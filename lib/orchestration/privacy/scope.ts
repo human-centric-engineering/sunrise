@@ -31,6 +31,8 @@ import type {
   EntityType,
   KnownValue,
   PrivacyMode,
+  SensitivityCategory,
+  SensitivityGroup,
   TokenSession,
 } from '@/lib/privacy/adapters/types';
 import { modeStrictness } from '@/lib/privacy/adapters/policy';
@@ -60,6 +62,11 @@ export interface PrivacyTally {
    * inventing `[PERSON_9]`), left visible as written. `pseudonymise` only.
    */
   unresolved: number;
+  /**
+   * Confidential content the classifiers found in any call here, by category,
+   * with the group of each (§130). Categories only: never text, never where.
+   */
+  sensitivity: Map<SensitivityCategory, SensitivityGroup>;
 }
 
 export interface PrivacyScopeInit {
@@ -135,6 +142,7 @@ function emptyTally(): PrivacyTally {
     failedAdapters: new Set(),
     refusals: new Set(),
     unresolved: 0,
+    sensitivity: new Map(),
   };
 }
 
@@ -324,20 +332,53 @@ export function recordPrivacyRefusal(scope: PrivacyScope, mode: PrivacyMode, rea
   }
 }
 
+/** What one call's classification adds to a tally (§130). */
+export interface PrivacySensitivityRecord {
+  /** The policy's mode for the call, which may be `off`: classifying runs in every mode. */
+  mode: PrivacyMode;
+  categories: readonly { category: SensitivityCategory; group: SensitivityGroup }[];
+  /** Classifiers that failed. The call is marked degraded, as for a detector. */
+  failedAdapters: readonly string[];
+}
+
+/** Add what a call's classification found to `scope` and every scope it sits inside. */
+export function recordPrivacySensitivity(
+  scope: PrivacyScope,
+  record: PrivacySensitivityRecord
+): void {
+  for (let s: PrivacyScope | undefined = scope; s; s = s.parent) {
+    raiseMode(s.tally, record.mode);
+    for (const { category, group } of record.categories) s.tally.sensitivity.set(category, group);
+    if (record.failedAdapters.length > 0) s.tally.degraded = true;
+    for (const id of record.failedAdapters) s.tally.failedAdapters.add(id);
+  }
+}
+
 /** Record placeholders a reply wrote that no session issued, left visible. */
 export function recordPrivacyUnresolved(scope: PrivacyScope, unresolved: number): void {
   if (unresolved <= 0) return;
   for (let s: PrivacyScope | undefined = scope; s; s = s.parent) s.tally.unresolved += unresolved;
 }
 
+/** The tally's confidential categories by group, each sorted; `undefined` when there are none. */
+function sensitivityByGroup(t: PrivacyTally): PrivacySummary['sensitivity'] {
+  if (t.sensitivity.size === 0) return undefined;
+  const byGroup: Partial<Record<SensitivityGroup, string[]>> = {};
+  for (const [category, group] of t.sensitivity) (byGroup[group] ??= []).push(category);
+  for (const list of Object.values(byGroup)) list.sort();
+  return byGroup;
+}
+
 /**
  * What a scope's tally looks like in message or execution metadata, or
- * `undefined` when the stage scanned no call in it (mode `off`, or only local
- * providers). Counts and adapter ids only.
+ * `undefined` when the stage neither scanned a call in it (mode `off`, or
+ * only local providers) nor classified one as confidential. Counts, category
+ * names and adapter ids only.
  */
 export function privacySummary(scope: PrivacyScope): PrivacySummary | undefined {
   const t = scope.tally;
   if (t.mode === null) return undefined;
+  const sensitivity = sensitivityByGroup(t);
   return {
     mode: t.mode,
     calls: t.calls,
@@ -348,5 +389,6 @@ export function privacySummary(scope: PrivacyScope): PrivacySummary | undefined 
     ...(t.failedAdapters.size > 0 ? { failedAdapters: [...t.failedAdapters].sort() } : {}),
     ...(t.refusals.size > 0 ? { refused: [...t.refusals].sort() } : {}),
     ...(t.unresolved > 0 ? { unresolved: t.unresolved } : {}),
+    ...(sensitivity ? { sensitivity } : {}),
   };
 }

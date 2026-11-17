@@ -17,6 +17,11 @@
  * `embeddingsPolicy: local_only` and a masking mode, one to a provider that is
  * not `isLocal` is refused instead.
  *
+ * Before any of that, a call made in a scope that records somewhere is
+ * classified for confidential content (§130), in every mode and to local
+ * providers too, and the categories found are recorded in its scope.
+ * Classifying changes nothing sent.
+ *
  * It refuses, and never sends, when it cannot say what the policy is: a
  * failed app init or core install (mode `off` included, because what was
  * rolled back may be what raised it), an unreadable stored mode, a policy
@@ -47,6 +52,7 @@ import {
   knownValuesOf,
   recordPrivacyCall,
   recordPrivacyRefusal,
+  recordPrivacySensitivity,
   recordPrivacyUnresolved,
   runInPrivacyScope,
   type PrivacyScope,
@@ -63,8 +69,14 @@ import {
   notifyPrivacyObservers,
   resolvePrivacyPolicy,
   runPrivacyDetectors,
+  runSensitivityClassifiers,
 } from '@/lib/privacy/adapters/run';
-import type { EntityType, PrivacyEvent, PrivacyPolicy } from '@/lib/privacy/adapters/types';
+import type {
+  EntityType,
+  PrivacyEvent,
+  PrivacyPolicy,
+  SensitivityPart,
+} from '@/lib/privacy/adapters/types';
 import { orgIdForCall } from '@/lib/tenancy/context';
 
 /**
@@ -221,6 +233,109 @@ export interface PrivacyStageResult {
 function chatMessages(call: PrivacyStageCall): readonly LlmMessage[] {
   const [first] = call.args;
   return call.coverage === 'full' && Array.isArray(first) ? (first as LlmMessage[]) : [];
+}
+
+/**
+ * What a call sends, part by part with its role, for the sensitivity
+ * classifiers (§130): each chat message's text, or each embedding input.
+ * A chat call's tool-call arguments are left out: they are the model's,
+ * derived from what the user wrote, which is classified already. An embedding
+ * call's input is classified whoever wrote it (a model-written search query
+ * included), because it is text that goes to the embedding provider.
+ */
+function sensitivityParts(call: PrivacyStageCall): SensitivityPart[] {
+  const parts: SensitivityPart[] = [];
+  if (call.coverage === 'full') {
+    for (const m of chatMessages(call)) {
+      if (typeof m.content === 'string') {
+        if (m.content.length > 0) parts.push({ role: m.role, text: m.content });
+        continue;
+      }
+      for (const part of m.content) {
+        if (part.type === 'text' && part.text.length > 0) {
+          parts.push({ role: m.role, text: part.text });
+        }
+      }
+    }
+    return parts;
+  }
+  const [first] = call.args;
+  const inputs = typeof first === 'string' ? [first] : Array.isArray(first) ? first : [];
+  for (const text of inputs) {
+    if (typeof text === 'string' && text.length > 0) parts.push({ role: 'embedding', text });
+  }
+  return parts;
+}
+
+/**
+ * Listed as the failed adapter when classifying a call failed outside any one
+ * classifier (a fault in the stage's own classification step), so the trace
+ * shows it degraded rather than nothing.
+ */
+const SENSITIVITY_STAGE_FAILURE = 'privacy-stage.sensitivity';
+
+/**
+ * Classify the call for confidential content and record what was found in
+ * its scope (§130, t-1036), whether the call is then sent or refused.
+ *
+ * Never refuses: until a policy acts on it, a fault here is recorded as
+ * degraded and the call goes on as it would have. Only in a scope that
+ * records somewhere: an ephemeral one has nothing to read the result yet.
+ * Records nothing when nothing was found and no classifier failed, so a turn
+ * gains a privacy summary only when what its calls carried held something
+ * confidential. Each call resends the history, so a disclosure from an
+ * earlier turn is found again on every later turn that carried it, as the
+ * PII counts are.
+ */
+async function classifyCall(
+  call: PrivacyStageCall,
+  scope: PrivacyScope,
+  mode: PrivacyPolicy['mode'],
+  orgId: string | undefined,
+  abandoned: AbortSignal | undefined,
+  inHouseOnly: boolean
+): Promise<void> {
+  let classified: Awaited<ReturnType<typeof runSensitivityClassifiers>> | null;
+  try {
+    const parts = sensitivityParts(call);
+    if (parts.length === 0) return;
+    const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
+    classified = await runSensitivityClassifiers(
+      { parts },
+      {
+        scopeId: scope.scopeId,
+        ...(orgId !== undefined ? { orgId } : {}),
+        ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+        signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
+        inHouseOnly,
+      }
+    );
+  } catch (err) {
+    // Observing only: a fault here must not stop a call that would otherwise
+    // go out (mode `off` included). Recorded as degraded, so it is seen.
+    logger.error('privacy-stage: sensitivity classification failed', undefined, {
+      providerSlug: call.providerSlug,
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
+    classified = null;
+  }
+  // The caller's own cancel stays a cancel, whatever happened above.
+  if (abandoned?.aborted) throw new CallAbandonedError();
+  if (classified === null) {
+    recordPrivacySensitivity(scope, {
+      mode,
+      categories: [],
+      failedAdapters: [SENSITIVITY_STAGE_FAILURE],
+    });
+    return;
+  }
+  const { categories, failures } = classified;
+  if (categories.length === 0 && failures.length === 0) return;
+  recordPrivacySensitivity(scope, {
+    mode,
+    categories,
+    failedAdapters: failures.map((f) => f.adapterId),
+  });
 }
 
 /**
@@ -401,6 +516,37 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       );
     }
 
+    // Before the returns for `off` and a skipped local provider: classifying
+    // changes nothing sent, and an install records what its agents meet in
+    // every mode (owner ruling, 2026-11-17).
+    // An embedding input is never masked: a masked name cannot be searched
+    // for. Under a masking mode an install that requires local embeddings
+    // refuses one to a provider that is not local instead (spec § Embeddings).
+    // Before classifying, so a refused embedding's text reaches no external
+    // classifier; it implies a masking mode and a provider that is not local,
+    // so neither return below would have come first.
+    if (
+      call.coverage === 'count' &&
+      !call.isLocal &&
+      protectsContent(policy.mode) &&
+      settings.privacyEmbeddingsPolicy === 'local_only'
+    ) {
+      throw refuse('embeddings_local_only', call, scope, mode);
+    }
+
+    // A call the layer forwards untouched is not sent to an external
+    // classifier either: that would be the one place its text went beyond
+    // the provider the operator chose (a local one, or any under `off`).
+    const forwardedUntouched =
+      policy.mode === 'off' || (call.isLocal && !policy.protectLocalProviders);
+    if (!scoped.ephemeral) {
+      // Recorded under `off` when the call goes out unscanned: the summary's
+      // mode is the strictest any SCANNED call ran under, and a skipped local
+      // call was not scanned, so it must not raise it.
+      const recordedMode = forwardedUntouched ? 'off' : policy.mode;
+      await classifyCall(call, scope, recordedMode, orgId, abandoned, forwardedUntouched);
+    }
+
     if (policy.mode === 'off') return unchanged;
     if (call.isLocal && !policy.protectLocalProviders) {
       notifyPrivacyObservers({
@@ -413,18 +559,6 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
       });
       return unchanged;
     }
-    // An embedding input is never masked: a masked name cannot be searched
-    // for. Under a masking mode an install that requires local embeddings
-    // refuses one to a provider that is not local instead (spec § Embeddings).
-    if (
-      call.coverage === 'count' &&
-      !call.isLocal &&
-      protectsContent(policy.mode) &&
-      settings.privacyEmbeddingsPolicy === 'local_only'
-    ) {
-      throw refuse('embeddings_local_only', call, scope, mode);
-    }
-
     // Nothing would read the result: an unscoped call (knowledge ingestion,
     // a background job) records nowhere, no observer is listening, and only a
     // `block` policy would act on a detector failing. A call the scan cannot

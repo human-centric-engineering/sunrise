@@ -7,9 +7,9 @@
  * (`lib/privacy/adapters/registry.ts`). If an app cannot do something through
  * an adapter, neither can core.
  *
- * Four slots ship now — the four this feature consumes. The proposal's other
- * two, `SensitivityClassifier` and `MediaProcessor`, arrive with the
- * sensitive-content routing and attachments features that use them: an
+ * Five slots: the four §127 consumes, and `SensitivityClassifier`, which
+ * arrived with the sensitive-content routing feature that consumes it (§130).
+ * The proposal's sixth, `MediaProcessor`, arrives with attachments: an
  * interface forks build on is public surface, and one defined before anything
  * consumes it is the one that turns out wrong.
  *
@@ -329,4 +329,113 @@ export interface PrivacyEvent {
 export interface PrivacyObserver {
   id: string;
   observe(event: PrivacyEvent): void | Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Sensitivity classifier (§130)
+// ---------------------------------------------------------------------------
+
+/**
+ * The two kinds of confidential content, each with its own policy.
+ *
+ * - `personal` — someone else's personal data, mostly the UK GDPR special
+ *   categories and criminal records. The person it is about did not choose to
+ *   share it with a model vendor.
+ * - `commercial` — the organisation's own secrets (an unannounced launch, a
+ *   deal). The organisation decides who sees them, and a contract with the
+ *   provider is what protects them.
+ */
+export const SENSITIVITY_GROUPS = ['personal', 'commercial'] as const;
+
+export type SensitivityGroup = (typeof SENSITIVITY_GROUPS)[number];
+
+/** The categories Sunrise's own classifier reports, and the group of each. */
+export const CORE_SENSITIVITY_CATEGORIES = {
+  health: 'personal',
+  ethnicity: 'personal',
+  religion: 'personal',
+  politics: 'personal',
+  trade_union: 'personal',
+  sexuality: 'personal',
+  criminal: 'personal',
+  hr_matter: 'personal',
+  legal_matter: 'personal',
+  personal_finance: 'personal',
+  not_public: 'commercial',
+  deal: 'commercial',
+  restructuring: 'commercial',
+  business_distress: 'commercial',
+  litigation: 'commercial',
+} as const satisfies Record<string, SensitivityGroup>;
+
+export type CoreSensitivityCategory = keyof typeof CORE_SENSITIVITY_CATEGORIES;
+
+/**
+ * A category name. Lower snake case: it is shown to an admin on the trace and
+ * stored in message metadata, so a classifier must not be able to put
+ * arbitrary text there.
+ */
+export type SensitivityCategory = string;
+
+/** What a valid {@link SensitivityCategory} looks like. */
+export const SENSITIVITY_CATEGORY_PATTERN = /^[a-z][a-z0-9_]{0,39}$/;
+
+/**
+ * Where a part of the call came from. `embedding` is an embedding call's
+ * input, which carries what a user wrote (a search query) or a reply to it.
+ */
+export type SensitivityPartRole = 'system' | 'user' | 'assistant' | 'tool' | 'embedding';
+
+/** One piece of what the call sends. */
+export interface SensitivityPart {
+  role: SensitivityPartRole;
+  text: string;
+}
+
+/** What a classifier is given: every text part of the call, in order. */
+export interface SensitivityInput {
+  parts: readonly SensitivityPart[];
+}
+
+/** What a classifier is told about the call. */
+export interface ClassifyContext {
+  /**
+   * Aborted at the classifier's timeout, the stage's pass deadline, or when
+   * the call is abandoned. A classifier that does I/O must honour it.
+   */
+  signal: AbortSignal;
+  /** The privacy scope this call belongs to (a conversation or execution). */
+  scopeId: string;
+  orgId?: string;
+  agentId?: string;
+}
+
+/**
+ * One category a classifier found in the call. An object, so a later field
+ * (a confidence) is additive.
+ */
+export interface SensitivityFinding {
+  category: SensitivityCategory;
+}
+
+/**
+ * Says what kinds of confidential content a call holds. Many run per call, in
+ * parallel; their findings are unioned. No offsets and no text come back:
+ * policy acts on the whole call, and nothing about where the content was is
+ * recorded.
+ */
+export interface SensitivityClassifier {
+  /** Unique across the registry. Core's are `core.*`; use your own prefix. */
+  id: string;
+  egress: AdapterEgress;
+  /** Where an `external` service processes data, e.g. `'UK'`, `'EU'`, `'US'`. */
+  jurisdiction?: string;
+  /**
+   * Every category this classifier may report, and the group each belongs to.
+   * A finding of any other category is rejected. A category another
+   * classifier already declared must be declared in the same group.
+   */
+  categories: Readonly<Record<SensitivityCategory, SensitivityGroup>>;
+  classify(input: SensitivityInput, ctx: ClassifyContext): Promise<readonly SensitivityFinding[]>;
+  health?(): Promise<AdapterHealth>;
 }

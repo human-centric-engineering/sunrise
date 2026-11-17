@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 
 /**
- * Tests: the privacy counts line on the conversation and execution traces (§127).
+ * Tests: the privacy counts line on the conversation and execution traces
+ * (§127), and the confidential content it shows (§130).
  */
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -138,6 +139,67 @@ describe('PrivacyCounts refusals, unresolved placeholders and verbs', () => {
   });
 });
 
+describe('PrivacyCounts confidential content', () => {
+  const offOnly: PrivacySummary = {
+    mode: 'off',
+    calls: 0,
+    counts: {},
+    embeddingCalls: 0,
+    embeddingCounts: {},
+  };
+
+  it('shows each group with its categories in words, beside the counts', () => {
+    render(
+      <PrivacyCounts
+        summary={{
+          ...SUMMARY,
+          sensitivity: { personal: ['health', 'hr_matter'], commercial: ['not_public'] },
+        }}
+      />
+    );
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent('3 PERSON found across 2 calls');
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent(
+      'confidential, personal: health, HR matter · commercial: not public'
+    );
+  });
+
+  it('says nothing about calls in mode off, where the only finding is confidential content', () => {
+    render(<PrivacyCounts summary={{ ...offOnly, sensitivity: { personal: ['health'] } }} />);
+    const line = screen.getByTestId('privacy-counts');
+    expect(line).toHaveTextContent('Privacy (off)');
+    expect(line).not.toHaveTextContent('no call sent');
+    expect(line).not.toHaveTextContent('found across');
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent(
+      'confidential, personal: health'
+    );
+  });
+
+  it("shows an app's own category as its name, spaced", () => {
+    render(
+      <PrivacyCounts summary={{ ...offOnly, sensitivity: { commercial: ['client_codename'] } }} />
+    );
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent(
+      'commercial: client codename'
+    );
+  });
+
+  it('shows no confidential clause when nothing confidential was found', () => {
+    render(<PrivacyCounts summary={SUMMARY} />);
+    expect(screen.queryByTestId('privacy-confidential')).toBeNull();
+  });
+
+  it('shows a failed classifier as degraded, in mode off too, without claiming nothing was sent', () => {
+    render(
+      <PrivacyCounts
+        summary={{ ...offOnly, degraded: true, failedAdapters: ['acme.classifier'] }}
+      />
+    );
+    const line = screen.getByTestId('privacy-counts');
+    expect(line).toHaveTextContent('degraded (acme.classifier)');
+    expect(line).not.toHaveTextContent('no call sent');
+  });
+});
+
 describe('the conversation trace', () => {
   function message(metadata: Record<string, unknown> | null) {
     return {
@@ -160,6 +222,44 @@ describe('the conversation trace', () => {
   it("shows an assistant message's privacy counts", () => {
     render(<ConversationTraceViewer messages={[message({ privacy: SUMMARY })]} />);
     expect(screen.getByTestId('privacy-counts')).toHaveTextContent('3 PERSON');
+  });
+
+  it('shows the confidential content stored on a message, read back through its schema', () => {
+    render(
+      <ConversationTraceViewer
+        messages={[
+          message({
+            privacy: {
+              mode: 'off',
+              calls: 0,
+              counts: {},
+              embeddingCalls: 0,
+              embeddingCounts: {},
+              sensitivity: { personal: ['health'] },
+            },
+          }),
+        ]}
+      />
+    );
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent('personal: health');
+  });
+
+  it('still shows the line when a stored summary names a group this build does not know', () => {
+    render(
+      <ConversationTraceViewer
+        messages={[
+          message({
+            privacy: {
+              ...SUMMARY,
+              sensitivity: { personal: ['health'], someday_group: ['x'] },
+            },
+          }),
+        ]}
+      />
+    );
+    expect(screen.getByTestId('privacy-counts')).toHaveTextContent('3 PERSON');
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent('personal: health');
+    expect(screen.getByTestId('privacy-confidential')).not.toHaveTextContent('someday');
   });
 
   it('shows nothing for a message without counts, or with malformed ones', () => {

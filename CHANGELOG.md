@@ -16,6 +16,26 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Confidential content is spotted and shown on the trace (§130, t-1036).**
+  A new privacy adapter slot, `SensitivityClassifier`, registered with
+  `registerSensitivityClassifier(classifier, { timeoutMs?, replace? })` from
+  `initAppPrivacyAdapters()`, says which kinds of confidential content a call
+  holds, each in one of two groups: **personal** (health, an HR or legal
+  matter, and the other special categories) and **commercial** (unannounced
+  plans, deals, restructuring, a business in trouble, a legal dispute). Core
+  registers `core.sensitivity-phrases`, a phrase list over what users wrote;
+  `replace: 'core.sensitivity-phrases'` swaps it for an app's. The privacy
+  stage runs the classifiers on every call in a chat turn or workflow
+  execution, **in every privacy mode, `off` included**, and records the
+  categories (never text) as `PrivacySummary.sensitivity`, shown on the
+  conversation and execution traces. Nothing is refused or rerouted yet: the
+  per-agent policy that acts on it follows. **A fork that mocks
+  `corePrivacyAdapters()` in its tests needs a `classifiers: []` field**, and
+  a classifier registered in `initAppPrivacyAdapters()` that throws there
+  makes the layer refuse every call, as any adapter does.
+
 ### Fixed
 
 - **The agent and capability forms' blocked-save summary now follows the

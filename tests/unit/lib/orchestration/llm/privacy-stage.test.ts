@@ -535,8 +535,10 @@ describe('the pass deadline', () => {
     } finally {
       timeout.mockRestore();
     }
+    // The last deadline is the detection pass's. The sensitivity classifiers
+    // (§130) take their own, earlier, and never wait on the known values.
     expect(order.indexOf('known values loaded')).toBeGreaterThanOrEqual(0);
-    expect(order.indexOf('known values loaded')).toBeLessThan(order.indexOf('deadline'));
+    expect(order.indexOf('known values loaded')).toBeLessThan(order.lastIndexOf('deadline'));
   });
 });
 

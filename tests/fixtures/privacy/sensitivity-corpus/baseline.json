@@ -1,0 +1,186 @@
+{
+  "development": {
+    "cases": 91,
+    "groups": {
+      "commercial": {
+        "labelled": 18,
+        "recall": 1,
+        "precision": 0.9474
+      },
+      "personal": {
+        "labelled": 38,
+        "recall": 1,
+        "precision": 1
+      }
+    },
+    "categories": {
+      "business_distress": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 0.75
+      },
+      "criminal": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "deal": {
+        "labelled": 4,
+        "recall": 0.75,
+        "precision": 1
+      },
+      "ethnicity": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "health": {
+        "labelled": 8,
+        "recall": 1,
+        "precision": 1
+      },
+      "hr_matter": {
+        "labelled": 7,
+        "recall": 1,
+        "precision": 1
+      },
+      "legal_matter": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "litigation": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "not_public": {
+        "labelled": 6,
+        "recall": 1,
+        "precision": 1
+      },
+      "personal_finance": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "politics": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "religion": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "restructuring": {
+        "labelled": 5,
+        "recall": 1,
+        "precision": 1
+      },
+      "sexuality": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      },
+      "trade_union": {
+        "labelled": 3,
+        "recall": 1,
+        "precision": 1
+      }
+    }
+  },
+  "heldOut": {
+    "cases": 161,
+    "groups": {
+      "commercial": {
+        "labelled": 32,
+        "recall": 0.6875,
+        "precision": 0.8462
+      },
+      "personal": {
+        "labelled": 61,
+        "recall": 0.623,
+        "precision": 0.9268
+      }
+    },
+    "categories": {
+      "business_distress": {
+        "labelled": 6,
+        "recall": 0.6667,
+        "precision": 1
+      },
+      "criminal": {
+        "labelled": 6,
+        "recall": 0.6667,
+        "precision": 1
+      },
+      "deal": {
+        "labelled": 8,
+        "recall": 0.75,
+        "precision": 0.75
+      },
+      "ethnicity": {
+        "labelled": 6,
+        "recall": 0.1667,
+        "precision": 1
+      },
+      "health": {
+        "labelled": 10,
+        "recall": 0.7,
+        "precision": 1
+      },
+      "hr_matter": {
+        "labelled": 11,
+        "recall": 0.8182,
+        "precision": 0.8182
+      },
+      "legal_matter": {
+        "labelled": 6,
+        "recall": 0.6667,
+        "precision": 0.8
+      },
+      "litigation": {
+        "labelled": 6,
+        "recall": 0.5,
+        "precision": 0.75
+      },
+      "not_public": {
+        "labelled": 9,
+        "recall": 0.8889,
+        "precision": 0.8889
+      },
+      "personal_finance": {
+        "labelled": 6,
+        "recall": 0.6667,
+        "precision": 1
+      },
+      "politics": {
+        "labelled": 5,
+        "recall": 0.6,
+        "precision": 1
+      },
+      "religion": {
+        "labelled": 6,
+        "recall": 0.5,
+        "precision": 1
+      },
+      "restructuring": {
+        "labelled": 8,
+        "recall": 0.25,
+        "precision": 1
+      },
+      "sexuality": {
+        "labelled": 5,
+        "recall": 0.6,
+        "precision": 1
+      },
+      "trade_union": {
+        "labelled": 5,
+        "recall": 0.6,
+        "precision": 1
+      }
+    }
+  }
+}

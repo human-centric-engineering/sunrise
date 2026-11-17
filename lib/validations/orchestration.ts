@@ -3476,6 +3476,10 @@ export const privacySummarySchema = z.object({
   failedAdapters: z.array(z.string()).optional(),
   refused: z.array(z.string()).optional(),
   unresolved: z.number().int().nonnegative().optional(),
+  // Any group name: a summary written with a group this build does not know
+  // must not fail the parse, which would hide the whole privacy line. The
+  // trace shows the groups in SENSITIVITY_GROUPS.
+  sensitivity: z.record(z.string(), z.array(z.string())).optional(),
 });
 
 export const executionTraceEntrySchema = z

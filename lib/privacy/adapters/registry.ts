@@ -30,12 +30,17 @@ import { formatPlaceholder, LITERAL_TYPE } from '@/lib/privacy/pii/token-strateg
 import {
   ADAPTER_EGRESS_VALUES,
   ENTITY_TYPE_PATTERN,
+  SENSITIVITY_CATEGORY_PATTERN,
+  SENSITIVITY_GROUPS,
   type AdapterEgress,
   type EntityType,
   type PrivacyDetector,
   type PrivacyObserver,
   type PrivacyPolicyResolver,
   type PrivacyTokenStrategy,
+  type SensitivityCategory,
+  type SensitivityClassifier,
+  type SensitivityGroup,
 } from '@/lib/privacy/adapters/types';
 
 /** The id prefix reserved for Sunrise's own adapters. */
@@ -102,6 +107,35 @@ export interface PolicyResolverRegistration {
   readonly core: boolean;
 }
 
+/** How a sensitivity classifier is registered (§130). */
+export interface ClassifierRegistrationOptions {
+  /** Enforced through the classifier's abort signal. Default {@link DEFAULT_DETECTOR_TIMEOUT_MS}. */
+  timeoutMs?: number;
+  /**
+   * The id of a core classifier this one replaces. The core classifier stops
+   * running. The only way to turn a core classifier off.
+   */
+  replace?: string;
+}
+
+/** A registered sensitivity classifier, as the registry holds it. Frozen. */
+export interface ClassifierRegistration {
+  readonly classifier: SensitivityClassifier;
+  /**
+   * The classifier's `id`, `egress`, `jurisdiction` and `categories` as they
+   * were when validated, copied and frozen. The layer reads these, never the
+   * classifier object's own fields.
+   */
+  readonly id: string;
+  readonly egress: AdapterEgress;
+  readonly jurisdiction: string | undefined;
+  readonly categories: Readonly<Record<SensitivityCategory, SensitivityGroup>>;
+  readonly timeoutMs: number;
+  readonly core: boolean;
+  /** Replaces a core classifier. */
+  readonly replacesCore: string | undefined;
+}
+
 /** A registered observer, as the registry holds it. Frozen. */
 export interface ObserverRegistration {
   readonly observer: PrivacyObserver;
@@ -122,8 +156,12 @@ export interface PrivacyAdapterSnapshot {
   /** In registration order, core first. */
   policyResolvers: readonly PolicyResolverRegistration[];
   observers: readonly ObserverRegistration[];
+  /** In registration order. They run in parallel, and order changes nothing they return. */
+  classifiers: readonly ClassifierRegistration[];
   /** Core detectors an app replaced, by id. */
   replacedCoreDetectors: readonly string[];
+  /** Core classifiers an app replaced, by id. */
+  replacedCoreClassifiers: readonly string[];
   /**
    * Set when the app's `initAppPrivacyAdapters()` threw and was rolled back.
    * The stage refuses EVERY call while it is set, mode `off` included: what
@@ -144,6 +182,9 @@ const detectors = new Map<string, DetectorRegistration>();
 const replacedCore = new Map<string, string>();
 const policyResolvers = new Map<string, PolicyResolverRegistration>();
 const observers = new Map<string, ObserverRegistration>();
+const classifiers = new Map<string, ClassifierRegistration>();
+/** Replaced core classifier id → the id of the classifier that replaced it. */
+const replacedCoreClassifiers = new Map<string, string>();
 /** One slot, held in a Map so the gate can snapshot and restore it like the rest. */
 const tokenStrategySlot = new Map<'active', { strategy: PrivacyTokenStrategy; core: boolean }>();
 
@@ -162,11 +203,17 @@ interface Snapshot {
   replacedCore: Map<string, string>;
   policyResolvers: Map<string, PolicyResolverRegistration>;
   observers: Map<string, ObserverRegistration>;
+  classifiers: Map<string, ClassifierRegistration>;
+  replacedCoreClassifiers: Map<string, string>;
   tokenStrategySlot: Map<'active', { strategy: PrivacyTokenStrategy; core: boolean }>;
 }
 
 function logReplacedCoreDetector(replaced: string, by: string): void {
   logger.warn('privacy-adapters: a core detector was replaced', { replaced, by });
+}
+
+function logReplacedCoreClassifier(replaced: string, by: string): void {
+  logger.warn('privacy-adapters: a core sensitivity classifier was replaced', { replaced, by });
 }
 
 function logReplacedTokenStrategy(replaced: string, by: string): void {
@@ -186,6 +233,8 @@ const appInit = createAppInitGate<Snapshot>({
       replacedCore: new Map(replacedCore),
       policyResolvers: new Map(policyResolvers),
       observers: new Map(observers),
+      classifiers: new Map(classifiers),
+      replacedCoreClassifiers: new Map(replacedCoreClassifiers),
       tokenStrategySlot: new Map(tokenStrategySlot),
     };
   },
@@ -194,12 +243,17 @@ const appInit = createAppInitGate<Snapshot>({
     restoreMap(replacedCore, before.replacedCore);
     restoreMap(policyResolvers, before.policyResolvers);
     restoreMap(observers, before.observers);
+    restoreMap(classifiers, before.classifiers);
+    restoreMap(replacedCoreClassifiers, before.replacedCoreClassifiers);
     restoreMap(tokenStrategySlot, before.tokenStrategySlot);
   },
   onSuccess: (before) => {
     initRunning = false;
     for (const [replaced, by] of replacedCore) {
       if (!before.replacedCore.has(replaced)) logReplacedCoreDetector(replaced, by);
+    }
+    for (const [replaced, by] of replacedCoreClassifiers) {
+      if (!before.replacedCoreClassifiers.has(replaced)) logReplacedCoreClassifier(replaced, by);
     }
     const was = before.tokenStrategySlot.get('active')?.strategy;
     const now = tokenStrategySlot.get('active')?.strategy;
@@ -232,6 +286,9 @@ function installCoreOnce(): void {
       addPolicyResolver(resolver, timeoutMs === undefined ? {} : { timeoutMs }, true);
     }
     for (const observer of core.observers) addObserver(observer, true);
+    for (const { classifier, timeoutMs } of core.classifiers) {
+      addClassifier(classifier, timeoutMs === undefined ? {} : { timeoutMs }, true);
+    }
   } catch (err) {
     coreFailure = `a core privacy adapter failed to install: ${describeThrown(err)}`;
     logger.error('privacy-adapters: core adapter install failed', { error: describeThrown(err) });
@@ -438,6 +495,99 @@ function addObserver(observer: PrivacyObserver, core: boolean): void {
   observers.set(id, Object.freeze({ observer, id, core }));
 }
 
+function isGroup(value: unknown): value is SensitivityGroup {
+  return SENSITIVITY_GROUPS.some((group) => group === value);
+}
+
+function addClassifier(
+  classifier: SensitivityClassifier,
+  options: ClassifierRegistrationOptions,
+  core: boolean
+): void {
+  const kind = 'sensitivity classifier';
+  const id = checkId(kind, classifier.id, core);
+  if (classifiers.has(id)) throw new Error(`${kind} ${id}: already registered`);
+  // Each field is read ONCE, and the value checked is the value kept.
+  const egress: unknown = classifier.egress;
+  if (!isEgress(egress)) {
+    throw new Error(`${kind} ${id}: egress must be one of ${ADAPTER_EGRESS_VALUES.join(', ')}`);
+  }
+  const jurisdiction: unknown = classifier.jurisdiction;
+  if (jurisdiction !== undefined && typeof jurisdiction !== 'string') {
+    throw new Error(`${kind} ${id}: jurisdiction must be a string`);
+  }
+  const declared: unknown = classifier.categories;
+  if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
+    throw new Error(`${kind} ${id}: categories must map each category to its group`);
+  }
+  const categories: Record<SensitivityCategory, SensitivityGroup> = {};
+  for (const [category, group] of Object.entries(declared)) {
+    if (!SENSITIVITY_CATEGORY_PATTERN.test(category)) {
+      throw new Error(`${kind} ${id}: category ${category} is not a valid name`);
+    }
+    if (!isGroup(group)) {
+      throw new Error(
+        `${kind} ${id}: category ${category} must be in one of ${SENSITIVITY_GROUPS.join(', ')}`
+      );
+    }
+    categories[category] = group;
+  }
+  if (Object.keys(categories).length === 0) {
+    throw new Error(`${kind} ${id}: categories must list at least one category`);
+  }
+  checkFunction(kind, id, 'classify', typeof classifier.classify === 'function');
+  if (classifier.health !== undefined)
+    checkFunction(kind, id, 'health', typeof classifier.health === 'function');
+
+  const timeoutMs = checkTimeout(kind, id, options.timeoutMs);
+
+  if (options.replace !== undefined) {
+    const target = classifiers.get(options.replace);
+    if (!target?.core) {
+      throw new Error(
+        `${kind} ${id}: replace names ${options.replace}, which is not a registered core classifier`
+      );
+    }
+  }
+
+  // The group decides which policy applies, so it must not depend on which
+  // classifier fired. The one being replaced stops running, so its groups
+  // do not bind its replacement.
+  for (const other of classifiers.values()) {
+    if (other.id === options.replace) continue;
+    for (const [category, group] of Object.entries(categories)) {
+      // Own keys only: a category named `constructor` must not find Object's.
+      const theirs = Object.hasOwn(other.categories, category)
+        ? other.categories[category]
+        : undefined;
+      if (theirs !== undefined && theirs !== group) {
+        throw new Error(
+          `${kind} ${id}: category ${category} is in ${group}, but ${other.id} declares it in ${theirs}`
+        );
+      }
+    }
+  }
+
+  const registration: ClassifierRegistration = Object.freeze({
+    classifier,
+    id,
+    egress,
+    jurisdiction,
+    categories: Object.freeze(categories),
+    timeoutMs,
+    core,
+    replacesCore: options.replace,
+  });
+
+  // They run in parallel and their result is sorted, so where a replacement
+  // sits changes nothing.
+  classifiers.set(id, registration);
+  if (options.replace === undefined) return;
+  classifiers.delete(options.replace);
+  replacedCoreClassifiers.set(options.replace, id);
+  if (!initRunning) logReplacedCoreClassifier(options.replace, id);
+}
+
 // ---------------------------------------------------------------------------
 // Public registration — call these from initAppPrivacyAdapters()
 // ---------------------------------------------------------------------------
@@ -482,16 +632,30 @@ export function registerPrivacyObserver(observer: PrivacyObserver): void {
   addObserver(observer, false);
 }
 
+/**
+ * Add a sensitivity classifier (§130). It runs alongside core's, and the
+ * categories they find are unioned. Pass `{ replace: 'core.<id>' }` to turn a
+ * core classifier off in its favour. Throws on a malformed classifier, a
+ * duplicate id, a category declared in a different group from another
+ * classifier's, or a `replace` that names no core classifier.
+ */
+export function registerSensitivityClassifier(
+  classifier: SensitivityClassifier,
+  options: ClassifierRegistrationOptions = {}
+): void {
+  installCoreOnce();
+  addClassifier(classifier, options, false);
+}
+
 // ---------------------------------------------------------------------------
 // Read
 // ---------------------------------------------------------------------------
 
 const EGRESS_ORDER: Record<AdapterEgress, number> = { in_process: 0, self_hosted: 1, external: 2 };
 
-/** Everything the privacy layer runs. Loads core and the app's init on first call. */
-export function getPrivacyAdapters(): PrivacyAdapterSnapshot {
-  ensureLoaded();
-  const ordered = [...detectors.values()]
+/** `in_process`, then `self_hosted`, then `external`; registration order within each. */
+function byEgress<T extends { egress: AdapterEgress }>(registrations: readonly T[]): T[] {
+  return registrations
     .map((registration, index) => ({ registration, index }))
     .sort(
       (a, b) =>
@@ -499,12 +663,19 @@ export function getPrivacyAdapters(): PrivacyAdapterSnapshot {
         a.index - b.index
     )
     .map(({ registration }) => registration);
+}
+
+/** Everything the privacy layer runs. Loads core and the app's init on first call. */
+export function getPrivacyAdapters(): PrivacyAdapterSnapshot {
+  ensureLoaded();
   return {
-    detectors: ordered,
+    detectors: byEgress([...detectors.values()]),
     tokenStrategy: tokenStrategySlot.get('active')?.strategy ?? null,
     policyResolvers: [...policyResolvers.values()],
     observers: [...observers.values()],
+    classifiers: [...classifiers.values()],
     replacedCoreDetectors: [...replacedCore.keys()],
+    replacedCoreClassifiers: [...replacedCoreClassifiers.keys()],
     appInitFailure,
     coreFailure,
   };
@@ -519,6 +690,8 @@ export function __resetPrivacyAdaptersForTests(): void {
   replacedCore.clear();
   policyResolvers.clear();
   observers.clear();
+  classifiers.clear();
+  replacedCoreClassifiers.clear();
   tokenStrategySlot.clear();
   coreInstalled = false;
   coreFailure = null;
