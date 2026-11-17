@@ -632,6 +632,16 @@ describe('the org caps (§110 t-788)', () => {
     });
   });
 
+  it('writes nothing for caps equal to what is stored, as for every slice', async () => {
+    const { tx, db } = txOver({ quotas: { monthlyBudgetUsd: 10 } });
+
+    expect(await writeOrgQuotas(ORG_A, { monthlyBudgetUsd: 10 }, db)).toEqual({
+      previous: { monthlyBudgetUsd: 10 },
+      stored: { monthlyBudgetUsd: 10 },
+    });
+    expect(tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing changed, nothing written
+  });
+
   it('treats a cap forwarded as undefined as no cap, removing the slice', async () => {
     // What a plan with no cap produces: `{ monthlyBudgetUsd: plan.cap }`. Zod
     // keeps the key, so counting keys would store `quotas: {}` for ever.
@@ -836,6 +846,7 @@ describe('the entitlement switches (§135 t-1033)', () => {
     expect(next).toHaveBeenCalledWith({ on: ['retired'], off: [], unreadable: false });
     expect(written).toEqual({
       previous: { on: ['retired'], off: [], unreadable: false },
+      previousStored: { on: ['retired'], off: [] },
       stored: { on: ['leads', 'reports'], off: ['beta'], unreadable: false },
       changed: true,
     });
@@ -866,6 +877,7 @@ describe('the entitlement switches (§135 t-1033)', () => {
     const kept = txOver({ branding: { logo: 'x' }, entitlements: { on: ['leads'], off: [] } });
     expect(await writeOrgEntitlements(ORG_A, () => null, kept.db)).toEqual({
       previous: { on: ['leads'], off: [], unreadable: false },
+      previousStored: { on: ['leads'], off: [] },
       stored: NONE,
       changed: true,
     });
@@ -913,6 +925,7 @@ describe('the entitlement switches (§135 t-1033)', () => {
     const left = txOver({ entitlements: { on: ['leads'], off: [] } });
     expect(await writeOrgEntitlements(ORG_A, () => undefined, left.db)).toEqual({
       previous: { on: ['leads'], off: [], unreadable: false },
+      previousStored: { on: ['leads'], off: [] },
       stored: { on: ['leads'], off: [], unreadable: false },
       changed: false,
     });

@@ -95,14 +95,11 @@ function describe(orgId: string, read: OrgEntitlementsRead, mayChange: boolean) 
   };
 }
 
-/**
- * What the audit log keeps: the keys set on and off, and whether the slice
- * could be read. An unreadable one keeps what parsed in it, so a key a save
- * carried over is not mistaken for one this admin granted.
- */
+/** What the audit log keeps of what is stored now: the keys set on and off, or `null` for none. */
 function auditable(read: OrgEntitlementsRead) {
-  const keys = { on: [...read.on], off: [...read.off] };
-  return read.unreadable ? { unreadable: true, ...keys } : keys;
+  return read.on.length === 0 && read.off.length === 0
+    ? null
+    : { on: [...read.on], off: [...read.off] };
 }
 
 /**
@@ -198,7 +195,9 @@ async function writeSwitches(
     // The org changed, which a platform admin may do from outside it (t-1005).
     actingOrgId: id,
     changes: {
-      entitlements: { from: auditable(written.previous), to: auditable(written.stored) },
+      // `from` exactly as it was stored, so what a tidying write dropped (a
+      // key that is not one, a slice that could not be read) is on the record.
+      entitlements: { from: written.previousStored, to: auditable(written.stored) },
     },
     clientIp: getClientIP(request),
   });

@@ -93,7 +93,36 @@ describe('OrgEntitlementsForm', () => {
     expect(screen.getByText('Funnels and leads.')).toBeInTheDocument();
   });
 
-  it('sets each switch it shows on or off, and shows what the server stored', async () => {
+  it('names only a switch the admin changed, so one left at its default stays there', async () => {
+    vi.mocked(apiClient.patch).mockResolvedValue(view());
+    const user = renderForm(
+      view({
+        // `leads` is on by default and nobody has set it on this org.
+        switches: view().switches.map((s) =>
+          s.key === 'leads' ? { ...s, on: true, atDefault: true } : s
+        ),
+      })
+    );
+
+    await user.click(screen.getByRole('checkbox', { name: /Reports/ }));
+    await user.click(screen.getByRole('button', { name: 'Save switches' }));
+
+    expect(apiClient.patch).toHaveBeenCalledWith(PATH, { body: { on: [], off: ['reports'] } });
+  });
+
+  it('offers Save only once something has changed', async () => {
+    const user = renderForm();
+    const save = screen.getByRole('button', { name: 'Save switches' });
+
+    expect(save).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /Lead generation/ }));
+    expect(save).toBeEnabled();
+    // Ticked back as it was: nothing to save again.
+    await user.click(screen.getByRole('checkbox', { name: /Lead generation/ }));
+    expect(save).toBeDisabled();
+  });
+
+  it('sets the switches the admin changed on or off, and shows what the server stored', async () => {
     vi.mocked(apiClient.patch).mockResolvedValue(
       view({
         switches: view().switches.map((s) => ({ ...s, on: s.key === 'leads' })),
@@ -105,7 +134,7 @@ describe('OrgEntitlementsForm', () => {
     await user.click(screen.getByRole('checkbox', { name: /Lead generation/ }));
     await user.click(screen.getByRole('button', { name: 'Save switches' }));
 
-    // Only what it was shown: a switch registered since it loaded is not named.
+    // Only what changed: a switch registered since it loaded is not named either.
     expect(apiClient.patch).toHaveBeenCalledWith(PATH, {
       body: { on: ['leads'], off: ['reports'] },
     });
@@ -123,6 +152,7 @@ describe('OrgEntitlementsForm', () => {
     );
     const user = renderForm();
 
+    await user.click(screen.getByRole('checkbox', { name: /Reports/ }));
     await user.click(screen.getByRole('button', { name: 'Save switches' }));
 
     expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeDisabled();
@@ -188,6 +218,7 @@ describe('OrgEntitlementsForm', () => {
     vi.mocked(apiClient.delete).mockResolvedValue(atDefaults());
     const user = renderForm();
 
+    await user.click(screen.getByRole('checkbox', { name: /Reports/ }));
     await user.click(screen.getByRole('button', { name: 'Save switches' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Try again later');
 

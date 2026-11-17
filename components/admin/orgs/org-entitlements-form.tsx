@@ -4,17 +4,18 @@
  * OrgEntitlementsForm — the switches an org has (§135 t-1033)
  *
  * The admin UI for `/api/v1/admin/orgs/[id]/entitlements`. A platform admin
- * ticks the switches the org has; a save (`PATCH`) sets each switch shown here
- * on or off, and leaves alone any it was not shown. Clearing (`DELETE`) puts
- * every switch back to its default. The page renders this only when the app
- * registers at least one switch, or its registration failed, so vanilla
- * Sunrise shows nothing new.
+ * ticks the switches the org has; a save (`PATCH`) sets only the switches the
+ * admin changed, so one left at its default stays at its default and follows
+ * it if the app changes it, and one the form was not shown is left alone.
+ * Clearing (`DELETE`) puts every switch back to its default. The page renders
+ * this only when the app registers at least one switch, or its registration
+ * failed, so vanilla Sunrise shows nothing new.
  *
  * What it says rather than hides:
  *  - **Nothing set**: every switch is at its default, and the boxes show those
- *    defaults. Saving sets them on the organisation itself.
- *  - **At its default**: one switch nobody has set here (one registered since
- *    the last save), which follows its default until it is saved.
+ *    defaults. A switch the admin changes is set on the organisation itself.
+ *  - **At its default**: a switch nobody has set here, which follows its
+ *    default until someone changes it.
  *  - **Unreadable**: the stored switches could not be read, so the org has
  *    none until it is saved again.
  *  - **Stored but not registered**: keys no app registers any more. They are
@@ -142,15 +143,19 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
     }
   };
 
-  // Every switch shown, on or off; a switch this form was not shown is left alone.
+  // Only what the admin changed: a switch left as it was is not named, so one
+  // at its default is not turned into a choice nobody made.
+  const changed = {
+    on: view.switches.filter((s) => ticked.has(s.key) && !s.on).map((s) => s.key),
+    off: view.switches.filter((s) => !ticked.has(s.key) && s.on).map((s) => s.key),
+  };
+  const anyChange = changed.on.length + changed.off.length > 0;
+
   const save = () =>
     write(
       () =>
         apiClient.patch<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId), {
-          body: {
-            on: view.switches.filter((s) => ticked.has(s.key)).map((s) => s.key),
-            off: view.switches.filter((s) => !ticked.has(s.key)).map((s) => s.key),
-          },
+          body: changed,
         }),
       saveFailure,
       'Saved'
@@ -188,7 +193,8 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       {view.nothingSet && (
         <p className="text-muted-foreground text-sm">
           None of these switches has been set on this organisation, so each is at its default, as
-          ticked below. Saving sets them on the organisation itself.
+          ticked below. A switch you change is set on the organisation; the rest stay at their
+          defaults.
         </p>
       )}
       {/* The shared notice: it offers the switch, or says why there is none. */}
@@ -254,7 +260,7 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       {view.mayChange && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void save()} disabled={saving}>
+            <Button onClick={() => void save()} disabled={saving || !anyChange}>
               {saving ? 'Saving…' : 'Save switches'}
             </Button>
             {!view.nothingSet && (

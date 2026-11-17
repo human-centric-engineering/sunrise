@@ -234,8 +234,9 @@ export async function orgHasSwitch(
  * a platform-admin check. A clash with a concurrent settings write throws
  * `P2034` (`isSettingsWriteConflict`).
  *
- * @returns what was stored before, what is stored now and whether this
- *   changed it, or `null` when the org does not exist.
+ * @returns what was stored before (read, and `previousStored` exactly as
+ *   stored), what is stored now and whether this changed it, or `null` when
+ *   the org does not exist.
  */
 export async function setOrgSwitches(
   orgId: string,
@@ -243,6 +244,7 @@ export async function setOrgSwitches(
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<{
   previous: OrgEntitlementsRead;
+  previousStored: unknown;
   stored: OrgEntitlementsRead;
   changed: boolean;
 } | null> {

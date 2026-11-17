@@ -258,7 +258,8 @@ describe('PATCH /api/v1/admin/orgs/[id]/entitlements', () => {
         actingOrgId: OTHER,
         changes: {
           entitlements: {
-            from: { on: [], off: [] },
+            // Exactly as stored: nothing was.
+            from: null,
             to: { on: ['reports'], off: ['leads'] },
           },
         },
@@ -338,8 +339,28 @@ describe('PATCH /api/v1/admin/orgs/[id]/entitlements', () => {
       expect.objectContaining({
         changes: {
           entitlements: {
-            from: { unreadable: true, on: ['old_pkg', 'reports'], off: [] },
+            // Exactly as stored, `off` missing and all.
+            from: { on: ['old_pkg', 'reports'] },
             to: { on: [], off: ['leads', 'old_pkg', 'reports'] },
+          },
+        },
+      })
+    );
+  });
+
+  it('records what a tidying write dropped, since `from` is the slice as it was stored', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['reports', 'Bad-Key'], off: [] } },
+    });
+
+    await patch({ on: ['reports'], off: [] });
+
+    expect(mockLogAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: {
+          entitlements: {
+            from: { on: ['reports', 'Bad-Key'], off: [] },
+            to: { on: ['reports'], off: [] },
           },
         },
       })

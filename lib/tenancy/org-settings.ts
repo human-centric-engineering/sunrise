@@ -50,6 +50,8 @@
  * @see .context/tenancy/identity.md — what `Org.settings` is, and whose the rest of it is
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
@@ -651,10 +653,11 @@ export async function loadOrgEntitlements(
  * in both lists, throws a `ZodError` and nothing is written.
  *
  * **A write that would store what is already stored writes nothing** and says
- * `changed: false`, so a save that changed nothing neither touches the row nor
- * risks a serialization clash. The comparison is with the stored JSON, not the
- * cleaned read, so a slice the read had to tidy (a duplicate, a stray
- * property, one it could not read) is written.
+ * `changed: false` (see {@link updateSettingsSlice}). The comparison is with
+ * the stored JSON, not the cleaned read, so a slice the read had to tidy (a
+ * duplicate, a stray property, one it could not read) is written.
+ * `previousStored` is that JSON exactly as it was, for an audit row that has
+ * to show what a tidying write dropped.
  *
  * **It decides nothing about who may**, as {@link writeOrgQuotas} does not:
  * the admin route's writes are platform-only and, at `multi`, install-org
@@ -664,8 +667,9 @@ export async function loadOrgEntitlements(
  * Through {@link updateSettingsSlice}: a clash with a concurrent settings
  * write throws `P2034` ({@link isSettingsWriteConflict}).
  *
- * @returns what was stored before, what is stored now and whether the write
- *   changed it, or `null` when the org does not exist.
+ * @returns what was stored before (read, and `previousStored` as stored), what
+ *   is stored now and whether the write changed it, or `null` when the org
+ *   does not exist.
  */
 export async function writeOrgEntitlements(
   orgId: string,
@@ -675,16 +679,19 @@ export async function writeOrgEntitlements(
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<{
   previous: OrgEntitlementsRead;
+  previousStored: unknown;
   stored: OrgEntitlementsRead;
   changed: boolean;
 } | null> {
   let previous: OrgEntitlementsRead = NOTHING_SET;
+  let previousStored: unknown = null;
   let stored: OrgEntitlementsRead = NOTHING_SET;
   const replaced = await updateSettingsSlice(
     orgId,
     ORG_ENTITLEMENTS_KEY,
     (settings) => {
       previous = readOrgEntitlements(settings, { orgId });
+      previousStored = isJsonObject(settings) ? (settings[ORG_ENTITLEMENTS_KEY] ?? null) : null;
       const keys = next(previous);
       if (keys === undefined) {
         stored = previous;
@@ -695,28 +702,11 @@ export async function writeOrgEntitlements(
           ? null
           : orgEntitlementsSchema.parse({ on: [...keys.on], off: [...keys.off] });
       stored = value === null ? NOTHING_SET : { on: value.on, off: value.off, unreadable: false };
-      const current = isJsonObject(settings) ? settings[ORG_ENTITLEMENTS_KEY] : undefined;
-      if (!previous.unreadable && isStoredSlice(current, value)) return LEAVE_AS_IS;
       return value;
     },
     db
   );
-  return replaced === null ? null : { previous, stored, changed: replaced.written };
-}
-
-/** Whether the stored JSON is exactly `value`, a validated slice, or absent for `null`. */
-function isStoredSlice(current: unknown, value: { on: string[]; off: string[] } | null): boolean {
-  if (value === null) return current === null || current === undefined;
-  const sameList = (stored: unknown, list: string[]) =>
-    Array.isArray(stored) &&
-    stored.length === list.length &&
-    stored.every((key, i) => key === list[i]);
-  return (
-    isJsonObject(current) &&
-    Object.keys(current).length === 2 &&
-    sameList(current.on, value.on) &&
-    sameList(current.off, value.off)
-  );
+  return replaced === null ? null : { previous, previousStored, stored, changed: replaced.written };
 }
 
 /**
@@ -751,6 +741,11 @@ const LEAVE_AS_IS = Symbol('leave the slice as it is');
  * transaction read it, for a writer that keeps part of what is stored. `update`
  * must not do I/O: it runs inside the transaction. It returns
  * {@link LEAVE_AS_IS} to write nothing, which `written` reports.
+ *
+ * A value equal to what the slice already holds (`null` when there is none) is
+ * not written either, for every slice: a save that changed nothing does not
+ * touch the row. It still read the row inside the serializable transaction, so
+ * a concurrent write can still, rarely, make it answer `P2034`.
  */
 async function updateSettingsSlice(
   orgId: string,
@@ -764,6 +759,8 @@ async function updateSettingsSlice(
       if (!row) return null;
       const value = update(row.settings);
       if (value === LEAVE_AS_IS) return { settings: row.settings, written: false };
+      const current = isJsonObject(row.settings) ? (row.settings[key] ?? null) : null;
+      if (isDeepStrictEqual(current, value)) return { settings: row.settings, written: false };
       const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
       if (value === null) delete base[key];
       else base[key] = value;

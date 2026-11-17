@@ -187,7 +187,9 @@ there is none.
 string[] }`, both required: the registered switches to set on and off. A
 switch named in neither is left as it is, so a form loaded before a switch
 was registered, or a script that knows only some of them, cannot turn one off
-by leaving it out. The form names every switch it shows. `DELETE` puts every
+by leaving it out. The form names only the switches the admin changed, so a
+switch left at its default stays there and follows the default if the app
+later changes it; Save is off until something has changed. `DELETE` puts every
 registered switch back to its default. An unregistered key, or one in both
 lists, is a 400. With nothing registered there is nothing to set, and a write
 is a 409. Values stored for keys nothing registers are kept by both, on or
