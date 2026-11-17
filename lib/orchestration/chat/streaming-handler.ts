@@ -549,6 +549,9 @@ export class StreamingChatHandler {
       },
       currentPrivacyScope()
     );
+    // The conversation the turn's `warn` note is kept on, once `runInner` has
+    // loaded it, as its owner's.
+    const noted: NoteTarget = { conversationId: null };
     yield* withPaidCallHold(
       hold,
       withPrivacyScope(
@@ -560,7 +563,13 @@ export class StreamingChatHandler {
             [SUNRISE_USER_ID]: request.userId,
             [SUNRISE_AGENT_SLUG]: request.agentSlug,
           },
-          (chatSpan) => this.runInner(chatSpan, request, hold, privacyScope),
+          (chatSpan) =>
+            this.withConfidentialNotes(
+              this.runInner(chatSpan, request, hold, privacyScope, noted),
+              privacyScope,
+              request,
+              noted
+            ),
           { manualStatus: true }
         )
       )
@@ -580,12 +589,10 @@ export class StreamingChatHandler {
     chatSpan: Span,
     request: ChatRequest,
     hold: PaidCallHold,
-    privacyScope: PrivacyScope
+    privacyScope: PrivacyScope,
+    noted: NoteTarget
   ): AsyncGenerator<ChatEvent, void, unknown> {
-    const log =
-      request.requestId || request.visitorId
-        ? logger.withContext({ requestId: request.requestId, visitorId: request.visitorId })
-        : logger;
+    const log = turnLogger(request);
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
     // The latest AiAgentVersion at turn start, stamped on the turn's user and
@@ -856,6 +863,7 @@ export class StreamingChatHandler {
         capSettings?.maxConversationsPerUser ?? null
       );
       conversationId = conversation.id;
+      noted.conversationId = conversation.id;
       bindPrivacyScope(privacyScope, { scopeId: `conversation:${conversation.id}` });
       setSpanAttributes(chatSpan, { [SUNRISE_CONVERSATION_ID]: conversation.id });
       // The stored summary, if there is a usable one. A pin with no text behind
@@ -2123,8 +2131,6 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'output', outputMode);
 
               if (outputMode === 'block') {
-                // The note before the error: a reader stops at the error.
-                yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
                 yield errorEvent(
                   'output_blocked',
                   'Response blocked by content policy. Please rephrase your question.'
@@ -2175,7 +2181,6 @@ export class StreamingChatHandler {
               emitGuardEvent(guardEventContext, 'citation', citationMode);
 
               if (citationMode === 'block') {
-                yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
                 yield errorEvent(
                   'citation_required',
                   citationScan.underCited
@@ -2401,10 +2406,6 @@ export class StreamingChatHandler {
             yield { type: 'citations', citations };
           }
 
-          // A `warn` confidential-content policy (§130): a note after
-          // sending, once per conversation per group (owner ruling).
-          yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
-
           // Per-turn cap — terminal-turn surface.
           //
           // The mid-loop cap (further down) hard-stops the tool loop
@@ -2569,9 +2570,6 @@ export class StreamingChatHandler {
             limitUsd: turnCap,
             iteration,
           });
-          // What was sent before the cap stopped the loop gets its `warn`
-          // note too (§130).
-          yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
           yield {
             type: 'budget_exceeded_per_turn',
             code: 'budget_exceeded_per_turn',
@@ -2592,8 +2590,6 @@ export class StreamingChatHandler {
           if (currentProvider.isLocal) {
             hold.cap = refusal.cap;
           } else {
-            // An earlier iteration's call was sent.
-            yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
             yield errorEvent(refusal.code, refusal.message);
             return;
           }
@@ -2852,8 +2848,6 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            // The turn ends here, paused or done: the `warn` note too (§130).
-            yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
             yield buildDoneEvent(
               resolvedModel,
               usage,
@@ -3158,8 +3152,6 @@ export class StreamingChatHandler {
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
-            // The turn ends here, paused or done: the `warn` note too (§130).
-            yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
             yield buildDoneEvent(
               resolvedModel,
               usage,
@@ -3193,7 +3185,6 @@ export class StreamingChatHandler {
         agentSlug: request.agentSlug,
         iterations: MAX_TOOL_ITERATIONS,
       });
-      yield* this.confidentialNotes(privacyScope, conversation.id, request.userId, log);
       yield errorEvent(
         'tool_loop_cap',
         `Exceeded maximum tool iterations (${MAX_TOOL_ITERATIONS})`
@@ -3232,14 +3223,6 @@ export class StreamingChatHandler {
           });
         }
       };
-
-      // The warn note (§130) for a call sent before the failure, before the
-      // error event: the embed widget stops reading at an error. No call was
-      // sent before the conversation exists, and with no warned decision this
-      // reads nothing.
-      if (conversationId) {
-        yield* this.confidentialNotes(privacyScope, conversationId, request.userId, log);
-      }
 
       if (err instanceof ChatError) {
         log.warn('Chat handler surfaced known error', {
@@ -3471,6 +3454,41 @@ export class StreamingChatHandler {
       select: { id: true, createdAt: true },
     });
     return row ? { id: row.id, createdAt: row.createdAt } : null;
+  }
+
+  /**
+   * Yields the turn's `warn` notes (§130) just before the first event that
+   * ends the turn: `done`, an `error`, or `budget_exceeded_per_turn`. In one
+   * place rather than at each ending, so an ending added later cannot leave
+   * the note out (t-1039). Placed there, the note comes after the answer, and
+   * after the work an ending does before saying so: the error marker, leaving
+   * a refused turn out of history. A reader that stops at the note, or at the
+   * error after it, stops the turn only once that work is done. The embed
+   * widget stops reading at an error, so the note goes before it, not after.
+   * Once per turn: a turn the per-turn cap ends sends that event and `done`.
+   * A turn ended before its conversation was loaded sent nothing, so has none.
+   */
+  private async *withConfidentialNotes(
+    events: AsyncGenerator<ChatEvent, void, unknown>,
+    scope: PrivacyScope,
+    request: ChatRequest,
+    noted: NoteTarget
+  ): AsyncGenerator<ChatEvent, void, unknown> {
+    let shown = false;
+    for await (const event of events) {
+      if (!shown && TURN_ENDING_EVENTS.has(event.type)) {
+        shown = true;
+        if (noted.conversationId) {
+          yield* this.confidentialNotes(
+            scope,
+            noted.conversationId,
+            request.userId,
+            turnLogger(request)
+          );
+        }
+      }
+      yield event;
+    }
   }
 
   /**
@@ -4017,6 +4035,25 @@ function isClientAbort(err: unknown, signal?: AbortSignal): boolean {
   if (err.name === 'AbortError') return true;
   // Last resort, for a raw undici-style error on a signal-less call.
   return signal === undefined && err.message.includes('aborted');
+}
+
+/** Where a turn's `warn` note is kept: its conversation, once loaded. */
+interface NoteTarget {
+  conversationId: string | null;
+}
+
+/** The events a turn ends on; the `warn` note goes before the first of them. */
+const TURN_ENDING_EVENTS: ReadonlySet<ChatEvent['type']> = new Set([
+  'done',
+  'error',
+  'budget_exceeded_per_turn',
+]);
+
+/** The turn's logger, carrying its request and visitor ids when it has them. */
+function turnLogger(request: ChatRequest): typeof logger {
+  return request.requestId || request.visitorId
+    ? logger.withContext({ requestId: request.requestId, visitorId: request.visitorId })
+    : logger;
 }
 
 function errorEvent(code: string, message: string): ChatEvent {

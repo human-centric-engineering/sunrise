@@ -1384,13 +1384,16 @@ An org floor per group is not in this feature.
   and the place come from the refusing groups whose content was found, not
   from a group flagged only because a classifier failed.
 - **The warn note.** The chat handler emits a `warning` event
-  (`confidential_personal`, `confidential_commercial`) as the turn ends
-  (after the answer, at a pause for approval or another tool that ends the
-  turn, or when the per-turn cost cap stops the tool loop), and before the
-  error event of a turn that ends in one after a call was sent (t-1039: the
-  output or citation guard blocking the reply, the budget running out
-  between tool calls, the tool-loop cap, and a later call failing, being
-  refused or the turn crashing), for each group
+  (`confidential_personal`, `confidential_commercial`) just before the first
+  event that ends the turn (`done`, `error` or `budget_exceeded_per_turn`),
+  however it ends: after the answer, at a pause for approval, when a cost or
+  budget cap stops it, or when it ends in an error after a call was sent (a
+  guard blocking the reply, the tool-loop cap, a later call failing or being
+  refused). One wrapper around the turn does this (t-1039), so an ending
+  added later cannot leave it out, and it comes after the work an ending does
+  first (the error marker, leaving a refused turn out of history), so a
+  reader that stops at the note stops the turn only once that is done. Once
+  per turn, for each group
   the turn recorded as warned that the conversation has not been told about,
   and then keeps the groups told in
   `AiConversation.metadata.confidentialNoted`. Shown first, recorded after:
@@ -1412,7 +1415,8 @@ An org floor per group is not in this feature.
   stream at an error event, so a note sent after one is never shown. A turn
   whose only flagged call was refused shows no note: nothing was sent, and
   the stage records a decision only for a call it sends. Neither does a turn
-  the input guard blocks, which ends before any call.
+  the input guard blocks, which ends before any call, nor one that ends
+  before its conversation is loaded.
 - **Not built here:** answering a flagged turn on another model (t-1038).
   Until then a policy that does not permit the agent's provider refuses.
 

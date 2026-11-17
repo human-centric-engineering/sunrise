@@ -10338,8 +10338,8 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
         { type: 'warning', code: 'confidential_personal', message: CONFIDENTIAL_NOTES.personal },
       ]);
       expect(errorOf(events)?.code).toBe(code);
-      const kinds = events.map((e) => e.type);
-      expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('error'));
+      const note = events.findIndex((e) => e.code === 'confidential_personal');
+      expect(note).toBeLessThan(events.findIndex((e) => e.type === 'error'));
       expect((conv as { metadata?: unknown }).metadata).toEqual({
         confidentialNoted: ['personal'],
       });
@@ -10437,6 +10437,58 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       expect(notes(refused)).toEqual([]);
       expect(provider.chatStream).toHaveBeenCalled();
       expect((conv as { metadata?: unknown }).metadata).toBeNull();
+    });
+
+    it('lets the turn finish its work before the note, for a reader that stops there', async () => {
+      // The visitor presses Stop as the note arrives: the error marker and
+      // leaving the refused turn out of history have already happened.
+      const { rows } = conversationStore();
+      sentThen((call) =>
+        call === 0
+          ? TOOL_CALL
+          : new PrivacyRefusedError('confidential_not_permitted', 'anthropic', undefined)
+      );
+
+      const stream = streamChat({
+        ...baseRequest,
+        conversationId: 'conv-1',
+        message: `I was ${DISCLOSURE}.`,
+      });
+      for await (const event of stream as AsyncGenerator<Event>) {
+        if (event.code === 'confidential_personal') break;
+      }
+
+      expect(marked(rows.find((r) => r.content === `I was ${DISCLOSURE}.`))).toBe(
+        'privacy_confidential'
+      );
+      expect(
+        rows.some(
+          (r) =>
+            r.role === 'assistant' &&
+            (r.metadata as { error?: boolean } | null)?.error === true &&
+            (r.metadata as { errorCode?: string }).errorCode === 'privacy_confidential'
+        )
+      ).toBe(true);
+    });
+
+    it('shows it once in a turn that the per-turn cap ends, even when recording it fails', async () => {
+      // The cap's event and then `done` both end the turn; the failed write
+      // leaves nothing on the conversation to say the note was shown.
+      conversationStore();
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ maxCostPerTurnUsd: 0.02 }) as never
+      );
+      vi.mocked(prisma.aiConversation.updateMany).mockRejectedValue(new Error('reset'));
+      sentThen(() => [
+        { type: 'text', content: 'Noted.' },
+        { type: 'done', usage: { inputTokens: 1000, outputTokens: 500 }, finishReason: 'stop' },
+      ]);
+
+      const events = await turn(`I was ${DISCLOSURE}.`);
+      expect(notes(events).map((e) => e.code)).toEqual(['confidential_personal']);
+      const kinds = events.map((e) => e.type);
+      expect(kinds.indexOf('warning')).toBeLessThan(kinds.indexOf('budget_exceeded_per_turn'));
+      expect(kinds.indexOf('budget_exceeded_per_turn')).toBeLessThan(kinds.indexOf('done'));
     });
   });
 });
