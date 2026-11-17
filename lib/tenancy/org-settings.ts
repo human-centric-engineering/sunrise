@@ -548,19 +548,31 @@ export interface OrgEntitlementsRead {
   unreadable: boolean;
 }
 
-const NOTHING_SET: OrgEntitlementsRead = { on: [], off: [], unreadable: false };
-const UNREADABLE_ENTITLEMENTS: OrgEntitlementsRead = { on: [], off: [], unreadable: true };
+// Frozen: every caller gets these same objects, and one that pushed onto a
+// shared list would hand that key to every org read after it.
+const NOTHING_SET: OrgEntitlementsRead = Object.freeze({
+  on: Object.freeze([]),
+  off: Object.freeze([]),
+  unreadable: false,
+});
+const UNREADABLE_ENTITLEMENTS: OrgEntitlementsRead = Object.freeze({
+  on: Object.freeze([]),
+  off: Object.freeze([]),
+  unreadable: true,
+});
 
 /**
  * Read an org's switches out of its `settings` (§135 t-1033).
  *
  * **Fails closed, like the provider policy.** A switch opens part of an app
- * an org may not have bought, so a slice that cannot be read at all gives the
- * org no switch, never the defaults: a default is only for a switch nobody
- * set, and an unreadable slice may have set it off. A key that is not a key is
- * dropped on its own with a warning, and a key stored both on and off reads as
- * off; either can only narrow what the org has. The readable keys were written
- * by a writer that validated them.
+ * an org may not have bought, so a slice that cannot be read gives the org no
+ * switch, never the defaults: a default is only for a switch nobody set, and
+ * an unreadable slice may have set it off. A slice that is an object but whose
+ * `on` or `off` is not a list is unreadable too, but what does parse in it is
+ * still returned, so a save that keeps keys it could not see keeps those. A
+ * key that is not a key is dropped on its own with a warning, and a key stored
+ * both on and off reads as off; either can only narrow what the org has. The
+ * readable keys were written by a writer that validated them.
  */
 export function readOrgEntitlements(
   settings: unknown,
@@ -574,9 +586,13 @@ export function readOrgEntitlements(
   }
   const slice = settings[ORG_ENTITLEMENTS_KEY];
   if (slice === null || slice === undefined) return NOTHING_SET;
-  if (!isJsonObject(slice) || !Array.isArray(slice.on) || !Array.isArray(slice.off)) {
+  if (!isJsonObject(slice)) {
     log.warn('Org entitlements slice is unreadable; the org has no switch on', context);
     return UNREADABLE_ENTITLEMENTS;
+  }
+  const unreadable = !Array.isArray(slice.on) || !Array.isArray(slice.off);
+  if (unreadable) {
+    log.warn('Org entitlements slice is unreadable; the org has no switch on', context);
   }
 
   let dropped = 0;
@@ -589,8 +605,8 @@ export function readOrgEntitlements(
     }
     return keys;
   };
-  const on = keysOf(slice.on);
-  const off = keysOf(slice.off);
+  const on = keysOf(Array.isArray(slice.on) ? slice.on : []);
+  const off = keysOf(Array.isArray(slice.off) ? slice.off : []);
   const both = [...on].filter((key) => off.has(key));
   for (const key of both) on.delete(key);
 
@@ -606,7 +622,7 @@ export function readOrgEntitlements(
       switches: both,
     });
   }
-  return { on: [...on].sort(), off: [...off].sort(), unreadable: false };
+  return { on: [...on].sort(), off: [...off].sort(), unreadable };
 }
 
 /** One org's switches as stored, or `null` when there is no such org. */
@@ -621,20 +637,23 @@ export async function loadOrgEntitlements(
 }
 
 /**
- * Replace an org's switches, preserving every other key in `settings`.
+ * Replace an org's whole entitlements slice, preserving every other key in
+ * `settings`. The low-level write: code that sets switches calls
+ * `setOrgSwitches()` (`lib/tenancy/entitlements.ts`), which keeps every value
+ * it does not name, rather than this.
  *
  * `next` is handed what is stored and returns the keys to store set on and
  * set off, or `null` to set none, so every switch is at its default (two empty
  * lists mean the same, and both remove the slice). It runs inside the write's
- * transaction, so a caller that keeps part of what is stored (the route keeps
- * keys no app registers) cannot lose a write that landed in between. The
- * result is validated with `orgEntitlementsSchema`, so a malformed key, or one
- * in both lists, throws a `ZodError` and nothing is written.
+ * transaction, so a caller that keeps part of what is stored cannot lose a
+ * write that landed in between. The result is validated with
+ * `orgEntitlementsSchema`, so a malformed key, or one in both lists, throws a
+ * `ZodError` and nothing is written.
  *
  * **It decides nothing about who may**, as {@link writeOrgQuotas} does not:
- * `PUT /api/v1/admin/orgs/[id]/entitlements` is platform-only and, at
- * `multi`, install-org only. A fork's own writer (billing, later) owns the
- * same two checks (`mayChangeOrgCommercialSettings`).
+ * the admin route's writes are platform-only and, at `multi`, install-org
+ * only. A fork's own writer (billing, later) owns the same two checks
+ * (`mayChangeOrgCommercialSettings`).
  *
  * Through {@link updateSettingsSlice}: a clash with a concurrent settings
  * write throws `P2034` ({@link isSettingsWriteConflict}).

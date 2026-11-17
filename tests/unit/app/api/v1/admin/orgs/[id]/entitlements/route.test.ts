@@ -1,15 +1,16 @@
 /**
- * Unit Tests: GET/PUT /api/v1/admin/orgs/[id]/entitlements (§135 t-1033)
+ * Unit Tests: GET/PATCH/DELETE /api/v1/admin/orgs/[id]/entitlements (§135 t-1033)
  *
- * Real `withAdminAuth`, the real registry and the real `writeOrgEntitlements`,
- * over a mocked Prisma whose `$transaction` runs the callback against the same
+ * Real `withAdminAuth`, the real registry and the real `setOrgSwitches`, over
+ * a mocked Prisma whose `$transaction` runs the callback against the same
  * mock; the app's switches come from a mocked `lib/app/entitlements.ts`. Pins:
  * platform-admin only (an org's own admin is refused, so it cannot grant itself
  * what it has not bought), and at `multi` written only from the install org or
- * an unbound admin API key, as the caps are; the key required, an unregistered key refused, a
- * replace keeping every other `settings` key and every stored key nothing
- * registers, `null` clearing back to nothing set, the 409s, and an audit row
- * naming what was replaced.
+ * an unbound admin API key, as the caps are; a PATCH setting only the switches
+ * it names, so a switch the caller did not know about is left alone; a DELETE
+ * putting every registered switch back to its default; every other `settings`
+ * key and every stored key nothing registers kept; an unregistered key
+ * refused; the 409s; and an audit row naming what was replaced.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
@@ -33,7 +34,6 @@ const mockPrisma = vi.hoisted(() => {
   const db = {
     org: { findUnique: vi.fn(), update: vi.fn() },
     orgMembership: { findUnique: vi.fn() },
-    aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
     $transaction: vi.fn(),
   };
   db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(db));
@@ -57,7 +57,7 @@ vi.mock('@/lib/logging', () => ({ logger: mockLog }));
 
 vi.mock('@/lib/app/entitlements', () => ({ initAppEntitlements: vi.fn() }));
 
-import { GET, PUT } from '@/app/api/v1/admin/orgs/[id]/entitlements/route';
+import { DELETE, GET, PATCH } from '@/app/api/v1/admin/orgs/[id]/entitlements/route';
 import { initAppEntitlements } from '@/lib/app/entitlements';
 import {
   __resetEntitlementRegistryForTests,
@@ -76,21 +76,20 @@ function session(role: 'USER' | 'ADMIN', activeOrgId: string | null = INSTALL_OR
   };
 }
 
+const URL_FOR = (id: string) => `http://localhost/api/v1/admin/orgs/${id}/entitlements`;
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
-const get = (id = OTHER) =>
-  GET(
-    new Request(`http://localhost/api/v1/admin/orgs/${id}/entitlements`) as unknown as NextRequest,
-    ctx(id)
-  );
-const put = (body: unknown, id = OTHER) =>
-  PUT(
-    new Request(`http://localhost/api/v1/admin/orgs/${id}/entitlements`, {
-      method: 'PUT',
+const get = (id = OTHER) => GET(new Request(URL_FOR(id)) as unknown as NextRequest, ctx(id));
+const patch = (body: unknown, id = OTHER) =>
+  PATCH(
+    new Request(URL_FOR(id), {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }) as unknown as NextRequest,
     ctx(id)
   );
+const reset = (id = OTHER) =>
+  DELETE(new Request(URL_FOR(id), { method: 'DELETE' }) as unknown as NextRequest, ctx(id));
 
 async function json(res: Response) {
   return JSON.parse(await res.text()) as {
@@ -126,7 +125,6 @@ beforeEach(() => {
   vi.mocked(initAppEntitlements).mockImplementation(() => {});
   registerSwitches();
   mockPrisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(mockPrisma));
-  mockPrisma.aiApiKey.findFirst.mockResolvedValue(null);
   mockResolveApiKey.mockResolvedValue(null);
   mockGetSession.mockResolvedValue(session('ADMIN'));
   mockPrisma.org.findUnique.mockResolvedValue({
@@ -149,6 +147,7 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
       nothingSet: true,
       unreadable: false,
       mayChange: true,
+      registrationFailed: false,
       switches: [
         {
           key: 'reports',
@@ -213,6 +212,17 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
     ]);
   });
 
+  it('says the app registration failed, rather than looking like an install with no switch', async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const data = (await json(await get())).data!;
+
+    expect(data).toMatchObject({ registrationFailed: true, switches: [] });
+  });
+
   it('is a 404 for an org that does not exist', async () => {
     mockPrisma.org.findUnique.mockResolvedValue(null);
 
@@ -226,9 +236,9 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
   });
 });
 
-describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
-  it('sets the ticked switches on and every other registered one off, keeping other settings keys, and audits it', async () => {
-    const res = await put({ switches: ['reports'] });
+describe('PATCH /api/v1/admin/orgs/[id]/entitlements', () => {
+  it('sets the named switches on and off, keeping other settings keys, and audits it', async () => {
+    const res = await patch({ on: ['reports'], off: ['leads'] });
 
     expect(res.status).toBe(200);
     expect(storedSettings()).toEqual({
@@ -242,7 +252,7 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
     });
     expect(mockLogAdminAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: 'org.entitlements.replace',
+        action: 'org.entitlements.update',
         entityType: 'org',
         entityId: OTHER,
         actingOrgId: OTHER,
@@ -256,18 +266,30 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
     );
   });
 
-  it('stores none ticked as every switch off, so a default-on switch is off for this org', async () => {
-    const res = await put({ switches: [] });
+  it('leaves a switch it does not name as it is, so a stale form cannot turn it off', async () => {
+    // The form loaded before `leads` was registered, so it names only `reports`.
+    const res = await patch({ on: [], off: ['reports'] });
+
+    expect(storedSettings()).toEqual({
+      providers: { approved: ['id-anthropic'] },
+      entitlements: { on: [], off: ['reports'] },
+    });
+    expect((await json(res)).data!.switches).toEqual([
+      expect.objectContaining({ key: 'reports', on: false, atDefault: false }),
+      expect.objectContaining({ key: 'leads', on: true, atDefault: true }),
+    ]);
+  });
+
+  it('stores every switch set off as off, so a default-on switch is off for this org', async () => {
+    const res = await patch({ on: [], off: ['leads', 'reports'] });
 
     expect(storedSettings()).toEqual({
       providers: { approved: ['id-anthropic'] },
       entitlements: { on: [], off: ['leads', 'reports'] },
     });
-    const data = (await json(res)).data!;
-    expect(data.nothingSet).toBe(false);
-    expect(data.switches).toEqual([
-      expect.objectContaining({ key: 'reports', on: false, atDefault: false }),
-      expect.objectContaining({ key: 'leads', on: false, atDefault: false }),
+    expect((await json(res)).data!.switches).toEqual([
+      expect.objectContaining({ key: 'reports', on: false }),
+      expect.objectContaining({ key: 'leads', on: false }),
     ]);
   });
 
@@ -276,7 +298,7 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
       settings: { entitlements: { on: ['leads', 'retired'], off: ['older'] } },
     });
 
-    await put({ switches: ['reports'] });
+    await patch({ on: ['reports'], off: ['leads'] });
 
     expect(storedSettings()).toEqual({
       entitlements: { on: ['reports', 'retired'], off: ['leads', 'older'] },
@@ -293,7 +315,84 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
     );
   });
 
-  it('puts every registered switch back to its default for null, keeping what it could not see', async () => {
+  it('counts repeated keys once against the limit', async () => {
+    const res = await patch({ on: Array.from({ length: 150 }, () => 'reports'), off: [] });
+
+    expect(res.status).toBe(200);
+    expect(storedSettings()).toMatchObject({ entitlements: { on: ['reports'], off: [] } });
+  });
+
+  it('refuses a key no app registers, naming it, and writes nothing', async () => {
+    const res = await patch({ on: ['reports'], off: ['repots'] });
+    const body = await json(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error?.code).toBe('VALIDATION_ERROR');
+    expect(body.error?.details?.unknownSwitches).toEqual(['repots']);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a switch named both on and off, and a body missing either list', async () => {
+    expect((await patch({ on: ['reports'], off: ['reports'] })).status).toBe(400);
+    expect((await patch({ on: ['reports'] })).status).toBe(400);
+    expect((await patch({ switches: ['reports'] })).status).toBe(400);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
+  it('is a 409 when no app registers a switch: there is nothing to set', async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {});
+
+    const res = await patch({ on: [], off: [] });
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error?.message).toMatch(/No entitlement switches are registered/);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
+  it('says the registration failed in its 409, rather than that there are none', async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const res = await patch({ on: [], off: [] });
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error?.message).toMatch(/failed to register/);
+  });
+
+  it('is a 409 when another settings write landed first, writing nothing', async () => {
+    const { Prisma } = await import('@prisma/client');
+    mockPrisma.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('conflict', { code: 'P2034', clientVersion: 'x' })
+    );
+
+    const res = await patch({ on: ['reports'], off: [] });
+
+    expect(res.status).toBe(409);
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
+  });
+
+  it('is a 404 for an org that does not exist', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue(null);
+
+    expect((await patch({ on: ['reports'], off: [] })).status).toBe(404);
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
+  });
+
+  it("refuses an org's own admin, so it cannot grant itself what it has not bought", async () => {
+    mockGetSession.mockResolvedValue(session('USER', OTHER));
+
+    const res = await patch({ on: ['reports'], off: [] });
+
+    expect(res.status).toBe(403);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('DELETE /api/v1/admin/orgs/[id]/entitlements', () => {
+  it('puts every registered switch back to its default, keeping what it could not see, and audits it', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: {
         entitlements: { on: ['retired'], off: ['leads', 'reports'] },
@@ -301,8 +400,9 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
       },
     });
 
-    const res = await put({ switches: null });
+    const res = await reset();
 
+    expect(res.status).toBe(200);
     expect(storedSettings()).toEqual({
       providers: { approved: [] },
       entitlements: { on: ['retired'], off: [] },
@@ -310,6 +410,7 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
     expect((await json(res)).data).toMatchObject({ nothingSet: true });
     expect(mockLogAdminAction).toHaveBeenCalledWith(
       expect.objectContaining({
+        action: 'org.entitlements.update',
         changes: {
           entitlements: {
             from: { on: ['retired'], off: ['leads', 'reports'] },
@@ -320,72 +421,20 @@ describe('PUT /api/v1/admin/orgs/[id]/entitlements', () => {
     );
   });
 
-  it('removes the slice when null leaves nothing stored', async () => {
+  it('removes the slice when nothing is left stored', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: { entitlements: { on: [], off: ['leads'] }, providers: { approved: [] } },
     });
 
-    await put({ switches: null });
+    await reset();
 
     expect(storedSettings()).toEqual({ providers: { approved: [] } });
   });
 
-  it('refuses a key no app registers, naming it, and writes nothing', async () => {
-    const res = await put({ switches: ['reports', 'repots'] });
-    const body = await json(res);
-
-    expect(res.status).toBe(400);
-    expect(body.error?.code).toBe('VALIDATION_ERROR');
-    expect(body.error?.details?.unknownSwitches).toEqual(['repots']);
-    expect(mockPrisma.org.update).not.toHaveBeenCalled();
-  });
-
-  it('refuses a body that leaves the key out, so a replace cannot clear an org by omission', async () => {
-    const res = await put({});
-
-    expect(res.status).toBe(400);
-    expect(mockPrisma.org.update).not.toHaveBeenCalled();
-  });
-
-  it('is a 409 when no app registers a switch: there is nothing to set', async () => {
-    __resetEntitlementRegistryForTests();
-    vi.mocked(initAppEntitlements).mockImplementation(() => {});
-
-    const res = await put({ switches: [] });
-
-    expect(res.status).toBe(409);
-    expect(mockPrisma.org.update).not.toHaveBeenCalled();
-  });
-
-  it('is a 409 when another settings write landed first, writing nothing', async () => {
-    const { Prisma } = await import('@prisma/client');
-    mockPrisma.$transaction.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('conflict', { code: 'P2034', clientVersion: 'x' })
-    );
-
-    const res = await put({ switches: ['reports'] });
-
-    expect(res.status).toBe(409);
-    expect(mockLogAdminAction).not.toHaveBeenCalled();
-  });
-
-  it('is a 404 for an org that does not exist', async () => {
-    mockPrisma.org.findUnique.mockResolvedValue(null);
-
-    expect((await put({ switches: ['reports'] })).status).toBe(404);
-    expect(mockLogAdminAction).not.toHaveBeenCalled();
-  });
-
-  it("refuses an org's own admin, so it cannot grant itself what it has not bought", async () => {
+  it("refuses an org's own admin", async () => {
     mockGetSession.mockResolvedValue(session('USER', OTHER));
-    mockPrisma.orgMembership.findUnique.mockResolvedValue({
-      role: 'OWNER',
-      org: { status: 'ACTIVE' },
-    });
 
-    const res = await put({ switches: ['reports'] });
-
-    expect(res.status).toBe(403);
+    expect((await reset()).status).toBe(403);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 });
@@ -396,7 +445,7 @@ describe('the switches at multi are changed only from the install org, as the ca
 
     // From the install org an unregistered key is a 400 naming it. The
     // refusal comes first, so it says nothing about what is registered.
-    const res = await put({ switches: ['not_registered'] });
+    const res = await patch({ on: ['not_registered'], off: [] });
     const body = await json(res);
 
     expect(res.status).toBe(403);
@@ -414,7 +463,7 @@ describe('the switches at multi are changed only from the install org, as the ca
   it('refuses clearing them from a customer org too', async () => {
     mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
 
-    expect((await put({ switches: null })).status).toBe(403);
+    expect((await reset()).status).toBe(403);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
@@ -439,12 +488,12 @@ describe('the switches at multi are changed only from the install org, as the ca
       ownerAccountType: 'HUMAN',
     });
 
-    const res = await put({ switches: ['reports'] });
+    const res = await patch({ on: ['reports'], off: [] });
 
     expect(res.status).toBe(200);
     expect(storedSettings()).toEqual({
       providers: { approved: ['id-anthropic'] },
-      entitlements: { on: ['reports'], off: ['leads'] },
+      entitlements: { on: ['reports'], off: [] },
     });
   });
 
@@ -458,7 +507,7 @@ describe('the switches at multi are changed only from the install org, as the ca
       ownerAccountType: 'HUMAN',
     });
 
-    expect((await put({ switches: ['reports'] })).status).toBe(403);
+    expect((await patch({ on: ['reports'], off: [] })).status).toBe(403);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
@@ -466,7 +515,7 @@ describe('the switches at multi are changed only from the install org, as the ca
     mockEnv.TENANCY_MODE = 'single';
     mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
 
-    const res = await put({ switches: ['reports'] });
+    const res = await patch({ on: ['reports'], off: [] });
 
     expect(res.status).toBe(200);
     expect(mockPrisma.org.update).toHaveBeenCalledTimes(1);

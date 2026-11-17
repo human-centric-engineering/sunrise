@@ -8,7 +8,7 @@
  * A switch is something an org either has or does not: a package it bought,
  * an area it may use, a free tier. Register yours here, and platform staff
  * set them on each org from `/admin/orgs/[id]` (or
- * `PUT /api/v1/admin/orgs/[id]/entitlements`). Read an org's with
+ * `PATCH /api/v1/admin/orgs/[id]/entitlements`). Read an org's with
  * `orgHasSwitch()` or `loadOrgSwitches()` from `lib/tenancy/entitlements.ts`.
  *
  * A switch is on or off; it carries no value. If you sell plans, a plan is a

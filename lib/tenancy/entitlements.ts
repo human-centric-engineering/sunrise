@@ -6,7 +6,8 @@
  * itself kept that in its own `Org.settings` key under names it had to guess,
  * and billing later renamed them. This is the one place it lives instead: an
  * app registers its switches from `lib/app/entitlements.ts`, platform staff set
- * them per org (`PUT /api/v1/admin/orgs/[id]/entitlements`), and the app reads
+ * them per org (`PATCH /api/v1/admin/orgs/[id]/entitlements`, or
+ * `setOrgSwitches()` from the app's own code), and the app reads
  * them here. When billing arrives it becomes a second writer of the same
  * slice; nothing that reads a switch changes.
  *
@@ -36,8 +37,12 @@ import type { PrismaClient } from '@prisma/client';
 import { initAppEntitlements } from '@/lib/app/entitlements';
 import { prisma } from '@/lib/db/client';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
-import { loadOrgEntitlements, type OrgEntitlementsRead } from '@/lib/tenancy/org-settings';
-import { ENTITLEMENT_KEY_PATTERN } from '@/lib/validations/tenancy';
+import {
+  loadOrgEntitlements,
+  writeOrgEntitlements,
+  type OrgEntitlementsRead,
+} from '@/lib/tenancy/org-settings';
+import { ENTITLEMENT_KEY_PATTERN, MAX_ORG_ENTITLEMENT_SWITCHES } from '@/lib/validations/tenancy';
 
 /** A switch as an app registers it. */
 export interface EntitlementSwitch {
@@ -85,9 +90,11 @@ const switches = new Map<string, RegisteredEntitlementSwitch>();
 /**
  * Register a switch. Call from `initAppEntitlements()` in
  * `lib/app/entitlements.ts`. Re-registering a key replaces it, as the other
- * registries do. A key that is not a key, or a missing or empty label,
- * throws, which rolls back every switch the init registered and logs why. A
- * missing description reads as none; it only explains the label.
+ * registries do. A key that is not a key, a missing or empty label, a
+ * `whenNothingSet` that is not `true` or `false`, or a switch past the
+ * {@link MAX_ORG_ENTITLEMENT_SWITCHES}th throws, which rolls back every switch
+ * the init registered and logs why. A missing description reads as none; it
+ * only explains the label.
  */
 export function registerEntitlementSwitch(definition: EntitlementSwitch): void {
   if (typeof definition.key !== 'string' || !ENTITLEMENT_KEY_PATTERN.test(definition.key)) {
@@ -96,21 +103,29 @@ export function registerEntitlementSwitch(definition: EntitlementSwitch): void {
     );
   }
   // Checked rather than trusted: an init written in JavaScript, or built from
-  // config, can leave either out.
+  // config, can pass anything.
   const label = typeof definition.label === 'string' ? definition.label.trim() : '';
   if (label.length === 0) {
     throw new Error(`Entitlement switch "${definition.key}" needs a label`);
+  }
+  const whenNothingSet: unknown = definition.whenNothingSet ?? false;
+  if (typeof whenNothingSet !== 'boolean') {
+    // The string "false" is truthy: read loosely, it would open the switch
+    // for every org.
+    throw new Error(
+      `Entitlement switch "${definition.key}" has whenNothingSet ${JSON.stringify(whenNothingSet)}; it must be true or false`
+    );
+  }
+  if (!switches.has(definition.key) && switches.size >= MAX_ORG_ENTITLEMENT_SWITCHES) {
+    throw new Error(
+      `At most ${MAX_ORG_ENTITLEMENT_SWITCHES} entitlement switches can be registered; "${definition.key}" is one too many`
+    );
   }
   const description =
     typeof definition.description === 'string' ? definition.description.trim() : '';
   switches.set(
     definition.key,
-    Object.freeze({
-      key: definition.key,
-      label,
-      description,
-      whenNothingSet: definition.whenNothingSet ?? false,
-    })
+    Object.freeze({ key: definition.key, label, description, whenNothingSet })
   );
 }
 
@@ -128,6 +143,16 @@ const appInit = createAppInitGate({
 export function registeredEntitlementSwitches(): readonly RegisteredEntitlementSwitch[] {
   appInit.ensure();
   return [...switches.values()];
+}
+
+/**
+ * Whether the app's `initAppEntitlements()` threw, so its switches were rolled
+ * back and every org reads as having none of them, defaults included. A
+ * surface asks so it can say so, rather than look like an install that
+ * registers no switch.
+ */
+export function entitlementSwitchesFailed(): boolean {
+  return appInit.ensure() === 'failed';
 }
 
 /**
@@ -179,6 +204,51 @@ export async function orgHasSwitch(
 ): Promise<boolean> {
   const org = await loadOrgSwitches(orgId, db);
   return org !== null && org.on.includes(key);
+}
+
+/**
+ * Set the named switches on an org, on or off, leaving every other stored
+ * value as it is; or, given `null`, put every registered switch back to its
+ * default, keeping values stored for keys nothing registers.
+ *
+ * The one writer for the admin route and an app's own code (billing, later)
+ * alike. Naming only what it decides is what stops a writer turning off a
+ * switch it did not know about: one registered after its form loaded, or by a
+ * newer build during a deploy. A plan that decides every switch names every
+ * switch.
+ *
+ * Keys are not checked against the registry here: a caller taking them from a
+ * request refuses unregistered ones first, as the route does. A key in both
+ * lists, or one that is not a key, throws a `ZodError` and nothing is written.
+ * **It decides nothing about who may**: ask `mayChangeOrgCommercialSettings()`
+ * (`lib/tenancy/shared-settings.ts`) after a platform-admin check. A clash with
+ * a concurrent settings write
+ * throws `P2034` (`isSettingsWriteConflict`).
+ *
+ * @returns what was stored before and what is stored now, or `null` when the
+ *   org does not exist.
+ */
+export async function setOrgSwitches(
+  orgId: string,
+  change: { on: readonly string[]; off: readonly string[] } | null,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<{ previous: OrgEntitlementsRead; stored: OrgEntitlementsRead } | null> {
+  const named = new Set(
+    change === null
+      ? registeredEntitlementSwitches().map((s) => s.key)
+      : [...change.on, ...change.off]
+  );
+  return writeOrgEntitlements(
+    orgId,
+    (previous) => {
+      const untouched = (keys: readonly string[]) => keys.filter((key) => !named.has(key));
+      return {
+        on: [...untouched(previous.on), ...(change?.on ?? [])],
+        off: [...untouched(previous.off), ...(change?.off ?? [])],
+      };
+    },
+    db
+  );
 }
 
 /** Test-only: clear the registry and re-arm the one-shot app init. */

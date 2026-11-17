@@ -1,39 +1,45 @@
 /**
  * One org's entitlement switches (§135 t-1033)
  *
- * GET /api/v1/admin/orgs/[id]/entitlements — every switch the app registers,
- *     whether this org has it, whether it was set on the org or is at its
- *     default, and whether this caller may change them.
- * PUT /api/v1/admin/orgs/[id]/entitlements — replace them:
- *     `{ switches: string[] | null }`, the registered switches that are on;
- *     every other registered switch is set off. `null` sets none, so every
- *     registered switch is back at its `whenNothingSet`. The key is required,
- *     so a replace cannot clear an org by leaving it out.
+ * GET    /api/v1/admin/orgs/[id]/entitlements — every switch the app
+ *        registers, whether this org has it, whether it was set on the org or
+ *        is at its default, and whether this caller may change them.
+ * PATCH  /api/v1/admin/orgs/[id]/entitlements — `{ on: string[], off: string[] }`:
+ *        set the named registered switches on or off. A switch named in
+ *        neither is left as it is.
+ * DELETE /api/v1/admin/orgs/[id]/entitlements — put every registered switch
+ *        back to its `whenNothingSet`.
  *
- * A key the app does not register is a 400. Values already stored on the org
- * for keys no app registers any more are kept by a replace, on or off: the
- * caller can only see and set what is registered, so a save must not drop
- * what it could not see (a process running older code, or a switch an app has
- * stopped registering). A switch registered after the save is not set by it,
- * so it reaches the org at its default. With nothing registered there is
- * nothing to set, and a PUT is a 409.
+ * Naming only what it changes is what keeps a caller from turning off a switch
+ * it did not know about: one registered after its form loaded, or by a newer
+ * build during a deploy. For the same reason, values stored for keys no app
+ * registers any more are kept by both writes (`setOrgSwitches`). A key the app
+ * does not register is a 400. With nothing registered there is nothing to
+ * set, and a write is a 409 (saying so when the app's registration failed).
  *
  * Platform-only: a switch is what an org has bought, and an org must not grant
  * it to itself. So, as with the caps, at `multi` a platform admin switched into
  * a customer's org may read the switches but not change them: the write comes
  * from the install org or an unbound admin API key
- * (`mayChangeOrgCommercialSettings`). Every replacement is in the admin audit
- * log with what it replaced.
+ * (`mayChangeOrgCommercialSettings`). Every write is in the admin audit log
+ * (`org.entitlements.update`) with what it replaced.
  */
 
-import { withAdminAuth } from '@/lib/auth/guards';
+import type { NextRequest } from 'next/server';
+
+import { withAdminAuth, type AuthenticatedSession } from '@/lib/auth/guards';
 import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { registeredEntitlementSwitches, resolveOrgSwitches } from '@/lib/tenancy/entitlements';
+import {
+  entitlementSwitchesFailed,
+  registeredEntitlementSwitches,
+  resolveOrgSwitches,
+  setOrgSwitches,
+} from '@/lib/tenancy/entitlements';
 import { getTenantContext } from '@/lib/tenancy/context';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 import {
@@ -43,7 +49,6 @@ import {
 import {
   isSettingsWriteConflict,
   loadOrgEntitlements,
-  writeOrgEntitlements,
   type OrgEntitlementsRead,
 } from '@/lib/tenancy/org-settings';
 import { orgEntitlementsInputSchema, orgIdParamSchema } from '@/lib/validations/tenancy';
@@ -63,7 +68,9 @@ const SWITCHES_REFUSAL =
 
 /**
  * The switches as the API reports them, against what is registered now.
- * `mayChange` lets the page offer the form only where a save can land.
+ * `mayChange` lets the page offer the form only where a save can land;
+ * `registrationFailed` lets it say the app's switches failed to register,
+ * rather than look like an install that has none.
  */
 function describe(orgId: string, read: OrgEntitlementsRead, mayChange: boolean) {
   const resolved = resolveOrgSwitches(read);
@@ -74,6 +81,7 @@ function describe(orgId: string, read: OrgEntitlementsRead, mayChange: boolean) 
     nothingSet: resolved.nothingSet,
     unreadable: resolved.unreadable,
     mayChange,
+    registrationFailed: entitlementSwitchesFailed(),
     switches: registeredEntitlementSwitches().map((s) => ({
       key: s.key,
       label: s.label,
@@ -102,10 +110,18 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
   );
 }, PLATFORM_ONLY);
 
-export const PUT = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+/**
+ * Both writes: refuse what this caller may not do, then set `change` (the
+ * named switches), or with `null` put every registered switch back to its
+ * default, and audit it.
+ */
+async function writeSwitches(
+  request: NextRequest,
+  session: AuthenticatedSession,
+  id: string,
+  change: { on: string[]; off: string[] } | null
+): Promise<Response> {
   const log = await getRouteLogger(request);
-  const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
-  const body = await validateRequestBody(request, orgEntitlementsInputSchema);
 
   // Before anything that says which switches exist.
   if (!mayChangeOrgCommercialSettings(session.principal.credential)) {
@@ -122,11 +138,15 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
   const registered = new Set(registeredEntitlementSwitches().map((s) => s.key));
   if (registered.size === 0) {
     return errorResponse(
-      'No entitlement switches are registered on this install, so there is nothing to set',
+      entitlementSwitchesFailed()
+        ? "The app's entitlement switches failed to register, so there is nothing to set. The server log says why."
+        : 'No entitlement switches are registered on this install, so there is nothing to set',
       { code: 'CONFLICT', status: 409 }
     );
   }
-  const unknownSwitches = (body.switches ?? []).filter((key) => !registered.has(key));
+  const unknownSwitches = change
+    ? [...change.on, ...change.off].filter((key) => !registered.has(key))
+    : [];
   if (unknownSwitches.length > 0) {
     const message = `No switch has the key ${unknownSwitches.join(', ')}`;
     // A VALIDATION_ERROR's details are fields (lib/api/errors.ts), so the
@@ -138,20 +158,9 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
     });
   }
 
-  let written: Awaited<ReturnType<typeof writeOrgEntitlements>>;
+  let written: Awaited<ReturnType<typeof setOrgSwitches>>;
   try {
-    written = await writeOrgEntitlements(id, (previous) => {
-      // Keep what the caller could not see: values stored for keys nothing registers.
-      const unseen = (keys: readonly string[]) => keys.filter((key) => !registered.has(key));
-      const keptOn = unseen(previous.on);
-      const keptOff = unseen(previous.off);
-      if (body.switches === null) return { on: keptOn, off: keptOff };
-      const ticked = new Set(body.switches);
-      return {
-        on: [...ticked, ...keptOn],
-        off: [...[...registered].filter((key) => !ticked.has(key)), ...keptOff],
-      };
-    });
+    written = await setOrgSwitches(id, change);
   } catch (error) {
     if (!isSettingsWriteConflict(error)) throw error;
     // Another write to this org's settings landed between our read and ours.
@@ -165,7 +174,7 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
 
   logAdminAction({
     userId: session.user.id,
-    action: 'org.entitlements.replace',
+    action: 'org.entitlements.update',
     entityType: 'org',
     entityId: id,
     // The org changed, which a platform admin may do from outside it (t-1005).
@@ -176,8 +185,9 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
     clientIp: getClientIP(request),
   });
 
-  log.info('Org entitlement switches replaced by admin', {
+  log.info('Org entitlement switches changed by admin', {
     orgId: id,
+    reset: change === null,
     on: written.stored.on,
     off: written.stored.off,
     actorUserId: session.user.id,
@@ -185,4 +195,15 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
 
   // Refused above otherwise, so this caller may change them.
   return successResponse(describe(id, written.stored, true));
+}
+
+export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
+  const body = await validateRequestBody(request, orgEntitlementsInputSchema);
+  return writeSwitches(request, session, id, body);
+}, PLATFORM_ONLY);
+
+export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
+  const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
+  return writeSwitches(request, session, id, null);
 }, PLATFORM_ONLY);

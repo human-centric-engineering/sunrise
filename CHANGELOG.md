@@ -64,8 +64,12 @@ release process.
   `registerEntitlementSwitch({ key, label, description, whenNothingSet })`.
   Platform staff set them per org on `/admin/orgs/[id]` (a new section, shown
   only when an app registers a switch) or through the new platform-only
-  `GET`/`PUT /api/v1/admin/orgs/[id]/entitlements`, audited as
-  `org.entitlements.replace`. At `multi` the write, like a caps write, comes
+  `GET`/`PATCH`/`DELETE /api/v1/admin/orgs/[id]/entitlements`, audited as
+  `org.entitlements.update`. A `PATCH` sets only the switches it names, so a
+  caller cannot turn off one it did not know about, and the app's own code
+  sets them the same way with `setOrgSwitches()`. A failed app registration
+  is reported (`entitlementSwitchesFailed()`) rather than looking like none.
+  At `multi` the write, like a caps write, comes
   only from the install org or an unbound admin API key; that rule is now one
   function, `mayChangeOrgCommercialSettings()` in
   `lib/tenancy/shared-settings.ts`, for a fork that writes either from a

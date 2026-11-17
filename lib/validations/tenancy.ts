@@ -271,15 +271,29 @@ export const entitlementKeySchema = z
   );
 
 /**
- * The most switches one org may hold set on, and the most set off. A sanity
- * limit on a bad write, not a product limit.
+ * The most switches an app may register, and so the most one change may set
+ * on, or off. A sanity limit, not a product limit.
  */
 export const MAX_ORG_ENTITLEMENT_SWITCHES = 100;
 
-const entitlementSwitchList = z
-  .array(entitlementKeySchema)
-  .max(MAX_ORG_ENTITLEMENT_SWITCHES, `At most ${MAX_ORG_ENTITLEMENT_SWITCHES} switches`)
-  .transform((keys) => [...new Set(keys)].sort());
+/**
+ * The most keys one org may hold in each stored list: room for every
+ * registered switch and for keys kept after an app stopped registering them,
+ * which every save keeps. A sanity limit on a bad write.
+ */
+const MAX_STORED_ENTITLEMENT_KEYS = 1000;
+
+/** Sorted and without duplicates; the limit counts what is left. */
+const entitlementKeyList = (max: number) =>
+  z
+    .array(entitlementKeySchema)
+    .max(MAX_STORED_ENTITLEMENT_KEYS * 2, 'Too many switches')
+    .transform((keys) => [...new Set(keys)].sort())
+    .refine((keys) => keys.length <= max, `At most ${max} switches`);
+
+const noKeyBothOnAndOff = (value: { on: string[]; off: string[] }) =>
+  !value.on.some((key) => value.off.includes(key));
+const BOTH_ON_AND_OFF = { message: 'A switch cannot be both on and off', path: ['off'] };
 
 /**
  * One org's switches as STORED in `Org.settings.entitlements` (§135 t-1033):
@@ -291,24 +305,29 @@ const entitlementSwitchList = z
  * same value, and no key is in both.
  */
 export const orgEntitlementsSchema = z
-  .object({ on: entitlementSwitchList, off: entitlementSwitchList })
+  .object({
+    on: entitlementKeyList(MAX_STORED_ENTITLEMENT_KEYS),
+    off: entitlementKeyList(MAX_STORED_ENTITLEMENT_KEYS),
+  })
   .strict()
-  .refine((value) => !value.on.some((key) => value.off.includes(key)), {
-    message: 'A switch cannot be both on and off',
-    path: ['off'],
-  });
+  .refine(noKeyBothOnAndOff, BOTH_ON_AND_OFF);
 
 export type OrgEntitlements = z.infer<typeof orgEntitlementsSchema>;
 
 /**
- * `PUT /api/v1/admin/orgs/[id]/entitlements` body: the registered switches
- * that are on (every other registered switch is set off), or `null` to put
- * every registered switch back to its default. The key is required, so a
- * replace cannot clear an org by leaving it out.
+ * `PATCH /api/v1/admin/orgs/[id]/entitlements` body: the registered switches
+ * to set on and to set off. A switch named in neither is left as it is, so a
+ * caller never turns off a switch it did not know about (one registered after
+ * its form loaded, or by a newer build during a deploy). Both keys are
+ * required, and empty lists change nothing.
  */
 export const orgEntitlementsInputSchema = z
-  .object({ switches: entitlementSwitchList.nullable() })
-  .strict();
+  .object({
+    on: entitlementKeyList(MAX_ORG_ENTITLEMENT_SWITCHES),
+    off: entitlementKeyList(MAX_ORG_ENTITLEMENT_SWITCHES),
+  })
+  .strict()
+  .refine(noKeyBothOnAndOff, BOTH_ON_AND_OFF);
 
 export type OrgEntitlementsInput = z.infer<typeof orgEntitlementsInputSchema>;
 

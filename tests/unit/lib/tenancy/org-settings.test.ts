@@ -750,7 +750,6 @@ describe('the entitlement switches (§135 t-1033)', () => {
     for (const settings of [
       { entitlements: ['reports'] },
       { entitlements: { on: 'reports', off: [] } },
-      { entitlements: { on: ['reports'] } },
       { entitlements: { switches: ['reports'] } },
       { entitlements: 'reports' },
       'not an object',
@@ -763,6 +762,23 @@ describe('the entitlement switches (§135 t-1033)', () => {
       });
       expect(mockLogger.warn).toHaveBeenCalledOnce();
     }
+  });
+
+  it('keeps what parses in a slice with one list missing, flagged unreadable, so a save can keep it', () => {
+    expect(
+      readOrgEntitlements({ entitlements: { on: ['old_pkg', 'reports'] } }, { orgId: ORG_A })
+    ).toEqual({ on: ['old_pkg', 'reports'], off: [], unreadable: true });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Org entitlements slice is unreadable; the org has no switch on',
+      { orgId: ORG_A }
+    );
+  });
+
+  it('hands every caller a nothing-set answer it cannot change for the next', () => {
+    const first = readOrgEntitlements(null);
+
+    expect(() => (first.on as string[]).push('leads')).toThrow();
+    expect(readOrgEntitlements(null).on).toEqual([]);
   });
 
   it('drops a stored key that is not a key, keeping the rest, and warns', () => {

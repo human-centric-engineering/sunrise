@@ -20,20 +20,30 @@ vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-const mockPrisma = vi.hoisted(() => ({ org: { findUnique: vi.fn() } }));
+const mockPrisma = vi.hoisted(() => {
+  const db = {
+    org: { findUnique: vi.fn(), update: vi.fn() },
+    $transaction: vi.fn(),
+  };
+  db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(db));
+  return db;
+});
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 
 import { initAppEntitlements } from '@/lib/app/entitlements';
 import { logger } from '@/lib/logging';
 import {
   __resetEntitlementRegistryForTests,
+  entitlementSwitchesFailed,
   loadOrgSwitches,
   orgHasSwitch,
   registerEntitlementSwitch,
   registeredEntitlementSwitches,
   resolveOrgSwitches,
+  setOrgSwitches,
   type EntitlementSwitch,
 } from '@/lib/tenancy/entitlements';
+import { MAX_ORG_ENTITLEMENT_SWITCHES } from '@/lib/validations/tenancy';
 
 const ORG = 'cmorg000000000000000acme1';
 
@@ -65,6 +75,7 @@ beforeEach(() => {
   __resetEntitlementRegistryForTests();
   vi.clearAllMocks();
   vi.mocked(initAppEntitlements).mockImplementation(() => {});
+  mockPrisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(mockPrisma));
 });
 
 describe('the registry', () => {
@@ -157,6 +168,60 @@ describe('the registry', () => {
         expect.objectContaining({ error: expect.stringContaining('needs a label') })
       );
     }
+  });
+
+  it.each([
+    ['the string "false"', 'false'],
+    ['a number', 1],
+  ])(
+    'refuses whenNothingSet given as %s, which read loosely would open the switch for every org',
+    (_what, whenNothingSet) => {
+      vi.mocked(initAppEntitlements).mockImplementation(() => {
+        registerEntitlementSwitch({
+          key: 'reports',
+          label: 'Reports',
+          description: '',
+          whenNothingSet,
+        } as never);
+      });
+
+      expect(registeredEntitlementSwitches()).toEqual([]);
+      expect(resolveOrgSwitches(stored()).on).toEqual([]);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('entitlements: initAppEntitlements threw'),
+        expect.objectContaining({ error: expect.stringContaining('must be true or false') })
+      );
+    }
+  );
+
+  it('refuses one switch past the limit, and still lets a registered one be replaced', () => {
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      for (let i = 0; i < MAX_ORG_ENTITLEMENT_SWITCHES; i += 1) {
+        registerEntitlementSwitch({ key: `s${i}`, label: `Switch ${i}`, description: '' });
+      }
+      registerEntitlementSwitch({ key: 's0', label: 'Replaced', description: '' });
+    });
+    expect(registeredEntitlementSwitches()).toHaveLength(MAX_ORG_ENTITLEMENT_SWITCHES);
+
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      for (let i = 0; i <= MAX_ORG_ENTITLEMENT_SWITCHES; i += 1) {
+        registerEntitlementSwitch({ key: `s${i}`, label: `Switch ${i}`, description: '' });
+      }
+    });
+    expect(registeredEntitlementSwitches()).toEqual([]);
+    expect(entitlementSwitchesFailed()).toBe(true);
+  });
+
+  it('says whether the app registration failed, which an empty registry alone cannot', () => {
+    expect(entitlementSwitchesFailed()).toBe(false);
+
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('boom');
+    });
+    expect(registeredEntitlementSwitches()).toEqual([]);
+    expect(entitlementSwitchesFailed()).toBe(true);
   });
 
   it('reads a description left out as none, rather than failing the whole init', () => {
@@ -276,5 +341,71 @@ describe('loading an org', () => {
     });
 
     await expect(orgHasSwitch(ORG, 'repots')).resolves.toBe(false);
+  });
+});
+
+describe('setOrgSwitches', () => {
+  beforeEach(registerBoth);
+
+  /** The entitlements slice the last write stored, or undefined when it removed it. */
+  function storedSlice() {
+    const call = mockPrisma.org.update.mock.calls.at(-1) as
+      [{ data: { settings: unknown } }] | undefined;
+    const settings = call?.[0].data.settings as { entitlements?: unknown } | undefined;
+    return settings?.entitlements;
+  }
+
+  it('sets only the switches it names, leaving every other stored value alone', async () => {
+    // `beta` was set by a newer build; `retired` by an older one.
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['beta', 'retired'], off: ['leads'] } },
+    });
+
+    const written = await setOrgSwitches(ORG, { on: ['leads'], off: ['reports'] });
+
+    expect(storedSlice()).toEqual({ on: ['beta', 'leads', 'retired'], off: ['reports'] });
+    expect(written?.previous).toEqual({
+      on: ['beta', 'retired'],
+      off: ['leads'],
+      unreadable: false,
+    });
+  });
+
+  it('leaves a switch it does not name at its default, rather than setting it off', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({ settings: null });
+
+    // A writer that only knew about `reports`.
+    await setOrgSwitches(ORG, { on: ['reports'], off: [] });
+
+    expect(storedSlice()).toEqual({ on: ['reports'], off: [] });
+    mockPrisma.org.findUnique.mockResolvedValue({ settings: { entitlements: storedSlice() } });
+    await expect(orgHasSwitch(ORG, 'leads')).resolves.toBe(true);
+  });
+
+  it('puts every registered switch back to its default for null, keeping keys nothing registers', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['reports', 'retired'], off: ['leads', 'older'] } },
+    });
+
+    await setOrgSwitches(ORG, null);
+
+    expect(storedSlice()).toEqual({ on: ['retired'], off: ['older'] });
+  });
+
+  it('keeps what parses in an unreadable slice, so the save does not drop it unseen', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['old_pkg', 'reports'] } },
+    });
+
+    await setOrgSwitches(ORG, { on: [], off: ['reports', 'leads'] });
+
+    expect(storedSlice()).toEqual({ on: ['old_pkg'], off: ['leads', 'reports'] });
+  });
+
+  it('is null, writing nothing, for an org that does not exist', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue(null);
+
+    await expect(setOrgSwitches(ORG, { on: ['reports'], off: [] })).resolves.toBeNull();
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 });

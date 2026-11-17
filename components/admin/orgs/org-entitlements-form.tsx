@@ -3,10 +3,12 @@
 /**
  * OrgEntitlementsForm — the switches an org has (§135 t-1033)
  *
- * The admin UI for `GET`/`PUT /api/v1/admin/orgs/[id]/entitlements`. A
- * platform admin ticks the switches the org has; a save sets exactly those
- * on and every other registered switch off. The page renders this only when
- * the app registers at least one switch, so vanilla Sunrise shows nothing new.
+ * The admin UI for `/api/v1/admin/orgs/[id]/entitlements`. A platform admin
+ * ticks the switches the org has; a save (`PATCH`) sets each switch shown here
+ * on or off, and leaves alone any it was not shown. Clearing (`DELETE`) puts
+ * every switch back to its default. The page renders this only when the app
+ * registers at least one switch, or its registration failed, so vanilla
+ * Sunrise shows nothing new.
  *
  * What it says rather than hides:
  *  - **Nothing set**: every switch is at its default, and the boxes show those
@@ -19,6 +21,8 @@
  *    off, and a save keeps them.
  *  - **Cannot change here**: at `multi`, from a customer's org, the switches
  *    are shown but can only be changed from the install organisation.
+ *  - **Registration failed**: the app's switches could not be registered, so
+ *    every organisation has none of them.
  */
 
 import { useState } from 'react';
@@ -49,6 +53,8 @@ export interface OrgEntitlementsView {
   unreadable: boolean;
   /** Whether this caller may change them from where they are. */
   mayChange: boolean;
+  /** The app's switches failed to register, so every org has none of them. */
+  registrationFailed: boolean;
   switches: {
     key: string;
     label: string;
@@ -104,17 +110,21 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
     });
   };
 
-  /** Whether the save landed; a failure is shown by `failure`. */
-  const put = async (switches: string[] | null, failure: typeof saveFailure): Promise<boolean> => {
+  /** Whether the write landed; a failure is shown by `failure`. */
+  const write = async (
+    send: () => Promise<OrgEntitlementsView>,
+    failure: typeof saveFailure
+  ): Promise<boolean> => {
     failure.clear();
     setSaving(true);
     setSaved(false);
     try {
-      const updated = await apiClient.put<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId), {
-        body: { switches },
-      });
+      const updated = await send();
       setView(updated);
       setTicked(onKeys(updated));
+      // Whichever write failed before, the switches are now as shown.
+      saveFailure.clear();
+      clearFailure.clear();
       setSaved(true);
       return true;
     } catch (err) {
@@ -125,16 +135,45 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
     }
   };
 
+  // Every switch shown, on or off; a switch this form was not shown is left alone.
+  const save = () =>
+    write(
+      () =>
+        apiClient.patch<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId), {
+          body: {
+            on: view.switches.filter((s) => ticked.has(s.key)).map((s) => s.key),
+            off: view.switches.filter((s) => !ticked.has(s.key)).map((s) => s.key),
+          },
+        }),
+      saveFailure
+    );
+
   const clearToDefaults = async () => {
-    if (await put(null, clearFailure)) setConfirmingClear(false);
+    const cleared = await write(
+      () => apiClient.delete<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId)),
+      clearFailure
+    );
+    if (cleared) setConfirmingClear(false);
   };
+
+  if (view.registrationFailed) {
+    return (
+      <p className="text-destructive text-sm">
+        The app&apos;s switches could not be registered, so every organisation has none of them. The
+        server log says why.
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-5">
       {view.unreadable && (
         <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
           The switches stored on this organisation could not be read, so it has none of them on
-          until they are saved again. Tick what it should have and save.
+          until they are saved again.{' '}
+          {view.mayChange
+            ? 'Tick what it should have and save.'
+            : 'Switch to the install organisation to set them.'}
         </div>
       )}
       {view.nothingSet && (
@@ -209,7 +248,7 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       {view.mayChange && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void put([...ticked], saveFailure)} disabled={saving}>
+            <Button onClick={() => void save()} disabled={saving}>
               {saving ? 'Saving…' : 'Save switches'}
             </Button>
             {!view.nothingSet && (

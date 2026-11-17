@@ -101,9 +101,9 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
  * t-1010), the provider list and its usage this month against its cap
  * (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`) and its entitlement
  * switches (`GET …/entitlements`, §135 t-1033), in parallel. The switches
- * section shows only when the API reports at least one registered switch, so
- * vanilla Sunrise shows nothing new; a failed load says so, since the page
- * cannot tell whether there were any. The approved providers, the privacy
+ * section shows only when the API reports at least one registered switch, or
+ * that the app's registration failed, so vanilla Sunrise shows nothing new; a
+ * failed load says so, since the page cannot tell whether there were any. The approved providers, the privacy
  * settings and the switches are editable here; rename, suspend and members
  * stay API-only. A
  * missing org is a 404, and any other failure to load it goes to the error
@@ -120,8 +120,10 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
     getOrgUsage(id),
     loadOrNull<OrgEntitlementsView>(API.ADMIN.orgEntitlements(id)),
   ]);
-  // No app switch registered: nothing to show, as on vanilla Sunrise.
-  const showSwitches = entitlements === null || entitlements.switches.length > 0;
+  // No app switch registered: nothing to show, as on vanilla Sunrise. A
+  // registration that failed is shown, since every org has lost its switches.
+  const showSwitches =
+    entitlements === null || entitlements.switches.length > 0 || entitlements.registrationFailed;
 
   return (
     <div className="space-y-6">

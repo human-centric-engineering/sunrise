@@ -39,7 +39,7 @@ the per-admin export sub-cap noted below.
 | `GET /api/v1/admin/orgs/[id]/export`        | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
 | `GET/PUT /api/v1/admin/orgs/[id]/providers` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PUT /api/v1/admin/orgs/[id]/privacy`   | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET/PUT …/admin/orgs/[id]/entitlements`    | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PATCH/DELETE …/orgs/[id]/entitlements` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
@@ -562,38 +562,39 @@ landed at the same time; nothing was written, so retry).
 ### An org's entitlement switches
 
 ```
-GET /api/v1/admin/orgs/[id]/entitlements
-PUT /api/v1/admin/orgs/[id]/entitlements
+GET    /api/v1/admin/orgs/[id]/entitlements
+PATCH  /api/v1/admin/orgs/[id]/entitlements
+DELETE /api/v1/admin/orgs/[id]/entitlements
 ```
 
 The switches the app registers and whether this org has each (§135 t-1033).
-A `PUT` takes `{ switches: string[] | null }`: the registered switches that are
-on, with every other registered switch set off, or `null` to set none, so
-every registered switch is back at its default. It is stored as
-`{ on, off }`, so a switch registered later is not set by it and reaches the
-org at its default. The key is required, so a replace cannot clear an org by
-leaving it out. Values stored for keys no app registers are kept. It writes an
-`org.entitlements.replace` audit row with what it replaced. At `multi` the
-`PUT`, like a caps write, comes only from the install org or an unbound admin
-API key: a platform admin switched into a customer's org may read the switches
-but not change them.
+A `PATCH` takes `{ on: string[], off: string[] }`, both required: the
+registered switches to set on and off. A switch named in neither is left as
+it is, so a caller cannot turn off one it did not know about. A `DELETE` puts
+every registered switch back to its default. Values stored for keys no app
+registers are kept by both. Each writes an `org.entitlements.update` audit
+row with what it replaced. At `multi` the writes, like a caps write, come
+only from the install org or an unbound admin API key: a platform admin
+switched into a customer's org may read the switches but not change them.
 
-Both return `{ orgId, nothingSet, unreadable, mayChange, switches,
-unregistered }`, where each switch is `{ key, label, description,
-whenNothingSet, on, atDefault }`, `on` is what the org has now and
-`atDefault` says nobody has set it on this org. `nothingSet` says that is
-true of every switch. `unreadable` is true when the stored slice does not
-parse, in which case the org has none on until it is saved again.
-`mayChange` says whether this caller may `PUT` from where it is. See
+All three return `{ orgId, nothingSet, unreadable, mayChange,
+registrationFailed, switches, unregistered }`, where each switch is `{ key,
+label, description, whenNothingSet, on, atDefault }`, `on` is what the org
+has now and `atDefault` says nobody has set it on this org. `nothingSet` says
+that is true of every switch. `unreadable` is true when the stored slice does
+not parse, in which case the org has none on until it is saved again.
+`mayChange` says whether this caller may write from where it is.
+`registrationFailed` says the app's `initAppEntitlements()` threw, so there
+are no switches and every org has none of them. See
 [Entitlements](../tenancy/entitlements.md).
 
-**Error Responses**: `400 VALIDATION_ERROR` (a missing key, a malformed key, or
-one no app registers, named in `details.unknownSwitches`) ·
-`403 FORBIDDEN` (a `PUT` from a customer's org at `multi`, with
-`details.reason: shared_settings_install_org_only`) ·
-`404 ORG_NOT_FOUND` · `409 CONFLICT` (no app registers a switch, so there is
-nothing to set; or another write to the org's settings landed at the same
-time, nothing was written, so retry).
+**Error Responses**: `400 VALIDATION_ERROR` (a missing list, a malformed key, a
+key in both lists, or one no app registers, named in
+`details.unknownSwitches`) · `403 FORBIDDEN` (a write from a customer's org
+at `multi`, with `details.reason: shared_settings_install_org_only`) ·
+`404 ORG_NOT_FOUND` · `409 CONFLICT` (no app registers a switch, or its
+registration failed, so there is nothing to set; or another write to the
+org's settings landed at the same time, nothing was written, so retry).
 
 ### Erase an org
 

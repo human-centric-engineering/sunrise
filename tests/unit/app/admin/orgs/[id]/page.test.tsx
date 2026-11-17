@@ -75,6 +75,7 @@ const NO_SWITCHES = {
   nothingSet: true,
   unreadable: false,
   mayChange: true,
+  registrationFailed: false,
   switches: [],
   unregistered: [],
 };
@@ -420,6 +421,7 @@ describe('OrgPage', () => {
       nothingSet: false,
       unreadable: false,
       mayChange: true,
+      registrationFailed: false,
       switches: [{ ...SWITCH, on: true, atDefault: false }],
       unregistered: [],
     };
@@ -448,6 +450,20 @@ describe('OrgPage', () => {
 
       expect(screen.getByRole('heading', { name: 'Entitlements' })).toBeInTheDocument();
       expect(screen.getByRole('checkbox', { name: /Reports/ })).toBeChecked();
+    });
+
+    it("says the app's switches failed to register, rather than show nothing as vanilla Sunrise", async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [ENTITLEMENTS_PATH]: { ...NO_SWITCHES, registrationFailed: true },
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Entitlements' })).toBeInTheDocument();
+      expect(screen.getByText(/could not be registered/)).toBeInTheDocument();
     });
 
     it('says the switches could not be loaded rather than offer a form to save over them', async () => {
