@@ -32,11 +32,15 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 import {
+  ORG_ENTITLEMENTS_KEY,
   ORG_PLATFORM_AGENTS_KEY,
   ORG_QUOTAS_KEY,
   ORG_RETENTION_KEY,
   applyOrgSettingsPatch,
+  loadOrgEntitlements,
   loadOrgQuotas,
+  readOrgEntitlements,
+  writeOrgEntitlements,
   loadOrgRetention,
   loadPlatformAgentsMarker,
   readOrgRetention,
@@ -701,5 +705,160 @@ describe('the org caps (§110 t-788)', () => {
     expect(
       applyOrgSettingsPatch({ quotas: { monthlyBudgetUsd: 10 } }, { quotas: {}, retention: null })
     ).toBe(Prisma.DbNull);
+  });
+});
+
+describe('the entitlement switches (§135 t-1033)', () => {
+  /** A `$transaction` over one org row holding `settings`, recording the write. */
+  function txOver(settings: unknown) {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue(settings === undefined ? null : { settings }),
+        update: vi.fn(),
+      },
+    };
+    const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>, _opts?: unknown) =>
+      fn(tx)
+    );
+    return { tx, db: { $transaction } as never, $transaction };
+  }
+
+  it('reads every way of never having been set as nothing set', () => {
+    expect(ORG_ENTITLEMENTS_KEY).toBe('entitlements');
+    expect(readOrgEntitlements(null)).toEqual({ set: false });
+    expect(readOrgEntitlements(undefined)).toEqual({ set: false });
+    expect(readOrgEntitlements({ quotas: { monthlyBudgetUsd: 5 } })).toEqual({ set: false });
+    expect(readOrgEntitlements({ entitlements: null })).toEqual({ set: false });
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('reads a set org as set, sorted, even with nothing on', () => {
+    expect(readOrgEntitlements({ entitlements: { switches: ['leads', 'reports'] } })).toEqual({
+      set: true,
+      switches: ['leads', 'reports'],
+      unreadable: false,
+    });
+    expect(readOrgEntitlements({ entitlements: { switches: [] } })).toEqual({
+      set: true,
+      switches: [],
+      unreadable: false,
+    });
+  });
+
+  it('fails closed on a slice it cannot read: set, nothing on, never "nothing set"', () => {
+    for (const settings of [
+      { entitlements: ['reports'] },
+      { entitlements: { switches: 'reports' } },
+      { entitlements: 'reports' },
+      'not an object',
+    ]) {
+      mockLogger.warn.mockClear();
+      expect(readOrgEntitlements(settings, { orgId: ORG_A })).toEqual({
+        set: true,
+        switches: [],
+        unreadable: true,
+      });
+      expect(mockLogger.warn).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('drops a stored key that is not a key, keeping the rest, and warns', () => {
+    expect(
+      readOrgEntitlements(
+        { entitlements: { switches: ['reports', 'Bad Key', 7, 'reports'] } },
+        { orgId: ORG_A }
+      )
+    ).toEqual({ set: true, switches: ['reports'], unreadable: false });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Dropped malformed entitlement switches; the org does not have them',
+      { orgId: ORG_A, dropped: 2 }
+    );
+  });
+
+  it('loads one org, and null for an org that does not exist', async () => {
+    mockFindUnique.mockResolvedValueOnce({ settings: { entitlements: { switches: ['leads'] } } });
+    expect(await loadOrgEntitlements(ORG_A)).toEqual({
+      set: true,
+      switches: ['leads'],
+      unreadable: false,
+    });
+
+    mockFindUnique.mockResolvedValueOnce(null);
+    expect(await loadOrgEntitlements('gone')).toBeNull();
+  });
+
+  it('writes in a serializable transaction, handing the updater what is stored, keeping every other key', async () => {
+    const { tx, db, $transaction } = txOver({
+      quotas: { monthlyBudgetUsd: 10 },
+      entitlements: { switches: ['retired'] },
+    });
+    const next = vi.fn(() => ['reports', 'leads', 'reports']);
+
+    const written = await writeOrgEntitlements(ORG_A, next, db);
+
+    expect($transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+    expect(next).toHaveBeenCalledWith({ set: true, switches: ['retired'], unreadable: false });
+    expect(written).toEqual({
+      previous: { set: true, switches: ['retired'], unreadable: false },
+      stored: { set: true, switches: ['leads', 'reports'], unreadable: false },
+    });
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: {
+        settings: {
+          quotas: { monthlyBudgetUsd: 10 },
+          entitlements: { switches: ['leads', 'reports'] },
+        },
+      },
+    });
+  });
+
+  it('stores an empty set as set, so the org is not read as nothing set afterwards', async () => {
+    const { tx, db } = txOver(null);
+
+    const written = await writeOrgEntitlements(ORG_A, () => [], db);
+
+    expect(written?.stored).toEqual({ set: true, switches: [], unreadable: false });
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { entitlements: { switches: [] } } },
+    });
+  });
+
+  it('clears back to nothing set for null, and NULLs a column left empty', async () => {
+    const kept = txOver({ branding: { logo: 'x' }, entitlements: { switches: ['leads'] } });
+    expect(await writeOrgEntitlements(ORG_A, () => null, kept.db)).toEqual({
+      previous: { set: true, switches: ['leads'], unreadable: false },
+      stored: { set: false },
+    });
+    expect(kept.tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { branding: { logo: 'x' } } },
+    });
+
+    const emptied = txOver({ entitlements: { switches: ['leads'] } });
+    await writeOrgEntitlements(ORG_A, () => null, emptied.db);
+    expect(emptied.tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: Prisma.DbNull },
+    });
+  });
+
+  it('writes nothing when the updater names a key that is not a key', async () => {
+    const { tx, db } = txOver(null);
+
+    await expect(writeOrgEntitlements(ORG_A, () => ['Not A Key'], db)).rejects.toThrow();
+    expect(tx.org.update).not.toHaveBeenCalled();
+  });
+
+  it('is null, writing nothing, for an org that does not exist', async () => {
+    const { tx, db } = txOver(undefined);
+    const next = vi.fn(() => ['leads']);
+
+    expect(await writeOrgEntitlements(ORG_A, next, db)).toBeNull();
+    expect(next).not.toHaveBeenCalled();
+    expect(tx.org.update).not.toHaveBeenCalled();
   });
 });

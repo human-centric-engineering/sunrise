@@ -6,6 +6,10 @@ import {
   type OrgProviderOption,
   type OrgProviderPolicyView,
 } from '@/components/admin/orgs/org-providers-form';
+import {
+  OrgEntitlementsForm,
+  type OrgEntitlementsView,
+} from '@/components/admin/orgs/org-entitlements-form';
 import { OrgPrivacyForm, type OrgPrivacyView } from '@/components/admin/orgs/org-privacy-form';
 import { OrgUsageSummary } from '@/components/admin/orgs/org-usage-summary';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +17,7 @@ import { API } from '@/lib/api/endpoints';
 import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import type { OrgUsageReport } from '@/lib/orchestration/llm/cost-reports';
+import { registeredEntitlementSwitches } from '@/lib/tenancy/entitlements';
 import { parsePaginationMeta } from '@/lib/validations/common';
 
 export const metadata: Metadata = {
@@ -95,21 +100,25 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
  * Server shell: the org (`GET /api/v1/admin/orgs/[id]`), its provider policy
  * (`GET …/providers`), its LLM privacy settings (`GET …/privacy`, §127
  * t-1010), the provider list and its usage this month against its cap
- * (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`), in parallel. The
- * approved providers and the privacy settings are editable here; rename,
- * suspend and members stay API-only. A
+ * (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`), in parallel, and
+ * its entitlement switches (`GET …/entitlements`, §135 t-1033) only when the
+ * app registers any, so vanilla Sunrise neither fetches nor shows them. The
+ * approved providers, the privacy settings and the switches are editable
+ * here; rename, suspend and members stay API-only. A
  * missing org is a 404, and any other failure to load it goes to the error
  * boundary. A policy or provider fetch that fails says so in place of the
  * form, rather than offering a partial set to save over the real one.
  */
 export default async function OrgPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [org, policy, privacy, providers, usage] = await Promise.all([
+  const hasSwitches = registeredEntitlementSwitches().length > 0;
+  const [org, policy, privacy, providers, usage, entitlements] = await Promise.all([
     getOrg(id),
     loadOrNull<OrgProviderPolicyView>(API.ADMIN.orgProviders(id)),
     loadOrNull<OrgPrivacyView>(API.ADMIN.orgPrivacy(id)),
     getAllProviders(),
     getOrgUsage(id),
+    hasSwitches ? loadOrNull<OrgEntitlementsView>(API.ADMIN.orgEntitlements(id)) : null,
   ]);
 
   return (
@@ -152,6 +161,19 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
           </p>
         )}
       </section>
+
+      {hasSwitches && (
+        <section className="space-y-3 rounded-md border p-4">
+          <h2 className="text-lg font-medium">Entitlements</h2>
+          {entitlements ? (
+            <OrgEntitlementsForm orgId={org.id} entitlements={entitlements} />
+          ) : (
+            <p className="text-destructive text-sm">
+              The switches could not be loaded. Reload the page to try again.
+            </p>
+          )}
+        </section>
+      )}
 
       <section className="space-y-3 rounded-md border p-4">
         <h2 className="text-lg font-medium">Approved providers</h2>

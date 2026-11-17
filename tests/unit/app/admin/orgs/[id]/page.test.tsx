@@ -45,7 +45,14 @@ vi.mock('next/link', () => ({
   ),
 }));
 
+// What the app registers decides whether the page shows switches at all
+// (§135 t-1033). Vanilla Sunrise registers none.
+vi.mock('@/lib/tenancy/entitlements', () => ({
+  registeredEntitlementSwitches: vi.fn(() => []),
+}));
+
 import OrgPage from '@/app/admin/orgs/[id]/page';
+import { registeredEntitlementSwitches } from '@/lib/tenancy/entitlements';
 import { notFound } from 'next/navigation';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { ServerLoadError } from '@/lib/api/server-load';
@@ -58,6 +65,7 @@ const POLICY_PATH = `/api/v1/admin/orgs/${ID}/providers`;
 const PROVIDERS_PATH = '/api/v1/admin/orchestration/providers?page=1&limit=100';
 const USAGE_PATH = `/api/v1/admin/orchestration/costs/orgs?orgId=${ID}`;
 const PRIVACY_PATH = `/api/v1/admin/orgs/${ID}/privacy`;
+const ENTITLEMENTS_PATH = `/api/v1/admin/orgs/${ID}/entitlements`;
 
 /** An org that has never saved its privacy settings (§127 t-1010). */
 const PRIVACY = {
@@ -388,6 +396,67 @@ describe('OrgPage', () => {
       expect(screen.queryByTestId('org-privacy-terms')).not.toBeInTheDocument();
       // The rest of the page still renders.
       expect(screen.getByRole('checkbox', { name: /Anthropic/ })).toBeChecked();
+    });
+  });
+
+  describe('Entitlements (§135 t-1033)', () => {
+    const SWITCH = {
+      key: 'reports',
+      label: 'Reports',
+      description: 'Build and share reports.',
+      whenNothingSet: false,
+    };
+    const ENTITLEMENTS = {
+      orgId: ID,
+      nothingSet: false,
+      unreadable: false,
+      switches: [{ ...SWITCH, on: true }],
+      unregistered: [],
+    };
+
+    it('shows nothing, and asks for nothing, when no app registers a switch', async () => {
+      serve({ [ORG_PATH]: ORG, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Approved providers' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Entitlements' })).not.toBeInTheDocument();
+      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).not.toContain(
+        ENTITLEMENTS_PATH
+      );
+    });
+
+    it("offers the org's switches when the app registers some", async () => {
+      vi.mocked(registeredEntitlementSwitches).mockReturnValueOnce([SWITCH]);
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [ENTITLEMENTS_PATH]: ENTITLEMENTS,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Entitlements' })).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: /Reports/ })).toBeChecked();
+    });
+
+    it('says the switches could not be loaded rather than offer a form to save over them', async () => {
+      vi.mocked(registeredEntitlementSwitches).mockReturnValueOnce([SWITCH]);
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [ENTITLEMENTS_PATH]: 500,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(
+        screen.getByText('The switches could not be loaded. Reload the page to try again.')
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: /Reports/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Save switches' })).not.toBeInTheDocument();
     });
   });
 });

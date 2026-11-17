@@ -117,6 +117,7 @@ covered by the version contract.
   - `lib/app/data-export.ts` → `initAppSubjectSources()` / `collectAppSubjectData()` — Art. 15 export sources
   - `lib/app/db-drift.ts` → `registerAppDriftProbes()` — drift-probe registry (primitives in `lib/db/drift-probes.ts`)
   - `lib/app/emails.ts` → `emailOverrides` — transactional-email template overrides
+  - `lib/app/entitlements.ts` → `initAppEntitlements()` — the switches an org can have, set per org by platform staff (primitives: `registerEntitlementSwitch()`, `loadOrgSwitches()`, `orgHasSwitch()` and `resolveOrgSwitches()` in `lib/tenancy/entitlements.ts`)
   - `lib/app/env.ts` → `appEnvSchema` — app env registry
   - `lib/app/erasure.ts` → `initAppErasureHooks()` — Art. 17 erasure cleanup hooks and stale-writer declarations (primitives: `registerErasureCleanupHook()` and `registerStaleWriter()` in `lib/privacy/erasure-hooks.ts`)
   - `lib/app/eslint.config.mjs` — the fork's own ESLint tier config, spread into the root config

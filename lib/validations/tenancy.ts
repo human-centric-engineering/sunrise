@@ -255,6 +255,52 @@ export type OrgQuotas = z.infer<typeof orgQuotasSchema>;
 /** The caps an org's `quotas` slice may name, for the per-key read. */
 export const ORG_QUOTA_KEYS = ['monthlyBudgetUsd', 'requestsPerMinute'] as const;
 
+/**
+ * An entitlement switch's key (§135 t-1033): lower-case words joined by
+ * underscores, starting with a letter, such as `lead_gen`. It is what is
+ * stored on an org and what a surface will name to require it, so it is the
+ * one spelling that must not change once orgs hold it.
+ */
+export const ENTITLEMENT_KEY_PATTERN = /^[a-z][a-z0-9_]{0,47}$/;
+
+export const entitlementKeySchema = z
+  .string()
+  .regex(
+    ENTITLEMENT_KEY_PATTERN,
+    'A switch key is lower-case letters, digits and underscores, starting with a letter, at most 48 characters'
+  );
+
+/** The most switches one org may hold. A sanity limit on a bad write, not a product limit. */
+export const MAX_ORG_ENTITLEMENT_SWITCHES = 100;
+
+const entitlementSwitchList = z
+  .array(entitlementKeySchema)
+  .max(MAX_ORG_ENTITLEMENT_SWITCHES, `At most ${MAX_ORG_ENTITLEMENT_SWITCHES} switches`)
+  .transform((keys) => [...new Set(keys)].sort());
+
+/**
+ * One org's switches as STORED in `Org.settings.entitlements` (§135 t-1033):
+ * the keys that are on. Absent slice means nothing was ever set, which is a
+ * different answer from `{ switches: [] }` (set, and none on): each switch an
+ * app registers says what an org with nothing set gets (`whenNothingSet`).
+ * Kept sorted and without duplicates, so two writes of the same set store the
+ * same value.
+ */
+export const orgEntitlementsSchema = z.object({ switches: entitlementSwitchList }).strict();
+
+export type OrgEntitlements = z.infer<typeof orgEntitlementsSchema>;
+
+/**
+ * `PUT /api/v1/admin/orgs/[id]/entitlements` body: the registered switches
+ * that are on, or `null` to clear the org back to nothing set. The key is
+ * required, so a replace cannot clear an org by leaving it out.
+ */
+export const orgEntitlementsInputSchema = z
+  .object({ switches: entitlementSwitchList.nullable() })
+  .strict();
+
+export type OrgEntitlementsInput = z.infer<typeof orgEntitlementsInputSchema>;
+
 /** The kinds of name an org may protect: people and organisations (§127, t-1010). */
 export const ORG_PROTECTED_TERM_TYPES = ['PERSON', 'ORG'] as const;
 

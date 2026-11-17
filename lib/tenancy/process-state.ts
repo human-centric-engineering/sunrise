@@ -866,6 +866,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "A fork's tenancy classification of its own MODELS (t-983) — which class each is in, which tier said so, which clashed — registered from code and the same for every org, plus a warn-once latch; no row data.",
   },
   {
+    file: 'lib/tenancy/entitlements.ts',
+    holders: ['switches', 'appInit'],
+    posture: 'no-tenant-data',
+    why: 'The entitlement switches an app registers from code (§135 t-1033), the same for every org. Which switches an org has is read from its row on every call and never held here.',
+  },
+  {
     file: 'lib/tenancy/resolver.ts',
     holders: ['resolver'],
     posture: 'no-tenant-data',
