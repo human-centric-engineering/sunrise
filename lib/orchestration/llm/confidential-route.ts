@@ -20,6 +20,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import type { ResolvedAgentBinding } from '@/lib/orchestration/llm/agent-resolver';
 import { confidentialRouting, type RoutingCandidate } from '@/lib/orchestration/llm/privacy-stage';
+import { buildsLocalClient } from '@/lib/orchestration/llm/provider-locality';
 import { isLocalProvider, isTrustedProvider } from '@/lib/orchestration/llm/provider-manager';
 import type { LlmMessage } from '@/lib/orchestration/llm/types';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -118,7 +119,12 @@ export async function routeConfidentialTurn(input: {
       ...(input.signal ? { signal: input.signal } : {}),
     });
     const { found } = routing;
-    if (routing.verdict === 'move' && target) {
+    // The policy permits the target; whether it can still answer is read
+    // only now, when a turn would move to it: a provider turned off, or a
+    // model no longer an active chat model, is no model at all.
+    const unusable =
+      routing.verdict === 'move' && target ? await confidentialModelProblem(target) : null;
+    if (routing.verdict === 'move' && target && unusable === null) {
       return {
         kind: 'move',
         // The administrator's own choice, so gated as an explicit binding.
@@ -139,10 +145,11 @@ export async function routeConfidentialTurn(input: {
       };
     }
     const kept = { ...binding, fallbacks: routing.fallbacks };
-    if (routing.verdict === 'unavailable') {
+    if (routing.verdict !== 'stay') {
       logger.warn('privacy: a turn needed the model for confidential messages and none is usable', {
         provider: binding.providerSlug,
         confidentialModelSet: target !== null,
+        ...(unusable !== null ? { problem: unusable } : {}),
       });
       return { kind: 'unavailable', binding: kept, found };
     }
@@ -173,11 +180,16 @@ export function readFlaggedGroups(metadata: Prisma.JsonValue | undefined): Sensi
  */
 export async function keepFlaggedGroups(
   where: Prisma.AiConversationWhereInput & { id: string },
-  found: readonly SensitivityGroup[]
+  found: readonly SensitivityGroup[],
+  /** The metadata the caller read with the conversation, so it is not read again. */
+  stored?: Prisma.JsonValue | null
 ): Promise<void> {
   if (found.length === 0) return;
   try {
-    const row = await prisma.aiConversation.findFirst({ where, select: { metadata: true } });
+    const row =
+      stored === undefined
+        ? await prisma.aiConversation.findFirst({ where, select: { metadata: true } })
+        : { metadata: stored };
     if (!row) return;
     const kept = readFlaggedGroups(row.metadata);
     if (found.every((g) => kept.includes(g))) return;
@@ -226,8 +238,7 @@ export async function confidentialModelProblem(
   ]);
   if (!provider) return 'Its provider is not configured.';
   if (!provider.isActive) return 'Its provider is turned off.';
-  // As `isLocalProvider` reads a row: a Voyage row never builds a local client.
-  const local = provider.isLocal && provider.providerType !== 'voyage';
+  const local = buildsLocalClient(provider);
   if (!local && !provider.trustedForConfidential) {
     return 'Its provider is neither local nor ticked "Trusted with confidential content".';
   }

@@ -63,6 +63,7 @@ import {
   keepFlaggedGroups,
   readFlaggedGroups,
   routeConfidentialTurn,
+  type ConfidentialRoute,
 } from '@/lib/orchestration/llm/confidential-route';
 import { resolveEffectivePrompt } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
@@ -854,6 +855,51 @@ export class StreamingChatHandler {
         }
       }
 
+      // The model for confidential messages (§130 t-1038). A turn whose
+      // agent's provider a group's policy does not permit for what the
+      // conversation holds is answered on it instead: chosen before anything
+      // is built from the binding, so the history budget, the summariser, the
+      // cost log and the trace all use the model that answers. The stage
+      // cannot do it: by then the provider and model are fixed, and a
+      // fallback is sent the primary's model id. Before the user's message is
+      // saved, so a turn the new model cannot serve ends without leaving it
+      // unanswered. Returns the error that ends the turn when the moved model
+      // cannot read the turn's attachments (the gate above asked about the
+      // agent's).
+      const routeTurn = async (
+        history: readonly AiMessage[],
+        metadata: Prisma.JsonValue | null
+      ): Promise<{ route: ConfidentialRoute; unsupported: ChatEvent | null }> => {
+        const routed = await routeConfidentialTurn({
+          binding: resolvedBinding,
+          messages: [
+            ...history.map((m) => ({ role: m.role, content: m.content })),
+            { role: isOpeningTurn ? 'system' : 'user', content: turnText },
+          ],
+          sticky: readFlaggedGroups(metadata),
+          ...(request.signal ? { signal: request.signal } : {}),
+        });
+        const unsupported =
+          routed.kind === 'move'
+            ? await attachmentGateError(
+                routed.binding.providerSlug,
+                routed.binding.model,
+                hasImageAttachments,
+                hasPdfAttachments,
+                'The model for confidential messages'
+              )
+            : null;
+        return { route: routed, unsupported };
+      };
+      // A new conversation has no history and nothing kept on it, so it is
+      // routed before it is created: a turn its moved model cannot serve then
+      // creates nothing, as the gate above.
+      let routing = request.conversationId ? null : await routeTurn([], null);
+      if (routing?.unsupported) {
+        yield routing.unsupported;
+        return;
+      }
+
       // Load cap settings once — used for conversation and message limits.
       const capSettings = await prisma.aiOrchestrationSettings.findUnique({
         where: { slug: 'global' },
@@ -928,27 +974,18 @@ export class StreamingChatHandler {
         }
       }
 
-      // The model for confidential messages (§130 t-1038). A turn whose
-      // agent's provider a group's policy does not permit for what the
-      // conversation holds is answered on it instead: chosen here, before
-      // anything is built from the binding, so the history budget, the
-      // summariser, the cost log and the trace all use the model that
-      // answers. The stage cannot do it: by then the provider and model are
-      // fixed, and a fallback is sent the primary's model id. Before the
-      // user's message is saved, so a turn the new model cannot serve ends
-      // without leaving it unanswered.
-      const route = await routeConfidentialTurn({
-        binding: resolvedBinding,
-        messages: [
-          ...history.map((m) => ({ role: m.role, content: m.content })),
-          { role: isOpeningTurn ? 'system' : 'user', content: turnText },
-        ],
-        sticky: readFlaggedGroups(conversation.metadata),
-        ...(request.signal ? { signal: request.signal } : {}),
-      });
+      if (!routing) {
+        routing = await routeTurn(history, conversation.metadata);
+        if (routing.unsupported) {
+          yield routing.unsupported;
+          return;
+        }
+      }
+      const { route } = routing;
       await keepFlaggedGroups(
         { id: conversation.id, ...conversationOwner(request.userId) },
-        route.found
+        route.found,
+        conversation.metadata
       );
       resolvedBinding = route.binding;
       resolvedModel = route.binding.model;
@@ -961,27 +998,6 @@ export class StreamingChatHandler {
           conversationId: conversation.id,
           provider: resolvedBinding.providerSlug,
         });
-        // The attachment gate above asked about the agent's model.
-        const unsupported = await attachmentGateError(
-          resolvedBinding.providerSlug,
-          resolvedModel,
-          hasImageAttachments,
-          hasPdfAttachments,
-          'The model for confidential messages'
-        );
-        if (unsupported) {
-          // Not answered there, so the reader is not told it moved. A
-          // conversation this turn created holds nothing yet, and is removed
-          // rather than left empty in the reader's list and against their
-          // cap: the gate above runs before one is created for that reason.
-          noted.movedTo = null;
-          if (!request.conversationId) {
-            noted.conversationId = null;
-            await this.discardEmptyConversation(conversation.id, request.userId, log);
-          }
-          yield unsupported;
-          return;
-        }
       }
 
       // Persist the user message up front so a mid-stream crash still
@@ -3516,28 +3532,6 @@ export class StreamingChatHandler {
       select: { id: true, createdAt: true },
     });
     return row ? { id: row.id, createdAt: row.createdAt } : null;
-  }
-
-  /**
-   * Remove a conversation this turn created and ended before anything was
-   * written to it (t-1038). Best effort: a failure is logged, and the empty
-   * row is left as any turn ended early leaves its conversation.
-   */
-  private async discardEmptyConversation(
-    conversationId: string,
-    userId: string,
-    log: typeof logger
-  ): Promise<void> {
-    try {
-      await prisma.aiConversation.deleteMany({
-        where: { id: conversationId, ...conversationOwner(userId) },
-      });
-    } catch (err) {
-      log.warn('Failed to remove a conversation a turn created and ended empty', {
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
   }
 
   /**

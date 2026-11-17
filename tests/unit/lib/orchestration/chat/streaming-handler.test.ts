@@ -44,8 +44,6 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
-      // A conversation a moved turn created and ended empty is removed (t-1038).
-      deleteMany: vi.fn(async () => ({ count: 1 })),
     },
     aiMessage: {
       findMany: vi.fn(),
@@ -63,8 +61,11 @@ vi.mock('@/lib/db/client', () => ({
     aiEvaluationLog: { findFirst: vi.fn(), create: vi.fn() },
     aiEvaluationSession: { findFirst: vi.fn() },
     aiWorkflowExecution: { findUnique: vi.fn() },
-    // The model-registry hydrate the resolver runs before the turn (#813).
-    aiProviderModel: { findMany: vi.fn() },
+    // The model-registry hydrate the resolver runs before the turn (#813),
+    // and whether the model for confidential messages is still usable before
+    // a turn moves to it (t-1038).
+    aiProviderModel: { findMany: vi.fn(), findUnique: vi.fn() },
+    aiProviderConfig: { findUnique: vi.fn() },
   },
 }));
 
@@ -10562,6 +10563,16 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
         confidentialModel: model,
       } as never);
       vi.mocked(isLocalProvider).mockImplementation(async (slug) => slug === LOCAL.providerSlug);
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue({
+        isActive: true,
+        isLocal: true,
+        providerType: 'openai-compatible',
+        trustedForConfidential: false,
+      } as never);
+      vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue({
+        isActive: true,
+        capabilities: ['chat'],
+      } as never);
     }
 
     const answer = (text: string) => [
@@ -10753,13 +10764,12 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       expect(rows).toEqual([]);
       expect(local.chatStream).not.toHaveBeenCalled();
       expect(cloud.chatStream).not.toHaveBeenCalled();
-      // Not answered there, so not told it moved; an existing conversation is kept.
+      // Not answered there, so not told it moved.
       expect(notes(events)).toEqual([]);
-      expect(prisma.aiConversation.deleteMany).not.toHaveBeenCalled();
       vi.mocked(assertModelSupportsAttachments).mockReset();
     });
 
-    it('removes a conversation that turn created, rather than leave it empty', async () => {
+    it('creates no conversation for a first turn its moved model cannot serve', async () => {
       confidentialSettings('local_only');
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
         makeAgent({ enableImageInput: true }) as never
@@ -10783,10 +10793,8 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       )) as Event[];
 
       expect(errorOf(events)?.code).toBe('IMAGE_NOT_SUPPORTED');
-      expect(prisma.aiConversation.create).toHaveBeenCalled();
-      expect(prisma.aiConversation.deleteMany).toHaveBeenCalledWith({
-        where: { id: 'conv-1', userId: baseRequest.userId },
-      });
+      // Routed before it would be created, as the agent's own gate is.
+      expect(prisma.aiConversation.create).not.toHaveBeenCalled();
       expect(notes(events)).toEqual([]);
       vi.mocked(assertModelSupportsAttachments).mockReset();
     });

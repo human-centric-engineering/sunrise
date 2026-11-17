@@ -870,7 +870,8 @@ export interface ConfidentialRouting {
   found: SensitivityGroup[];
   /**
    * The fallbacks no flagged group refuses, in order: the agent's own list
-   * when nothing is flagged. Used on `stay`; a moved turn has none.
+   * when nothing is flagged. A moved turn uses none: a fallback is sent the
+   * primary's model id.
    */
   fallbacks: string[];
 }
@@ -945,13 +946,17 @@ export async function confidentialRouting(input: {
     return resolved;
   };
   // Nothing to route unless some policy could refuse a provider the turn
-  // could reach.
+  // could reach. A group under `block` is left out of this question: it is
+  // refused at every provider, so routing cannot help, and an install whose
+  // only strict group is blocked pays for no classification here.
+  const routable = (policy: PrivacyPolicy) =>
+    SENSITIVITY_GROUPS.filter((g) => groupPolicy(policy, g) !== 'block');
   const primaryCouldRefuse =
-    (await refusedAt(primaryPolicy, SENSITIVITY_GROUPS, primary)).length > 0;
+    (await refusedAt(primaryPolicy, routable(primaryPolicy), primary)).length > 0;
   let couldRefuse = primaryCouldRefuse;
   for (let i = 0; !couldRefuse && i < fallbacks.length; i++) {
     const p = await fallbackPolicy(i);
-    couldRefuse = p === null || (await refusedAt(p, SENSITIVITY_GROUPS, fallbacks[i])).length > 0;
+    couldRefuse = p === null || (await refusedAt(p, routable(p), fallbacks[i])).length > 0;
   }
   if (!couldRefuse) return unchanged;
 
@@ -1013,7 +1018,7 @@ export async function confidentialRouting(input: {
   if (target !== null) {
     const targetPolicy = await policyAt(target);
     if (targetPolicy !== null && (await refusedAt(targetPolicy, flagged, target)).length === 0) {
-      return { verdict: 'move', found, fallbacks: [] };
+      return { verdict: 'move', found, fallbacks: permitted };
     }
   }
   return { verdict: 'unavailable', found, fallbacks: permitted };

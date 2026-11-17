@@ -136,6 +136,14 @@ beforeEach(() => {
   db.agent.mockResolvedValue(null);
   db.conversation.mockResolvedValue(null);
   db.updateMany.mockResolvedValue({ count: 1 });
+  // The model for confidential messages is usable unless a test says not.
+  db.provider.mockResolvedValue({
+    isActive: true,
+    isLocal: true,
+    providerType: 'openai-compatible',
+    trustedForConfidential: true,
+  });
+  db.model.mockResolvedValue({ isActive: true, capabilities: ['chat'] });
   setUp('allow', 'allow');
 });
 
@@ -208,11 +216,45 @@ describe('routeConfidentialTurn', () => {
   });
 
   it('keeps a turn under block where it is: no provider is permitted, so the stage refuses it', async () => {
-    setUp('block', 'allow');
+    // Commercial could move; Personal is blocked, and flagged.
+    setUp('block', 'local_only');
     const result = await route([HEALTH]);
 
     expect(result).toMatchObject({ kind: 'stay', found: ['personal'] });
     expect(result.binding.providerSlug).toBe('cloud');
+  });
+
+  it('classifies nothing when the only strict policy is block: routing cannot help there', async () => {
+    const classify = vi.fn(async () => []);
+    registerSensitivityClassifier({
+      id: 'acme.spy',
+      egress: 'in_process',
+      categories: { acme_secret: 'commercial' },
+      classify,
+    });
+    setUp('block', 'allow');
+    const result = await route([HEALTH]);
+
+    expect(result).toMatchObject({ kind: 'stay', found: [] });
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('does not move to a model that is no longer usable, and says why', async () => {
+    setUp('local_only', 'allow');
+    db.provider.mockResolvedValue({
+      isActive: false,
+      isLocal: true,
+      providerType: 'openai-compatible',
+      trustedForConfidential: false,
+    });
+    const result = await route([HEALTH]);
+
+    expect(result.kind).toBe('unavailable');
+    expect(result.binding.providerSlug).toBe('cloud');
+    expect(logger.warn).toHaveBeenCalledWith(
+      'privacy: a turn needed the model for confidential messages and none is usable',
+      { provider: 'cloud', confidentialModelSet: true, problem: 'Its provider is turned off.' }
+    );
   });
 
   it('keeps a turn its provider is permitted, taking out the fallbacks the policy refuses', async () => {
@@ -393,6 +435,17 @@ describe('stickiness', () => {
     expect(db.updateMany).toHaveBeenCalledWith({
       where: { id: 'c1', metadata: { equals: Prisma.AnyNull } },
       data: { metadata: { confidentialFlagged: ['commercial'] } },
+    });
+  });
+
+  it('uses the metadata its caller read rather than reading it again', async () => {
+    const stored = { confidentialNoted: ['personal'] };
+    await keepFlaggedGroups({ id: 'c1' }, ['commercial'], stored);
+
+    expect(db.conversation).not.toHaveBeenCalled();
+    expect(db.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', metadata: { equals: stored } },
+      data: { metadata: { confidentialNoted: ['personal'], confidentialFlagged: ['commercial'] } },
     });
   });
 

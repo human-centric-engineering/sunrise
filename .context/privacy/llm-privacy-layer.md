@@ -1475,7 +1475,8 @@ rerouting an operator's recorded choice is worse than refusing it.
     from an earlier turn, or, under a policy that can refuse, when a
     classifier failed.
   - Something flagged under `block` stays: no provider is permitted, so the
-    stage refuses it.
+    stage refuses it. A `block` policy alone does not make routing classify
+    a turn, for the same reason.
   - If the agent's provider is permitted, the turn stays, and a fallback a
     flagged group refuses is taken out.
   - Otherwise it moves when the model for confidential messages is permitted
@@ -1485,15 +1486,22 @@ rerouting an operator's recorded choice is worse than refusing it.
   turns that into a binding, for the chat handler and the `agent_call` and
   `chat_turn` executors. A moved binding has **no fallbacks**: a fallback is
   sent the primary's model id, which only that provider is known to serve.
-  It is gated as an explicit binding, the administrator's own choice. A fault
-  while routing keeps the agent's binding, and the stage decides as before.
-- **The chat handler** routes once the history is read and before the user's
-  message is saved: the history and the new message are what is classified.
-  The binding it rebinds is the one everything after reads: the attachment
-  check (asked again of the moved model, ending the turn before the message
-  is saved if it cannot read them), the history budget, the summariser (given
-  the moved model in place of the routing default, with no fallbacks), the
-  request, failover, cost logging and the trace.
+  It is gated as an explicit binding, the administrator's own choice. Before
+  a turn moves, the model is checked again (`confidentialModelProblem`): one
+  whose provider has since been turned off, or that is no longer an active
+  chat model, is no model, and the turn is refused as if none were set,
+  with the reason in the log. A fault while routing keeps the agent's
+  binding, and the stage decides as before.
+- **The chat handler** routes before the user's message is saved: an
+  existing conversation once its history is read (the history and the new
+  message are what is classified), a new one before it is created (it has
+  no history, and nothing kept on it). The binding it rebinds is the one
+  everything after reads: the attachment check (asked again of the moved
+  model, ending the turn before the message is saved, and before a new
+  conversation is created, if it cannot read them; the reader is then not
+  told it moved), the history budget, the summariser (given the moved model
+  in place of the routing default, with no fallbacks), the request,
+  failover, cost logging and the trace.
 - **Stickiness.** The groups a turn's routing found are kept on the
   conversation (`AiConversation.metadata.confidentialFlagged`, by
   compare-and-set), so a conversation stays on the model once the message

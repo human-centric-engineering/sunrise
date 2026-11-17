@@ -28,6 +28,7 @@ import {
 import {
   TASK_TYPES,
   type ApprovalDefaultAction,
+  type ConfidentialModelBinding,
   type EscalationConfig,
   type InputGuardMode,
   type OutputGuardMode,
@@ -75,6 +76,17 @@ export function parseEscalationConfig(
 ): EscalationConfig | null {
   const parsed = escalationConfigSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * The model for confidential messages from its two columns (§130 t-1038):
+ * both halves or none, since half a binding names no model.
+ */
+export function confidentialModelBinding(
+  providerSlug: string | null | undefined,
+  model: string | null | undefined
+): ConfidentialModelBinding | null {
+  return providerSlug && model ? { providerSlug, model } : null;
 }
 
 /**
@@ -222,11 +234,10 @@ export function hydrateSettings(row: {
     privacyConfidentialCommercial: parseConfidentialPolicy(
       row.privacyConfidentialCommercial ?? undefined
     ),
-    // Both halves or none: half a binding names no model.
-    confidentialModel:
-      row.confidentialModelProvider && row.confidentialModel
-        ? { providerSlug: row.confidentialModelProvider, model: row.confidentialModel }
-        : null,
+    confidentialModel: confidentialModelBinding(
+      row.confidentialModelProvider,
+      row.confidentialModel
+    ),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -101,13 +101,6 @@ export const PATCH = withAdminAuth(
     // t-899); a save of anything else on the row does not need to.
     const loadedAt = body.escalationConfig !== undefined ? requireIfMatch(request) : undefined;
 
-    // Validate the active-embedding-model FK against the model matrix. The
-    // Zod schema only enforces "non-empty string", since the foreign key
-    // is a cuid we can't refine sync. The runtime needs an active embedding-
-    // capable row with a non-null `dimensions` (the embedder enforces these
-    // same gates in `resolveActiveEmbeddingConfig`), so reject early if any
-    // gate fails — otherwise the failure only surfaces on the next chat
-    // turn / search call.
     // The model for confidential messages (§130 t-1038): refused unless it
     // could answer a confidential turn, so it is never saved broken.
     if (body.confidentialModel) {
@@ -124,6 +117,13 @@ export const PATCH = withAdminAuth(
       }
     }
 
+    // Validate the active-embedding-model FK against the model matrix. The
+    // Zod schema only enforces "non-empty string", since the foreign key
+    // is a cuid we can't refine sync. The runtime needs an active embedding-
+    // capable row with a non-null `dimensions` (the embedder enforces these
+    // same gates in `resolveActiveEmbeddingConfig`), so reject early if any
+    // gate fails — otherwise the failure only surfaces on the next chat
+    // turn / search call.
     if (body.activeEmbeddingModelId !== undefined && body.activeEmbeddingModelId !== null) {
       const model = await prisma.aiProviderModel.findUnique({
         where: { id: body.activeEmbeddingModelId },

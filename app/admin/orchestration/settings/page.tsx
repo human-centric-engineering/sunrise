@@ -17,6 +17,7 @@ import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { FieldHelp } from '@/components/ui/field-help';
 import { env } from '@/lib/env';
 import { API } from '@/lib/api/endpoints';
+import { buildsLocalClient } from '@/lib/orchestration/llm/provider-locality';
 import { loadServerData, requireServerData, type LoadResult } from '@/lib/api/server-load';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings as FullOrchestrationSettings } from '@/types/orchestration';
@@ -123,8 +124,10 @@ function confidentialModelOptions(
   for (const model of models) {
     const provider = providers.find((p) => p.slug === model.provider);
     if (!provider?.isActive) continue;
-    // As `isLocalProvider` reads a row: a Voyage row never builds a local client.
-    const local = provider.isLocal === true && provider.providerType !== 'voyage';
+    const local = buildsLocalClient({
+      isLocal: provider.isLocal === true,
+      providerType: provider.providerType ?? '',
+    });
     if (!local && provider.trustedForConfidential !== true) continue;
     options.push({
       providerSlug: model.provider,

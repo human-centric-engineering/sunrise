@@ -15,6 +15,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { confidentialModelBinding } from '@/lib/orchestration/settings';
 import { runAsOrg } from '@/lib/tenancy/context';
 import type { BackupPayload } from '@/lib/orchestration/backup/schema';
 import { bundleContacts, sealExport } from '@/lib/orchestration/backup/export-seal';
@@ -352,10 +353,10 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
             privacyConfidentialPersonal: parseConfidentialPolicy(privacyConfidentialPersonal),
             privacyConfidentialCommercial: parseConfidentialPolicy(privacyConfidentialCommercial),
             // One binding or none, as the settings read it (t-1038).
-            confidentialModel:
-              confidentialModelProvider && confidentialModel
-                ? { providerSlug: confidentialModelProvider, model: confidentialModel }
-                : null,
+            confidentialModel: confidentialModelBinding(
+              confidentialModelProvider,
+              confidentialModel
+            ),
           };
         })(settings);
 
