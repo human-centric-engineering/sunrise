@@ -1177,6 +1177,11 @@ export interface PrivacySummary {
   refused?: string[];
   /** Placeholders a reply wrote that no call issued, left visible as written. */
   unresolved?: number;
+  /**
+   * Confidential content found in what the calls sent, by group: category
+   * names only, each list sorted (§130). Absent when none was found.
+   */
+  sensitivity?: { personal?: string[]; commercial?: string[] };
 }
 
 /**

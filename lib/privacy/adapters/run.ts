@@ -24,11 +24,15 @@ import { getPrivacyAdapters } from '@/lib/privacy/adapters/registry';
 import { MalformedSpansError, resolveOverlaps, validateSpans } from '@/lib/privacy/adapters/spans';
 import type {
   AttributedSpan,
+  ClassifyContext,
   DetectContext,
   EntityType,
   PolicyInput,
   PrivacyEvent,
   PrivacyPolicy,
+  SensitivityCategory,
+  SensitivityGroup,
+  SensitivityInput,
 } from '@/lib/privacy/adapters/types';
 
 /** Why an adapter's contribution was lost. */
@@ -36,7 +40,11 @@ export type AdapterFailureReason = 'timeout' | 'threw' | 'malformed' | 'aborted'
 
 export interface AdapterFailure {
   adapterId: string;
-  /** Only detectors carry the flag; a policy resolver's failure is always fatal. */
+  /**
+   * Only detectors carry the flag; a policy resolver's failure is always
+   * fatal. A classifier's is `false`: what its failure means is the policy's
+   * to say, not the registration's (spec § Confidential content).
+   */
   required: boolean;
   reason: AdapterFailureReason;
 }
@@ -292,4 +300,107 @@ export function notifyPrivacyObservers(event: PrivacyEvent): void {
         });
       });
   }
+}
+
+/** One category found in a call, with the group its policy comes from. */
+export interface ClassifiedCategory {
+  category: SensitivityCategory;
+  group: SensitivityGroup;
+}
+
+export interface ClassificationResult {
+  /** Every category any classifier found, once each, sorted by category. */
+  categories: ClassifiedCategory[];
+  failures: AdapterFailure[];
+}
+
+/** Thrown inside the runner when a classifier's answer is not a list of declared findings. */
+class MalformedFindingsError extends Error {
+  constructor(readonly reason: string) {
+    super(`malformed sensitivity findings: ${reason}`);
+    this.name = 'MalformedFindingsError';
+  }
+}
+
+/** The categories in `result`, each checked against what the classifier declared. */
+function validateFindings(
+  result: unknown,
+  declared: Readonly<Record<SensitivityCategory, SensitivityGroup>>
+): SensitivityCategory[] {
+  if (!Array.isArray(result)) throw new MalformedFindingsError('not an array');
+  const findings: readonly unknown[] = result;
+  const found: SensitivityCategory[] = [];
+  for (const finding of findings) {
+    const category: unknown =
+      finding !== null && typeof finding === 'object' && 'category' in finding
+        ? finding.category
+        : undefined;
+    if (typeof category !== 'string') throw new MalformedFindingsError('a finding has no category');
+    if (!Object.prototype.hasOwnProperty.call(declared, category)) {
+      throw new MalformedFindingsError('a finding names a category the classifier did not declare');
+    }
+    found.push(category);
+  }
+  return found;
+}
+
+/**
+ * Run every registered sensitivity classifier over `input`, in parallel, each
+ * under its own timeout, and union what they found (§130).
+ *
+ * A classifier that times out, throws, or returns anything but findings of
+ * categories it declared contributes nothing and is listed in `failures`. If
+ * the call is abandoned (`ctx.signal`), every classifier still running is
+ * reported `aborted`. Nothing about where in the call a category was found
+ * comes back: policy acts on the whole call.
+ */
+export async function runSensitivityClassifiers(
+  input: SensitivityInput,
+  ctx: Omit<ClassifyContext, 'signal'> & { signal?: AbortSignal }
+): Promise<ClassificationResult> {
+  const { classifiers } = getPrivacyAdapters();
+  const { signal: outer, ...rest } = ctx;
+  // Frozen once: every classifier sees the same parts, and none can change
+  // what another (or the caller) reads.
+  const frozen: SensitivityInput = Object.freeze({
+    parts: Object.freeze(input.parts.map((p) => Object.freeze({ ...p }))),
+  });
+  const settled = await Promise.all(
+    classifiers.map(async ({ classifier, id, categories, timeoutMs }) => {
+      if (outer?.aborted) {
+        return { id, ok: false as const, reason: 'aborted' as const };
+      }
+      try {
+        const result: unknown = await raceAdapter(
+          (signal) => classifier.classify(frozen, { ...rest, signal }),
+          timeoutMs,
+          outer
+        );
+        return { id, ok: true as const, found: validateFindings(result, categories), categories };
+      } catch (err) {
+        const reason =
+          err instanceof MalformedFindingsError ? ('malformed' as const) : classify(err, outer);
+        logger.warn('privacy-adapters: sensitivity classifier failed', {
+          adapterId: id,
+          reason,
+          errorName: errorName(err),
+          ...(err instanceof MalformedFindingsError ? { detail: err.reason } : {}),
+        });
+        return { id, ok: false as const, reason };
+      }
+    })
+  );
+  const groups = new Map<SensitivityCategory, SensitivityGroup>();
+  const failures: AdapterFailure[] = [];
+  for (const outcome of settled) {
+    if (!outcome.ok) {
+      failures.push({ adapterId: outcome.id, required: false, reason: outcome.reason });
+      continue;
+    }
+    for (const category of outcome.found) groups.set(category, outcome.categories[category]);
+  }
+  const categories = [...groups]
+    .map(([category, group]) => ({ category, group }))
+    .sort((a, b) => a.category.localeCompare(b.category));
+  return { categories, failures };
 }

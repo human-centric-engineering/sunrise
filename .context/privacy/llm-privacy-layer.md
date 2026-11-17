@@ -2,9 +2,12 @@
 
 Finds personal data in what Sunrise sends to external LLM providers, replaces
 it with placeholders before the call, and restores it in the reply and in
-tool-call arguments. It runs locally, with no external service and no per-use
+tool-call arguments. It also spots confidential content (a health disclosure,
+an unannounced launch) and records it, so policy can decide which provider may
+see it. It runs locally, with no external service and no per-use
 cost. Every stage is an adapter an app can add to or replace. This is the
-binding spec for §127 (`f-llm-privacy-layer`); tasks point here.
+binding spec for §127 (`f-llm-privacy-layer`) and §130
+(`f-sensitive-content-routing`); tasks point here.
 
 **It lowers exposure. It is not anonymisation.** Pseudonymised data is still
 personal data under UK GDPR, so provider data processing agreements are still
@@ -28,6 +31,9 @@ has merged; this table says what exists.
 | A `block` caused by a memory: the memory is deleted, and the user carries on           | t-1018 | **Built** |
 | A reply whose embedding fails or is refused no longer holds the backfill back          | t-1016 | **Built** |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | **Built** |
+| Confidential content: the classifier slot, core's phrase list, recorded on the trace   | t-1036 | **Built** |
+| Confidential content: per-group policy, trusted providers, warn, block, the backstop   | t-1037 | Not yet   |
+| Confidential content: answering a flagged conversation on the confidential model       | t-1038 | Not yet   |
 
 ## Quick Reference
 
@@ -59,11 +65,11 @@ has merged; this table says what exists.
 
 A turn can carry three kinds of risk, and they need different treatment:
 
-| Kind                 | Examples                                                                 | Treatment                                                      | Where                             |
-| -------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------- | --------------------------------- |
-| Identifiers          | names, emails, phones, addresses, NI and NHS numbers, bank details, keys | Replaced with placeholders                                     | **This feature**                  |
-| Confidential content | "signed off with depression", "30 redundancies in March"                 | Detected and routed to a local provider, or warned, or blocked | Sensitive-content routing feature |
-| Media                | screenshots, scanned letters, PDFs                                       | Read locally, then masked or refused                           | Attachments feature               |
+| Kind                 | Examples                                                                 | Treatment                                                      | Where                                                |
+| -------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------- | ---------------------------------------------------- |
+| Identifiers          | names, emails, phones, addresses, NI and NHS numbers, bank details, keys | Replaced with placeholders                                     | **This feature**                                     |
+| Confidential content | "signed off with depression", "30 redundancies in March"                 | Detected and routed to a local provider, or warned, or blocked | [Confidential content](#confidential-content) (§130) |
+| Media                | screenshots, scanned letters, PDFs                                       | Read locally, then masked or refused                           | Attachments feature                                  |
 
 Replacing identifiers already helps with confidential content: "PERSON_1 has
 been signed off" tells a provider much less than the original.
@@ -566,10 +572,11 @@ something through an adapter, neither can core.
 | `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | `core.scope-settings`: agent mode, org floor (t-1010)        |
 | `PrivacyObserver`       | receives counts and ids per call                   | many                 | none: core's counts reach metadata through the scope (t-991) |
 
-Two more slots arrive with the features that use them: `SensitivityClassifier`
-(sensitive-content routing) and `MediaProcessor` (attachments). They are not
-defined yet on purpose: an interface forks build on is public surface, and one
-defined before anything consumes it is the one that turns out wrong.
+A fifth slot, `SensitivityClassifier`, arrived with the feature that consumes
+it (§130): see [Confidential content](#confidential-content). One more,
+`MediaProcessor`, arrives with attachments. It is not defined yet on purpose:
+an interface forks build on is public surface, and one defined before anything
+consumes it is the one that turns out wrong.
 
 ### Loading
 
@@ -1106,6 +1113,212 @@ spend caps; it also exempts it from this layer. Setting one up, the two places
 it can run, and what switching costs: [Running a local embedding
 model](../orchestration/knowledge.md#running-a-local-embedding-model).
 
+## Confidential content
+
+The binding spec for §130 (`f-sensitive-content-routing`): t-1036 (spotting
+and recording), t-1037 (policy and the backstop) and t-1038 (routing) build to
+it. Owner rulings of 2026-11-17 are marked as such; the Hub journal has them.
+
+**Masking hides who a disclosure is about, not the disclosure.** "PERSON_1 has
+been signed off with depression" and "we're making 30 staff redundant in
+March" still reach the provider. That content cannot be masked without leaving
+the model nothing to answer, so the remaining control is **which provider sees
+it**. This section spots such content locally, records it, and (t-1037,
+t-1038) lets policy send it anywhere, warn, send it only to trusted or local
+providers, or refuse it.
+
+### Two groups
+
+"Confidential" is two different things, so each has its own policy (owner
+ruling):
+
+- **Personal** — someone else's personal data, mostly the UK GDPR special
+  categories (Art. 9) and criminal records (Art. 10). The person it is about
+  did not choose to share it with a model vendor, and the law puts duties on
+  whoever does.
+- **Commercial** — the organisation's own secrets. The organisation decides
+  who sees them, and a contract with the provider is what protects them. An
+  agency designing launch messaging for a client's unannounced phone _wants_
+  the details sent to the provider it holds a contract with; one policy for
+  both kinds would make an install that locks down health lock down the
+  launch work too.
+
+Core's categories (`CORE_SENSITIVITY_CATEGORIES` in
+`lib/privacy/adapters/types.ts`):
+
+| Category            | Group      | Catches                                                                                 |
+| ------------------- | ---------- | --------------------------------------------------------------------------------------- |
+| `health`            | personal   | diagnoses, conditions, treatment, sick leave, mental health, pregnancy, disability      |
+| `ethnicity`         | personal   | racial or ethnic origin stated about someone                                            |
+| `religion`          | personal   | religious or philosophical belief stated about someone                                  |
+| `politics`          | personal   | political opinions or party membership stated about someone                             |
+| `trade_union`       | personal   | trade-union membership or activity                                                      |
+| `sexuality`         | personal   | sexual orientation, sex life, gender identity                                           |
+| `criminal`          | personal   | convictions, arrests, charges, cautions, criminal records                               |
+| `hr_matter`         | personal   | a grievance, disciplinary, dismissal, a person being made redundant, a harassment claim |
+| `legal_matter`      | personal   | an employment tribunal, divorce, custody, a personal injury or other personal claim     |
+| `personal_finance`  | personal   | personal debt, arrears, bankruptcy, an IVA, payday loans                                |
+| `not_public`        | commercial | unannounced, embargoed, "not public yet", under NDA, "strictly confidential", insider   |
+| `deal`              | commercial | an acquisition, merger, takeover, due diligence, a term sheet or letter of intent       |
+| `restructuring`     | commercial | redundancies, layoffs, headcount reduction, a site closure                              |
+| `business_distress` | commercial | administration, insolvency, a cash-flow crisis, missing payroll, a profit warning       |
+| `litigation`        | commercial | a business being sued, legal action, a dispute heading to court                         |
+
+An app classifier may declare categories of its own (lower snake case), each
+in one of the two groups.
+
+### The classifier slot
+
+`SensitivityClassifier` (`lib/privacy/adapters/types.ts`), registered with
+`registerSensitivityClassifier(classifier, { timeoutMs?, replace? })` from
+`initAppPrivacyAdapters()`:
+
+- It declares every category it may report and the group of each
+  (`categories`). A finding naming an undeclared category fails the
+  classifier (`malformed`). Two classifiers declaring one category in
+  different groups is a registration error: the group decides which policy
+  applies, so it must not depend on which classifier fired.
+- `classify({ parts }, ctx)` returns findings, `{ category }` each. **No
+  offsets and no score**: nothing acts on where in a call the content was, and
+  a score nothing reads would be public surface for no consumer. The finding
+  is an object so a later field (§131's confidence) is additive.
+- Many run, **in parallel**, each under its own timeout (default
+  `DEFAULT_DETECTOR_TIMEOUT_MS`, at most `MAX_DETECTOR_TIMEOUT_MS`) and the
+  stage's pass deadline. Their findings are unioned.
+- Core's is `core.sensitivity-phrases`. `replace: 'core.sensitivity-phrases'`
+  turns it off in favour of the app's; there is no other way. The `core.`
+  prefix is reserved, as for every slot.
+- The registry snapshots the slot with the others, so a throwing app init
+  rolls a registered classifier back and the layer refuses every call
+  (_Loading_).
+- `egress` and `jurisdiction` as for detectors. An external classifier is sent
+  the parts it is given and nothing more.
+
+### What is classified
+
+The parts a call sends, each with its role. **Core's classifier reads only
+`user` parts and `embedding` inputs**; an app classifier is handed every part
+and may read more.
+
+- **Not the system prompt.** The operator wrote it, and an HR agent's prompt
+  says "grievance" on every call.
+- **Not tool results or retrieved knowledge.** An HR policy document would flag
+  every question asked of it.
+- **Not tool-call arguments.** They are the model's, derived from what the user
+  wrote, which is already classified.
+- **Embedding inputs are**, because they carry what the user wrote (a search
+  query) or a reply to it.
+- **A known limit:** a workflow step's prompt is sent as a user message, so an
+  operator-written step prompt ("Summarise this grievance: {{input}}") is
+  classified with its input.
+
+A conversation flagged once stays flagged: each call resends the history, so
+every later call carries the message that was flagged. That is intended. What
+matters is what is sent where.
+
+### When it runs
+
+On every chat and embedding call made in a scope that records somewhere (a
+chat turn, a workflow execution), **in every privacy mode, `off` included, and
+to local providers too** (owner ruling: upgrades record). Classifying changes
+nothing sent. It runs after the policy is resolved and before the stage's
+early returns for `off` and for a skipped local provider, so it sees the calls
+those returns forward.
+
+A call in an ephemeral scope (no turn or execution: ingestion, a background
+job) is not classified while nothing acts on the result. The backstop (t-1037)
+classifies it when a policy that could refuse it applies.
+
+### What is recorded
+
+The categories found, by group, on the scope's tally, and from there in the
+turn's message metadata and each workflow step's trace entry
+(`PrivacySummary.sensitivity: { personal?: string[]; commercial?: string[] }`,
+sorted). **Never text, and never which message**. A classifier that fails is
+listed in `failedAdapters` and marks the summary `degraded`, as a detector
+does. A summary is written when something was found or a classifier failed,
+and only then, so an install in mode `off` gains a privacy line on a turn only
+when that turn held something confidential. The trace shows the categories
+beside the counts (`components/admin/orchestration/privacy-counts.tsx`).
+
+### Policy (t-1037)
+
+One policy per group, global with an agent override that only tightens:
+
+| Value           | A flagged call                                                                   |
+| --------------- | -------------------------------------------------------------------------------- |
+| `allow`         | is sent as normal and recorded                                                   |
+| `warn`          | is sent, and the user sees a note once per conversation per group (owner ruling) |
+| `approved_only` | is sent only to a provider ticked "Trusted with confidential content", or local  |
+| `local_only`    | is sent only to an `isLocal` provider                                            |
+| `block`         | is refused                                                                       |
+
+Strictness runs in that order. A call flagged in both groups is held to the
+stricter of the two. `warn` is a note **after** sending: it protects nothing
+for that message and informs what the user types next (owner ruling). An "ask
+before sending" value can be added later without changing it.
+
+| Where            | Personal | Commercial |
+| ---------------- | -------- | ---------- |
+| Existing install | `allow`  | `allow`    |
+| New install      | `warn`   | `allow`    |
+| Agent            | inherits | inherits   |
+
+The migration fills the existing settings row and then sets the column
+defaults, never writing a value into a row beyond that fill (the t-991
+two-step). `PrivacyPolicy` carries both groups, so an app resolver can tighten
+them like the mode.
+
+**`approved_only` means the provider tick** (owner ruling), with `isLocal`
+always counting as trusted. The org provider policy cannot say it: every
+provider a call can reach has already passed that policy, and at `single`, or
+for the install org, it approves everything.
+
+**The backstop.** In the stage, a flagged call whose policy does not permit its
+provider is refused, and so is any flagged call under `block`. A classifier
+failure counts as flagged in both groups under `approved_only`, `local_only`
+and `block`, and is recorded as degraded under `allow` and `warn`. Embedding
+callers handle the refusal as they handle `embeddings_local_only`. A refusal
+under `block` is left out of later history and placed, by §127's machinery.
+An org floor per group is not in this feature.
+
+### Routing (t-1038)
+
+A flagged conversation whose agent's provider the policy does not permit is
+answered on one install-wide **model for confidential messages** (a provider
+and a model, which must be an active chat model on a local or trusted
+provider), or refused with a message that says why when none is set. A
+config-health check names a strict policy with no usable model.
+
+It cannot happen in the stage: by then the provider and model are fixed, and a
+fallback reuses the primary's model id, so a provider swap alone would send a
+cloud model's id to a local server. So the turn rebinds **at its start**,
+before the request is built, and the history budget, cost, trace and spans use
+the model that answers. Its summariser, failover and other calls use the
+rebound binding. The user sees a note once that the conversation moved. A
+workflow `llm_call` with a `modelOverride`, and a capability that resolves its
+own binding, are left to the backstop: refused, not rerouted, because
+rerouting an operator's recorded choice is worse than refusing it.
+
+### Measured
+
+`core.sensitivity-phrases` is gated by a labelled synthetic UK corpus in
+`tests/fixtures/privacy/sensitivity-corpus/`: a development set, and a
+held-out set written by someone who never saw the phrase list, both with
+business text that must not flag (HR policy questions, product copy,
+"customer acquisition"). `tests/unit/lib/privacy/sensitivity/corpus.test.ts`
+compares per-group recall and precision, and each set's size, with
+`baseline.json`, and fails on any drop.
+
+### What it does not protect
+
+**A phrase list catches what is said outright and misses what is implied.**
+"I've been signed off with depression" is caught; "I haven't been myself since
+the diagnosis" is not. It is a safety net for general-purpose agents, not a
+guarantee. An agent whose whole job is health, HR or a client's unannounced
+plans belongs on a local or trusted provider from the start, where it costs
+nothing to flag it. The optional local model (§131) can score more subtly.
+
 ## Testing
 
 - Detection and mask/restore are pure: unit and property tests
@@ -1136,7 +1349,7 @@ model](../orchestration/knowledge.md#running-a-local-embedding-model).
 
 Each is its own feature, depending on this one: service adapters (a generic HTTP
 detector, egress enforcement, the conformance kit, Presidio/Comprehend/Azure
-recipes); attachments; sensitive-content routing; the optional local NER model;
+recipes); attachments; the optional local NER model;
 a persistent pseudonym vault, the only way to mask embedding inputs and still
 search by name.
 

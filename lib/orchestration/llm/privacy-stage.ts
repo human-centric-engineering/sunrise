@@ -17,6 +17,11 @@
  * `embeddingsPolicy: local_only` and a masking mode, one to a provider that is
  * not `isLocal` is refused instead.
  *
+ * Before any of that, a call made in a scope that records somewhere is
+ * classified for confidential content (§130), in every mode and to local
+ * providers too, and the categories found are recorded in its scope.
+ * Classifying changes nothing sent.
+ *
  * It refuses, and never sends, when it cannot say what the policy is: a
  * failed app init or core install (mode `off` included, because what was
  * rolled back may be what raised it), an unreadable stored mode, a policy
@@ -47,6 +52,7 @@ import {
   knownValuesOf,
   recordPrivacyCall,
   recordPrivacyRefusal,
+  recordPrivacySensitivity,
   recordPrivacyUnresolved,
   runInPrivacyScope,
   type PrivacyScope,
@@ -63,8 +69,14 @@ import {
   notifyPrivacyObservers,
   resolvePrivacyPolicy,
   runPrivacyDetectors,
+  runSensitivityClassifiers,
 } from '@/lib/privacy/adapters/run';
-import type { EntityType, PrivacyEvent, PrivacyPolicy } from '@/lib/privacy/adapters/types';
+import type {
+  EntityType,
+  PrivacyEvent,
+  PrivacyPolicy,
+  SensitivityPart,
+} from '@/lib/privacy/adapters/types';
 import { orgIdForCall } from '@/lib/tenancy/context';
 
 /**
@@ -221,6 +233,71 @@ export interface PrivacyStageResult {
 function chatMessages(call: PrivacyStageCall): readonly LlmMessage[] {
   const [first] = call.args;
   return call.coverage === 'full' && Array.isArray(first) ? (first as LlmMessage[]) : [];
+}
+
+/**
+ * What a call sends, part by part with its role, for the sensitivity
+ * classifiers (§130): each chat message's text, or each embedding input.
+ * Tool-call arguments are left out: they are the model's, derived from what
+ * the user wrote, which is classified already.
+ */
+function sensitivityParts(call: PrivacyStageCall): SensitivityPart[] {
+  const parts: SensitivityPart[] = [];
+  if (call.coverage === 'full') {
+    for (const m of chatMessages(call)) {
+      if (typeof m.content === 'string') {
+        if (m.content.length > 0) parts.push({ role: m.role, text: m.content });
+        continue;
+      }
+      for (const part of m.content) {
+        if (part.type === 'text' && part.text.length > 0) {
+          parts.push({ role: m.role, text: part.text });
+        }
+      }
+    }
+    return parts;
+  }
+  const [first] = call.args;
+  const inputs = typeof first === 'string' ? [first] : Array.isArray(first) ? first : [];
+  for (const text of inputs) {
+    if (typeof text === 'string' && text.length > 0) parts.push({ role: 'embedding', text });
+  }
+  return parts;
+}
+
+/**
+ * Classify the call for confidential content and record what was found in
+ * its scope (§130, t-1036). Only in a scope that records somewhere: an
+ * ephemeral one has nothing to read the result yet. Records nothing when
+ * nothing was found and no classifier failed, so a turn gains a privacy
+ * summary only when it held something confidential.
+ */
+async function classifyCall(
+  call: PrivacyStageCall,
+  scope: PrivacyScope,
+  mode: PrivacyPolicy['mode'],
+  orgId: string | undefined,
+  abandoned: AbortSignal | undefined
+): Promise<void> {
+  const parts = sensitivityParts(call);
+  if (parts.length === 0) return;
+  const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
+  const { categories, failures } = await runSensitivityClassifiers(
+    { parts },
+    {
+      scopeId: scope.scopeId,
+      ...(orgId !== undefined ? { orgId } : {}),
+      ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+      signal: abandoned ? AbortSignal.any([abandoned, deadline]) : deadline,
+    }
+  );
+  if (abandoned?.aborted) throw new CallAbandonedError();
+  if (categories.length === 0 && failures.length === 0) return;
+  recordPrivacySensitivity(scope, {
+    mode,
+    categories,
+    failedAdapters: failures.map((f) => f.adapterId),
+  });
 }
 
 /**
@@ -400,6 +477,11 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
         resolverFailures.map((f) => f.adapterId)
       );
     }
+
+    // Before the returns for `off` and a skipped local provider: classifying
+    // changes nothing sent, and an install records what its agents meet in
+    // every mode (owner ruling, 2026-11-17).
+    if (!scoped.ephemeral) await classifyCall(call, scope, policy.mode, orgId, abandoned);
 
     if (policy.mode === 'off') return unchanged;
     if (call.isLocal && !policy.protectLocalProviders) {

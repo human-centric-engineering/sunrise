@@ -3476,6 +3476,12 @@ export const privacySummarySchema = z.object({
   failedAdapters: z.array(z.string()).optional(),
   refused: z.array(z.string()).optional(),
   unresolved: z.number().int().nonnegative().optional(),
+  sensitivity: z
+    .object({
+      personal: z.array(z.string()).optional(),
+      commercial: z.array(z.string()).optional(),
+    })
+    .optional(),
 });
 
 export const executionTraceEntrySchema = z

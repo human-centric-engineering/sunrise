@@ -3,8 +3,9 @@
  * with, registered through the same registry an app uses.
  *
  * The three local detection tiers are here (t-989): rules, known values, and
- * word lists; the stateless token strategy (t-990); and the resolver that
- * applies an agent's mode and an org's minimum (t-1010). Each core adapter is
+ * word lists; the stateless token strategy (t-990); the resolver that
+ * applies an agent's mode and an org's minimum (t-1010); and the phrase-list
+ * sensitivity classifier (§130, t-1036). Each core adapter is
  * added here and nowhere else, so core's detectors are reached only through
  * the registry — `tests/unit/lib/privacy/pii/registry-only.test.ts` fails on
  * any other caller.
@@ -23,11 +24,13 @@ import type {
   PrivacyObserver,
   PrivacyPolicyResolver,
   PrivacyTokenStrategy,
+  SensitivityClassifier,
 } from '@/lib/privacy/adapters/types';
 import { knownValuesDetector } from '@/lib/privacy/pii/known-values';
 import { listsDetector } from '@/lib/privacy/pii/lists';
 import { RULES_DETECTOR_ID, rulesDetector } from '@/lib/privacy/pii/rules';
 import { statelessTokenStrategy } from '@/lib/privacy/pii/token-strategy';
+import { sensitivityPhrasesClassifier } from '@/lib/privacy/sensitivity/classifier';
 import { scopeSettingsResolver } from '@/lib/orchestration/privacy/scope-settings';
 
 /**
@@ -49,6 +52,7 @@ export interface CorePrivacyAdapters {
   tokenStrategy: PrivacyTokenStrategy | null;
   policyResolvers: readonly { resolver: PrivacyPolicyResolver; timeoutMs?: number }[];
   observers: readonly PrivacyObserver[];
+  classifiers: readonly { classifier: SensitivityClassifier; timeoutMs?: number }[];
 }
 
 export function corePrivacyAdapters(): CorePrivacyAdapters {
@@ -68,5 +72,6 @@ export function corePrivacyAdapters(): CorePrivacyAdapters {
       { resolver: scopeSettingsResolver(), timeoutMs: SCOPE_SETTINGS_RESOLVER_TIMEOUT_MS },
     ],
     observers: [],
+    classifiers: [{ classifier: sensitivityPhrasesClassifier() }],
   };
 }
