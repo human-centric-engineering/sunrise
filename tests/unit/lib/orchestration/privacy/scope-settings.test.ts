@@ -19,6 +19,8 @@ interface ScriptedDb {
   agentReads: number;
   orgReads: number;
   failNext: boolean;
+  /** The agent's confidential-content policy columns (§130 t-1037). */
+  confidential: Record<string, unknown>;
 }
 const db = vi.hoisted((): ScriptedDb => ({
   agentMode: null,
@@ -27,6 +29,7 @@ const db = vi.hoisted((): ScriptedDb => ({
   agentReads: 0,
   orgReads: 0,
   failNext: false,
+  confidential: {},
 }));
 const settings = vi.hoisted((): { mode: string; embeddings: string; ignored: string[] } => ({
   mode: 'off',
@@ -46,7 +49,10 @@ vi.mock('@/lib/db/client', () => ({
           throw new Error('connection reset');
         }
         const id = query.where.id;
-        return { privacyMode: id in db.byAgent ? db.byAgent[id] : db.agentMode };
+        return {
+          privacyMode: id in db.byAgent ? db.byAgent[id] : db.agentMode,
+          ...db.confidential,
+        };
       }),
     },
     org: {
@@ -80,7 +86,10 @@ import {
   runInPrivacyScope,
   type PrivacyScope,
 } from '@/lib/orchestration/privacy/scope';
-import { scopePrivacySettings } from '@/lib/orchestration/privacy/scope-settings';
+import {
+  scopePrivacySettings,
+  scopeSettingsResolver,
+} from '@/lib/orchestration/privacy/scope-settings';
 import {
   PRIVACY_MODES_AVAILABLE,
   PRIVACY_TIGHTENING_MODES,
@@ -135,6 +144,7 @@ beforeEach(() => {
     agentReads: 0,
     orgReads: 0,
     failNext: false,
+    confidential: {},
   });
   settings.mode = 'off';
   settings.embeddings = 'allow';
@@ -445,5 +455,62 @@ describe('agentPrivacyScope', () => {
 
     expect(s).toMatchObject({ scopeId: `agent:${AGENT}`, agentId: AGENT });
     expect(s.parent).toBeUndefined();
+  });
+});
+
+describe("the agent's confidential-content policies (§130 t-1037)", () => {
+  const resolve = (agentId: string | undefined = AGENT) =>
+    runInPrivacyScope(scope({ agentId, orgId: ORG }), () =>
+      scopeSettingsResolver().resolve(
+        { agentId, orgId: ORG, providerSlug: 'openai', isLocalProvider: false },
+        {
+          mode: 'off',
+          ignoredEntityTypes: [],
+          protectLocalProviders: false,
+          onDetectorFailure: 'fallback',
+          confidentialPersonal: 'allow',
+          confidentialCommercial: 'allow',
+        },
+        { signal: new AbortController().signal }
+      )
+    );
+
+  it('are read with the mode, in the same read, and only the ones set are proposed', async () => {
+    db.confidential = {
+      privacyConfidentialPersonal: 'local_only',
+      privacyConfidentialCommercial: null,
+    };
+    await expect(resolve()).resolves.toEqual({ confidentialPersonal: 'local_only' });
+    expect(db.agentReads).toBe(1);
+  });
+
+  it('propose nothing when the agent sets none, as before', async () => {
+    db.confidential = { privacyConfidentialPersonal: null, privacyConfidentialCommercial: null };
+    await expect(resolve()).resolves.toBeUndefined();
+  });
+
+  it('ride beside the agent mode', async () => {
+    db.agentMode = 'redact';
+    db.confidential = { privacyConfidentialCommercial: 'block' };
+    await expect(resolve()).resolves.toEqual({ mode: 'redact', confidentialCommercial: 'block' });
+  });
+
+  it('refuse the call when one is set and not a policy, naming the agent and not the value', async () => {
+    db.confidential = { privacyConfidentialPersonal: 'ask_first' };
+    await expect(run(scope())).rejects.toMatchObject({ reason: 'policy_resolver_failed' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('confidential-content policy is not a policy'),
+      { agentId: AGENT }
+    );
+  });
+
+  it('are kept on the scope with the rest of what was read', async () => {
+    db.confidential = { privacyConfidentialPersonal: 'warn' };
+    const s = scope();
+    const read = await scopePrivacySettings({ agentId: AGENT, orgId: ORG }, s);
+    expect(read).toMatchObject({
+      agentConfidentialPersonal: 'warn',
+      agentConfidentialCommercial: null,
+    });
   });
 });

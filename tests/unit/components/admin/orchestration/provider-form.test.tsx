@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
@@ -842,6 +842,71 @@ describe('ProviderForm', () => {
       );
       await user.click(create);
       expect(apiClient.post).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Trusted with confidential content (§130 t-1037) ─────────────────────────
+
+  describe('trusted with confidential content', () => {
+    it('is off on a new provider, with a help popover, and sends what was chosen', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'p', name: 'Anthropic', slug: 'a' });
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+
+      const tick = screen.getByRole('switch', { name: /trusted with confidential content/i });
+      expect(tick).toHaveAttribute('aria-checked', 'false');
+      const label = screen.getByText(/^Trusted with confidential content/);
+      expect(within(label).getByRole('button', { name: 'More information' })).toBeInTheDocument();
+
+      await user.type(
+        screen.getByRole('textbox', { name: /api key env var/i }),
+        'ANTHROPIC_API_KEY'
+      );
+      await user.click(tick);
+      await user.click(screen.getByRole('button', { name: /create provider/i }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalled());
+      const body = (vi.mocked(apiClient.post).mock.calls[0][1] as { body: Record<string, unknown> })
+        .body;
+      expect(body.trustedForConfidential).toBe(true);
+    });
+
+    it("shows a provider's stored tick on edit and can clear it", async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ id: 'prov-1' });
+      const user = userEvent.setup();
+      render(
+        <ProviderForm mode="edit" provider={makeProvider({ trustedForConfidential: true })} />
+      );
+
+      const tick = screen.getByRole('switch', { name: /trusted with confidential content/i });
+      expect(tick).toHaveAttribute('aria-checked', 'true');
+      await user.click(tick);
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalled());
+      const body = (
+        vi.mocked(apiClient.patch).mock.calls[0][1] as { body: Record<string, unknown> }
+      ).body;
+      expect(body.trustedForConfidential).toBe(false);
+    });
+
+    it('is hidden for a local provider, which always counts as trusted, and stores nothing', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'p', name: 'Ollama', slug: 'o' });
+      const user = userEvent.setup();
+      render(<ProviderForm mode="create" />);
+      await selectFlavor(user, 'Ollama');
+
+      expect(
+        screen.queryByRole('switch', { name: /trusted with confidential content/i })
+      ).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /create provider/i }));
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalled());
+      const body = (vi.mocked(apiClient.post).mock.calls[0][1] as { body: Record<string, unknown> })
+        .body;
+      expect(body.trustedForConfidential).toBe(false);
     });
   });
 });

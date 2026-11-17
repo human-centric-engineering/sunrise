@@ -272,6 +272,17 @@ export const PRIVACY_REFUSED = 'privacy_refused';
 export const PRIVACY_BLOCKED = 'privacy_blocked';
 
 /**
+ * The code a refusal for confidential content carries (§130): the call held
+ * content of a group whose policy is `block`, or whose policy does not permit
+ * this provider (`approved_only`, `local_only`). Apart from
+ * {@link PRIVACY_BLOCKED} because the reader is told something different, and
+ * like it because the reader can carry on: the refused turn, and an earlier
+ * message that held the content, are left out of what later turns send. A
+ * request fault for the same reasons.
+ */
+export const PRIVACY_CONFIDENTIAL = 'privacy_confidential';
+
+/**
  * The codes a monthly spend-cap refusal carries (§110 t-788): the call-time
  * gate's `SpendCapExceededError` (`spend-caps.ts`), and the chat handler's own
  * refusal before a turn starts, which uses the same words for the same cap.
@@ -314,9 +325,15 @@ export const SPEND_CAP_CODES = {
 // about the provider's health, so it must never reach a circuit breaker — at
 // `multi`, one org's refusal would otherwise open the circuit for every org.
 //
-// `privacy_refused` and `privacy_blocked` are the privacy stage's refusals
-// (§127): its policy gives the same answer on a retry and at every provider,
-// and it is not about the provider's health either.
+// `privacy_refused`, `privacy_blocked` and `privacy_confidential` are the
+// privacy stage's refusals (§127, §130): its policy gives the same answer on a
+// retry, and it is not about the provider's health either, so it must never
+// reach a circuit breaker. `privacy_confidential` under a policy that permits
+// some providers (`approved_only`, `local_only`) is NOT the same at every
+// provider: a trusted or local fallback would take the call. It is still a
+// request fault, because failing over mid-turn would count it against the
+// breaker's provider and reuse the primary's model id; moving a flagged turn
+// to a permitted model happens at the turn's start instead (§130 t-1038).
 //
 // The spend-cap codes are the same kind of answer (§110 t-788): a cap that has
 // been reached stays reached on a retry, and every other paid provider is held
@@ -331,6 +348,7 @@ const REQUEST_FAULT_CODES = new Set<string>([
   PROVIDER_NOT_PERMITTED,
   PRIVACY_REFUSED,
   PRIVACY_BLOCKED,
+  PRIVACY_CONFIDENTIAL,
   ...Object.values(SPEND_CAP_CODES),
 ]);
 

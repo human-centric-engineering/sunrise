@@ -66,6 +66,7 @@ const PROVIDERS = [
     timeoutMs: null,
     maxRetries: null,
     jurisdiction: null,
+    trustedForConfidential: false,
   },
   {
     id: 'prov-openai',
@@ -83,6 +84,7 @@ const PROVIDERS = [
     timeoutMs: null,
     maxRetries: null,
     jurisdiction: null,
+    trustedForConfidential: false,
   },
 ];
 

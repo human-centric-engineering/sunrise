@@ -373,6 +373,7 @@ const providerFormSchema = z.object({
     .optional()
     .or(z.literal('')),
   isActive: z.boolean(),
+  trustedForConfidential: z.boolean(),
   timeoutMs: z
     .number()
     .int()
@@ -486,6 +487,7 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
       baseUrl: provider?.baseUrl ?? '',
       apiKeyEnvVar: provider?.apiKeyEnvVar ?? '',
       isActive: provider?.isActive ?? true,
+      trustedForConfidential: provider?.trustedForConfidential ?? false,
       timeoutMs: provider?.timeoutMs ?? undefined,
       maxRetries: provider?.maxRetries ?? undefined,
     },
@@ -560,6 +562,9 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
         providerType: meta.providerType,
         isLocal: meta.isLocal,
         isActive: data.isActive,
+        // A local provider always counts as trusted (§130), so the switch is
+        // hidden for one and nothing is stored.
+        trustedForConfidential: meta.isLocal ? false : data.trustedForConfidential,
       };
 
       if (isEdit) {
@@ -847,6 +852,30 @@ export function ProviderForm({ mode, provider }: ProviderFormProps) {
           onCheckedChange={(checked) => setValue('isActive', checked)}
         />
       </div>
+
+      {/* Trusted with confidential content (§130). A local provider always is. */}
+      {!flavorMeta.isLocal && (
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div>
+            <Label htmlFor="trustedForConfidential" className="text-sm font-medium">
+              Trusted with confidential content{' '}
+              <FieldHelp title="Trusted with confidential content">
+                Tick this when your agreement with this provider covers confidential content, such
+                as a health or HR matter or a client&apos;s unannounced plans. An agent whose
+                confidential-content policy is &ldquo;trusted or local providers only&rdquo; then
+                sends a message holding that content here; to any other provider it is refused.
+                Local providers always count as trusted. Leave it off if you are not sure: nothing
+                else changes.
+              </FieldHelp>
+            </Label>
+          </div>
+          <Switch
+            id="trustedForConfidential"
+            checked={watch('trustedForConfidential')}
+            onCheckedChange={(checked) => setValue('trustedForConfidential', checked)}
+          />
+        </div>
+      )}
 
       {/* Advanced settings — collapsible */}
       <div className="rounded-md border">

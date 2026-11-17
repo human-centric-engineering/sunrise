@@ -193,6 +193,27 @@ describe('ProvidersList', () => {
       expect(screen.getByText('Local')).toBeInTheDocument();
     });
 
+    it('renders a "Trusted" badge for a cloud provider ticked trusted with confidential content (§130)', () => {
+      render(
+        <ProvidersList
+          initialProviders={[
+            makeProvider({ id: 'p-t', slug: 'claude', trustedForConfidential: true }),
+            makeProvider({ id: 'p-u', slug: 'other', name: 'Other' }),
+          ]}
+        />
+      );
+      expect(screen.getAllByText('Trusted')).toHaveLength(1);
+    });
+
+    it('shows no "Trusted" badge on a local provider: it always counts as trusted', () => {
+      render(
+        <ProvidersList
+          initialProviders={[makeProvider({ isLocal: true, trustedForConfidential: true })]}
+        />
+      );
+      expect(screen.queryByText('Trusted')).not.toBeInTheDocument();
+    });
+
     it('renders empty state when no providers', () => {
       render(<ProvidersList initialProviders={[]} />);
 

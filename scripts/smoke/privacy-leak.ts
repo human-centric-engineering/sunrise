@@ -20,6 +20,13 @@
  *      step's output is restored.
  *   6. With `privacyMode: off`, the same step sends the identifiers as they
  *      are: provider behaviour unchanged.
+ *   7. Confidential content (§130 t-1037): with the Personal policy at
+ *      `local_only` and mode `off`, a chat turn holding a health disclosure
+ *      to a cloud provider is refused before it is sent (the provider
+ *      receives nothing), the reader is told why, and the next turn in the
+ *      same conversation is answered without the disclosure.
+ *   8. With the Personal policy at `warn`, the turn is answered and the user
+ *      is told once: the next turn, which resends the disclosure, is not.
  *
  * Safety:
  *   - The install's privacy settings are changed for the run and put back in
@@ -165,17 +172,108 @@ function workflowProvider(received: LlmMessage[][]): LlmProvider {
   };
 }
 
-async function setPrivacy(privacyMode: string, privacyEmbeddingsPolicy: string): Promise<void> {
+async function setPrivacy(
+  privacyMode: string,
+  privacyEmbeddingsPolicy: string,
+  privacyConfidentialPersonal = 'allow',
+  privacyConfidentialCommercial = 'allow'
+): Promise<void> {
   await prisma.aiOrchestrationSettings.update({
     where: { slug: 'global' },
-    data: { privacyMode, privacyEmbeddingsPolicy },
+    data: {
+      privacyMode,
+      privacyEmbeddingsPolicy,
+      privacyConfidentialPersonal,
+      privacyConfidentialCommercial,
+    },
   });
   invalidateOrchestrationSettingsCache();
 }
 
+const DISCLOSURE = "I've been signed off with depression";
+
+/** A cloud chat provider that answers every call, and records what it was sent. */
+function plainChatProvider(received: LlmMessage[][]): LlmProvider {
+  return {
+    ...chatProvider(received),
+    async *chatStream(messages: LlmMessage[]): AsyncIterable<StreamChunk> {
+      received.push(structuredClone(messages));
+      yield { type: 'text', content: 'Noted.' };
+      yield { type: 'done', usage: { inputTokens: 10, outputTokens: 2 }, finishReason: 'stop' };
+    },
+  };
+}
+
+async function confidentialTurns(userId: string): Promise<void> {
+  const agent = await prisma.aiAgent.create({
+    data: {
+      slug: `${AGENT_SLUG}-confidential`,
+      name: 'Smoke Privacy Agent (confidential)',
+      description: 'Throwaway agent for scripts/smoke/privacy-leak.ts — safe to delete.',
+      provider: CHAT_PROVIDER,
+      model: 'fake-model-1',
+      systemInstructions: 'You are an HR assistant.',
+      isActive: true,
+      createdBy: userId,
+    },
+  });
+  const received: LlmMessage[][] = [];
+  registerProviderInstance(CHAT_PROVIDER, plainChatProvider(received));
+  const turn = async (message: string, conversationId?: string) => {
+    const events: ChatEvent[] = [];
+    for await (const event of streamChat({
+      message,
+      agentSlug: agent.slug,
+      userId,
+      ...(conversationId ? { conversationId } : {}),
+    })) {
+      events.push(event);
+    }
+    const started = events.find((e) => e.type === 'start');
+    return { events, conversationId: started?.type === 'start' ? started.conversationId : null };
+  };
+
+  console.log('\n════ chat turn, confidential content under local_only ════');
+  await setPrivacy('off', 'allow', 'local_only', 'allow');
+  const refused = await turn(`${DISCLOSURE}. How do I tell my manager?`);
+  const error = refused.events.find((e) => e.type === 'error');
+  console.log(`    provider calls: ${received.length}; error: ${JSON.stringify(error)}`);
+  check(received.length === 0, 'a flagged turn to a cloud provider never reached it');
+  check(
+    error?.type === 'error' && error.code === 'privacy_confidential',
+    'the reader is told it was confidential content'
+  );
+  if (!refused.conversationId) throw new Error('the refused turn never started');
+  const after = await turn('What is the holiday policy?', refused.conversationId);
+  check(
+    !after.events.some((e) => e.type === 'error'),
+    'the next turn in the conversation is answered'
+  );
+  check(
+    received.length === 1 && !JSON.stringify(received).includes(DISCLOSURE),
+    'and its call no longer carries the disclosure'
+  );
+
+  console.log('\n════ chat turn, confidential content under warn ════');
+  await setPrivacy('off', 'allow', 'warn', 'allow');
+  const warned = await turn(`${DISCLOSURE}. Can you help me plan my return?`);
+  const notes = warned.events.filter((e) => e.type === 'warning');
+  console.log(`    notes: ${JSON.stringify(notes.map((n) => n.type === 'warning' && n.code))}`);
+  check(
+    notes.length === 1 && notes[0].type === 'warning' && notes[0].code === 'confidential_personal',
+    'the turn is answered, and the user told once'
+  );
+  if (!warned.conversationId) throw new Error('the warned turn never started');
+  const again = await turn('And after that?', warned.conversationId);
+  check(
+    !again.events.some((e) => e.type === 'warning'),
+    'the next turn resends the disclosure and is not told again'
+  );
+}
+
 async function cleanUp(): Promise<void> {
   const agents = await prisma.aiAgent.findMany({
-    where: { slug: AGENT_SLUG },
+    where: { slug: { startsWith: AGENT_SLUG } },
     select: { id: true },
   });
   for (const { id } of agents) {
@@ -330,7 +428,12 @@ async function main(): Promise<void> {
   if (!user) throw new Error('No user rows in the dev DB: seed one first.');
   const before = await prisma.aiOrchestrationSettings.findUnique({
     where: { slug: 'global' },
-    select: { privacyMode: true, privacyEmbeddingsPolicy: true },
+    select: {
+      privacyMode: true,
+      privacyEmbeddingsPolicy: true,
+      privacyConfidentialPersonal: true,
+      privacyConfidentialCommercial: true,
+    },
   });
   if (!before) throw new Error('No orchestration settings row: open the settings page once.');
 
@@ -341,8 +444,14 @@ async function main(): Promise<void> {
     await workflowStep(user.id, 'pseudonymise');
     await setPrivacy('off', 'allow');
     await workflowStep(user.id, 'off');
+    await confidentialTurns(user.id);
   } finally {
-    await setPrivacy(before.privacyMode, before.privacyEmbeddingsPolicy);
+    await setPrivacy(
+      before.privacyMode,
+      before.privacyEmbeddingsPolicy,
+      before.privacyConfidentialPersonal,
+      before.privacyConfidentialCommercial
+    );
     // The turn's reply embedding is fire-and-forget: let it settle first.
     await new Promise((r) => setTimeout(r, 500));
     await cleanUp();

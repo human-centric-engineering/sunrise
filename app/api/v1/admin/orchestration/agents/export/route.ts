@@ -32,7 +32,10 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { logger } from '@/lib/logging';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
-import { isTighteningMode } from '@/lib/orchestration/privacy/settings-policy';
+import {
+  isStoredConfidentialPolicy,
+  isTighteningMode,
+} from '@/lib/orchestration/privacy/settings-policy';
 import {
   narrowProviderTools,
   narrowServiceTier,
@@ -143,6 +146,13 @@ export const POST = withAdminAuth(
           // source agent refuses every call until a mode is chosen.
           ...(agent.privacyMode === null || isTighteningMode(agent.privacyMode)
             ? { privacyMode: agent.privacyMode }
+            : {}),
+          // The same for the confidential-content policies (§130).
+          ...(isStoredConfidentialPolicy(agent.privacyConfidentialPersonal)
+            ? { privacyConfidentialPersonal: agent.privacyConfidentialPersonal }
+            : {}),
+          ...(isStoredConfidentialPolicy(agent.privacyConfidentialCommercial)
+            ? { privacyConfidentialCommercial: agent.privacyConfidentialCommercial }
             : {}),
           maxHistoryTokens: agent.maxHistoryTokens,
           maxHistoryMessages: agent.maxHistoryMessages,

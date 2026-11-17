@@ -70,3 +70,59 @@ describe('the embeddings policy migration (t-992)', () => {
     expect(schema).toMatch(/privacyEmbeddingsPolicy\s+String\s+@default\("allow"\)/);
   });
 });
+
+/**
+ * t-1037 (§130): the confidential-content policies and the provider tick.
+ * Replayed on the dev DB in the PR: the existing settings row read
+ * allow/allow, a row inserted afterwards read warn/allow, and every provider
+ * read unticked.
+ */
+const confidentialSql = read(
+  'prisma/migrations/20261117120000_confidential_content_policy/migration.sql'
+)
+  .split('\n')
+  .filter((line) => !line.trimStart().startsWith('--'))
+  .join('\n');
+const agentSchema = read('prisma/schema/orchestration-agents.prisma');
+
+describe('the confidential-content policy migration (t-1037)', () => {
+  it("adds both settings policies as 'allow', which is what fills a row that already exists", () => {
+    expect(confidentialSql).toMatch(
+      /ADD COLUMN\s+"privacyConfidentialPersonal" TEXT NOT NULL DEFAULT 'allow'/
+    );
+    expect(confidentialSql).toMatch(
+      /ADD COLUMN\s+"privacyConfidentialCommercial" TEXT NOT NULL DEFAULT 'allow'/
+    );
+  });
+
+  it("then makes 'warn' the Personal default for a row created afterwards, and leaves Commercial at 'allow'", () => {
+    const add = confidentialSql.search(/ADD COLUMN\s+"privacyConfidentialPersonal"/);
+    const setDefault = confidentialSql.search(
+      /ALTER COLUMN "privacyConfidentialPersonal" SET DEFAULT 'warn'/
+    );
+    expect(add).toBeGreaterThanOrEqual(0);
+    expect(setDefault).toBeGreaterThan(add);
+    expect(confidentialSql).not.toMatch(/ALTER COLUMN "privacyConfidentialCommercial" SET DEFAULT/);
+  });
+
+  it('never writes a value into a row: no UPDATE, no INSERT', () => {
+    expect(confidentialSql).not.toMatch(/\bUPDATE\b/i);
+    expect(confidentialSql).not.toMatch(/\bINSERT\b/i);
+  });
+
+  it('adds the agent policies nullable (inherit) and the provider tick off', () => {
+    expect(confidentialSql).toMatch(/"ai_agent" ADD COLUMN\s+"privacyConfidentialPersonal" TEXT,/);
+    expect(confidentialSql).toMatch(/ADD COLUMN\s+"privacyConfidentialCommercial" TEXT;/);
+    expect(confidentialSql).toMatch(
+      /"ai_provider_config" ADD COLUMN\s+"trustedForConfidential" BOOLEAN NOT NULL DEFAULT false/
+    );
+  });
+
+  it("matches the schema's final defaults, so a later migrate diff sees no drift", () => {
+    expect(schema).toMatch(/privacyConfidentialPersonal\s+String\s+@default\("warn"\)/);
+    expect(schema).toMatch(/privacyConfidentialCommercial\s+String\s+@default\("allow"\)/);
+    expect(schema).toMatch(/trustedForConfidential\s+Boolean\s+@default\(false\)/);
+    expect(agentSchema).toMatch(/privacyConfidentialPersonal\s+String\?/);
+    expect(agentSchema).toMatch(/privacyConfidentialCommercial\s+String\?/);
+  });
+});

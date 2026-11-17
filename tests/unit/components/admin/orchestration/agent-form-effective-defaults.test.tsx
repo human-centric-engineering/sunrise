@@ -146,6 +146,8 @@ function makeSystemSeededAgent(): AiAgent {
     outputGuardMode: null,
     citationGuardMode: null,
     privacyMode: null,
+    privacyConfidentialPersonal: null,
+    privacyConfidentialCommercial: null,
     maxHistoryTokens: null,
     maxHistoryMessages: null,
     retentionDays: null,

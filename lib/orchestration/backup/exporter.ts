@@ -23,9 +23,11 @@ import { IMPORTED_FROM_SLUG_KEY } from '@/lib/orchestration/backup/schema';
 import { z } from 'zod';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import {
-  parseIgnoredEntityTypes,
-  parseEmbeddingsPolicy,
+  isStoredConfidentialPolicy,
   isTighteningMode,
+  parseConfidentialPolicy,
+  parseEmbeddingsPolicy,
+  parseIgnoredEntityTypes,
   parsePrivacyMode,
 } from '@/lib/orchestration/privacy/settings-policy';
 import {
@@ -91,6 +93,8 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
         outputGuardMode: true,
         citationGuardMode: true,
         privacyMode: true,
+        privacyConfidentialPersonal: true,
+        privacyConfidentialCommercial: true,
         maxHistoryTokens: true,
         maxHistoryMessages: true,
         retentionDays: true,
@@ -213,6 +217,8 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
           privacyIgnoredEntityTypes: true,
           privacyProtectLocalProviders: true,
           privacyEmbeddingsPolicy: true,
+          privacyConfidentialPersonal: true,
+          privacyConfidentialCommercial: true,
         },
       })
     ),
@@ -263,6 +269,8 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
       serviceTier,
       providerTools,
       privacyMode,
+      privacyConfidentialPersonal,
+      privacyConfidentialCommercial,
       ...rest
     } = a;
     return {
@@ -279,6 +287,13 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
       // read an explicit none and loosen it. The source agent refuses every
       // call until a mode is chosen.
       ...(privacyMode === null || isTighteningMode(privacyMode) ? { privacyMode } : {}),
+      // The same for the confidential-content policies (§130).
+      ...(isStoredConfidentialPolicy(privacyConfidentialPersonal)
+        ? { privacyConfidentialPersonal }
+        : {}),
+      ...(isStoredConfidentialPolicy(privacyConfidentialCommercial)
+        ? { privacyConfidentialCommercial }
+        : {}),
       personaMode: narrowMode(personaMode),
       voiceMode: narrowMode(voiceMode),
       guardrailsMode: narrowMode(guardrailsMode),
@@ -314,13 +329,24 @@ async function readConfig(includeShared: boolean, orgId: string): Promise<Backup
   const exportedSettings =
     settings === null
       ? null
-      : (({ privacyMode, privacyIgnoredEntityTypes, privacyEmbeddingsPolicy, ...rest }) => {
+      : (({
+          privacyMode,
+          privacyIgnoredEntityTypes,
+          privacyEmbeddingsPolicy,
+          privacyConfidentialPersonal,
+          privacyConfidentialCommercial,
+          ...rest
+        }) => {
           const mode = parsePrivacyMode(privacyMode);
           return {
             ...rest,
             ...(mode !== null ? { privacyMode: mode } : {}),
             privacyIgnoredEntityTypes: parseIgnoredEntityTypes(privacyIgnoredEntityTypes),
             privacyEmbeddingsPolicy: parseEmbeddingsPolicy(privacyEmbeddingsPolicy),
+            // As the stage reads them: a stored value that is not a policy
+            // exports as `block`, never as something looser (§130).
+            privacyConfidentialPersonal: parseConfidentialPolicy(privacyConfidentialPersonal),
+            privacyConfidentialCommercial: parseConfidentialPolicy(privacyConfidentialCommercial),
           };
         })(settings);
 

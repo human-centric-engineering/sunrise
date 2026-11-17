@@ -10,7 +10,11 @@ import { z } from 'zod';
 import { REASONING_EFFORTS } from '@/lib/orchestration/llm/types';
 import { agentProviderToolsField, modelParamFields } from '@/lib/validations/orchestration';
 import { EMBEDDINGS_POLICIES } from '@/lib/orchestration/privacy/settings-policy';
-import { ENTITY_TYPE_PATTERN, PRIVACY_MODES_BY_STRICTNESS } from '@/lib/privacy/adapters/types';
+import {
+  CONFIDENTIAL_POLICIES_BY_STRICTNESS,
+  ENTITY_TYPE_PATTERN,
+  PRIVACY_MODES_BY_STRICTNESS,
+} from '@/lib/privacy/adapters/types';
 
 export const agentBackupSchema = z.object({
   name: z.string(),
@@ -110,6 +114,9 @@ export const agentBackupSchema = z.object({
   // left absent: the restore keeps the agent's current mode, as the
   // settings' mode is kept, rather than loosen a protection by omission.
   privacyMode: z.string().max(64).nullable().optional(),
+  // The confidential-content policies (§130, t-1037), the same way.
+  privacyConfidentialPersonal: z.string().max(64).nullable().optional(),
+  privacyConfidentialCommercial: z.string().max(64).nullable().optional(),
   maxHistoryTokens: z.number().nullable().optional().default(null),
   maxHistoryMessages: z.number().nullable().optional().default(null),
   retentionDays: z.number().nullable().optional().default(null),
@@ -200,6 +207,9 @@ const settingsBackupSchema = z.object({
   privacyIgnoredEntityTypes: z.array(z.string().regex(ENTITY_TYPE_PATTERN)).max(100).optional(),
   privacyProtectLocalProviders: z.boolean().optional(),
   privacyEmbeddingsPolicy: z.enum(EMBEDDINGS_POLICIES).optional(),
+  // §130. Absent on a backup from before them, and then left alone.
+  privacyConfidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
+  privacyConfidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
 });
 
 /**

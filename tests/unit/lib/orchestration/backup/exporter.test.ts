@@ -619,6 +619,70 @@ describe('exportOrchestrationConfig', () => {
     expect('privacyMode' in payload.data.agents[0]).toBe(exported !== undefined);
   });
 
+  it.each([
+    ['its policy', 'local_only', 'local_only'],
+    ['none for inheriting', null, null],
+    ['absent for a stored value that is not a policy', 'ask_first', undefined],
+  ])(
+    "exports an agent's confidential-content policies as %s (§130 t-1037)",
+    async (_label, stored, exported) => {
+      mockFindMany
+        .mockResolvedValueOnce([
+          {
+            ...agentRow,
+            privacyConfidentialPersonal: stored,
+            privacyConfidentialCommercial: stored,
+          },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+      mockFindUnique.mockResolvedValue(null);
+
+      const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+      const agent = payload.data.agents[0] as Record<string, unknown>;
+
+      for (const field of ['privacyConfidentialPersonal', 'privacyConfidentialCommercial']) {
+        expect(agent[field]).toBe(exported);
+        expect(field in agent).toBe(exported !== undefined);
+      }
+    }
+  );
+
+  it("exports the install's confidential-content policies, an unreadable one as block (§130 t-1037)", async () => {
+    mockFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue({
+      ...settingsRow,
+      privacyMode: 'detect',
+      privacyIgnoredEntityTypes: [],
+      privacyProtectLocalProviders: false,
+      privacyEmbeddingsPolicy: 'allow',
+      privacyConfidentialPersonal: 'warn',
+      privacyConfidentialCommercial: 'garbled',
+    });
+
+    const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          privacyConfidentialPersonal: true,
+          privacyConfidentialCommercial: true,
+        }),
+      })
+    );
+    expect(payload.data.settings).toMatchObject({
+      privacyConfidentialPersonal: 'warn',
+      privacyConfidentialCommercial: 'block',
+    });
+  });
+
   it('emits knowledgeAccessMode as "full" for any non-restricted value', async () => {
     // Any value that is not 'restricted' coerces to 'full' (the else branch)
     const fullAgentRow = {

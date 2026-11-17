@@ -391,6 +391,23 @@ describe('SearchKnowledgeCapability', () => {
       expect(result.error?.message).toMatch(/local embedding model/i);
     });
 
+    it('returns a tool error the model can act on when the query holds confidential content (§130)', async () => {
+      vi.mocked(searchKnowledgeWithEmbedding).mockRejectedValue(
+        new PrivacyRefusedError('confidential_not_permitted', 'openai')
+      );
+
+      const result = await new SearchKnowledgeCapability().execute(
+        { query: 'redundancy plans for the Hull site' },
+        context
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('confidential_content');
+      expect(result.error?.message).toMatch(/search again without it/i);
+      // Never echoes the query.
+      expect(result.error?.message).not.toMatch(/Hull/);
+    });
+
     it('rethrows a privacy refusal for any other reason', async () => {
       const err = new PrivacyRefusedError('stage_error', 'openai');
       vi.mocked(searchKnowledgeWithEmbedding).mockRejectedValue(err);

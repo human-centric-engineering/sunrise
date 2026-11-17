@@ -252,6 +252,34 @@ export async function isLocalProvider(slugOrName: string): Promise<boolean> {
 }
 
 /**
+ * Whether `slugOrName` is ticked "Trusted with confidential content" (§130),
+ * read off its row the way {@link isLocalProvider} reads `isLocal`: the
+ * cached row when fresh, else the database. `false` when it cannot be found
+ * or read, and for a provider a fork registered in code, which has no row:
+ * an `approved_only` policy then refuses rather than send confidential
+ * content somewhere nobody ticked.
+ */
+export async function isTrustedProvider(slugOrName: string): Promise<boolean> {
+  try {
+    const cached = instanceCache.get(slugOrName);
+    if (isFresh(cached) && cached.config) return cached.config.trustedForConfidential === true;
+    const select = { trustedForConfidential: true } as const;
+    const config =
+      (await prisma.aiProviderConfig.findFirst({ where: { slug: slugOrName }, select })) ??
+      (await prisma.aiProviderConfig.findFirst({ where: { name: slugOrName }, select }));
+    return config?.trustedForConfidential === true;
+  } catch (err) {
+    // Said, so an `approved_only` refusal of a ticked provider is not
+    // debugged as a missing tick.
+    logger.warn('privacy: could not read whether a provider is trusted; treated as untrusted', {
+      provider: slugOrName,
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
+    return false;
+  }
+}
+
+/**
  * Whether a provider row builds a local client. A Voyage row never does: its
  * `isLocal` decides only whether its `baseUrl` may be on loopback.
  */
@@ -419,7 +447,13 @@ async function privacyStage(
 ): Promise<{ sent: unknown[]; restorer?: CallRestorer }> {
   const coverage = PRIVACY_COVERAGE[prop];
   if (coverage === 'none') return { sent: args };
-  const result = await applyPrivacyStage({ providerSlug: slug, isLocal, coverage, args });
+  const result = await applyPrivacyStage({
+    providerSlug: slug,
+    isLocal,
+    isTrusted: () => isTrustedProvider(slug),
+    coverage,
+    args,
+  });
   return {
     sent: [...result.args],
     ...(result.restorer ? { restorer: result.restorer } : {}),

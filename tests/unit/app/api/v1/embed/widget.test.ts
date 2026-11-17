@@ -561,3 +561,37 @@ describe('Embed widget multi-line message input (Phase 5)', () => {
     expect(body).toMatch(/\.input-area textarea\s*\{[^}]*resize:\s*none/);
   });
 });
+
+describe('Embed widget confidential-content note (§130 t-1037)', () => {
+  it('shows a confidential_* warning as a plain-text note, and no other warning', async () => {
+    const body = await GET(makeGetRequest()).text();
+    expect(body).toContain("evt.type === 'warning' && isVisitorNotice(evt.data)");
+    expect(body).toContain("data.code.indexOf('confidential_') === 0");
+  });
+
+  it('renders the note with textContent, never markup', async () => {
+    const body = await GET(makeGetRequest()).text();
+    const start = body.indexOf('function addNotice(text)');
+    expect(start).toBeGreaterThan(-1);
+    const fn = body.slice(start, body.indexOf('\n    }', start));
+    expect(fn).toContain('div.textContent = text;');
+    expect(fn).not.toContain('innerHTML');
+  });
+
+  it('decides which warnings a visitor sees as the server sends them', async () => {
+    const body = await GET(makeGetRequest()).text();
+    const start = body.indexOf('function isVisitorNotice(data)');
+    const end = body.indexOf('\n    }', start);
+    // The served source, run on its own: the function, then its name as the result.
+    const isVisitorNotice: unknown = new Script(
+      `${body.slice(start, end)}\n    }\nisVisitorNotice;`
+    ).runInNewContext({});
+    if (typeof isVisitorNotice !== 'function') throw new Error('isVisitorNotice not found');
+    expect(isVisitorNotice({ code: 'confidential_personal', message: 'note' })).toBe(true);
+    expect(isVisitorNotice({ code: 'confidential_commercial', message: 'note' })).toBe(true);
+    // An agent's budget is for operators, not a site's visitors.
+    expect(isVisitorNotice({ code: 'budget_warning', message: '85% used' })).toBe(false);
+    expect(isVisitorNotice({ code: 'confidential_personal' })).toBe(false);
+    expect(isVisitorNotice(null)).toBe(false);
+  });
+});

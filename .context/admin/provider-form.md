@@ -58,7 +58,9 @@ A `role="radiogroup"` of sixteen bordered cards organized into six collapsible g
 | ------------------- | ----------------------------------------- | ------------------- | ------------------ | --------- | ---------------------- |
 | `openai-compatible` | Name, Slug, baseUrl, apiKeyEnvVar, Active | `openai-compatible` | — (required input) | `false`   | — (optional input)     |
 
-`providerType` and `isLocal` are never tracked in form state — they're derived from `flavor` on submit and injected into the POST/PATCH payload. The client-side Zod schema only tracks `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?, isActive, timeoutMs?, maxRetries? }`.
+`providerType` and `isLocal` are never tracked in form state — they're derived from `flavor` on submit and injected into the POST/PATCH payload. The client-side Zod schema only tracks `{ flavor, name, slug, baseUrl?, apiKeyEnvVar?, isActive, trustedForConfidential, timeoutMs?, maxRetries? }`.
+
+**Trusted with confidential content** (§130, t-1037) is a switch beside Active, with a `<FieldHelp>`, for every flavor but a local one: a local provider always counts as trusted, so the switch is hidden and `false` is sent. A confidential-content policy of "trusted or local providers only" sends flagged messages only to a ticked or local provider. The providers list shows a **Trusted** badge on a ticked provider that is not local.
 
 ### Reverse mapping on edit
 

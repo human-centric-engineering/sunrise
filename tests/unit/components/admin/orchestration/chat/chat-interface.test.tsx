@@ -1053,6 +1053,48 @@ describe('ChatInterface', () => {
     expect(screen.queryByText('Token limit approaching')).not.toBeInTheDocument();
   });
 
+  it('keeps a confidential-content note after the turn ends, one per group, until the next message (§130 t-1037)', async () => {
+    const user = userEvent.setup();
+    const note = (code: string, message: string) =>
+      'event: warning\ndata: ' + JSON.stringify({ code, message }) + '\n\n';
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          body: makeSseStream([
+            startFrame('conv-1', 'msg-1'),
+            contentFrame('Noted.'),
+            note('confidential_personal', 'Personal note.'),
+            note('confidential_commercial', 'Commercial note.'),
+            doneFrame(),
+          ]),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          body: makeSseStream([startFrame('conv-1', 'msg-2'), contentFrame('Again.'), doneFrame()]),
+        })
+    );
+
+    render(<ChatInterface agentSlug="test-agent" />);
+    const input = screen.getByPlaceholderText(/type a message/i);
+    await user.type(input, 'First');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(screen.getByText('Noted.')).toBeInTheDocument());
+    // `done` came after both notes, and neither was cleared by it.
+    expect(screen.getAllByTestId('confidential-notice').map((n) => n.textContent)).toEqual([
+      'Personal note.',
+      'Commercial note.',
+    ]);
+
+    await user.type(input, 'Second');
+    await user.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => expect(screen.getByText('Again.')).toBeInTheDocument());
+    expect(screen.queryByTestId('confidential-notice')).not.toBeInTheDocument();
+  });
+
   it('handles content_reset by clearing accumulated content', async () => {
     const user = userEvent.setup();
     const stream = makeSseStream([

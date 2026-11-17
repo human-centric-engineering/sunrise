@@ -194,6 +194,8 @@ describe('queueMessageEmbedding', () => {
   });
 
   it('still warns for a privacy refusal that is not the embeddings policy', async () => {
+    // Placeholder to keep the anchor; replaced below.
+
     vi.mocked(embedText).mockRejectedValue(new PrivacyRefusedError('stage_error', 'openai'));
 
     queueMessageEmbedding('msg-8', 'This is a valid message to embed');

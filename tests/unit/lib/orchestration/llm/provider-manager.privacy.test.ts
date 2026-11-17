@@ -29,7 +29,11 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-const privacy = vi.hoisted((): { mode: string | null } => ({ mode: 'detect' }));
+const privacy = vi.hoisted((): { mode: string | null; personal: string; commercial: string } => ({
+  mode: 'detect',
+  personal: 'allow',
+  commercial: 'allow',
+}));
 vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/settings')>()),
   getOrchestrationSettings: vi.fn(async () => ({
@@ -37,6 +41,8 @@ vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
     privacyMode: privacy.mode,
     privacyIgnoredEntityTypes: ['DATE', 'LOCATION'],
     privacyProtectLocalProviders: false,
+    privacyConfidentialPersonal: privacy.personal,
+    privacyConfidentialCommercial: privacy.commercial,
   })),
 }));
 
@@ -57,9 +63,12 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import {
   clearCache,
   getProvider,
+  isTrustedProvider,
   registerProviderInstance,
 } from '@/lib/orchestration/llm/provider-manager';
 import {
@@ -140,6 +149,8 @@ beforeEach(() => {
   __resetInFlightCountersForTests();
   __resetPrivacyAdaptersForTests();
   privacy.mode = 'detect';
+  privacy.personal = 'allow';
+  privacy.commercial = 'allow';
   masking.fail = false;
 });
 
@@ -389,5 +400,54 @@ describe('pseudonymise through the Proxy (t-992)', () => {
     ).rejects.toMatchObject({ reason: 'stage_error' });
     expect(received).toEqual([]);
     expect(provider.chat).not.toHaveBeenCalled();
+  });
+});
+
+describe('a confidential-content policy through the Proxy (§130 t-1037)', () => {
+  const LAUNCH: LlmMessage[] = [
+    { role: 'user', content: "Write teaser copy for the S27, it's unannounced until March." },
+  ];
+  const trusted = (value: boolean | null) =>
+    vi
+      .mocked(prisma.aiProviderConfig.findFirst)
+      .mockResolvedValue((value === null ? null : { trustedForConfidential: value }) as never);
+
+  it("asks the provider's row whether it is trusted, and sends to one that is", async () => {
+    privacy.commercial = 'approved_only';
+    trusted(true);
+    const { provider: fake, received } = fakeProvider();
+    registerProviderInstance('probe', fake);
+
+    await inTurn(async () => (await getProvider('probe')).chat(LAUNCH, { model: 'm' }));
+
+    expect(received.map((r) => r.method)).toEqual(['chat']);
+    expect(prisma.aiProviderConfig.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'probe' },
+      select: { trustedForConfidential: true },
+    });
+  });
+
+  it('refuses one that is not, and the vendor never sees the call', async () => {
+    privacy.commercial = 'approved_only';
+    trusted(false);
+    const { provider: fake, received } = fakeProvider();
+    registerProviderInstance('probe', fake);
+
+    await expect(
+      inTurn(async () => (await getProvider('probe')).chat(LAUNCH, { model: 'm' }))
+    ).rejects.toMatchObject({ reason: 'confidential_not_permitted' });
+    expect(received).toEqual([]);
+  });
+
+  it('treats a provider with no row, or a row it cannot read, as untrusted', async () => {
+    trusted(null);
+    await expect(isTrustedProvider('registered-in-code')).resolves.toBe(false);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockRejectedValue(new Error('db down'));
+    await expect(isTrustedProvider('probe')).resolves.toBe(false);
+    // Said, so a refusal of a ticked provider is not debugged as a missing tick.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'privacy: could not read whether a provider is trusted; treated as untrusted',
+      { provider: 'probe', errorName: 'Error' }
+    );
   });
 });

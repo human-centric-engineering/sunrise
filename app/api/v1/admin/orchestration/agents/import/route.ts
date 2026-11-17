@@ -256,6 +256,13 @@ export const POST = withAdminAuth(
               // agent's own mode rather than loosen a protection by omission;
               // a new agent inherits the install's.
               ...(bundled.privacyMode !== undefined ? { privacyMode: bundled.privacyMode } : {}),
+              // Absent on a bundle from before t-1037: kept, as above.
+              ...(bundled.privacyConfidentialPersonal !== undefined
+                ? { privacyConfidentialPersonal: bundled.privacyConfidentialPersonal }
+                : {}),
+              ...(bundled.privacyConfidentialCommercial !== undefined
+                ? { privacyConfidentialCommercial: bundled.privacyConfidentialCommercial }
+                : {}),
               maxHistoryTokens: bundled.maxHistoryTokens ?? null,
               maxHistoryMessages: bundled.maxHistoryMessages ?? null,
               retentionDays: bundled.retentionDays ?? null,

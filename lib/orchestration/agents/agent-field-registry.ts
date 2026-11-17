@@ -325,6 +325,18 @@ const CORE_SCALAR_FIELDS = {
     versioned: true,
     ui: { label: 'LLM privacy mode', tab: 'Model', order: 215 },
   },
+  // Where this agent's confidential content may go, per group (§130, t-1037):
+  // an org's choice, like its privacy mode, and only ever tightening.
+  privacyConfidentialPersonal: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'Confidential content: personal', tab: 'Model', order: 216 },
+  },
+  privacyConfidentialCommercial: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'Confidential content: commercial', tab: 'Model', order: 217 },
+  },
   topicBoundaries: {
     platformAgent: 'code',
     versioned: true,

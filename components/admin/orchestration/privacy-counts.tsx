@@ -31,6 +31,10 @@ const REFUSAL_TEXT: Record<PrivacyRefusalReason, string> = {
   content_blocked: 'personal data found (block mode)',
   detector_failed: 'a detector failed or ran out of time',
   embeddings_local_only: 'embedding refused: local embedding models only',
+  confidential_blocked: 'confidential content (block policy)',
+  confidential_not_permitted:
+    "confidential content its group's policy does not send to this provider",
+  confidential_unchecked: 'a confidential-content classifier failed under a strict policy',
   app_init_failed: "the app's privacy adapters failed to load",
   core_install_failed: 'a built-in privacy adapter failed to load',
   settings_unreadable: 'the stored privacy mode is unreadable',
@@ -62,11 +66,23 @@ function categoryText(category: string): string {
   return CATEGORY_TEXT.get(category) ?? category.replaceAll('_', ' ');
 }
 
-/** The confidential content found, by group: "personal: health, HR matter · commercial: not public". */
-function sensitivityText(sensitivity: NonNullable<PrivacySummary['sensitivity']>): string | null {
-  const groups = SENSITIVITY_GROUPS.filter((g) => (sensitivity[g]?.length ?? 0) > 0).map(
-    (g) => `${g}: ${(sensitivity[g] ?? []).map(categoryText).join(', ')}`
-  );
+/**
+ * The confidential content found, by group, with what its policy did when
+ * there is a decision (§130): "personal: health, HR matter (warned) ·
+ * commercial: not public (refused)". A decision this version does not know
+ * shows as written.
+ */
+function sensitivityText(
+  sensitivity: NonNullable<PrivacySummary['sensitivity']>,
+  confidential: PrivacySummary['confidential']
+): string | null {
+  const groups = SENSITIVITY_GROUPS.filter((g) => (sensitivity[g]?.length ?? 0) > 0).map((g) => {
+    const decisions = confidential?.[g] ?? [];
+    const categories = (sensitivity[g] ?? []).map(categoryText).join(', ');
+    return decisions.length > 0
+      ? `${g}: ${categories} (${decisions.join(', ')})`
+      : `${g}: ${categories}`;
+  });
   return groups.length === 0 ? null : groups.join(' · ');
 }
 
@@ -96,7 +112,9 @@ function summaryText(summary: PrivacySummary): string {
 }
 
 export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
-  const confidential = summary.sensitivity ? sensitivityText(summary.sensitivity) : null;
+  const confidential = summary.sensitivity
+    ? sensitivityText(summary.sensitivity, summary.confidential)
+    : null;
   return (
     <div
       className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
@@ -141,7 +159,9 @@ export function PrivacyCounts({ summary }: { summary: PrivacySummary }) {
         business in trouble, a legal dispute). It is spotted by a phrase list, so it catches what is
         said outright and misses what is only implied. Like the counts, it covers everything a
         turn&apos;s calls carried, so a disclosure from an earlier turn shows again on each later
-        turn that resent it. The text itself is never stored.
+        turn that resent it. Beside each group is what its confidential-content policy did with the
+        calls that held it, each that applied: allowed (sent), warned (sent, and the user told once)
+        or refused (not sent). The text itself is never stored.
       </FieldHelp>
     </div>
   );

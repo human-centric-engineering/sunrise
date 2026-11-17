@@ -16,7 +16,9 @@ import {
   currentPrivacyScope,
   knownValuesOf,
   privacySummary,
+  recordConfidentialDecision,
   recordPrivacyCall,
+  recordPrivacySensitivity,
   recordPrivacyRefusal,
   recordPrivacyUnresolved,
   runInPrivacyScope,
@@ -289,5 +291,38 @@ describe('one store per process (#1138)', () => {
       instrumentation.currentPrivacyScope()
     );
     expect(seen).toBe(scope);
+  });
+});
+
+describe('confidential-content decisions (§130 t-1037)', () => {
+  it('keeps every decision per group, in order, here and in every scope it sits in', () => {
+    const turn = createPrivacyScope({ scopeId: 'turn' });
+    const step = childPrivacyScope(turn, 'step');
+    recordPrivacySensitivity(step, {
+      mode: 'detect',
+      categories: [
+        { category: 'health', group: 'personal' },
+        { category: 'deal', group: 'commercial' },
+      ],
+      failedAdapters: [],
+    });
+    recordConfidentialDecision(step, { personal: 'warned', commercial: 'allowed' });
+    recordConfidentialDecision(step, { personal: 'allowed', commercial: 'refused' });
+    recordConfidentialDecision(step, { personal: 'warned' });
+
+    for (const scope of [step, turn]) {
+      // A sent call and a refused one in one turn read both: the content was
+      // sent, whatever else was refused.
+      expect(privacySummary(scope)?.confidential).toEqual({
+        personal: ['allowed', 'warned'],
+        commercial: ['allowed', 'refused'],
+      });
+    }
+  });
+
+  it('adds nothing to a summary when no decision was recorded', () => {
+    const scope = createPrivacyScope({ scopeId: 'turn' });
+    recordPrivacyCall(scope, chat({ EMAIL: 1 }));
+    expect(privacySummary(scope)).not.toHaveProperty('confidential');
   });
 });

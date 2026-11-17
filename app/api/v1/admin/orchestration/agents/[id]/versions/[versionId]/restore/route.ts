@@ -79,6 +79,10 @@ const versionSnapshotSchema = updateAgentObjectSchema.extend({
   provider: z.union([z.literal(''), updateAgentObjectSchema.shape.provider.unwrap()]).optional(),
   model: z.union([z.literal(''), updateAgentObjectSchema.shape.model.unwrap()]).optional(),
   privacyMode: z.string().max(64).nullable().optional(),
+  // The same for the confidential-content policies (§130, t-1037): a value
+  // this release does not know restores as it was, and refuses until fixed.
+  privacyConfidentialPersonal: z.string().max(64).nullable().optional(),
+  privacyConfidentialCommercial: z.string().max(64).nullable().optional(),
 });
 
 export const POST = withAdminAuth<{ id: string; versionId: string }>(

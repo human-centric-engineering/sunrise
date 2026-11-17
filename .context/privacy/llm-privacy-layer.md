@@ -32,7 +32,7 @@ has merged; this table says what exists.
 | A reply whose embedding fails or is refused no longer holds the backfill back          | t-1016 | **Built** |
 | Running a local embedding model: checked end to end, documented                        | t-1011 | **Built** |
 | Confidential content: the classifier slot, core's phrase list, recorded on the trace   | t-1036 | **Built** |
-| Confidential content: per-group policy, trusted providers, warn, block, the backstop   | t-1037 | Not yet   |
+| Confidential content: per-group policy, trusted providers, warn, block, the backstop   | t-1037 | **Built** |
 | Confidential content: answering a flagged conversation on the confidential model       | t-1038 | Not yet   |
 
 ## Quick Reference
@@ -56,6 +56,8 @@ has merged; this table says what exists.
 | The stage on every vendor call | `applyPrivacyStage()` — `lib/orchestration/llm/privacy-stage.ts`                    |
 | Mask a call, restore its reply | `maskMessages()`, `CallRestorer` — `lib/orchestration/privacy/call-masking.ts`      |
 | Tell a local-only refusal      | `isLocalOnlyEmbeddingRefusal(err)` — `lib/orchestration/llm/privacy-stage.ts`       |
+| Tell a confidential refusal    | `isConfidentialRefusal(err)` — `lib/orchestration/llm/privacy-stage.ts`             |
+| Is a provider trusted          | `isTrustedProvider(slug)` — `lib/orchestration/llm/provider-manager.ts`             |
 | Enter a scope for some work    | `withPrivacyScope()` / `runInPrivacyScope()` — `lib/orchestration/privacy/scope.ts` |
 | Run one named agent's calls    | `runInPrivacyScope(agentPrivacyScope(agent.id), …)` — `scope.ts`                    |
 | The agent's and org's settings | `scopePrivacySettings()` — `lib/orchestration/privacy/scope-settings.ts`            |
@@ -106,15 +108,18 @@ Sunrise core makes already passes through it, so no caller changes.
 1. Resolve the policy: global settings, then the agent's mode and the org
    floor (core's resolver, `core.scope-settings`), then any app resolver —
    each can only tighten.
-2. `off`: forward the call untouched. Local providers are skipped unless the
+2. Classify it for confidential content and apply each group's policy
+   (§130): refuse a call holding a group whose policy is `block`, or does not
+   permit the provider. In every mode, before step 3's early returns.
+3. `off`: forward the call untouched. Local providers are skipped unless the
    policy protects them.
-3. Detect: run every detector over the outbound text (messages, system prompt,
+4. Detect: run every detector over the outbound text (messages, system prompt,
    tool results).
-4. Act per mode: count (`detect`), replace and later restore (`pseudonymise`),
+5. Act per mode: count (`detect`), replace and later restore (`pseudonymise`),
    replace for good (`redact`), or refuse (`block`).
-5. Restore placeholders in the streamed reply and in tool-call arguments before
+6. Restore placeholders in the streamed reply and in tool-call arguments before
    dispatch, so a capability runs with real values (`pseudonymise` only).
-6. Record per-type counts, never values, in message and execution metadata, and
+7. Record per-type counts, never values, in message and execution metadata, and
    notify observers.
 
 The privacy scope (org, conversation or execution, agent, known values,
@@ -726,21 +731,24 @@ timeout bounds one detector, not the pass: the stage bounds the pass by passing
 a deadline as the call's signal (`AbortSignal.timeout()`), and detectors left
 when it fires are reported `aborted`.
 
-| Failure                                                     | Reported as                            | What the stage does                                                                                                                                              |
-| ----------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| An optional detector fails or times out                     | `failures`, `required: false`          | Carries on; the call is marked degraded                                                                                                                          |
-| A required detector fails (every core detector is required) | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded                                                                                          |
-| A policy resolver fails or returns a non-policy             | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                                                                                                              |
-| An observer fails                                           | logged                                 | Nothing; observers are fire-and-forget                                                                                                                           |
-| The app's init threw                                        | `appInitFailure`                       | Refuses every call, mode `off` included                                                                                                                          |
-| A core adapter failed to install                            | `coreFailure`                          | Refuses every call, mode `off` included                                                                                                                          |
-| The stored mode is not a mode                               | `settings_unreadable`                  | Refuses every call until a mode is chosen                                                                                                                        |
-| A required detector fails under `pseudonymise` or stricter  | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)                                                                                         |
-| `block`, and something was found                            | `content_blocked`                      | Refuses with code `privacy_blocked`; the turn is left out of later history, and so is what earlier held it (t-1017) or a memory that held it is deleted (t-1018) |
-| An external embedding call under `local_only`               | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                                                                                                       |
-| An agent's mode or an org's privacy settings cannot be read | `policy_resolver_failed`               | Refuses every call for it; the log names the agent or org, not the value                                                                                         |
-| A bug throws inside the stage, or settings cannot be read   | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose                                                                                           |
-| The model mangles a placeholder                             | —                                      | Lenient restore; anything unresolved is left visible and counted                                                                                                 |
+| Failure                                                                   | Reported as                            | What the stage does                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An optional detector fails or times out                                   | `failures`, `required: false`          | Carries on; the call is marked degraded                                                                                                                                                                                                                                                                           |
+| A required detector fails (every core detector is required)               | `failures`, `required: true`           | `onDetectorFailure: 'block'` refuses; `'fallback'` carries on, degraded                                                                                                                                                                                                                                           |
+| A policy resolver fails or returns a non-policy                           | `failures` from `resolvePrivacyPolicy` | Refuses: the resolver may have tightened the policy                                                                                                                                                                                                                                                               |
+| An observer fails                                                         | logged                                 | Nothing; observers are fire-and-forget                                                                                                                                                                                                                                                                            |
+| The app's init threw                                                      | `appInitFailure`                       | Refuses every call, mode `off` included                                                                                                                                                                                                                                                                           |
+| A core adapter failed to install                                          | `coreFailure`                          | Refuses every call, mode `off` included                                                                                                                                                                                                                                                                           |
+| The stored mode is not a mode                                             | `settings_unreadable`                  | Refuses every call until a mode is chosen                                                                                                                                                                                                                                                                         |
+| A required detector fails under `pseudonymise` or stricter                | `detector_failed`                      | Refuses a chat call: sent, it would carry what was missed (owner ruling)                                                                                                                                                                                                                                          |
+| `block`, and something was found                                          | `content_blocked`                      | Refuses with code `privacy_blocked`; the turn is left out of later history, and so is what earlier held it (t-1017) or a memory that held it is deleted (t-1018)                                                                                                                                                  |
+| An external embedding call under `local_only`                             | `embeddings_local_only`                | Refuses; each caller gives its own remedy (see Embeddings)                                                                                                                                                                                                                                                        |
+| Confidential content under a group's `block` policy                       | `confidential_blocked`                 | Refuses with code `privacy_confidential`, any provider; placed and left out of later history like `content_blocked` (see [Confidential content](#confidential-content))                                                                                                                                           |
+| Confidential content, and the group's policy does not permit the provider | `confidential_not_permitted`           | Refuses with code `privacy_confidential`; placed as above                                                                                                                                                                                                                                                         |
+| A sensitivity classifier fails under a strict group policy                | `confidential_unchecked`               | Counts as flagged in every group whose policy is `approved_only`, `local_only` or `block` and refuses where that policy would; nothing was found, so it carries `privacy_refused`, the reader is not told their message held anything, and nothing is placed or left out. Under `allow` and `warn`, degraded only |
+| An agent's mode or an org's privacy settings cannot be read               | `policy_resolver_failed`               | Refuses every call for it; the log names the agent or org, not the value                                                                                                                                                                                                                                          |
+| A bug throws inside the stage, or settings cannot be read                 | `stage_error`                          | Refuses. Never sends unmasked. The opposite of guard-floor, on purpose                                                                                                                                                                                                                                            |
+| The model mangles a placeholder                                           | —                                      | Lenient restore; anything unresolved is left visible and counted                                                                                                                                                                                                                                                  |
 
 Every refusal ships its remedy: the user sees a plain message
 (`privacy_refused` in `chat/error-messages.ts`), and the operator finds the
@@ -762,15 +770,17 @@ the caller reads. Observers get counts and ids only.
 
 ## Policy
 
-`PrivacyPolicy` has four fields, and `tightenPolicy()` keeps the stricter value
+`PrivacyPolicy` has six fields, and `tightenPolicy()` keeps the stricter value
 of each:
 
-| Field                   | Values                           | Stricter is                   |
-| ----------------------- | -------------------------------- | ----------------------------- |
-| `mode`                  | see [Modes](#modes)              | later in the strictness order |
-| `ignoredEntityTypes`    | entity types left alone          | fewer (the intersection)      |
-| `protectLocalProviders` | apply to `isLocal` providers too | `true`                        |
-| `onDetectorFailure`     | `fallback` \| `block`            | `block`                       |
+| Field                    | Values                                                                 | Stricter is                   |
+| ------------------------ | ---------------------------------------------------------------------- | ----------------------------- |
+| `mode`                   | see [Modes](#modes)                                                    | later in the strictness order |
+| `ignoredEntityTypes`     | entity types left alone                                                | fewer (the intersection)      |
+| `protectLocalProviders`  | apply to `isLocal` providers too                                       | `true`                        |
+| `onDetectorFailure`      | `fallback` \| `block`                                                  | `block`                       |
+| `confidentialPersonal`   | `allow` \| `warn` \| `approved_only` \| `local_only` \| `block` (§130) | later in that order           |
+| `confidentialCommercial` | the same                                                               | later in that order           |
 
 `ignoredEntityTypes` lists exclusions, not inclusions, so a type a new detector
 introduces is protected by default. A resolver's answer is validated by
@@ -779,13 +789,15 @@ tightening that did nothing) and combined, never trusted to tighten by itself.
 
 ### Settings
 
-| Setting           | Where                             | Values                                                          | Default                                                            | Task          |
-| ----------------- | --------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------ | ------------- |
-| Mode              | global, agent override, org floor | the five modes globally; the four but `off` for an agent or org | `off` on upgrade, `detect` on a new install; agent and org inherit | t-991, t-1010 |
-| Entity types      | global                            | per-type on or off                                              | identifiers on; `DATE` and `LOCATION` off                          | t-991         |
-| Local providers   | global                            | protect or skip                                                 | skip                                                               | t-991         |
-| Protected terms   | org (`Org.settings`)              | names always masked, each a person or an organisation           | empty; the form suggests the org's own name until the org saves    | t-1010        |
-| Embeddings policy | global                            | `allow` \| `local_only`                                         | `allow`                                                            | t-992         |
+| Setting                            | Where                                                | Values                                                          | Default                                                                                  | Task          |
+| ---------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------- |
+| Mode                               | global, agent override, org floor                    | the five modes globally; the four but `off` for an agent or org | `off` on upgrade, `detect` on a new install; agent and org inherit                       | t-991, t-1010 |
+| Entity types                       | global                                               | per-type on or off                                              | identifiers on; `DATE` and `LOCATION` off                                                | t-991         |
+| Local providers                    | global                                               | protect or skip                                                 | skip                                                                                     | t-991         |
+| Protected terms                    | org (`Org.settings`)                                 | names always masked, each a person or an organisation           | empty; the form suggests the org's own name until the org saves                          | t-1010        |
+| Embeddings policy                  | global                                               | `allow` \| `local_only`                                         | `allow`                                                                                  | t-992         |
+| Confidential: personal, commercial | global, agent override                               | the five policies globally; the four but `allow` for an agent   | `allow` on upgrade; on a new install `warn` personal, `allow` commercial; agent inherits | t-1037        |
+| Trusted with confidential content  | provider (`AiProviderConfig.trustedForConfidential`) | ticked or not; hidden for a local provider, which always counts | unticked                                                                                 | t-1037        |
 
 The global values are columns on `AiOrchestrationSettings` (one row per
 install): `privacyMode`, `privacyIgnoredEntityTypes`,
@@ -1100,6 +1112,14 @@ Ruled at claim, 2026-11-11, from real deployments:
   with the reason; a `rag_retrieve` step fails with the refusal's message; a refused upload stores the refusal's own
   message, which names the setting, as the document's `errorMessage`. A
   stored value that is not a policy reads as `local_only`.
+- A refusal for confidential content (§130) is recognised with
+  `isConfidentialRefusal()` and answered the same way: a reply's embedding is
+  skipped and logged at info (the backfill counts it skipped, as any privacy
+  refusal); `search_knowledge_base` returns the tool error
+  `confidential_content`, telling the model to search without it; the admin
+  search test answers 409 `CONFIDENTIAL_CONTENT` and the MCP resource an error
+  body. A refused embedding is never placed: there is no history to leave it
+  out of.
 - The settings page warns when the mode is `pseudonymise` or stricter,
   embeddings go to a provider that is not `isLocal`, and the policy is
   `allow`. Whether the provider is local comes from
@@ -1196,10 +1216,14 @@ in one of the two groups.
   rolls a registered classifier back and the layer refuses every call
   (_Loading_).
 - `egress` and `jurisdiction` as for detectors. An external classifier is sent
-  the parts it is given and nothing more, and **not at all on a call the layer
+  the parts it is given and nothing more, and **not on a call the layer
   forwards untouched** (mode `off`, or a local provider it skips): there it
   would be the one place the text went beyond the provider the operator
   chose. In-process and self-hosted classifiers still run on those calls.
+  One exception (t-1037): a call to a remote provider that a group's policy
+  could refuse is sent to external classifiers too, or a policy whose only
+  classifier is external would be enforced by nothing. A call to a local
+  provider never is.
 
 ### What is classified
 
@@ -1212,6 +1236,11 @@ parts, for any classifier. **Core's classifier reads only `user` parts and
   says "grievance" on every call.
 - **Not tool results or retrieved knowledge.** An HR policy document would flag
   every question asked of it.
+- **Not knowledge being ingested.** `embedBatch` (uploads, chunking, the
+  seeder) runs in an `operatorContentScope()`, whose calls the stage does not
+  classify, so an HR handbook that says "redundancies" still uploads under a
+  strict policy. It is a child of the current scope, so an agent's privacy
+  settings still apply to it otherwise.
 - **Not tool-call arguments**, which no classifier is given. They are the
   model's, derived from what the user wrote, which is already classified.
 - **Embedding inputs are**, because they carry what the user wrote (a search
@@ -1234,8 +1263,10 @@ early returns for `off` and for a skipped local provider, so it sees the calls
 those returns forward.
 
 A call in an ephemeral scope (no turn or execution: ingestion, a background
-job) is not classified while nothing acts on the result. The backstop (t-1037)
-classifies it when a policy that could refuse it applies.
+job), or one that records nowhere (an agent's reply embedding), is classified
+only when a group's policy could refuse it at this provider: `block`,
+`local_only` on a provider that is not local, or `approved_only` on one that
+is neither local nor trusted. Otherwise nothing would read the result.
 
 ### What is recorded
 
@@ -1253,6 +1284,19 @@ does. Classification adds to a scope's summary only when it found something or a
 classifier failed, so an install in mode `off` gains a privacy line on a turn
 only when that turn held something confidential. The trace shows the categories
 beside the counts (`components/admin/orchestration/privacy-counts.tsx`).
+
+What the policy did with them is recorded too (t-1037),
+`PrivacySummary.confidential: { personal?, commercial? }`, each `allowed`,
+`warned` or `refused`: every decision any call in the scope got for that
+group, in that order. A turn whose chat call was sent and whose knowledge
+search embedding was refused reads `allowed, refused`, not a refusal alone,
+which would say the content never left. A call refused for a group records
+every group it held as refused, since none of it was sent. `allowed` and
+`warned` are recorded only once the call is actually sent, so a call the
+personal-data detectors then refuse (`content_blocked`) reads neither. The trace shows
+the decisions beside each group ("personal: health (allowed, refused)"). It is recorded only for a group whose
+content was found, so a refusal caused by a classifier failure shows in
+`refused` and `degraded`, not here.
 
 ### Policy (t-1037)
 
@@ -1294,6 +1338,78 @@ and `block`, and is recorded as degraded under `allow` and `warn`. Embedding
 callers handle the refusal as they handle `embeddings_local_only`. A refusal
 under `block` is left out of later history and placed, by §127's machinery.
 An org floor per group is not in this feature.
+
+### What is built (t-1037)
+
+- **Fields.** `AiOrchestrationSettings.privacyConfidentialPersonal` and
+  `…Commercial`, `AiAgent` columns of the same names (null inherits; declared
+  in the core field registry, versioned, org-owned on a platform agent like
+  `privacyMode`), and `AiProviderConfig.trustedForConfidential`. Labels and
+  parsing in `lib/orchestration/privacy/settings-policy.ts`: a stored install
+  value that is not a policy reads as `block`, and an agent's throws, so the
+  stage refuses (`policy_resolver_failed`), as for an unknown mode.
+  `core.scope-settings` proposes the agent's two policies with its mode, read
+  in the same query. Settings, agent and provider forms each carry them, with
+  `<FieldHelp>`; the settings page and the agent form say what a phrase list
+  misses. Backup, the agent export and import, and version restore carry
+  them, an unknown agent value left out of an export as an unknown mode is.
+- **The backstop** (`applyPrivacyStage`): classify, then decide per group,
+  after the `embeddings_local_only` refusal and before the returns for `off`
+  and a skipped local provider. The provider tick is read only when an
+  `approved_only` policy needs it, through `isTrustedProvider(slug)` on the
+  provider manager (the cached row, else the database); a provider registered
+  in code, with no row, or a read that fails, counts as untrusted.
+- **External classifiers on untouched calls.** A call forwarded untouched
+  (mode `off`, or a skipped local provider) goes to external classifiers only
+  when it is going to a remote provider and a group's policy could refuse it
+  there. The text leaves the install either way, and without them a fork
+  whose only classifier is external would have its strict policy enforced by
+  nothing (code review). A local call never goes to one. A policy that could
+  refuse a call no registered classifier can look at fails closed: the call
+  is refused, with `privacy-stage.no-classifier` listed as the failed
+  adapter.
+- **Placement.** Classifiers say what a call holds, not where, so on a
+  refused chat call the stage classifies each message again, alone, and
+  reports the ones holding a refused group's content as
+  `PrivacyRefusedError.found`, four messages at a time so an external
+  classifier is not sent the whole history in a burst. A message a classifier
+  fails on is not placed, but the ones found are: left out, they stop
+  refusing later turns, and the failed one is tried again on the next
+  refusal. When nothing is placed, the chat handler leaves out the turn
+  alone. The handler places it with `placePrivacyRefusal(…, 'confidential')`
+  and tells the reader with its own codes: `privacy_confidential`, and
+  `privacy_confidential_earlier`, `_setup`, `_memory`. The rows left out
+  carry `excludedFromHistory: 'privacy_confidential'` (a `block` refusal's
+  carry `'privacy_blocked'`); later history leaves out either. The reason
+  and the place come from the refusing groups whose content was found, not
+  from a group flagged only because a classifier failed.
+- **The warn note.** The chat handler emits a `warning` event
+  (`confidential_personal`, `confidential_commercial`) as the turn ends
+  (after the answer, at a pause for approval or another tool that ends the
+  turn, or when the per-turn cost cap stops the tool loop), for each group
+  the turn recorded as warned that the conversation has not been told about,
+  and then keeps the groups told in
+  `AiConversation.metadata.confidentialNoted`. Shown first, recorded after:
+  a reader who left before it arrived is told next turn rather than never.
+  The write is a compare-and-set on the metadata it read, so a write made in
+  between is kept and the note may at worst be shown again. Once per conversation per
+  group: keying on "this turn held it" would repeat it every turn, since the
+  history is resent. Admin chat keeps
+  a `confidential_*` note under the answer until the next message is sent,
+  apart from its other warnings, which the end of the turn clears; the embed
+  widget shows only `confidential_*` warnings (an agent's budget warning is
+  for operators, not a site's visitors). The note
+  never names what was found.
+- **A refusal for a classifier failure** (`confidential_unchecked`) is told
+  as a generic privacy refusal (`privacy_refused`), never as confidential
+  content, which nobody found, and is neither placed nor left out of later
+  history: it is tried again on the next call.
+- **A known gap:** a turn that ends in an error after a warned call was sent
+  (the output guard blocking, the tool-loop cap) shows no note. The
+  conversation stays flagged and nothing records the note as shown, so the
+  next turn that ends with an answer shows it.
+- **Not built here:** answering a flagged turn on another model (t-1038).
+  Until then a policy that does not permit the agent's provider refuses.
 
 ### Routing (t-1038)
 
@@ -1383,7 +1499,14 @@ nothing to flag it. The optional local model (§131) can score more subtly.
   either, the reply and the step output come back restored, the tool runs
   with real values, and under `local_only` the search and the reply
   embedding are refused. It also runs `off` and checks the request is
-  unchanged.
+  unchanged. Under a Personal policy of `local_only` (mode `off`), a turn
+  holding a health disclosure never reaches the cloud provider, the reader
+  gets `privacy_confidential`, and the next turn is answered without the
+  disclosure; under `warn` the note is shown once and not on the next turn.
+- `tests/unit/lib/orchestration/llm/privacy-stage.confidential.test.ts` runs
+  each group's policy through the real stage and core's classifier against
+  providers that are local, trusted or neither, a failing classifier under
+  each policy, scopes that record nowhere, and placement.
 - `tests/unit/lib/orchestration/privacy/scope-settings.test.ts` runs every
   (global, agent, org) mode combination through the real stage and expects
   the strictest, by `PRIVACY_MODES_BY_STRICTNESS`, the one ordering; it fails

@@ -13,7 +13,10 @@
 
 import { logger } from '@/lib/logging';
 import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowledge/search';
-import { isLocalOnlyEmbeddingRefusal } from '@/lib/orchestration/llm/privacy-stage';
+import {
+  isConfidentialRefusal,
+  isLocalOnlyEmbeddingRefusal,
+} from '@/lib/orchestration/llm/privacy-stage';
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import type { McpResourceContent } from '@/types/mcp';
 import type { ResourceCallContext } from '@/lib/orchestration/mcp/resource-registry';
@@ -75,6 +78,15 @@ export async function handleKnowledgeSearch(
         uri,
         mimeType: 'application/json',
         text: JSON.stringify({ error: err.message, code: 'embeddings_local_only' }),
+      };
+    }
+    // The query holds confidential content a policy does not send to the
+    // embedding provider (§130): told, as above.
+    if (isConfidentialRefusal(err)) {
+      return {
+        uri,
+        mimeType: 'application/json',
+        text: JSON.stringify({ error: err.message, code: 'confidential_content' }),
       };
     }
     throw err;

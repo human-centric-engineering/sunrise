@@ -174,3 +174,78 @@ describe('AgentForm — LLM privacy mode', () => {
     expect(await savedBody(user)).toMatchObject({ privacyMode: 'redact' });
   });
 });
+
+describe('AgentForm — confidential-content policies (§130 t-1037)', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockResolvedValue({});
+  });
+
+  async function openWith(personal: string | null, commercial: string | null = null) {
+    const user = userEvent.setup();
+    const agent = {
+      ...makeAgent(null),
+      privacyConfidentialPersonal: personal,
+      privacyConfidentialCommercial: commercial,
+    };
+    render(<AgentForm mode="edit" agent={agent} providers={PROVIDERS} models={MODELS} />);
+    await user.click(screen.getByRole('tab', { name: 'Model' }));
+    return user;
+  }
+  const select = (group: 'personal' | 'commercial') =>
+    screen.getByRole('combobox', { name: new RegExp(`confidential content: ${group}`, 'i') });
+
+  it("shows each group's policy, offers no 'allow', and saves the one chosen", async () => {
+    const user = await openWith('warn');
+    expect(select('personal')).toHaveTextContent('Warn (send, then tell the user)');
+    expect(select('commercial')).toHaveTextContent("Use the install's setting");
+
+    await user.click(select('commercial'));
+    const names = within(screen.getByRole('listbox'))
+      .getAllByRole('option')
+      .map((o) => o.textContent);
+    expect(names).toEqual([
+      "Use the install's setting",
+      'Warn (send, then tell the user)',
+      'Trusted or local providers only',
+      'Local providers only',
+      'Block (never send)',
+    ]);
+    await user.click(
+      within(screen.getByRole('listbox')).getByRole('option', { name: 'Local providers only' })
+    );
+
+    expect(await savedBody(user)).toMatchObject({
+      privacyConfidentialPersonal: 'warn',
+      privacyConfidentialCommercial: 'local_only',
+    });
+  });
+
+  it("saves null for the install's setting", async () => {
+    const user = await openWith('block');
+    await user.click(select('personal'));
+    await user.click(
+      within(screen.getByRole('listbox')).getByRole('option', {
+        name: "Use the install's setting",
+      })
+    );
+    expect(await savedBody(user)).toMatchObject({ privacyConfidentialPersonal: null });
+  });
+
+  it('keeps a stored value it does not know when a save leaves the field alone', async () => {
+    const user = await openWith('ask_first');
+    expect(select('personal')).toHaveTextContent('Not a setting this version knows');
+    // Sending null would loosen the agent without anyone choosing to.
+    expect(await savedBody(user)).not.toHaveProperty('privacyConfidentialPersonal');
+  });
+
+  it('gives each select a help popover that says what a phrase list misses', async () => {
+    await openWith(null);
+    for (const group of ['personal', 'commercial'] as const) {
+      const label = screen.getByText(new RegExp(`^Confidential content: ${group}$`, 'i'));
+      expect(within(label).getByRole('button', { name: 'More information' })).toBeInTheDocument();
+    }
+  });
+});

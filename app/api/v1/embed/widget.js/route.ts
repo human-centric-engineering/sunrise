@@ -259,6 +259,11 @@ export function GET(request: NextRequest): Response {
           font-family: inherit; font-size: 13px; resize: vertical;
         }
         .status { font-size: 12px; color: var(--sw-status); font-style: italic; padding: 0 16px 4px; }
+        .notice {
+          font-size: 12px; line-height: 1.4; color: var(--sw-status);
+          background: var(--sw-surface-muted); border-left: 3px solid var(--sw-primary);
+          padding: 6px 10px; margin: 0 0 8px; border-radius: 6px;
+        }
         .starters {
           padding: 0 12px 8px; display: flex; flex-wrap: wrap; gap: 6px;
         }
@@ -1010,6 +1015,27 @@ export function GET(request: NextRequest): Response {
       return span;
     }
 
+    // A note the server sends about the conversation as a whole: a
+    // \`warning\` event. Only the privacy layer's confidential-content note
+    // (§130, \`confidential_*\`) is shown here; the others (an agent's budget,
+    // say) are for operators, not a site's visitors. Plain text, never markup.
+    function isVisitorNotice(data) {
+      return (
+        !!data &&
+        typeof data.message === 'string' &&
+        typeof data.code === 'string' &&
+        data.code.indexOf('confidential_') === 0
+      );
+    }
+    function addNotice(text) {
+      var div = document.createElement('div');
+      div.className = 'notice';
+      div.setAttribute('role', 'note');
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
     // Re-renders an assistant span as markdown. Safe against XSS: every
     // node is built via document.createElement + textContent / appendChild;
     // raw HTML in the source text becomes an inert text node, not a real
@@ -1683,6 +1709,8 @@ export function GET(request: NextRequest): Response {
                 renderCitations(assistantSpan, fullText, evt.data.citations);
               } else if (evt.type === 'approval_required' && evt.data.pendingApproval) {
                 renderApprovalCard(evt.data.pendingApproval);
+              } else if (evt.type === 'warning' && isVisitorNotice(evt.data)) {
+                addNotice(evt.data.message);
               } else if (evt.type === 'error') {
                 if (evt.data && evt.data.code === 'conversation_not_found') {
                   // The visitor id includes the client IP (#705, t-765), so a

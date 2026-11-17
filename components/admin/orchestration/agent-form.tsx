@@ -21,6 +21,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { z } from 'zod';
 import {
+  CONFIDENTIAL_GROUP_DESCRIPTIONS,
+  CONFIDENTIAL_POLICY_LABELS,
+  CONFIDENTIAL_TIGHTENING_POLICIES,
+  isConfidentialTighteningPolicy,
   isTighteningMode,
   PRIVACY_MODE_LABELS,
   PRIVACY_TIGHTENING_MODES,
@@ -154,6 +158,8 @@ const agentFormSchema = z
     outputGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     citationGuardMode: z.enum(['log_only', 'warn_and_continue', 'block']).nullable().optional(),
     privacyMode: z.enum(PRIVACY_TIGHTENING_MODES).nullable().optional(),
+    privacyConfidentialPersonal: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
+    privacyConfidentialCommercial: z.enum(CONFIDENTIAL_TIGHTENING_POLICIES).nullable().optional(),
     maxHistoryTokens: z.number().int().min(1000).max(2000000).nullable().optional(),
     maxHistoryMessages: z.number().int().min(0).max(500).nullable().optional(),
     retentionDays: z.number().int().min(1).max(3650).nullable().optional(),
@@ -364,6 +370,26 @@ function toModelParamsValue(
   };
 }
 
+/** The agent's confidential-content policy fields (§130), one select each. */
+const CONFIDENTIAL_FIELDS = [
+  'privacyConfidentialPersonal',
+  'privacyConfidentialCommercial',
+] as const;
+
+type ConfidentialField = (typeof CONFIDENTIAL_FIELDS)[number];
+
+/** Each field's label from the core field registry, its one source, and its group's wording. */
+const CONFIDENTIAL_FIELD_TEXT: Record<ConfidentialField, { label: string; help: string }> = {
+  privacyConfidentialPersonal: {
+    label: fieldLabels().privacyConfidentialPersonal,
+    help: CONFIDENTIAL_GROUP_DESCRIPTIONS.personal,
+  },
+  privacyConfidentialCommercial: {
+    label: fieldLabels().privacyConfidentialCommercial,
+    help: CONFIDENTIAL_GROUP_DESCRIPTIONS.commercial,
+  },
+};
+
 export function AgentForm({
   mode,
   agent,
@@ -494,6 +520,16 @@ export function AgentForm({
       outputGuardMode: (agent?.outputGuardMode as AgentFormData['outputGuardMode']) ?? null,
       citationGuardMode: (agent?.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
       privacyMode: isTighteningMode(agent?.privacyMode) ? agent.privacyMode : null,
+      privacyConfidentialPersonal: isConfidentialTighteningPolicy(
+        agent?.privacyConfidentialPersonal
+      )
+        ? agent.privacyConfidentialPersonal
+        : null,
+      privacyConfidentialCommercial: isConfidentialTighteningPolicy(
+        agent?.privacyConfidentialCommercial
+      )
+        ? agent.privacyConfidentialCommercial
+        : null,
       maxHistoryTokens: agent?.maxHistoryTokens ?? null,
       maxHistoryMessages: agent?.maxHistoryMessages ?? null,
       retentionDays: agent?.retentionDays ?? null,
@@ -619,6 +655,21 @@ export function AgentForm({
   );
   const storedPrivacyModeUnknown =
     storedPrivacyMode !== null && !isTighteningMode(storedPrivacyMode);
+  // The same for the confidential-content policies (§130): a stored value
+  // this version does not know is kept until the admin chooses one.
+  const [storedConfidential, setStoredConfidential] = useState<
+    Record<ConfidentialField, string | null>
+  >({
+    privacyConfidentialPersonal: agent?.privacyConfidentialPersonal ?? null,
+    privacyConfidentialCommercial: agent?.privacyConfidentialCommercial ?? null,
+  });
+  const [confidentialChosen, setConfidentialChosen] = useState<ReadonlySet<ConfidentialField>>(
+    new Set()
+  );
+  const confidentialUnknown = (field: ConfidentialField): boolean =>
+    storedConfidential[field] !== null &&
+    !isConfidentialTighteningPolicy(storedConfidential[field]) &&
+    !confidentialChosen.has(field);
   const currentVisibility = watch('visibility');
   const currentProfileId = watch('profileId');
   const currentPersona = watch('persona');
@@ -849,6 +900,9 @@ export function AgentForm({
         // admin chose another: the select shows it as "the install's mode",
         // and sending that would loosen a protection nobody chose to (§127).
         if (storedPrivacyModeUnknown && !privacyModeChosen) delete editPayload.privacyMode;
+        for (const field of CONFIDENTIAL_FIELDS) {
+          if (confidentialUnknown(field)) delete editPayload[field];
+        }
         if (!authored.model || data.model.length === 0) delete editPayload.model;
 
         await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), {
@@ -2049,6 +2103,56 @@ export function AgentForm({
                 </p>
               )}
             </div>
+
+            {CONFIDENTIAL_FIELDS.map((field) => (
+              <div key={field} className="grid gap-2 rounded-md border p-3">
+                <Label htmlFor={field}>
+                  {CONFIDENTIAL_FIELD_TEXT[field].label}{' '}
+                  <FieldHelp title={CONFIDENTIAL_FIELD_TEXT[field].label}>
+                    <p>{CONFIDENTIAL_FIELD_TEXT[field].help}</p>
+                    <p className="mt-2">
+                      Where this agent may send a message that holds it. It can only make the
+                      install&apos;s setting (Settings &rarr; LLM privacy) stricter. &ldquo;Trusted
+                      or local providers only&rdquo; sends it to a provider ticked &ldquo;Trusted
+                      with confidential content&rdquo;, or a local one; anywhere else the message is
+                      refused. Confidential content is spotted by a phrase list, which catches what
+                      is said outright and misses what is only implied: an agent whose whole job is
+                      this kind of content belongs on a local or trusted provider from the start.
+                      Leave on &ldquo;Use the install&apos;s setting&rdquo; to inherit it.
+                    </p>
+                  </FieldHelp>
+                </Label>
+                <Select
+                  value={
+                    confidentialUnknown(field) ? '__unknown__' : (watch(field) ?? '__global__')
+                  }
+                  disabled={locked(field)}
+                  onValueChange={(v) => {
+                    setConfidentialChosen((prev) => new Set(prev).add(field));
+                    setValue(field, isConfidentialTighteningPolicy(v) ? v : null, {
+                      shouldValidate: true,
+                    });
+                  }}
+                >
+                  <SelectTrigger id={field}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {confidentialUnknown(field) && (
+                      <SelectItem value="__unknown__" disabled>
+                        Not a setting this version knows (calls refused)
+                      </SelectItem>
+                    )}
+                    <SelectItem value="__global__">Use the install&apos;s setting</SelectItem>
+                    {CONFIDENTIAL_TIGHTENING_POLICIES.map((policy) => (
+                      <SelectItem key={policy} value={policy}>
+                        {CONFIDENTIAL_POLICY_LABELS[policy]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
           </div>
 
           <AgentTestCard providerId={currentProviderId} model={currentModel || null} />
@@ -2518,6 +2622,16 @@ export function AgentForm({
                       citationGuardMode:
                         (fresh.citationGuardMode as AgentFormData['citationGuardMode']) ?? null,
                       privacyMode: isTighteningMode(fresh.privacyMode) ? fresh.privacyMode : null,
+                      privacyConfidentialPersonal: isConfidentialTighteningPolicy(
+                        fresh.privacyConfidentialPersonal
+                      )
+                        ? fresh.privacyConfidentialPersonal
+                        : null,
+                      privacyConfidentialCommercial: isConfidentialTighteningPolicy(
+                        fresh.privacyConfidentialCommercial
+                      )
+                        ? fresh.privacyConfidentialCommercial
+                        : null,
                       maxHistoryTokens: fresh.maxHistoryTokens ?? null,
                       maxHistoryMessages: fresh.maxHistoryMessages ?? null,
                       retentionDays: fresh.retentionDays ?? null,
@@ -2558,6 +2672,11 @@ export function AgentForm({
                     // The restored row's privacy mode is the stored one now.
                     setStoredPrivacyMode(fresh.privacyMode ?? null);
                     setPrivacyModeChosen(false);
+                    setStoredConfidential({
+                      privacyConfidentialPersonal: fresh.privacyConfidentialPersonal ?? null,
+                      privacyConfidentialCommercial: fresh.privacyConfidentialCommercial ?? null,
+                    });
+                    setConfidentialChosen(new Set());
                     // MUST clear authorship. `reset` replaces the form values
                     // but not this state, so without it a provider the operator
                     // picked-but-did-not-save left `authored.provider` true

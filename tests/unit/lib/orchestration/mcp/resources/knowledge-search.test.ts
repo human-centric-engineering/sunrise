@@ -413,6 +413,21 @@ describe('handleKnowledgeSearch', () => {
       });
     });
 
+    it('tells the client when the query holds confidential content a policy does not send (§130)', async () => {
+      vi.mocked(searchKnowledge).mockRejectedValue(
+        new PrivacyRefusedError('confidential_blocked', 'openai')
+      );
+      const result = await handleKnowledgeSearch('sunrise://knowledge/search?q=acme', null, {
+        scopedAgentId: null,
+        apiKeyId: 'key-1',
+        userId: null,
+      });
+      expect(JSON.parse(result.text)).toEqual({
+        error: expect.stringContaining('confidential content'),
+        code: 'confidential_content',
+      });
+    });
+
     it('lets any other failure through', async () => {
       vi.mocked(searchKnowledge).mockRejectedValue(
         new PrivacyRefusedError('stage_error', 'openai')

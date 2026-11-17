@@ -62,6 +62,7 @@ const MOCK_PROVIDERS = [
     timeoutMs: null,
     maxRetries: null,
     jurisdiction: null,
+    trustedForConfidential: false,
   },
 ];
 

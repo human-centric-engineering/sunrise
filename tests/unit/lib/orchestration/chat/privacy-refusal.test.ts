@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { MessageSource } from '@/lib/orchestration/chat/message-builder';
-import { placePrivacyRefusal } from '@/lib/orchestration/chat/privacy-refusal';
+import { placePrivacyRefusal, privacyRefusalKind } from '@/lib/orchestration/chat/privacy-refusal';
 
 // What a turn built: setup, two memories, the summary, two earlier exchanges,
 // the user's message.
@@ -235,5 +235,29 @@ describe('placePrivacyRefusal', () => {
         { messageCount: 1, sources, historyRows: HISTORY_ROWS, memories: MEMORIES }
       )
     ).toBeNull();
+  });
+});
+
+describe('a refusal for confidential content (§130 t-1037)', () => {
+  const confidential = (messageIndices: number[]) =>
+    placePrivacyRefusal({ messageCount: 12, messageIndices }, SENT, 'confidential');
+
+  it('is placed exactly as one for personal details, with its own codes', () => {
+    for (const [indices, code] of [
+      [[MESSAGE], 'privacy_confidential'],
+      [[SYSTEM], 'privacy_confidential_setup'],
+      [[QUESTION], 'privacy_confidential_earlier'],
+      [[MEMORY_2], 'privacy_confidential_memory'],
+    ] as const) {
+      const personal = place([...indices]);
+      expect(confidential([...indices])).toEqual({ ...personal, code });
+    }
+  });
+
+  it('is told from the code the stage gave it', () => {
+    expect(privacyRefusalKind('privacy_blocked')).toBe('personal_details');
+    expect(privacyRefusalKind('privacy_confidential')).toBe('confidential');
+    // Any other refusal is not placed: it is not about the content.
+    expect(privacyRefusalKind('privacy_refused')).toBeNull();
   });
 });

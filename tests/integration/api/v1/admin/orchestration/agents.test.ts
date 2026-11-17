@@ -509,6 +509,24 @@ describe('POST /api/v1/admin/orchestration/agents', () => {
       expect(data.data).toMatchObject({ slug: 'test-agent' });
     });
 
+    it("stores the agent's confidential-content policies, and null (inherit) when left out (§130 t-1037)", async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.create).mockResolvedValue(makeAgent() as never);
+
+      await POST(makePostRequest({ ...VALID_AGENT, privacyConfidentialPersonal: 'local_only' }));
+      const refused = await POST(
+        makePostRequest({ ...VALID_AGENT, privacyConfidentialCommercial: 'allow' })
+      );
+
+      const data = vi.mocked(prisma.aiAgent.create).mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        privacyConfidentialPersonal: 'local_only',
+        privacyConfidentialCommercial: null,
+      });
+      // `allow` would say nothing: an agent only tightens the install's policy.
+      expect(refused.status).toBe(400);
+    });
+
     it('writes an "Initial configuration" v1 snapshot of the new agent', async () => {
       // Point-in-time versioning makes the original config a first-class,
       // restorable entry from creation, so a single later edit can be rolled

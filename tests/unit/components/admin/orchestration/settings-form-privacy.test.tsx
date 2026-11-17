@@ -77,10 +77,10 @@ describe('the LLM privacy card', () => {
     expect(within(card()).getByText(/it is not anonymisation/i)).toBeInTheDocument();
   });
 
-  it('gives each of its four fields a help popover', () => {
+  it('gives each of its six fields a help popover', () => {
     render(<SettingsForm initialSettings={settings()} />);
     const help = within(card()).getAllByRole('button', { name: 'More information' });
-    expect(help).toHaveLength(4);
+    expect(help).toHaveLength(6);
     // One beside each field: the mode, the types, local providers, embeddings.
     expect(within(card()).getByText('Privacy mode').contains(help[0])).toBe(true);
     expect(within(card()).getByText('What to look for').contains(help[1])).toBe(true);
@@ -90,6 +90,9 @@ describe('the LLM privacy card', () => {
         .contains(help[2])
     ).toBe(true);
     expect(within(card()).getByText('Embeddings').contains(help[3])).toBe(true);
+    // And one beside each confidential-content group (§130).
+    expect(within(card()).getByText('Personal').contains(help[4])).toBe(true);
+    expect(within(card()).getByText('Commercial').contains(help[5])).toBe(true);
   });
 
   it('offers only the modes this version can apply', async () => {
@@ -260,5 +263,65 @@ describe('the embeddings policy', () => {
       />
     );
     expect(screen.queryByTestId('privacy-embeddings-refused')).toBeNull();
+  });
+});
+
+describe('confidential content (§130 t-1037)', () => {
+  it('shows each group’s stored policy and saves both', async () => {
+    render(
+      <SettingsForm
+        initialSettings={settings({
+          privacyConfidentialPersonal: 'warn',
+          privacyConfidentialCommercial: 'approved_only',
+        })}
+      />
+    );
+    expect(screen.getByRole('combobox', { name: /^personal/i })).toHaveTextContent(
+      'Warn (send, then tell the user)'
+    );
+    expect(screen.getByRole('combobox', { name: /^commercial/i })).toHaveTextContent(
+      'Trusted or local providers only'
+    );
+    expect(await save()).toMatchObject({
+      privacyConfidentialPersonal: 'warn',
+      privacyConfidentialCommercial: 'approved_only',
+    });
+  });
+
+  it('offers every policy, allow included, and saves the one chosen', async () => {
+    const user = userEvent.setup();
+    render(<SettingsForm initialSettings={settings()} />);
+    await user.click(screen.getByRole('combobox', { name: /^personal/i }));
+    expect(
+      within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.textContent)
+    ).toEqual([
+      'Allow (record only)',
+      'Warn (send, then tell the user)',
+      'Trusted or local providers only',
+      'Local providers only',
+      'Block (never send)',
+    ]);
+    await user.click(
+      within(screen.getByRole('listbox')).getByRole('option', { name: 'Local providers only' })
+    );
+    expect(await save()).toMatchObject({ privacyConfidentialPersonal: 'local_only' });
+  });
+
+  it('reads a policy it does not know as block, never as something looser', () => {
+    render(
+      <SettingsForm initialSettings={settings({ privacyConfidentialCommercial: 'ask_first' })} />
+    );
+    expect(screen.getByRole('combobox', { name: /^commercial/i })).toHaveTextContent(
+      'Block (never send)'
+    );
+  });
+
+  it('says plainly what a phrase list misses', () => {
+    render(<SettingsForm initialSettings={settings()} />);
+    expect(screen.getByTestId('privacy-confidential-section')).toHaveTextContent(
+      'misses what is only implied'
+    );
   });
 });

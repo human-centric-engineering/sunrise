@@ -255,6 +255,28 @@ export const DETECTOR_FAILURE_ACTIONS = ['fallback', 'block'] as const;
 
 export type DetectorFailureAction = (typeof DETECTOR_FAILURE_ACTIONS)[number];
 
+/**
+ * What the layer does with a call that holds confidential content of one
+ * group (§130). Listed least to most strict; a call flagged in both groups is
+ * held to the stricter of their two policies.
+ *
+ * - `allow` — send it, and record what was found.
+ * - `warn` — send it, and tell the user once per conversation per group.
+ * - `approved_only` — send it only to a provider ticked "Trusted with
+ *   confidential content", or a local one.
+ * - `local_only` — send it only to a local provider.
+ * - `block` — refuse it, whatever the provider.
+ */
+export const CONFIDENTIAL_POLICIES_BY_STRICTNESS = [
+  'allow',
+  'warn',
+  'approved_only',
+  'local_only',
+  'block',
+] as const;
+
+export type ConfidentialPolicy = (typeof CONFIDENTIAL_POLICIES_BY_STRICTNESS)[number];
+
 /** The resolved policy for one call. */
 export interface PrivacyPolicy {
   mode: PrivacyMode;
@@ -268,6 +290,10 @@ export interface PrivacyPolicy {
   protectLocalProviders: boolean;
   /** When a detector fails: carry on with the rest (`fallback`) or refuse the call. */
   onDetectorFailure: DetectorFailureAction;
+  /** What a call holding confidential content of the Personal group may do (§130). */
+  confidentialPersonal: ConfidentialPolicy;
+  /** What a call holding confidential content of the Commercial group may do (§130). */
+  confidentialCommercial: ConfidentialPolicy;
 }
 
 /** What a resolver is told about the call. */

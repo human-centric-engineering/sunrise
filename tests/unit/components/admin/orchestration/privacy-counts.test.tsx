@@ -183,6 +183,49 @@ describe('PrivacyCounts confidential content', () => {
     );
   });
 
+  it("shows what each group's policy did beside it (§130 t-1037)", () => {
+    render(
+      <PrivacyCounts
+        summary={{
+          ...offOnly,
+          refused: ['confidential_not_permitted'],
+          sensitivity: { personal: ['health'], commercial: ['not_public'] },
+          confidential: { personal: ['allowed', 'refused'], commercial: ['warned'] },
+        }}
+      />
+    );
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent(
+      'confidential, personal: health (allowed, refused) · commercial: not public (warned)'
+    );
+    expect(screen.getByTestId('privacy-refused')).toHaveTextContent(
+      "refused: confidential content its group's policy does not send to this provider"
+    );
+  });
+
+  it('names a refusal because a classifier failed, without saying anything was found', () => {
+    render(<PrivacyCounts summary={{ ...offOnly, refused: ['confidential_unchecked'] }} />);
+    expect(screen.getByTestId('privacy-refused')).toHaveTextContent(
+      'refused: a confidential-content classifier failed under a strict policy'
+    );
+  });
+
+  it('names a block-policy refusal, and shows a decision it does not know as written', () => {
+    render(
+      <PrivacyCounts
+        summary={{
+          ...offOnly,
+          refused: ['confidential_blocked'],
+          sensitivity: { personal: ['health'] },
+          confidential: { personal: ['rerouted'] as never },
+        }}
+      />
+    );
+    expect(screen.getByTestId('privacy-refused')).toHaveTextContent(
+      'refused: confidential content (block policy)'
+    );
+    expect(screen.getByTestId('privacy-confidential')).toHaveTextContent('health (rerouted)');
+  });
+
   it('shows no confidential clause when nothing confidential was found', () => {
     render(<PrivacyCounts summary={SUMMARY} />);
     expect(screen.queryByTestId('privacy-confidential')).toBeNull();

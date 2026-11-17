@@ -405,6 +405,20 @@ describe('embedBatch', () => {
     expect(result.provenance.model).toBe('text-embedding-3-small');
   });
 
+  it("embeds in a scope marked as the operator's content, not classified for confidential content (§130)", async () => {
+    const { currentPrivacyScope } = await import('@/lib/orchestration/privacy/scope');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    const seen: unknown[] = [];
+    installEmbedMany(async (texts) => {
+      seen.push(currentPrivacyScope()?.operatorContent);
+      return { embeddings: texts.map(() => tagged(0)), inputTokens: texts.length };
+    });
+
+    await embedBatch(['Redundancies are handled by HR.']);
+
+    expect(seen).toEqual([true]);
+  });
+
   it('should split 250 texts into 3 batches of 100/100/50 with default batch size', async () => {
     vi.useFakeTimers();
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);

@@ -343,6 +343,12 @@ export const PATCH = withAdminAuth(
     if (body.privacyEmbeddingsPolicy !== undefined) {
       updateData.privacyEmbeddingsPolicy = body.privacyEmbeddingsPolicy;
     }
+    if (body.privacyConfidentialPersonal !== undefined) {
+      updateData.privacyConfidentialPersonal = body.privacyConfidentialPersonal;
+    }
+    if (body.privacyConfidentialCommercial !== undefined) {
+      updateData.privacyConfidentialCommercial = body.privacyConfidentialCommercial;
+    }
     if (body.escalationConfig !== undefined) {
       updateData.escalationConfig =
         body.escalationConfig === null ? Prisma.JsonNull : body.escalationConfig;
@@ -389,6 +395,12 @@ export const PATCH = withAdminAuth(
             : {}),
           ...(body.privacyEmbeddingsPolicy !== undefined
             ? { privacyEmbeddingsPolicy: body.privacyEmbeddingsPolicy }
+            : {}),
+          ...(body.privacyConfidentialPersonal !== undefined
+            ? { privacyConfidentialPersonal: body.privacyConfidentialPersonal }
+            : {}),
+          ...(body.privacyConfidentialCommercial !== undefined
+            ? { privacyConfidentialCommercial: body.privacyConfidentialCommercial }
             : {}),
         },
         update: updateData,

@@ -27,16 +27,21 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { logger } from '@/lib/logging';
-import type {
-  EntityType,
-  KnownValue,
-  PrivacyMode,
-  SensitivityCategory,
-  SensitivityGroup,
-  TokenSession,
+import {
+  SENSITIVITY_GROUPS,
+  type EntityType,
+  type KnownValue,
+  type PrivacyMode,
+  type SensitivityCategory,
+  type SensitivityGroup,
+  type TokenSession,
 } from '@/lib/privacy/adapters/types';
 import { modeStrictness } from '@/lib/privacy/adapters/policy';
-import type { PrivacySummary } from '@/types/orchestration';
+import {
+  CONFIDENTIAL_DECISIONS,
+  type ConfidentialDecision,
+  type PrivacySummary,
+} from '@/types/orchestration';
 import type { ScopePrivacySettings } from '@/lib/orchestration/privacy/scope-settings';
 
 /** What the stage found across the calls made in one scope. Counts only, never values. */
@@ -67,6 +72,11 @@ export interface PrivacyTally {
    * with the group of each (§130). Categories only: never text, never where.
    */
   sensitivity: Map<SensitivityCategory, SensitivityGroup>;
+  /**
+   * What the confidential-content policy did with the calls holding each
+   * group's content (§130): every decision any of them got.
+   */
+  confidential: Map<SensitivityGroup, Set<ConfidentialDecision>>;
 }
 
 export interface PrivacyScopeInit {
@@ -85,6 +95,12 @@ export interface PrivacyScopeInit {
    * detector for nothing.
    */
   recordsNowhere?: boolean;
+  /**
+   * What this scope's calls send is the operator's own content (knowledge
+   * being ingested), not what a user wrote: not classified for confidential
+   * content (§130). See {@link operatorContentScope}.
+   */
+  operatorContent?: boolean;
   /**
    * Loads more known values (the user's own name and email, say), once per
    * scope and only when a call is actually scanned, so mode `off` costs
@@ -108,6 +124,8 @@ export interface PrivacyScope {
   loadKnownValues?: () => Promise<readonly KnownValue[]>;
   /** See {@link PrivacyScopeInit.recordsNowhere}. */
   recordsNowhere?: boolean;
+  /** See {@link PrivacyScopeInit.operatorContent}. */
+  operatorContent?: boolean;
   /** The loader's result, once asked for. Shared with child scopes. */
   loaded?: Promise<readonly KnownValue[]>;
   /**
@@ -143,6 +161,7 @@ function emptyTally(): PrivacyTally {
     refusals: new Set(),
     unresolved: 0,
     sensitivity: new Map(),
+    confidential: new Map(),
   };
 }
 
@@ -160,6 +179,7 @@ export function createPrivacyScope(init: PrivacyScopeInit, parent?: PrivacyScope
     knownValues: frozenValues(init.knownValues ?? []),
     ...(init.loadKnownValues ? { loadKnownValues: init.loadKnownValues } : {}),
     ...(init.recordsNowhere ? { recordsNowhere: true } : {}),
+    ...(init.operatorContent ? { operatorContent: true } : {}),
     tally: emptyTally(),
     ...(parent ? { parent } : {}),
   };
@@ -213,6 +233,24 @@ export function agentPrivacyScope(
     ? childPrivacyScope(parent, `${parent.scopeId}:agent:${agentId}`)
     : createPrivacyScope({ scopeId: `agent:${agentId}` });
   bindPrivacyScope(scope, { agentId });
+  return scope;
+}
+
+/**
+ * A scope for calls that send the operator's own content: knowledge being
+ * chunked and embedded (§130). Inside the current scope when there is one, so
+ * its agent's and org's privacy settings still apply and what it counts is
+ * recorded there; one that records nowhere when there is not, as an unscoped
+ * call's would. Its calls are not classified for confidential content: the
+ * policies are about what users write, and an HR handbook would otherwise
+ * fail to upload under a strict policy for saying "redundancies".
+ */
+export function operatorContentScope(scopeId: string): PrivacyScope {
+  const parent = currentPrivacyScope();
+  const scope = parent
+    ? childPrivacyScope(parent, `${parent.scopeId}:${scopeId}`)
+    : createPrivacyScope({ scopeId, recordsNowhere: true });
+  scope.operatorContent = true;
   return scope;
 }
 
@@ -354,6 +392,28 @@ export function recordPrivacySensitivity(
   }
 }
 
+/**
+ * Record what the confidential-content policy did with a call (§130), per
+ * group found, in `scope` and every scope it sits inside. A scope keeps every
+ * decision its calls got: a turn whose chat call was sent and whose
+ * embedding was refused reads both, rather than claim the content was never
+ * sent.
+ */
+export function recordConfidentialDecision(
+  scope: PrivacyScope,
+  decisions: Partial<Record<SensitivityGroup, ConfidentialDecision>>
+): void {
+  for (let s: PrivacyScope | undefined = scope; s; s = s.parent) {
+    for (const group of SENSITIVITY_GROUPS) {
+      const decision = decisions[group];
+      if (decision === undefined) continue;
+      const decided = s.tally.confidential.get(group) ?? new Set<ConfidentialDecision>();
+      decided.add(decision);
+      s.tally.confidential.set(group, decided);
+    }
+  }
+}
+
 /** Record placeholders a reply wrote that no session issued, left visible. */
 export function recordPrivacyUnresolved(scope: PrivacyScope, unresolved: number): void {
   if (unresolved <= 0) return;
@@ -390,5 +450,15 @@ export function privacySummary(scope: PrivacyScope): PrivacySummary | undefined 
     ...(t.refusals.size > 0 ? { refused: [...t.refusals].sort() } : {}),
     ...(t.unresolved > 0 ? { unresolved: t.unresolved } : {}),
     ...(sensitivity ? { sensitivity } : {}),
+    ...(t.confidential.size > 0
+      ? {
+          confidential: Object.fromEntries(
+            [...t.confidential].map(([group, decided]) => [
+              group,
+              CONFIDENTIAL_DECISIONS.filter((d) => decided.has(d)),
+            ])
+          ),
+        }
+      : {}),
   };
 }
