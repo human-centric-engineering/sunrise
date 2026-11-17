@@ -17,7 +17,6 @@ import { API } from '@/lib/api/endpoints';
 import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import type { OrgUsageReport } from '@/lib/orchestration/llm/cost-reports';
-import { registeredEntitlementSwitches } from '@/lib/tenancy/entitlements';
 import { parsePaginationMeta } from '@/lib/validations/common';
 
 export const metadata: Metadata = {
@@ -100,26 +99,29 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
  * Server shell: the org (`GET /api/v1/admin/orgs/[id]`), its provider policy
  * (`GET …/providers`), its LLM privacy settings (`GET …/privacy`, §127
  * t-1010), the provider list and its usage this month against its cap
- * (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`), in parallel, and
- * its entitlement switches (`GET …/entitlements`, §135 t-1033) only when the
- * app registers any, so vanilla Sunrise neither fetches nor shows them. The
- * approved providers, the privacy settings and the switches are editable
- * here; rename, suspend and members stay API-only. A
+ * (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`) and its entitlement
+ * switches (`GET …/entitlements`, §135 t-1033), in parallel. The switches
+ * section shows only when the API reports at least one registered switch, so
+ * vanilla Sunrise shows nothing new; a failed load says so, since the page
+ * cannot tell whether there were any. The approved providers, the privacy
+ * settings and the switches are editable here; rename, suspend and members
+ * stay API-only. A
  * missing org is a 404, and any other failure to load it goes to the error
  * boundary. A policy or provider fetch that fails says so in place of the
  * form, rather than offering a partial set to save over the real one.
  */
 export default async function OrgPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const hasSwitches = registeredEntitlementSwitches().length > 0;
   const [org, policy, privacy, providers, usage, entitlements] = await Promise.all([
     getOrg(id),
     loadOrNull<OrgProviderPolicyView>(API.ADMIN.orgProviders(id)),
     loadOrNull<OrgPrivacyView>(API.ADMIN.orgPrivacy(id)),
     getAllProviders(),
     getOrgUsage(id),
-    hasSwitches ? loadOrNull<OrgEntitlementsView>(API.ADMIN.orgEntitlements(id)) : null,
+    loadOrNull<OrgEntitlementsView>(API.ADMIN.orgEntitlements(id)),
   ]);
+  // No app switch registered: nothing to show, as on vanilla Sunrise.
+  const showSwitches = entitlements === null || entitlements.switches.length > 0;
 
   return (
     <div className="space-y-6">
@@ -162,7 +164,7 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
         )}
       </section>
 
-      {hasSwitches && (
+      {showSwitches && (
         <section className="space-y-3 rounded-md border p-4">
           <h2 className="text-lg font-medium">Entitlements</h2>
           {entitlements ? (

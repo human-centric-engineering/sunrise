@@ -124,9 +124,12 @@ throws Prisma's `P2034` (`isSettingsWriteConflict`); the route answers 409.
 
 ## The admin surface
 
-`/admin/orgs/[id]` shows an **Entitlements** section only when the app
-registers at least one switch, and only then fetches them, so vanilla Sunrise
-shows and requests nothing new. The section ticks what the org has, marks the
+`/admin/orgs/[id]` asks `GET …/entitlements` with its other reads and shows an
+**Entitlements** section only when the answer lists at least one switch, so
+vanilla Sunrise shows nothing new. The page learns that from the API rather
+than reading the registry itself (API-first). A load that fails says so in the
+section's place, since the page cannot tell whether there were switches to
+show. The section ticks what the org has, marks the
 default-on switches, says when nothing has been set, and offers **Clear to
 defaults** once something has.
 

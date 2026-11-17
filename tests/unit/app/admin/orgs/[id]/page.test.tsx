@@ -45,14 +45,7 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-// What the app registers decides whether the page shows switches at all
-// (§135 t-1033). Vanilla Sunrise registers none.
-vi.mock('@/lib/tenancy/entitlements', () => ({
-  registeredEntitlementSwitches: vi.fn(() => []),
-}));
-
 import OrgPage from '@/app/admin/orgs/[id]/page';
-import { registeredEntitlementSwitches } from '@/lib/tenancy/entitlements';
 import { notFound } from 'next/navigation';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { ServerLoadError } from '@/lib/api/server-load';
@@ -76,15 +69,30 @@ const PRIVACY = {
   protectedTerms: [],
 };
 
+/** An install whose app registers no entitlement switch, as vanilla Sunrise (§135 t-1033). */
+const NO_SWITCHES = {
+  orgId: ID,
+  nothingSet: true,
+  unreadable: false,
+  switches: [],
+  unregistered: [],
+};
+
+/** What each path answers when a test does not name it. */
+const DEFAULTS: Record<string, unknown> = {
+  [PRIVACY_PATH]: PRIVACY,
+  [ENTITLEMENTS_PATH]: NO_SWITCHES,
+};
+
 /**
  * Answer each path with its body. A path mapped to `null` (or not mapped) is a
  * 404; one mapped to a number is that HTTP status. `metas` gives a path's
- * pagination meta. The privacy settings answer as never saved unless a test
- * names them.
+ * pagination meta. The privacy settings answer as never saved, and the
+ * switches as none registered, unless a test names them.
  */
 function serve(bodies: Record<string, unknown>, metas: Record<string, unknown> = {}) {
   vi.mocked(serverFetch).mockImplementation(async (path: string) => {
-    const data = path === PRIVACY_PATH && !(path in bodies) ? PRIVACY : bodies[path];
+    const data = path in bodies ? bodies[path] : DEFAULTS[path];
     if (data === null || data === undefined) return apiFailure(404, 'NOT_FOUND');
     if (typeof data === 'number') return apiFailure(data);
     if (data instanceof Response) return data.clone();
@@ -414,20 +422,19 @@ describe('OrgPage', () => {
       unregistered: [],
     };
 
-    it('shows nothing, and asks for nothing, when no app registers a switch', async () => {
+    it('shows nothing new when the API reports no registered switch', async () => {
       serve({ [ORG_PATH]: ORG, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
 
       render(await OrgPage({ params }));
 
+      // Asked the API rather than reading the registry from the page.
+      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).toContain(ENTITLEMENTS_PATH);
       expect(screen.getByRole('heading', { name: 'Approved providers' })).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: 'Entitlements' })).not.toBeInTheDocument();
-      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).not.toContain(
-        ENTITLEMENTS_PATH
-      );
+      expect(logger.error).not.toHaveBeenCalled();
     });
 
     it("offers the org's switches when the app registers some", async () => {
-      vi.mocked(registeredEntitlementSwitches).mockReturnValueOnce([SWITCH]);
       serve({
         [ORG_PATH]: ORG,
         [POLICY_PATH]: POLICY,
@@ -442,7 +449,6 @@ describe('OrgPage', () => {
     });
 
     it('says the switches could not be loaded rather than offer a form to save over them', async () => {
-      vi.mocked(registeredEntitlementSwitches).mockReturnValueOnce([SWITCH]);
       serve({
         [ORG_PATH]: ORG,
         [POLICY_PATH]: POLICY,
