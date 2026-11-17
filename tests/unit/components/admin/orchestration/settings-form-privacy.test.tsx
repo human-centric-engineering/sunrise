@@ -404,6 +404,44 @@ describe('the model for confidential messages (§130 t-1038)', () => {
     expect(await save()).not.toHaveProperty('confidentialModel');
   });
 
+  it('sends a model chosen back after a save, judged against what that save stored', async () => {
+    const user = userEvent.setup();
+    render(
+      <SettingsForm
+        initialSettings={settings({ confidentialModel: OPTIONS[0] })}
+        confidentialModelOptions={OPTIONS}
+      />
+    );
+    const pick = async (name: RegExp) => {
+      await user.click(select());
+      await user.click(within(screen.getByRole('listbox')).getByRole('option', { name }));
+    };
+
+    await pick(/Claude X/);
+    expect(await save()).toMatchObject({
+      confidentialModel: { providerSlug: 'anthropic', model: 'claude-x' },
+    });
+
+    // Back to the model the page loaded with: the server now holds Claude X,
+    // so this is a change, and is sent.
+    vi.mocked(apiClient.patch).mockClear();
+    await pick(/Llama 3.1 8B/);
+    expect(await save()).toMatchObject({
+      confidentialModel: { providerSlug: 'ollama-local', model: 'llama3.1:8b' },
+    });
+  });
+
+  it('does not call a saved model unusable when the options could not be read', () => {
+    render(
+      <SettingsForm
+        initialSettings={settings({ confidentialModel: OPTIONS[0] })}
+        confidentialModelOptions={null}
+      />
+    );
+    expect(select()).toHaveTextContent('llama3.1:8b (ollama-local)');
+    expect(select()).not.toHaveTextContent('no longer usable');
+  });
+
   it('says a policy that moves conversations, with no model, refuses instead', async () => {
     const user = userEvent.setup();
     render(<SettingsForm initialSettings={settings()} confidentialModelOptions={OPTIONS} />);

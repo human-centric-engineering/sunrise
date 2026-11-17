@@ -818,11 +818,6 @@ function refuse(
 }
 
 /**
- * Run the stage on one call. Returns the arguments to send, and under
- * `pseudonymise` a restorer for the reply, or throws a
- * {@link PrivacyRefusedError}, in which case nothing may be sent.
- */
-/**
  * The policy a call to `provider` runs under in `scope`: the settings' base,
  * tightened by every resolver. Inside the scope, ephemeral or not, so core's
  * resolver keeps what it reads on the scope the call records into
@@ -938,14 +933,24 @@ export async function confidentialRouting(input: {
 
   const primaryPolicy = await policyAt(primary);
   if (primaryPolicy === null) return unchanged;
-  const fallbackPolicies = await Promise.all(fallbacks.map(policyAt));
+  // A fallback's policy is resolved only when something asks about it:
+  // resolvers may do I/O, and most turns never need one.
+  const fallbackPolicies = new Map<number, Promise<PrivacyPolicy | null>>();
+  const fallbackPolicy = (i: number): Promise<PrivacyPolicy | null> => {
+    let resolved = fallbackPolicies.get(i);
+    if (!resolved) {
+      resolved = policyAt(fallbacks[i]);
+      fallbackPolicies.set(i, resolved);
+    }
+    return resolved;
+  };
   // Nothing to route unless some policy could refuse a provider the turn
   // could reach.
   const primaryCouldRefuse =
     (await refusedAt(primaryPolicy, SENSITIVITY_GROUPS, primary)).length > 0;
   let couldRefuse = primaryCouldRefuse;
   for (let i = 0; !couldRefuse && i < fallbacks.length; i++) {
-    const p = fallbackPolicies[i];
+    const p = await fallbackPolicy(i);
     couldRefuse = p === null || (await refusedAt(p, SENSITIVITY_GROUPS, fallbacks[i])).length > 0;
   }
   if (!couldRefuse) return unchanged;
@@ -997,7 +1002,7 @@ export async function confidentialRouting(input: {
   }
   const permitted: string[] = [];
   for (let i = 0; i < fallbacks.length; i++) {
-    const p = fallbackPolicies[i];
+    const p = await fallbackPolicy(i);
     if (p !== null && (await refusedAt(p, flagged, fallbacks[i])).length === 0) {
       permitted.push(fallbacks[i].slug);
     }
@@ -1014,6 +1019,11 @@ export async function confidentialRouting(input: {
   return { verdict: 'unavailable', found, fallbacks: permitted };
 }
 
+/**
+ * Run the stage on one call. Returns the arguments to send, and under
+ * `pseudonymise` a restorer for the reply, or throws a
+ * {@link PrivacyRefusedError}, in which case nothing may be sent.
+ */
 export async function applyPrivacyStage(call: PrivacyStageCall): Promise<PrivacyStageResult> {
   const unchanged: PrivacyStageResult = { args: call.args };
   const abandoned = callerSignal(call);

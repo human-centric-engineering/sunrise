@@ -1516,6 +1516,20 @@ rerouting an operator's recorded choice is worse than refusing it.
 - **With no usable model** the reader is told as before
   (`privacy_confidential` and its placements). The operator's log line now
   names the setting.
+- **Known limits.**
+  - Chat routing classifies the conversation's rows and the new message, not
+    the system text the request is built with (the agent's prompt, retrieved
+    knowledge, the summary, the user's memories). Core's classifier reads
+    none of those, so for core nothing differs. An app classifier that reads
+    system text can find content routing did not; the stage then refuses the
+    turn rather than it moving.
+  - A turn routing classifies is classified again by the stage, call by
+    call: under a strict policy on a remote agent, each turn pays for the
+    classifiers twice. The stage's own pass cannot be skipped, since it is
+    the backstop.
+  - The agent's budget is checked before routing, against the agent's own
+    provider: an agent over budget is refused even when the turn would have
+    moved to a free local model.
 - **Not moved:** embeddings (one install-wide embedding model; the stage
   refuses them as for `embeddings_local_only`), a capability that resolves its
   own binding, and an `llm_call` with a `modelOverride`.

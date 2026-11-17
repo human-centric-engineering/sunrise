@@ -320,6 +320,7 @@ describe('the model for confidential messages (§130 t-1038)', () => {
     expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
+          isActive: true,
           OR: [
             { privacyConfidentialPersonal: { in: ['approved_only', 'local_only'] } },
             { privacyConfidentialCommercial: { in: ['approved_only', 'local_only'] } },

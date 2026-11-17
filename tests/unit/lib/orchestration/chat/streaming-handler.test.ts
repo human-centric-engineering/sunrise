@@ -44,6 +44,8 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      // A conversation a moved turn created and ended empty is removed (t-1038).
+      deleteMany: vi.fn(async () => ({ count: 1 })),
     },
     aiMessage: {
       findMany: vi.fn(),
@@ -10751,6 +10753,41 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       expect(rows).toEqual([]);
       expect(local.chatStream).not.toHaveBeenCalled();
       expect(cloud.chatStream).not.toHaveBeenCalled();
+      // Not answered there, so not told it moved; an existing conversation is kept.
+      expect(notes(events)).toEqual([]);
+      expect(prisma.aiConversation.deleteMany).not.toHaveBeenCalled();
+      vi.mocked(assertModelSupportsAttachments).mockReset();
+    });
+
+    it('removes a conversation that turn created, rather than leave it empty', async () => {
+      confidentialSettings('local_only');
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(
+        makeAgent({ enableImageInput: true }) as never
+      );
+      vi.mocked(assertModelSupportsAttachments).mockImplementation(async (slug: string) => {
+        if (slug === LOCAL.providerSlug) {
+          throw new ProviderError('no vision', {
+            code: 'CAPABILITY_NOT_SUPPORTED',
+            retriable: false,
+          });
+        }
+      });
+      providers();
+
+      const events = (await collect(
+        streamChat({
+          ...baseRequest,
+          message: `I've been ${DISCLOSURE}, here is my fit note.`,
+          attachments: [{ name: 'note.png', mediaType: 'image/png', data: 'aGVsbG8=' }],
+        })
+      )) as Event[];
+
+      expect(errorOf(events)?.code).toBe('IMAGE_NOT_SUPPORTED');
+      expect(prisma.aiConversation.create).toHaveBeenCalled();
+      expect(prisma.aiConversation.deleteMany).toHaveBeenCalledWith({
+        where: { id: 'conv-1', userId: baseRequest.userId },
+      });
+      expect(notes(events)).toEqual([]);
       vi.mocked(assertModelSupportsAttachments).mockReset();
     });
   });

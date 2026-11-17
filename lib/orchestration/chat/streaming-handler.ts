@@ -970,6 +970,15 @@ export class StreamingChatHandler {
           'The model for confidential messages'
         );
         if (unsupported) {
+          // Not answered there, so the reader is not told it moved. A
+          // conversation this turn created holds nothing yet, and is removed
+          // rather than left empty in the reader's list and against their
+          // cap: the gate above runs before one is created for that reason.
+          noted.movedTo = null;
+          if (!request.conversationId) {
+            noted.conversationId = null;
+            await this.discardEmptyConversation(conversation.id, request.userId, log);
+          }
           yield unsupported;
           return;
         }
@@ -3507,6 +3516,28 @@ export class StreamingChatHandler {
       select: { id: true, createdAt: true },
     });
     return row ? { id: row.id, createdAt: row.createdAt } : null;
+  }
+
+  /**
+   * Remove a conversation this turn created and ended before anything was
+   * written to it (t-1038). Best effort: a failure is logged, and the empty
+   * row is left as any turn ended early leaves its conversation.
+   */
+  private async discardEmptyConversation(
+    conversationId: string,
+    userId: string,
+    log: typeof logger
+  ): Promise<void> {
+    try {
+      await prisma.aiConversation.deleteMany({
+        where: { id: conversationId, ...conversationOwner(userId) },
+      });
+    } catch (err) {
+      log.warn('Failed to remove a conversation a turn created and ended empty', {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**

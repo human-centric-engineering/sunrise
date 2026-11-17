@@ -100,7 +100,9 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
         moving.includes(settings.privacyConfidentialPersonal) ||
         moving.includes(settings.privacyConfidentialCommercial) ||
         (await prisma.aiAgent.findFirst({
+          // A deactivated agent answers nothing, so needs no model.
           where: {
+            isActive: true,
             OR: [
               { privacyConfidentialPersonal: { in: moving } },
               { privacyConfidentialCommercial: { in: moving } },

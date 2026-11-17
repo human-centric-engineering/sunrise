@@ -459,6 +459,12 @@ export function SettingsForm({
 }: SettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
+  // What the server holds for the model for confidential messages: the page's
+  // copy at load, moved on by each save that sent it. A save sends it only
+  // when it differs from this, never from the stale load-time value.
+  const [savedConfidentialKey, setSavedConfidentialKey] = React.useState(() =>
+    confidentialModelKey(initialSettings.confidentialModel)
+  );
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
   );
@@ -663,12 +669,15 @@ export function SettingsForm({
     watchedConfidentialModel === NO_CONFIDENTIAL_MODEL &&
     (movingPolicy(watch('privacyConfidentialPersonal')) ||
       movingPolicy(watch('privacyConfidentialCommercial')));
-  // The saved model, listed even when it is no longer one of the options, so
-  // the select shows what is saved rather than quietly showing none.
-  const savedConfidentialKey = confidentialModelKey(initialSettings.confidentialModel);
-  const savedConfidentialUnlisted =
+  // The model the page loaded with, listed even when it is not one of the
+  // options, so the select shows what is stored rather than quietly showing
+  // none. Said to be no longer usable only when the options were read.
+  const loadedConfidentialKey = confidentialModelKey(initialSettings.confidentialModel);
+  const loadedConfidentialUnlisted =
     initialSettings.confidentialModel != null &&
-    !(confidentialModelOptions ?? []).some((o) => confidentialModelKey(o) === savedConfidentialKey);
+    !(confidentialModelOptions ?? []).some(
+      (o) => confidentialModelKey(o) === loadedConfidentialKey
+    );
 
   React.useEffect(() => {
     reset(defaults);
@@ -739,7 +748,7 @@ export function SettingsForm({
             privacyConfidentialCommercial: values.privacyConfidentialCommercial,
             // Only when changed: the API refuses a model that is no longer
             // usable, and that must not stop a save of anything else.
-            ...(values.confidentialModel !== confidentialModelKey(initialSettings.confidentialModel)
+            ...(values.confidentialModel !== savedConfidentialKey
               ? { confidentialModel: confidentialModelFromKey(values.confidentialModel) }
               : {}),
             globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
@@ -770,6 +779,7 @@ export function SettingsForm({
         }
       );
       reset(undefined, { keepValues: true });
+      setSavedConfidentialKey(values.confidentialModel);
       if (values.privacyMode !== KEEP_STORED_MODE) setStoredPrivacyModeShown(true);
       setSavedEmails([...escalationEmails]);
       // Only a save that wrote the list moves this page's copy of it on. One
@@ -1150,10 +1160,11 @@ export function SettingsForm({
                           {option.label} ({option.where === 'local' ? 'local' : 'trusted'})
                         </SelectItem>
                       ))}
-                      {savedConfidentialUnlisted && initialSettings.confidentialModel && (
-                        <SelectItem value={savedConfidentialKey}>
+                      {loadedConfidentialUnlisted && initialSettings.confidentialModel && (
+                        <SelectItem value={loadedConfidentialKey}>
                           {initialSettings.confidentialModel.model} (
-                          {initialSettings.confidentialModel.providerSlug}, no longer usable)
+                          {initialSettings.confidentialModel.providerSlug}
+                          {confidentialModelOptions === null ? '' : ', no longer usable'})
                         </SelectItem>
                       )}
                     </SelectContent>
