@@ -19,6 +19,7 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
+import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
@@ -99,6 +100,22 @@ export const PATCH = withAdminAuth(
     // A save of the escalation list says which version it loaded (§122
     // t-899); a save of anything else on the row does not need to.
     const loadedAt = body.escalationConfig !== undefined ? requireIfMatch(request) : undefined;
+
+    // The model for confidential messages (§130 t-1038): refused unless it
+    // could answer a confidential turn, so it is never saved broken.
+    if (body.confidentialModel) {
+      const problem = await confidentialModelProblem(body.confidentialModel);
+      if (problem) {
+        return errorResponse(
+          `That model can't be the model for confidential messages. ${problem}`,
+          {
+            code: 'VALIDATION_ERROR',
+            status: 400,
+            details: { field: 'confidentialModel' },
+          }
+        );
+      }
+    }
 
     // Validate the active-embedding-model FK against the model matrix. The
     // Zod schema only enforces "non-empty string", since the foreign key
@@ -349,6 +366,10 @@ export const PATCH = withAdminAuth(
     if (body.privacyConfidentialCommercial !== undefined) {
       updateData.privacyConfidentialCommercial = body.privacyConfidentialCommercial;
     }
+    if (body.confidentialModel !== undefined) {
+      updateData.confidentialModelProvider = body.confidentialModel?.providerSlug ?? null;
+      updateData.confidentialModel = body.confidentialModel?.model ?? null;
+    }
     if (body.escalationConfig !== undefined) {
       updateData.escalationConfig =
         body.escalationConfig === null ? Prisma.JsonNull : body.escalationConfig;
@@ -401,6 +422,12 @@ export const PATCH = withAdminAuth(
             : {}),
           ...(body.privacyConfidentialCommercial !== undefined
             ? { privacyConfidentialCommercial: body.privacyConfidentialCommercial }
+            : {}),
+          ...(body.confidentialModel
+            ? {
+                confidentialModelProvider: body.confidentialModel.providerSlug,
+                confidentialModel: body.confidentialModel.model,
+              }
             : {}),
         },
         update: updateData,

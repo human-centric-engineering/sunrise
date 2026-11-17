@@ -300,6 +300,13 @@ model AiOrchestrationSettings {
   // 2026-11-17).
   privacyConfidentialPersonal   String    @default("warn")
   privacyConfidentialCommercial String    @default("allow")
+  // The model for confidential messages (§130 t-1038): a turn whose agent's
+  // provider a group's policy does not permit is answered on it instead.
+  // Both set or neither; the API checks it is an active chat model on a local
+  // or trusted provider. Strings, not a foreign key, as an agent's binding
+  // is, so a backup carries it to another install.
+  confidentialModelProvider     String?
+  confidentialModel             String?
   createdAt                     DateTime  @default(now())
   updatedAt                     DateTime  @updatedAt
 

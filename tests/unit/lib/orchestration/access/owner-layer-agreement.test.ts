@@ -319,6 +319,11 @@ const OWNER_DISPOSITIONS: Record<string, OwnerDisposition> = {
     kind: 'checked',
     because: 'reads its run’s conversation and history by id in one read, checked by the layer.',
   },
+  'lib/orchestration/llm/confidential-route.ts': {
+    kind: 'checked',
+    because:
+      'reads one conversation’s metadata by the id its caller passes, checked by the layer, and writes it back.',
+  },
   'lib/orchestration/capabilities/built-in/send-message-to-channel.ts': {
     kind: 'checked',
     because: 'reads the run and its conversation by id, checked on the row.',

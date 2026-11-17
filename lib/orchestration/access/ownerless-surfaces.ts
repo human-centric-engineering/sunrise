@@ -388,6 +388,15 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'the engine has no caller to scope by.',
   },
   {
+    path: 'lib/orchestration/llm/confidential-route.ts',
+    disposition: 'by-design',
+    reason:
+      'keeps the confidential groups a turn found on that turn’s own conversation (§130 ' +
+      't-1038), with the `where` its caller passes: the chat handler’s, keyed on ' +
+      '`request.userId`, or the `chat_turn` step’s, its run’s conversation. It has no ' +
+      'caller of its own to scope by, and returns no row content.',
+  },
+  {
     path: 'lib/orchestration/capabilities/built-in/send-message-to-channel.ts',
     disposition: 'by-design',
     reason:

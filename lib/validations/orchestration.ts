@@ -3145,6 +3145,17 @@ export const updateOrchestrationSettingsSchema = z
     // What a call holding confidential content may do, per group (§130).
     privacyConfidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
     privacyConfidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS).optional(),
+    // The model for confidential messages (§130 t-1038), or null to clear it.
+    // The route checks it is an active chat model on a local or trusted
+    // provider: that needs the database.
+    confidentialModel: z
+      .object({
+        providerSlug: z.string().trim().min(1).max(100),
+        model: z.string().trim().min(1).max(200),
+      })
+      .strict()
+      .nullable()
+      .optional(),
     // Write path: the refined variant, so an unsafe target is rejected at the
     // API boundary rather than only when the stored value is next used (#553).
     escalationConfig: escalationConfigWriteSchema.nullable().optional(),
@@ -3236,7 +3247,8 @@ export const updateOrchestrationSettingsSchema = z
       v.privacyProtectLocalProviders !== undefined ||
       v.privacyEmbeddingsPolicy !== undefined ||
       v.privacyConfidentialPersonal !== undefined ||
-      v.privacyConfidentialCommercial !== undefined,
+      v.privacyConfidentialCommercial !== undefined ||
+      v.confidentialModel !== undefined,
     {
       message: 'At least one field must be provided',
     }

@@ -14,8 +14,18 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('@/components/admin/orchestration/settings-form', () => ({
-  SettingsForm: ({ initialSettings }: { initialSettings: unknown }) => (
-    <div data-testid="settings-form" data-settings={JSON.stringify(initialSettings)} />
+  SettingsForm: ({
+    initialSettings,
+    confidentialModelOptions,
+  }: {
+    initialSettings: unknown;
+    confidentialModelOptions?: unknown;
+  }) => (
+    <div
+      data-testid="settings-form"
+      data-settings={JSON.stringify(initialSettings)}
+      data-confidential-options={JSON.stringify(confidentialModelOptions ?? null)}
+    />
   ),
 }));
 
@@ -290,6 +300,76 @@ describe('OrchestrationSettingsPage', () => {
     });
     expect(JSON.parse(form.getAttribute('data-providers') ?? '[]')).toEqual(providers);
     expect(JSON.parse(form.getAttribute('data-embeddings') ?? '[]')).toEqual(embeddingModels);
+  });
+
+  it('offers as the model for confidential messages only chat models on an active local or trusted provider (§130 t-1038)', async () => {
+    const chatRows = [
+      ['llama', 'Llama', 'ollama'],
+      ['claude', 'Claude', 'anthropic'],
+      ['gpt', 'GPT', 'openai'],
+      ['voy', 'Voyage chat', 'voyage'],
+      ['off', 'Off model', 'disabled'],
+      ['orphan', 'Orphan', 'nowhere'],
+    ].map(([modelId, name, providerSlug]) => ({
+      modelId,
+      name,
+      providerSlug,
+      tierRole: 'worker',
+      deploymentProfiles: ['hosted'],
+    }));
+    const providers = [
+      {
+        slug: 'ollama',
+        name: 'Ollama',
+        isActive: true,
+        isLocal: true,
+        providerType: 'openai-compatible',
+      },
+      {
+        slug: 'anthropic',
+        name: 'Anthropic',
+        isActive: true,
+        isLocal: false,
+        trustedForConfidential: true,
+      },
+      {
+        slug: 'openai',
+        name: 'OpenAI',
+        isActive: true,
+        isLocal: false,
+        trustedForConfidential: false,
+      },
+      // A Voyage row marked local never builds a local client.
+      { slug: 'voyage', name: 'Voyage', isActive: true, isLocal: true, providerType: 'voyage' },
+      { slug: 'disabled', name: 'Off', isActive: false, isLocal: true },
+    ];
+    answer({ chat: chatRows, providers });
+
+    render(await OrchestrationSettingsPage());
+
+    expect(
+      JSON.parse(
+        screen.getByTestId('settings-form').getAttribute('data-confidential-options') ?? ''
+      )
+    ).toEqual([
+      { providerSlug: 'ollama', model: 'llama', label: 'Llama on Ollama', where: 'local' },
+      {
+        providerSlug: 'anthropic',
+        model: 'claude',
+        label: 'Claude on Anthropic',
+        where: 'trusted',
+      },
+    ]);
+  });
+
+  it('passes no confidential-model options when the models or providers could not be read', async () => {
+    answer({ providers: apiFailure(500) });
+
+    render(await OrchestrationSettingsPage());
+
+    expect(screen.getByTestId('settings-form').getAttribute('data-confidential-options')).toBe(
+      'null'
+    );
   });
 
   it('reshapes audio matrix rows into the audio model summaries DefaultModelsForm takes', async () => {

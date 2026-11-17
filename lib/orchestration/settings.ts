@@ -28,6 +28,7 @@ import {
 import {
   TASK_TYPES,
   type ApprovalDefaultAction,
+  type ConfidentialModelBinding,
   type EscalationConfig,
   type InputGuardMode,
   type OutputGuardMode,
@@ -78,6 +79,17 @@ export function parseEscalationConfig(
 }
 
 /**
+ * The model for confidential messages from its two columns (§130 t-1038):
+ * both halves or none, since half a binding names no model.
+ */
+export function confidentialModelBinding(
+  providerSlug: string | null | undefined,
+  model: string | null | undefined
+): ConfidentialModelBinding | null {
+  return providerSlug && model ? { providerSlug, model } : null;
+}
+
+/**
  * Hydrate a raw Prisma row into the `OrchestrationSettings` response shape,
  * filling in any task keys the stored JSON is missing from the registry defaults.
  */
@@ -124,6 +136,8 @@ export function hydrateSettings(row: {
   privacyEmbeddingsPolicy?: string | null;
   privacyConfidentialPersonal?: string | null;
   privacyConfidentialCommercial?: string | null;
+  confidentialModelProvider?: string | null;
+  confidentialModel?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -219,6 +233,10 @@ export function hydrateSettings(row: {
     ),
     privacyConfidentialCommercial: parseConfidentialPolicy(
       row.privacyConfidentialCommercial ?? undefined
+    ),
+    confidentialModel: confidentialModelBinding(
+      row.confidentialModelProvider,
+      row.confidentialModel
     ),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

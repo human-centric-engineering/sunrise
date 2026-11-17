@@ -49,6 +49,16 @@ vi.mock('@/lib/orchestration/llm/agent-resolver', () => ({
   resolveAgentProviderAndModel: vi.fn(),
 }));
 
+// Routing for confidential content (§130 t-1038) is proved in its own tests;
+// here it keeps the binding unless a test says otherwise.
+vi.mock('@/lib/orchestration/llm/confidential-route', () => ({
+  routeConfidentialTurn: vi.fn(async ({ binding }: { binding: unknown }) => ({
+    kind: 'stay',
+    binding,
+    found: [],
+  })),
+}));
+
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   calculateCost: vi.fn(),
   logCost: vi.fn(),
@@ -86,6 +96,7 @@ import { getCapabilityDefinitions } from '@/lib/orchestration/capabilities/regis
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { routeConfidentialTurn } from '@/lib/orchestration/llm/confidential-route';
 import type { TurnEntry, WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { MockTracer } from '@/tests/helpers/mock-tracer';
@@ -2294,5 +2305,46 @@ describe('executeAgentCall', () => {
       expect(result.tokensUsed).toBe(priorTokensTotal + newIterationTokens);
       expect(result.costUsd).toBeCloseTo(priorCostTotal + newIterationCost);
     });
+  });
+});
+
+describe('executeAgentCall — the model for confidential messages (§130 t-1038)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaultMocks();
+  });
+
+  it('answers on the binding routing moved it to, routed on what the step sends', async () => {
+    const provenance = {
+      task: 'chat' as const,
+      primary: 'explicit' as const,
+      fallbacks: 'explicit' as const,
+    };
+    let scopedTo: string | undefined;
+    vi.mocked(routeConfidentialTurn).mockImplementationOnce(async () => {
+      scopedTo = currentPrivacyScope()?.agentId;
+      return {
+        kind: 'move',
+        binding: { providerSlug: 'ollama-local', model: 'llama3.1:8b', fallbacks: [], provenance },
+        to: 'local',
+        found: ['personal'],
+      };
+    });
+
+    await executeAgentCall(makeStep(), makeCtx());
+
+    expect(routeConfidentialTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ providerSlug: 'anthropic' }),
+        messages: [
+          { role: 'system', content: '[Instructions]\nYou are a summarizer.' },
+          { role: 'user', content: 'Summarize: hello' },
+        ],
+      })
+    );
+    // In the agent's own privacy scope, so its policy decides.
+    expect(scopedTo).toBe('agent_1');
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('ollama-local', [], provenance);
+    expect(mockChat.mock.calls[0][1]).toMatchObject({ model: 'llama3.1:8b' });
   });
 });

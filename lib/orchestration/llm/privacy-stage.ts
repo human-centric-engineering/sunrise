@@ -144,7 +144,7 @@ const OPERATOR_MESSAGES: Record<PrivacyRefusalReason, string> = {
   confidential_blocked:
     'The LLM privacy layer refused the call: it held confidential content of a group whose policy is block, or a confidential-content classifier failed under that policy. Choose a looser policy for the group in the orchestration settings or on the agent, or leave the agent as it is if the content should never be sent.',
   confidential_not_permitted:
-    'The LLM privacy layer refused the call: it held confidential content of a group whose policy sends it only to local providers (local_only) or to trusted and local ones (approved_only), or a confidential-content classifier failed under that policy, and the call\'s provider is neither. Put the agent on a local provider, tick the provider "Trusted with confidential content" if your contract with it covers this content, or loosen the group\'s policy.',
+    'The LLM privacy layer refused the call: it held confidential content of a group whose policy sends it only to local providers (local_only) or to trusted and local ones (approved_only), or a confidential-content classifier failed under that policy, and the call\'s provider is neither. A chat turn or agent step moves to the model for confidential messages (Settings → LLM privacy) when one is set and permitted; this call was not moved, because none is, or because the caller chose its own model. Choose that model, put the agent on a local provider, tick the provider "Trusted with confidential content" if your contract with it covers this content, or loosen the group\'s policy.',
   confidential_unchecked:
     'The LLM privacy layer refused the call: a confidential-content classifier failed or ran out of time, and a group whose policy is approved_only, local_only or block would have refused the call had it found that content, so a call it could not check is not sent. See the server log for which classifier; it is tried again on the next call.',
   stage_error:
@@ -450,12 +450,12 @@ function trustedOnce(call: PrivacyStageCall): () => Promise<boolean> {
  */
 async function groupRefuses(
   policy: ConfidentialPolicy,
-  call: PrivacyStageCall,
+  isLocal: boolean,
   isTrusted: () => Promise<boolean>
 ): Promise<boolean> {
   if (policy === 'block') return true;
-  if (policy === 'local_only') return !call.isLocal;
-  if (policy === 'approved_only') return !call.isLocal && !(await isTrusted());
+  if (policy === 'local_only') return !isLocal;
+  if (policy === 'approved_only') return !isLocal && !(await isTrusted());
   return false;
 }
 
@@ -471,7 +471,7 @@ async function confidentialPolicyCouldRefuse(
   isTrusted: () => Promise<boolean>
 ): Promise<boolean> {
   for (const g of SENSITIVITY_GROUPS) {
-    if (await groupRefuses(groupPolicy(policy, g), call, isTrusted)) return true;
+    if (await groupRefuses(groupPolicy(policy, g), call.isLocal, isTrusted)) return true;
   }
   return false;
 }
@@ -516,7 +516,7 @@ async function confidentialVerdict(
   let blocked = false;
   for (const g of flagged) {
     const p = groupPolicy(policy, g);
-    if (await groupRefuses(p, call, isTrusted)) {
+    if (await groupRefuses(p, call.isLocal, isTrusted)) {
       refusing.push(g);
       if (p === 'block') blocked = true;
     }
@@ -818,6 +818,213 @@ function refuse(
 }
 
 /**
+ * The policy a call to `provider` runs under in `scope`: the settings' base,
+ * tightened by every resolver. Inside the scope, ephemeral or not, so core's
+ * resolver keeps what it reads on the scope the call records into
+ * (`scopePrivacySettings`). The stage and routing (t-1038) both resolve
+ * through here, so they cannot disagree about the policy.
+ */
+function resolvePolicyFor(
+  scope: PrivacyScope,
+  base: PrivacyPolicy,
+  provider: { slug: string; isLocal: boolean },
+  abandoned: AbortSignal | undefined
+): ReturnType<typeof resolvePrivacyPolicy> {
+  const orgId = orgOf(scope);
+  return runInPrivacyScope(scope, () =>
+    resolvePrivacyPolicy(
+      base,
+      {
+        ...(orgId !== undefined ? { orgId } : {}),
+        ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+        ...(scope.userId !== undefined ? { userId: scope.userId } : {}),
+        providerSlug: provider.slug,
+        isLocalProvider: provider.isLocal,
+      },
+      abandoned
+    )
+  );
+}
+
+/** A provider routing (t-1038) may send a turn to. */
+export interface RoutingCandidate {
+  slug: string;
+  isLocal: boolean;
+  /** Whether it is ticked "Trusted with confidential content"; asked only when a policy needs it. */
+  isTrusted: () => Promise<boolean>;
+}
+
+/** What routing should do with a turn (t-1038). */
+export interface ConfidentialRouting {
+  /**
+   * - `stay`: keep the agent's provider. Nothing flagged is refused there, or
+   *   nothing could help (a `block` policy, an unreadable policy), and the
+   *   stage decides each call as it would anyway.
+   * - `move`: the agent's provider is refused for something flagged, and the
+   *   target is permitted for everything flagged.
+   * - `unavailable`: the agent's provider is refused for something flagged,
+   *   and there is no target, or it is refused too. The stage refuses the call.
+   */
+  verdict: 'stay' | 'move' | 'unavailable';
+  /** The groups the classifiers found in what was classified: to keep on the conversation. */
+  found: SensitivityGroup[];
+  /**
+   * The fallbacks no flagged group refuses, in order: the agent's own list
+   * when nothing is flagged. A moved turn uses none: a fallback is sent the
+   * primary's model id.
+   */
+  fallbacks: string[];
+}
+
+/**
+ * Where a turn holding confidential content can be answered (§130 t-1038),
+ * decided at its start, before the request is built: by then the stage could
+ * only refuse. The same policy, classifiers and per-group rule as the stage
+ * ({@link groupRefuses}), so routing and the backstop never disagree about a
+ * provider.
+ *
+ * Classifies only when a group's policy could refuse the agent's provider or
+ * one of its fallbacks: otherwise there is nothing to route, and an install
+ * on `allow` and `warn` pays nothing. External classifiers run as the stage
+ * would run them on the turn's first call: always under a masking mode, and
+ * for a call it forwards untouched only when the agent's provider is remote
+ * and its policy could refuse it. Nothing is recorded here: the stage records each call it
+ * classifies, and this pass is not a call. A group counts as flagged when
+ * content of it was found, when it is in `sticky` (found on an earlier turn
+ * of the conversation, which may since have been summarised away), or, under
+ * a policy that can refuse, when a classifier failed.
+ */
+export async function confidentialRouting(input: {
+  parts: readonly SensitivityPart[];
+  sticky: readonly SensitivityGroup[];
+  primary: RoutingCandidate;
+  fallbacks: readonly RoutingCandidate[];
+  target: RoutingCandidate | null;
+  /** The settings the caller read already, so a turn reads them once. */
+  settings: Awaited<ReturnType<typeof getOrchestrationSettings>>;
+  signal?: AbortSignal;
+}): Promise<ConfidentialRouting> {
+  const { parts, sticky, primary, fallbacks, target, settings, signal } = input;
+  const unchanged: ConfidentialRouting = {
+    verdict: 'stay',
+    found: [],
+    fallbacks: fallbacks.map((f) => f.slug),
+  };
+  const adapters = getPrivacyAdapters();
+  // The stage refuses every call in these cases; routing cannot help.
+  if (adapters.coreFailure !== null || adapters.appInitFailure !== null) return unchanged;
+  const base = basePolicyFromSettings(settings);
+  if (base === null) return unchanged;
+  const { scope } = scopeFor();
+  const policyAt = async (c: RoutingCandidate): Promise<PrivacyPolicy | null> => {
+    const { policy, failures } = await resolvePolicyFor(scope, base, c, signal);
+    return failures.length > 0 ? null : policy;
+  };
+  const refusedAt = async (
+    policy: PrivacyPolicy,
+    groups: readonly SensitivityGroup[],
+    c: RoutingCandidate
+  ): Promise<SensitivityGroup[]> => {
+    const refused: SensitivityGroup[] = [];
+    for (const g of groups) {
+      if (await groupRefuses(groupPolicy(policy, g), c.isLocal, c.isTrusted)) refused.push(g);
+    }
+    return refused;
+  };
+
+  const primaryPolicy = await policyAt(primary);
+  if (primaryPolicy === null) return unchanged;
+  // A fallback's policy is resolved only when something asks about it:
+  // resolvers may do I/O, and most turns never need one.
+  const fallbackPolicies = new Map<number, Promise<PrivacyPolicy | null>>();
+  const fallbackPolicy = (i: number): Promise<PrivacyPolicy | null> => {
+    let resolved = fallbackPolicies.get(i);
+    if (!resolved) {
+      resolved = policyAt(fallbacks[i]);
+      fallbackPolicies.set(i, resolved);
+    }
+    return resolved;
+  };
+  // Nothing to route unless some policy could refuse a provider the turn
+  // could reach. A group under `block` is left out of this question: it is
+  // refused at every provider, so routing cannot help, and an install whose
+  // only strict group is blocked pays for no classification here.
+  const routable = (policy: PrivacyPolicy) =>
+    SENSITIVITY_GROUPS.filter((g) => groupPolicy(policy, g) !== 'block');
+  const primaryCouldRefuse =
+    (await refusedAt(primaryPolicy, routable(primaryPolicy), primary)).length > 0;
+  let couldRefuse = primaryCouldRefuse;
+  for (let i = 0; !couldRefuse && i < fallbacks.length; i++) {
+    const p = await fallbackPolicy(i);
+    couldRefuse = p === null || (await refusedAt(p, routable(p), fallbacks[i])).length > 0;
+  }
+  if (!couldRefuse) return unchanged;
+
+  let found: SensitivityGroup[] = [];
+  let failed = false;
+  try {
+    const textParts = parts.filter((p) => p.text.length > 0);
+    if (textParts.length > 0) {
+      const deadline = AbortSignal.timeout(PRIVACY_PASS_DEADLINE_MS);
+      const orgId = orgOf(scope);
+      const { categories, failures } = await runSensitivityClassifiers(
+        { parts: textParts },
+        {
+          scopeId: scope.scopeId,
+          ...(orgId !== undefined ? { orgId } : {}),
+          ...(scope.agentId !== undefined ? { agentId: scope.agentId } : {}),
+          signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+          // The stage's rule for the call the turn starts with: a call it
+          // forwards untouched goes to external classifiers only when it is
+          // remote and its own policy could refuse it.
+          inHouseOnly:
+            (primaryPolicy.mode === 'off' ||
+              (primary.isLocal && !primaryPolicy.protectLocalProviders)) &&
+            !(primaryCouldRefuse && !primary.isLocal),
+        }
+      );
+      found = SENSITIVITY_GROUPS.filter((g) => categories.some((c) => c.group === g));
+      failed = failures.length > 0;
+    }
+  } catch (err) {
+    logger.error('privacy-stage: classifying a turn for routing failed', undefined, {
+      providerSlug: primary.slug,
+      errorName: err instanceof Error ? err.name : typeof err,
+    });
+    failed = true;
+  }
+
+  const flagged = SENSITIVITY_GROUPS.filter(
+    (g) =>
+      found.includes(g) ||
+      sticky.includes(g) ||
+      (failed && refusesSomewhere(groupPolicy(primaryPolicy, g)))
+  );
+  if (flagged.length === 0) return { ...unchanged, found };
+  // `block` refuses whatever the provider: routing cannot help.
+  if (flagged.some((g) => groupPolicy(primaryPolicy, g) === 'block')) {
+    return { ...unchanged, found };
+  }
+  const permitted: string[] = [];
+  for (let i = 0; i < fallbacks.length; i++) {
+    const p = await fallbackPolicy(i);
+    if (p !== null && (await refusedAt(p, flagged, fallbacks[i])).length === 0) {
+      permitted.push(fallbacks[i].slug);
+    }
+  }
+  if ((await refusedAt(primaryPolicy, flagged, primary)).length === 0) {
+    return { verdict: 'stay', found, fallbacks: permitted };
+  }
+  if (target !== null) {
+    const targetPolicy = await policyAt(target);
+    if (targetPolicy !== null && (await refusedAt(targetPolicy, flagged, target)).length === 0) {
+      return { verdict: 'move', found, fallbacks: permitted };
+    }
+  }
+  return { verdict: 'unavailable', found, fallbacks: permitted };
+}
+
+/**
  * Run the stage on one call. Returns the arguments to send, and under
  * `pseudonymise` a restorer for the reply, or throws a
  * {@link PrivacyRefusedError}, in which case nothing may be sent.
@@ -841,23 +1048,13 @@ export async function applyPrivacyStage(call: PrivacyStageCall): Promise<Privacy
     scope = scoped.scope;
     if (base === null) throw refuse('settings_unreadable', call, scope, mode);
 
-    // Resolvers run even when the base is `off`: one may raise it. Inside the
-    // call's scope, ephemeral or not, so core's resolver keeps what it reads
-    // on the scope this call records into (`scopePrivacySettings`).
+    // Resolvers run even when the base is `off`: one may raise it.
     const orgId = orgOf(scope);
-    const resolving = scope;
-    const { policy, failures: resolverFailures } = await runInPrivacyScope(resolving, () =>
-      resolvePrivacyPolicy(
-        base,
-        {
-          ...(orgId !== undefined ? { orgId } : {}),
-          ...(resolving.agentId !== undefined ? { agentId: resolving.agentId } : {}),
-          ...(resolving.userId !== undefined ? { userId: resolving.userId } : {}),
-          providerSlug: call.providerSlug,
-          isLocalProvider: call.isLocal,
-        },
-        abandoned
-      )
+    const { policy, failures: resolverFailures } = await resolvePolicyFor(
+      scope,
+      base,
+      { slug: call.providerSlug, isLocal: call.isLocal },
+      abandoned
     );
     // The caller gave up while the resolvers ran: a cancel, not a refusal.
     // The caller gave up while the resolvers ran. Thrown whatever the mode:

@@ -27,6 +27,7 @@
 import type { AiProviderConfig } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { buildsLocalClient } from '@/lib/orchestration/llm/provider-locality';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
 import { getBreaker, peekBreaker } from '@/lib/orchestration/llm/circuit-breaker';
@@ -279,12 +280,9 @@ export async function isTrustedProvider(slugOrName: string): Promise<boolean> {
   }
 }
 
-/**
- * Whether a provider row builds a local client. A Voyage row never does: its
- * `isLocal` decides only whether its `baseUrl` may be on loopback.
- */
+/** Whether a provider row builds a local client (`buildsLocalClient`). */
 function isLocalConfig(config: Pick<AiProviderConfig, 'isLocal' | 'providerType'>): boolean {
-  return config.isLocal && config.providerType !== 'voyage';
+  return buildsLocalClient(config);
 }
 
 /** `getProvider` for any call origin, including an unrecorded fallback. */

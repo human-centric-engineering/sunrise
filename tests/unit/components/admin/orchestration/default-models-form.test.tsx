@@ -101,6 +101,7 @@ const MOCK_SETTINGS: OrchestrationSettings = {
   privacyEmbeddingsPolicy: 'allow',
   privacyConfidentialPersonal: 'allow',
   privacyConfidentialCommercial: 'allow',
+  confidentialModel: null,
   createdAt: new Date('2026-01-01'),
   updatedAt: new Date('2026-01-01'),
 };

@@ -150,6 +150,13 @@ export interface SummarizeOptions {
    */
   provenance?: BindingProvenance;
   /**
+   * The model to summarise with, in place of the routing default. Set by a
+   * turn that moved to the model for confidential messages (§130 t-1038): the
+   * provider passed is that model's, and the routing default may not exist
+   * there, nor be one the policy permits.
+   */
+  model?: string;
+  /**
    * The caller's cancellation signal. A client that disconnects mid-turn stops
    * the provider call instead of paying for a summary nobody will read.
    */
@@ -250,7 +257,7 @@ export async function summarizeMessages(
   const extending = typeof options.previousSummary === 'string' && options.previousSummary !== '';
 
   try {
-    const model = await getDefaultModelForTask('routing');
+    const model = options.model ?? (await getDefaultModelForTask('routing'));
     const { provider, usedSlug } = await getProviderWithFallbacks(
       providerSlug,
       fallbackSlugs,

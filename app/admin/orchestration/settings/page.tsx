@@ -9,6 +9,7 @@ import {
 import { DefaultModelsForm } from '@/components/admin/orchestration/default-models-form';
 import {
   SettingsForm,
+  type ConfidentialModelOption,
   type OrchestrationSettings,
 } from '@/components/admin/orchestration/settings-form';
 import { BackupPanel } from '@/components/admin/orchestration/settings/backup-panel';
@@ -16,6 +17,7 @@ import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { FieldHelp } from '@/components/ui/field-help';
 import { env } from '@/lib/env';
 import { API } from '@/lib/api/endpoints';
+import { buildsLocalClient } from '@/lib/orchestration/llm/provider-locality';
 import { loadServerData, requireServerData, type LoadResult } from '@/lib/api/server-load';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings as FullOrchestrationSettings } from '@/types/orchestration';
@@ -104,6 +106,37 @@ interface ProviderSummary {
   slug: string;
   name: string;
   isActive: boolean;
+  isLocal?: boolean;
+  providerType?: string;
+  trustedForConfidential?: boolean;
+}
+
+/**
+ * The models that can be the model for confidential messages (§130 t-1038):
+ * active chat models on an active provider that is local or ticked trusted.
+ * The API checks the same when one is saved (`confidentialModelProblem`).
+ */
+function confidentialModelOptions(
+  models: ModelInfo[],
+  providers: ProviderSummary[]
+): ConfidentialModelOption[] {
+  const options: ConfidentialModelOption[] = [];
+  for (const model of models) {
+    const provider = providers.find((p) => p.slug === model.provider);
+    if (!provider?.isActive) continue;
+    const local = buildsLocalClient({
+      isLocal: provider.isLocal === true,
+      providerType: provider.providerType ?? '',
+    });
+    if (!local && provider.trustedForConfidential !== true) continue;
+    options.push({
+      providerSlug: model.provider,
+      model: model.id,
+      label: `${model.name} on ${provider.name}`,
+      where: local ? 'local' : 'trusted',
+    });
+  }
+  return options;
 }
 
 function getProviders(): Promise<LoadResult<ProviderSummary[]>> {
@@ -288,6 +321,9 @@ export default async function OrchestrationSettingsPage() {
         // Server-only env, so the client guard cannot read it directly (#553).
         allowPrivateEscalationWebhook={env.ESCALATION_WEBHOOK_ALLOW_PRIVATE}
         embeddingProviderIsLocal={embeddingProviderIsLocal}
+        confidentialModelOptions={
+          models.ok && providers.ok ? confidentialModelOptions(models.data, providers.data) : null
+        }
       />
 
       <BackupPanel />
