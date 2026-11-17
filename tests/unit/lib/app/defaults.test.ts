@@ -117,6 +117,11 @@ import {
   getRegisteredAccountSections,
   __resetAccountSectionRegistryForTests,
 } from '@/lib/account-sections/registry';
+import {
+  registeredEntitlementSwitches,
+  resolveOrgSwitches,
+  __resetEntitlementRegistryForTests,
+} from '@/lib/tenancy/entitlements';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
 import { ORG_TIER_ADMIN_PAGES, adminPageTier } from '@/lib/auth/admin-tier';
 import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
@@ -565,6 +570,17 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       for (const surface of ACCOUNT_SURFACES) {
         expect(getRegisteredAccountSections(surface)).toEqual([]);
       }
+    },
+  },
+  {
+    seam: 'lib/app/entitlements.ts',
+    risk: 'a stray switch would appear on every org page, and one on by default (whenNothingSet) would be granted to every org nobody had set it on, on every install',
+    assert: () => {
+      __resetEntitlementRegistryForTests();
+      // The read triggers the lazy init, so this exercises the REAL seam.
+      expect(registeredEntitlementSwitches()).toEqual([]);
+      // …so nothing an org stores, or does not, gives it a switch.
+      expect(resolveOrgSwitches({ on: [], off: [], unreadable: false }).on).toEqual([]);
     },
   },
   {

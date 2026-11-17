@@ -255,6 +255,82 @@ export type OrgQuotas = z.infer<typeof orgQuotasSchema>;
 /** The caps an org's `quotas` slice may name, for the per-key read. */
 export const ORG_QUOTA_KEYS = ['monthlyBudgetUsd', 'requestsPerMinute'] as const;
 
+/**
+ * An entitlement switch's key (§135 t-1033): lower-case words joined by
+ * underscores, starting with a letter, such as `lead_gen`. It is what is
+ * stored on an org and what a surface will name to require it, so it is the
+ * one spelling that must not change once orgs hold it.
+ */
+export const ENTITLEMENT_KEY_PATTERN = /^[a-z][a-z0-9_]{0,47}$/;
+
+export const entitlementKeySchema = z
+  .string()
+  .regex(
+    ENTITLEMENT_KEY_PATTERN,
+    'A switch key is lower-case letters, digits and underscores, starting with a letter, at most 48 characters'
+  );
+
+/**
+ * The most switches an app may register, and so the most one change may set
+ * on, or off. A sanity limit, not a product limit.
+ */
+export const MAX_ORG_ENTITLEMENT_SWITCHES = 100;
+
+/**
+ * The most keys one org may hold in each stored list: room for every
+ * registered switch and for keys kept after an app stopped registering them,
+ * which every save keeps. A sanity limit on a bad write.
+ */
+const MAX_STORED_ENTITLEMENT_KEYS = 1000;
+
+/** Sorted and without duplicates; the limit counts what is left. */
+const entitlementKeyList = (max: number) =>
+  z
+    .array(entitlementKeySchema)
+    .max(MAX_STORED_ENTITLEMENT_KEYS * 2, 'Too many switches')
+    .transform((keys) => [...new Set(keys)].sort())
+    .refine((keys) => keys.length <= max, `At most ${max} switches`);
+
+const noKeyBothOnAndOff = (value: { on: string[]; off: string[] }) =>
+  !value.on.some((key) => value.off.includes(key));
+const BOTH_ON_AND_OFF = { message: 'A switch cannot be both on and off', path: ['off'] };
+
+/**
+ * One org's switches as STORED in `Org.settings.entitlements` (§135 t-1033):
+ * the keys set on and the keys set off. A key in neither has not been set on
+ * this org, so it gets that switch's `whenNothingSet`, which is a different
+ * answer from a key set off. Recording both is what lets a switch an app
+ * registers later reach an org that was saved before it existed. Each list is
+ * kept sorted and without duplicates, so two writes of the same set store the
+ * same value, and no key is in both.
+ */
+export const orgEntitlementsSchema = z
+  .object({
+    on: entitlementKeyList(MAX_STORED_ENTITLEMENT_KEYS),
+    off: entitlementKeyList(MAX_STORED_ENTITLEMENT_KEYS),
+  })
+  .strict()
+  .refine(noKeyBothOnAndOff, BOTH_ON_AND_OFF);
+
+export type OrgEntitlements = z.infer<typeof orgEntitlementsSchema>;
+
+/**
+ * `PATCH /api/v1/admin/orgs/[id]/entitlements` body: the registered switches
+ * to set on and to set off. A switch named in neither is left as it is, so a
+ * caller never turns off a switch it did not know about (one registered after
+ * its form loaded, or by a newer build during a deploy). Both keys are
+ * required, and empty lists change nothing.
+ */
+export const orgEntitlementsInputSchema = z
+  .object({
+    on: entitlementKeyList(MAX_ORG_ENTITLEMENT_SWITCHES),
+    off: entitlementKeyList(MAX_ORG_ENTITLEMENT_SWITCHES),
+  })
+  .strict()
+  .refine(noKeyBothOnAndOff, BOTH_ON_AND_OFF);
+
+export type OrgEntitlementsInput = z.infer<typeof orgEntitlementsInputSchema>;
+
 /** The kinds of name an org may protect: people and organisations (§127, t-1010). */
 export const ORG_PROTECTED_TERM_TYPES = ['PERSON', 'ORG'] as const;
 

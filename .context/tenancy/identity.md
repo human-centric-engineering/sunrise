@@ -103,7 +103,7 @@ Three things about the shape are decisions, not defaults:
   fork's product tiers sit beneath the org). The database refuses a fourth
   value, and `tests/unit/lib/tenancy/roles.test.ts` asserts the enum and
   `ORG_ROLES` agree.
-- **`settings` is one JSON column with five platform-owned keys**, and the
+- **`settings` is one JSON column with six platform-owned keys**, and the
   rest of it is a fork's. `retention` (§108 t-713) holds the retention
   windows this org keeps instead of the platform's, described in
   [Data Retention](../orchestration/retention.md#per-org-windows) and written
@@ -129,6 +129,12 @@ Three things about the shape are decisions, not defaults:
   and fails closed: an unreadable slice refuses the org's every AI call until
   it is saved again (see
   [LLM privacy layer](../privacy/llm-privacy-layer.md#what-is-built-t-1010)).
+  `entitlements` (§135 t-1033) holds the switches set on and off the org,
+  `{ on, off }`, written through `PATCH`/`DELETE
+/api/v1/admin/orgs/[id]/entitlements` from the install org only, or by an
+  app's own code through `setOrgSwitches()`. It fails closed too: an
+  unreadable slice gives the org no switch, its defaults included (see
+  [Entitlements](./entitlements.md)).
   `lib/tenancy/org-settings.ts` is the whole of what the platform reads and
   writes there. It **replaces its own slice rather than the object**, in a
   serializable read-modify-write, so a fork's keys, and the other platform
@@ -685,8 +691,12 @@ merge-impact section promises forks.
 
 ## What a fork may add — and what it may not
 
-- **A product layer beneath the org** — plans, billing, branding, teams — is
+- **A product layer beneath the org** — plans, prices, branding, teams — is
   yours (principle 8). Put it in your own schema file with a FK to `Org`.
+  What an org has bought is not: register it as a switch in
+  `lib/app/entitlements.ts` and read it with `orgHasSwitch()`
+  ([`entitlements.md`](./entitlements.md)), so billing later only changes who
+  sets it.
 - **Your own tenant-owned models** join the org by carrying an `orgId` column
   (principle 4), in the exact shape every core model uses:
 

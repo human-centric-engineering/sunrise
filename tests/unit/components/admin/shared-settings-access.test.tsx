@@ -166,6 +166,21 @@ describe('SharedSettingsReadOnlyNotice — no membership of the install org', ()
   });
 });
 
+describe('SharedSettingsReadOnlyNotice — a reason of its own (§135 t-1033)', () => {
+  it('replaces only the opening sentence, keeping who can make the change', () => {
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch={false} installOrgMember={false}>
+        <SharedSettingsReadOnlyNotice reason="These switches can only be changed from the install organisation." />
+      </SharedSettingsAccessProvider>
+    );
+
+    const notice = screen.getByTestId('shared-settings-read-only');
+    expect(notice).toHaveTextContent('These switches can only be changed');
+    expect(notice).not.toHaveTextContent('shared by every organisation');
+    expect(notice).toHaveTextContent('ask one of its admins');
+  });
+});
+
 describe('useIsInstallOrg', () => {
   function InstallProbe() {
     return <p data-testid="install">{useIsInstallOrg() ? 'install' : 'other'}</p>;

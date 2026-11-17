@@ -90,8 +90,13 @@ Every PR in the programme is reviewed against these.
    [`.context/auth/authorization.md`](../auth/authorization.md); read the
    "what is not behind the seam yet" section before designing against it.
 8. **Platform owns the mechanism; forks own the product.** Org roles stop at
-   `OWNER / ADMIN / MEMBER`. Plans, billing, pricing, org branding, self-serve
-   signup UX, and any team/workspace layer beneath the org are fork-owned.
+   `OWNER / ADMIN / MEMBER`. The commercial mechanism is the platform's,
+   opt-in and off by default: what an org has (entitlement switches, quotas
+   and budgets), meters, and self-serve signup into an org of one's own
+   (decision of 2026-11-16; switches shipped in §135, see
+   [`entitlements.md`](../tenancy/entitlements.md)). Plans, prices, what an
+   app counts, org branding, signup UX, and any team/workspace layer beneath
+   the org are fork-owned.
 
 And two standing rules inherited from the repo: every seam lands in
 `VERSIONING.md`'s public surface with a CHANGELOG bullet in the same PR, and
@@ -457,8 +462,10 @@ A fork owns:
   cover it automatically (principle 4). The playbook's
   [what a fork adds](./multi-tenancy.md#what-a-fork-adds-for-its-own-models)
   is the table of those tests.
-- **The product layer** — plans, billing, pricing, self-serve signup, org
-  branding, and any team/workspace layer beneath the org.
+- **The product layer** — plans, prices, what it counts, signup UX, org
+  branding, and any team/workspace layer beneath the org. What an org has
+  is not the fork's to store: it registers its switches in
+  `lib/app/entitlements.ts` (principle 8, §135).
 - **Tenant arrival beyond the session** — a subdomain or path scheme via
   `lib/app/tenant-resolver.ts`, with the cookie/CORS/CSP consequences that
   choice carries.
