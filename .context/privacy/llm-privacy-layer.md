@@ -1200,16 +1200,17 @@ in one of the two groups.
 
 ### What is classified
 
-The parts a call sends, each with its role. **Core's classifier reads only
-`user` parts and `embedding` inputs**; an app classifier is handed every part
-and may read more.
+Every classifier is handed the text a call sends, part by part with its role:
+each message's text, or each embedding input. Tool-call arguments are not
+parts, for any classifier. **Core's classifier reads only `user` parts and
+`embedding` inputs**; an app classifier may read more.
 
 - **Not the system prompt.** The operator wrote it, and an HR agent's prompt
   says "grievance" on every call.
 - **Not tool results or retrieved knowledge.** An HR policy document would flag
   every question asked of it.
-- **Not tool-call arguments.** They are the model's, derived from what the user
-  wrote, which is already classified.
+- **Not tool-call arguments**, which no classifier is given. They are the
+  model's, derived from what the user wrote, which is already classified.
 - **Embedding inputs are**, because they carry what the user wrote (a search
   query) or a reply to it.
 - **A known limit:** a workflow step's prompt is sent as a user message, so an
