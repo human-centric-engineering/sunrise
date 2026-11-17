@@ -60,6 +60,9 @@ has merged; this table says what exists.
 | Run one named agent's calls    | `runInPrivacyScope(agentPrivacyScope(agent.id), …)` — `scope.ts`                    |
 | The agent's and org's settings | `scopePrivacySettings()` — `lib/orchestration/privacy/scope-settings.ts`            |
 | Read a scope's counts          | `privacySummary(scope)` — the `PrivacySummary` written to metadata                  |
+| Add a sensitivity classifier   | `registerSensitivityClassifier(classifier, { timeoutMs?, replace? })`               |
+| Classify a call's parts        | `runSensitivityClassifiers({ parts }, ctx)` — `lib/privacy/adapters/run.ts`         |
+| Core's phrase list             | `lib/privacy/sensitivity/phrases.ts` (`classifier.ts` matches it)                   |
 
 ## What it protects
 
@@ -571,6 +574,7 @@ something through an adapter, neither can core.
 | `PrivacyTokenStrategy`  | what a placeholder looks like and how it maps back | exactly one          | numbered, rebuilt per call (t-990)                           |
 | `PrivacyPolicyResolver` | tightens the policy for a call                     | many; strictest wins | `core.scope-settings`: agent mode, org floor (t-1010)        |
 | `PrivacyObserver`       | receives counts and ids per call                   | many                 | none: core's counts reach metadata through the scope (t-991) |
+| `SensitivityClassifier` | says what kinds of confidential content a call has | many; unioned        | `core.sensitivity-phrases` (§130, t-1036)                    |
 
 A fifth slot, `SensitivityClassifier`, arrived with the feature that consumes
 it (§130): see [Confidential content](#confidential-content). One more,
@@ -1236,9 +1240,9 @@ turn's message metadata and each workflow step's trace entry
 (`PrivacySummary.sensitivity: { personal?: string[]; commercial?: string[] }`,
 sorted). **Never text, and never which message**. A classifier that fails is
 listed in `failedAdapters` and marks the summary `degraded`, as a detector
-does. A summary is written when something was found or a classifier failed,
-and only then, so an install in mode `off` gains a privacy line on a turn only
-when that turn held something confidential. The trace shows the categories
+does. Classification adds to a scope's summary only when it found something or a
+classifier failed, so an install in mode `off` gains a privacy line on a turn
+only when that turn held something confidential. The trace shows the categories
 beside the counts (`components/admin/orchestration/privacy-counts.tsx`).
 
 ### Policy (t-1037)
@@ -1303,12 +1307,36 @@ rerouting an operator's recorded choice is worse than refusing it.
 ### Measured
 
 `core.sensitivity-phrases` is gated by a labelled synthetic UK corpus in
-`tests/fixtures/privacy/sensitivity-corpus/`: a development set, and a
-held-out set written by someone who never saw the phrase list, both with
-business text that must not flag (HR policy questions, product copy,
-"customer acquisition"). `tests/unit/lib/privacy/sensitivity/corpus.test.ts`
-compares per-group recall and precision, and each set's size, with
+`tests/fixtures/privacy/sensitivity-corpus/`: a development set (85 messages,
+30 that must not flag), and a held-out set (161 messages, 68 that must not
+flag) written by a subagent that never saw the phrase list or the classifier,
+from a table of the category definitions alone. Both carry business text that must not
+flag (HR policy questions, product copy, "customer acquisition", code
+requests). `tests/unit/lib/privacy/sensitivity/corpus.test.ts` compares
+per-group and per-category recall and precision, and each set's size, with
 `baseline.json`, and fails on any drop.
+
+| Set                          | Personal recall | Personal precision | Commercial recall | Commercial precision |
+| ---------------------------- | --------------- | ------------------ | ----------------- | -------------------- |
+| Development                  | 1.00            | 1.00               | 1.00              | 0.95                 |
+| Held-out, as first measured  | 0.61            | 0.93               | 0.63              | 0.83                 |
+| Held-out, after defect fixes | 0.66            | 0.93               | 0.69              | 0.85                 |
+
+**The held-out figures are the honest estimate: about two in three explicit
+disclosures caught, and about one flag in seven wrong for commercial, one in
+fourteen for personal.** Six defects the held-out set exposed were fixed
+before its figures were recorded, each a
+fault in how a phrase was matched rather than a word it lacked: a pronoun's
+contraction as the verb ("she's Black Caribbean", "I'm bi"), a plural
+("headcount reductions"), a missing optional "the" ("can't pay rent"), a verb
+form and a determiner ("close the Hull site", "laying off the whole team"),
+"Reform member" beside "votes Reform", and "haven't announced yet". **Words it
+missed were not added**, because adding them would tune the list to the test
+and the figures would stop estimating anything: "Crohn's", "did a stretch
+inside", "right-sizing", an ICO investigation, a letter before claim, a
+Jehovah's Witness. Its wrong flags are mostly general-knowledge questions
+("merger versus acquisition, for A-level homework"), which a phrase list cannot
+tell from a disclosure.
 
 ### What it does not protect
 

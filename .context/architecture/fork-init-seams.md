@@ -149,8 +149,9 @@ agent while it is known to have thrown, and the worker fails each agent case as
 `case_setup_failed`, naming the error.
 
 **`privacy-adapters` refuses.** Falling back to Sunrise's own detectors
-looks safe and is not: an app that registered a required service detector, or
-a policy resolver that tightens protection for some agents, would run on core
+looks safe and is not: an app that registered a required service detector, a
+sensitivity classifier for its own confidential categories, or a policy
+resolver that tightens protection for some agents, would run on core
 alone while its author believed their protection was live. So the registry
 records the failure, `getPrivacyAdapters()` reports it as `appInitFailure`,
 and the privacy stage refuses **every** call until the init is fixed, mode
