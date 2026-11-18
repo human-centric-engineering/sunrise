@@ -832,18 +832,19 @@ the org export does. The key is in no backup, no log line and no response.
 An org's OWNER or ADMIN manages its keys on **AI keys** (`/admin/provider-keys`,
 org-tier, shown at `multi` only) over `/api/v1/orgs/[id]/provider-keys`:
 
-| Verb                                           | What it does                                                                                                                                                                                                                                                                                                                          |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /provider-keys`                           | Every active provider the org is approved for that takes a key (not a local one), and every provider it holds a key for. Each key: `hint` (last four characters, `''` under 16), `version`, `savedAt`, `savedBy`, and `state`: `in_use`, `switched_off`, `not_approved` or `will_not_open`. Plus `switchedOn` and `saveBlocked`.      |
-| `PUT /provider-keys/[providerId]` `{ apiKey }` | Save, or replace the saved key. Tests the key first with the row's own connection check (`testProviderKey()`: a one-token message for Anthropic, the model list for the others), on a client built for that call and never cached. A key that fails is not stored: 422 `KEY_TEST_FAILED`. 201 for a first key, 200 for a replacement. |
-| `POST /provider-keys/[providerId]/test`        | Re-test the saved key: `{ ok, reason? }`, with `reason` `test_failed` or `will_not_open`. Runs while the switch is off.                                                                                                                                                                                                               |
-| `DELETE /provider-keys/[providerId]`           | Remove the saved key. The org's calls go back to the install's key, if it is approved for the provider. 404 with no key.                                                                                                                                                                                                              |
+| Verb                                           | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /provider-keys`                           | Every active provider the org is approved for that takes a key (not a local one), and every provider it holds a key for, whatever has become of the row since. Each provider: `approved`, and `takesKey` (active and not local: false only for a keyed row kept so its key can be removed). Each key: `hint` (last four characters, `''` under 16), `version`, `savedAt`, `savedBy`, and `state`: `in_use`, `provider_off` (the row is inactive), `switched_off`, `not_approved` or `will_not_open`. Plus `switchedOn` and `saveBlocked`. |
+| `PUT /provider-keys/[providerId]` `{ apiKey }` | Save, or replace the saved key. Tests the key first with the row's own connection check (`testProviderKey()`: a one-token message for Anthropic, the model list for the others), on a client built for that call and never cached. A key that fails is not stored: 422 `KEY_TEST_FAILED`. 201 for a first key, 200 for a replacement.                                                                                                                                                                                                     |
+| `POST /provider-keys/[providerId]/test`        | Re-test the saved key: `{ ok, reason? }`, with `reason` `test_failed` or `will_not_open`. Runs while the switch is off.                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `DELETE /provider-keys/[providerId]`           | Remove the saved key. The org's calls go back to the install's key, if it is approved for the provider. 404 with no key.                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Who.** The authorization policy decides, about the resource
 `{ kind: 'org.providerKeys', id, orgId }`: the default policy admits the org's
 OWNER and ADMIN while they act in it. A fork that wants another role to manage
 keys answers that kind in its own policy (`canRead`'s `unattributed` arm), and
-the routes follow. Three rules sit on top of any policy: the caller must be
+the routes follow. Four rules sit on top of any policy: the install must be at
+`multi` (409 `single_tenant`: no org's key is used at `single`); the caller must be
 **acting in the org** (the default policy admits a platform admin to every org;
 here that is their own org only, and they reach a customer's keys through a
 support session); a **browser session**; and **not the install org**, which
@@ -870,9 +871,11 @@ that failed during a save, with `stored: false`) and removal
 hint and the result, never the key.
 
 **The key never leaves the server.** The vendor's error from a failed test can
-repeat part of the key, so the browser is told only that the test failed, and
-the log line has the key cut out. A database error is logged by its name and
-code only, since its message can carry the sealed key.
+repeat the key, so the browser is told only that the test failed, and the log
+line has the whole key cut out. A vendor's own masked echo of it (a prefix and
+the last four characters, say) is left in the log: no more than the hint
+shows. A database error is logged by its name and code only, since its message
+can carry the sealed key.
 
 ## Per-org approved providers (core, at `multi`)
 

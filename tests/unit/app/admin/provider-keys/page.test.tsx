@@ -47,7 +47,14 @@ import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const ORG = { id: 'org-entered', name: 'Acme' };
 const PROVIDERS = [
-  { providerConfigId: 'p1', name: 'Anthropic', slug: 'anthropic', approved: true, key: null },
+  {
+    providerConfigId: 'p1',
+    name: 'Anthropic',
+    slug: 'anthropic',
+    approved: true,
+    takesKey: true,
+    key: null,
+  },
 ];
 
 function keysAre(saveBlocked: string | null, switchedOn = saveBlocked !== 'switched_off') {

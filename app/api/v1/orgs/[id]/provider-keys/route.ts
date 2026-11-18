@@ -3,8 +3,8 @@
  *
  * GET /api/v1/orgs/[id]/provider-keys — every provider the org can hold a key
  *     for, each with its saved key's hint, when and by whom it was saved, and
- *     its state: in use, switched off, provider not approved, or will not
- *     open. Never the key.
+ *     its state: in use, provider switched off, own keys switched off,
+ *     provider not approved, or will not open. Never the key.
  *
  * Who may call it is the authorization policy's decision, about the resource
  * `{ kind: 'org.providerKeys', id, orgId }`: by default the org's OWNER and
@@ -22,18 +22,12 @@ import {
   assertActsForOrgKeys,
   keyStoreFailure,
   providerKeysView,
-  resolveProviderKeysResource,
+  providerKeysGuard,
 } from '@/lib/orchestration/llm/org-provider-key-admin';
 
-const RESOURCE = {
-  resource: async (_request: unknown, context?: { params: Promise<{ id: string }> }) =>
-    resolveProviderKeysResource(await context?.params),
-  ownership: {
-    decidedBy: 'resource',
-    because:
-      'The policy admitted the caller to the keys of the org the URL names, and the handler reads that org’s keys only, in its own scope.',
-  },
-} as const;
+const RESOURCE = providerKeysGuard<{ id: string }>(
+  'The policy admitted the caller to the keys of the org the URL names, and the handler reads that org’s keys only, in its own scope.'
+);
 
 export const GET = withAuth<{ id: string }>(async (_request, session, { params }) => {
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);

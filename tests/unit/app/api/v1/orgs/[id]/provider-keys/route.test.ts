@@ -157,7 +157,8 @@ const OLLAMA: ProviderRow = {
   isActive: true,
   baseUrl: 'http://localhost:11434/v1',
 };
-const PROVIDERS = [ANTHROPIC, OPENAI, OLLAMA];
+/** The provider table, reset before each test; a test may change a row. */
+let providers: ProviderRow[] = [];
 
 function keyring(): void {
   envOverrides.SEALED_SECRET_KEYS = 'one:master-key-one-0123456789abcdefghijklmnop';
@@ -204,6 +205,20 @@ async function storedKey(
     savedAt: new Date('2026-11-01T10:00:00Z'),
     createdAt: new Date('2026-11-01T10:00:00Z'),
   });
+}
+
+/** What the key table's `providerConfig` relation reads, from the provider table. */
+function syncProviderRelation(): void {
+  orgKeyTable.providers.clear();
+  for (const row of providers) {
+    orgKeyTable.providers.set(row.id, { name: row.name, slug: row.slug, isActive: row.isActive });
+  }
+}
+
+/** Change one provider row, as platform staff would. */
+function changeProvider(id: string, change: Partial<ProviderRow>): void {
+  providers = providers.map((row) => (row.id === id ? { ...row, ...change } : row));
+  syncProviderRelation();
 }
 
 const orgParams = (id = ORG) => ({ params: Promise.resolve({ id }) });
@@ -285,17 +300,17 @@ beforeEach(() => {
   mockDb.$transaction.mockImplementation(async (fn: (tx: MockDb) => unknown) => fn(mockDb));
   mockDb.aiProviderConfig.findUnique.mockImplementation(
     async (args: { where: { id: string } }) =>
-      PROVIDERS.find((row) => row.id === args.where.id) ?? null
+      providers.find((row) => row.id === args.where.id) ?? null
   );
   mockDb.aiProviderConfig.findMany.mockImplementation(
     async (args: { where: { OR: [{ isActive: true }, { id: { in: string[] } }] } }) => {
       const keyed = new Set(args.where.OR[1].id.in);
-      return PROVIDERS.filter((row) => row.isActive || keyed.has(row.id));
+      return providers.filter((row) => row.isActive || keyed.has(row.id));
     }
   );
   mockDb.user.findMany.mockResolvedValue([{ id: USER_ID, name: 'Ada Admin' }]);
-  for (const row of PROVIDERS)
-    orgKeyTable.providers.set(row.id, { name: row.name, slug: row.slug });
+  providers = [ANTHROPIC, OPENAI, OLLAMA];
+  syncProviderRelation();
   mockTestProviderKey.mockResolvedValue({ ok: true, models: ['claude'] });
 });
 
@@ -323,6 +338,7 @@ describe('GET — the org’s keys and their state', () => {
           name: 'Anthropic',
           slug: 'anthropic',
           approved: true,
+          takesKey: true,
           key: {
             hint: 'wxyz',
             version: 1,
@@ -332,7 +348,14 @@ describe('GET — the org’s keys and their state', () => {
           },
         },
         // No key saved: the platform's key. Ollama is local and takes no key.
-        { providerConfigId: OPENAI.id, name: 'OpenAI', slug: 'openai', approved: true, key: null },
+        {
+          providerConfigId: OPENAI.id,
+          name: 'OpenAI',
+          slug: 'openai',
+          approved: true,
+          takesKey: true,
+          key: null,
+        },
       ],
     });
     expect(text).not.toContain('sealedKey');
@@ -377,6 +400,56 @@ describe('GET — the org’s keys and their state', () => {
     const json = await body(await list());
 
     expect(json.data.providers[0].key.state).toBe('will_not_open');
+  });
+
+  it('lists a key for a provider platform staff switched off, as provider off, and offers no save or test for it', async () => {
+    actingAs(ORG_ADMIN_ROLE);
+    await storedKey(OPENAI);
+    changeProvider(OPENAI.id, { isActive: false });
+
+    const json = await body(await list());
+    const openai = json.data.providers.find((p: { slug: string }) => p.slug === 'openai');
+
+    expect(openai).toEqual(
+      expect.objectContaining({
+        takesKey: false,
+        key: expect.objectContaining({ state: 'provider_off' }),
+      })
+    );
+    expect((await test(OPENAI.id)).status).toBe(404);
+    expect((await remove(OPENAI.id)).status).toBe(200);
+  });
+
+  it('keeps listing a key for a provider that has since become local, so it can be removed', async () => {
+    actingAs(ORG_ADMIN_ROLE);
+    await storedKey(OPENAI);
+    changeProvider(OPENAI.id, { isLocal: true });
+
+    const json = await body(await list());
+    const openai = json.data.providers.find((p: { slug: string }) => p.slug === 'openai');
+
+    expect(openai).toEqual(expect.objectContaining({ takesKey: false, key: expect.anything() }));
+    // An inactive provider without a key is not listed at all.
+    changeProvider(ANTHROPIC.id, { isActive: false });
+    const after = await body(await list());
+    expect(after.data.providers.map((p: { slug: string }) => p.slug)).toEqual(['openai']);
+  });
+
+  it('refuses every verb on an install with one organisation, where no org’s key is used', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    envOverrides.TENANCY_MODE = 'single';
+
+    for (const res of [
+      await list(),
+      await save(ANTHROPIC.id),
+      await test(ANTHROPIC.id),
+      await remove(ANTHROPIC.id),
+    ]) {
+      expect(res.status).toBe(409);
+      expect((await body(res)).error.details).toEqual({ reason: 'single_tenant' });
+    }
+    expect(mockTestProviderKey).not.toHaveBeenCalled();
+    expect(orgKeyTable.rows.size).toBe(0);
   });
 
   it('blocks saving when no master key is configured', async () => {

@@ -4,11 +4,14 @@
  * disagree, and a test can hold every state the API reports to a sentence.
  */
 
+import type { OrgProviderKeyState } from '@/lib/orchestration/llm/org-provider-keys';
+import type { SaveBlocked } from '@/lib/orchestration/llm/org-provider-key-admin';
+
 /** A saved key's state, as `GET /api/v1/orgs/[id]/provider-keys` reports it. */
-export type ProviderKeyState = 'in_use' | 'switched_off' | 'not_approved' | 'will_not_open';
+export type ProviderKeyState = OrgProviderKeyState;
 
 /** Why the viewer cannot save a key, as the same route reports it. */
-export type ProviderKeySaveBlocked = 'switched_off' | 'master_key_missing' | 'support_session';
+export type ProviderKeySaveBlocked = NonNullable<SaveBlocked>;
 
 /** One provider as the list route returns it (dates as JSON strings). */
 export interface ProviderKeyRow {
@@ -16,6 +19,8 @@ export interface ProviderKeyRow {
   name: string;
   slug: string;
   approved: boolean;
+  /** Whether a key can be saved or tested for the row (active, not local). */
+  takesKey: boolean;
   key: {
     hint: string;
     version: number;
@@ -31,6 +36,8 @@ export function stateBadge(row: ProviderKeyRow): { label: string; problem: boole
   switch (row.key.state) {
     case 'in_use':
       return { label: 'Your key, in use', problem: false };
+    case 'provider_off':
+      return { label: 'Not in use: provider switched off', problem: true };
     case 'switched_off':
       return { label: 'Not in use: switched off', problem: true };
     case 'not_approved':
@@ -49,6 +56,8 @@ export function stateSentence(row: ProviderKeyRow): string {
   switch (row.key.state) {
     case 'in_use':
       return `This organisation’s calls to ${name} go out on your key, and are billed to your ${name} account.`;
+    case 'provider_off':
+      return `Platform staff have switched ${name} off on this platform, so this organisation’s calls to it are refused and the key is not used. Remove the key if you no longer need it.`;
     case 'switched_off':
       return `Organisations’ own keys are switched off on this platform, so this organisation’s calls to ${name} are refused. They work again when platform staff switch own keys back on, or when you remove this key and go back to the platform’s key.`;
     case 'not_approved':

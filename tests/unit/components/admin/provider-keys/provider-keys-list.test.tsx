@@ -40,6 +40,7 @@ function row(state: ProviderKeyState | null, over: Partial<ProviderKeyRow> = {})
     name: 'Anthropic',
     slug: 'anthropic',
     approved: true,
+    takesKey: true,
     key:
       state === null
         ? null
@@ -62,6 +63,7 @@ describe('what each state says', () => {
   it.each<[ProviderKeyState | null, string, RegExp]>([
     [null, 'Platform key', /use the platform’s key/],
     ['in_use', 'Your key, in use', /go out on your key/],
+    ['provider_off', 'Not in use: provider switched off', /switched Anthropic off.*refused/],
     ['switched_off', 'Not in use: switched off', /switched off on this platform.*refused/],
     ['not_approved', 'Not in use: provider not approved', /not approved to use Anthropic.*refused/],
     ['will_not_open', 'Not in use: key unreadable', /can no longer be read.*Save the key again/],
@@ -125,6 +127,20 @@ describe('which actions are offered', () => {
     expect(screen.getByRole('button', { name: /Remove key/ })).toBeInTheDocument();
   });
 
+  it('offers only removal on a key for a provider that has been switched off or made local', () => {
+    render(
+      <ProviderKeysList
+        orgId={ORG}
+        providers={[row('provider_off', { takesKey: false })]}
+        canSave
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: 'Replace key' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Test key/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Remove key/ })).toBeInTheDocument();
+  });
+
   it('opens the save form for that provider', async () => {
     const user = userEvent.setup();
     render(<ProviderKeysList orgId={ORG} providers={[row(null)]} canSave />);
@@ -151,6 +167,8 @@ describe('testing a saved key', () => {
       '/api/v1/orgs/org-entered/provider-keys/prov-1/test'
     );
     expect(await screen.findByRole('status')).toHaveTextContent('Anthropic accepted the key.');
+    // A passing test cannot change what the page shows.
+    expect(mockRefresh).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -164,6 +182,7 @@ describe('testing a saved key', () => {
     await user.click(screen.getByRole('button', { name: /Test key/ }));
 
     expect(await screen.findByRole('status')).toHaveTextContent(sentence);
+    expect(mockRefresh).toHaveBeenCalled();
   });
 
   it('shows the API’s refusal, such as the rate limit, as worded', async () => {

@@ -25,13 +25,15 @@
  *   replace a key: the vendor's staff do not handle a customer's secret.
  *
  * The install org is refused: its calls run on the install's own keys, which
- * are set where the providers are configured.
+ * are set where the providers are configured. So is every verb at `single`,
+ * where no org's key is ever used.
  *
  * ## The key never leaves the server
  *
  * No response or log line carries it. The vendor's error from a failed test
- * can repeat part of it, so the browser is told only that the test failed,
- * and the log has the key cut out.
+ * can repeat it, so the browser is told only that the test failed, and the
+ * log has the whole key cut out; a vendor's own masked echo (a prefix and the
+ * last four) is left, which is no more than the hint shows.
  *
  * @see lib/orchestration/llm/org-provider-keys.ts — the store and the call path
  * @see .context/orchestration/llm-providers.md — Organisations' own keys
@@ -39,11 +41,13 @@
 
 import { APIError, ConflictError, ForbiddenError, NotFoundError } from '@/lib/api/errors';
 import { isApiKeySession } from '@/lib/auth/api-keys';
+import { isSupportEntry } from '@/lib/auth/support-principal';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { applyOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import {
+  describeError,
   orgProviderKeyStatuses,
   type OrgProviderKeyState,
 } from '@/lib/orchestration/llm/org-provider-keys';
@@ -55,7 +59,7 @@ import {
   SealedSecretKeyMissingError,
 } from '@/lib/security/sealed-secrets';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { getTenantContext } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { resolveOrgResource } from '@/lib/tenancy/lifecycle';
 import type { AiProviderConfig } from '@/types/prisma';
 
@@ -70,17 +74,44 @@ export async function resolveProviderKeysResource(
   return org ? { kind: PROVIDER_KEYS_RESOURCE_KIND, id: org.id, orgId: org.orgId } : null;
 }
 
+/**
+ * The guard options every route over an org's own keys passes: the resource
+ * above, and the ownership claim, with the route's own reason.
+ */
+export function providerKeysGuard<TParams>(because: string): ProviderKeysGuard<TParams> {
+  return {
+    resource: async (_request, context) => resolveProviderKeysResource(await context?.params),
+    ownership: { decidedBy: 'resource', because },
+  };
+}
+
+/** What {@link providerKeysGuard} returns: `withAuth`'s `resource` and `ownership` options. */
+export interface ProviderKeysGuard<TParams> {
+  resource: (
+    request: unknown,
+    context?: { params: Promise<TParams> }
+  ) => ReturnType<typeof resolveProviderKeysResource>;
+  ownership: { decidedBy: 'resource'; because: string };
+}
+
 /** Whether this request runs in a support session (§121). */
 export function inSupportSession(): boolean {
-  return getTenantContext()?.source === 'support';
+  return isSupportEntry(getTenantContext());
 }
 
 /**
  * Refuse a caller the policy admitted who may still not act on this org's
- * keys: an API key, someone not acting in the org, or anyone in the install
+ * keys: on an install with one organisation (where no org's key is ever
+ * used), an API key, someone not acting in the org, or anyone in the install
  * org. See the module header.
  */
 export function assertActsForOrgKeys(session: AuthenticatedSession, orgId: string): void {
+  if (!isMultiTenant()) {
+    throw new ConflictError(
+      'Organisations’ own AI keys are for installs with more than one organisation',
+      { reason: 'single_tenant' }
+    );
+  }
   if (isApiKeySession(session)) {
     throw new ForbiddenError('Managing an organisation’s AI keys requires a browser session');
   }
@@ -145,7 +176,9 @@ export async function assertKeysCanBeSaved(): Promise<void> {
 
 /**
  * Test `apiKey` against `config` with one cheap vendor call. The vendor's
- * message is logged with the key cut out and is never returned.
+ * message is never returned. It is logged with the whole key cut out; a
+ * vendor's own masked echo of it (a prefix and the last four, say) is left,
+ * as the hint already shows the last four.
  */
 export async function runKeyTest(
   config: AiProviderConfig,
@@ -201,16 +234,9 @@ export function keyStoreFailure(
   }
   logger.error(`Could not ${what} an org’s AI key`, undefined, {
     ...context,
-    error: errorName(err),
+    error: describeError(err),
   });
   return new APIError(`The key could not be ${PAST[what]}. Try again.`, 'INTERNAL_ERROR', 500);
-}
-
-/** An error's name and code. Never its message. */
-function errorName(err: unknown): string {
-  if (!(err instanceof Error)) return typeof err;
-  const code: unknown = 'code' in err ? err.code : undefined;
-  return typeof code === 'string' || typeof code === 'number' ? `${err.name} ${code}` : err.name;
 }
 
 /** What the page and the list route show for one provider an org can hold a key for. */
@@ -220,6 +246,12 @@ export interface ProviderKeyView {
   slug: string;
   /** Whether the org is approved for the provider. A saved key for one it is not is shown as `not_approved`. */
   approved: boolean;
+  /**
+   * Whether a key can be saved or tested for the row: it is active and not
+   * local. False only for a row the org already holds a key for, listed so
+   * the key can be seen and removed.
+   */
+  takesKey: boolean;
   key: {
     hint: string;
     version: number;
@@ -240,40 +272,44 @@ export interface ProviderKeysView {
 }
 
 /**
- * The org-in-scope's view: every provider it is approved for that takes a
- * key, and every provider it holds a key for, each with the key's state.
+ * The org-in-scope's view: every active, non-local provider it is approved
+ * for, and every provider it holds a key for whatever has become of the row
+ * since (switched off, or now local), so the key can still be seen and
+ * removed. Each with the key's state.
  */
 export async function providerKeysView(): Promise<ProviderKeysView> {
   const [settings, statuses] = await Promise.all([
     getOrchestrationSettings(),
     orgProviderKeyStatuses(),
   ]);
-  // An inactive provider is listed only when the org holds a key for it, so
-  // the key can still be seen and removed.
-  const rows = await prisma.aiProviderConfig.findMany({
-    where: {
-      OR: [{ isActive: true }, { id: { in: statuses.map((status) => status.providerConfigId) } }],
-    },
-    select: { id: true, name: true, slug: true, isLocal: true, providerType: true },
-    orderBy: { name: 'asc' },
-  });
-  const takesKey = rows.filter((row) => !buildsLocalClient(row));
-  const approved = new Set(await applyOrgProviderPolicy(takesKey.map((row) => row.slug)));
-  const byProvider = new Map(statuses.map((status) => [status.providerConfigId, status]));
-
+  const keyed = statuses.map((status) => status.providerConfigId);
   const saverIds = [
     ...new Set(statuses.flatMap((status) => (status.savedById ? [status.savedById] : []))),
   ];
-  const savers =
+  const [rows, savers] = await Promise.all([
+    prisma.aiProviderConfig.findMany({
+      where: { OR: [{ isActive: true }, { id: { in: keyed } }] },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isLocal: true,
+        isActive: true,
+        providerType: true,
+      },
+      orderBy: { name: 'asc' },
+    }),
     saverIds.length === 0
       ? []
-      : await prisma.user.findMany({
-          where: { id: { in: saverIds } },
-          select: { id: true, name: true },
-        });
+      : prisma.user.findMany({ where: { id: { in: saverIds } }, select: { id: true, name: true } }),
+  ]);
+  const takesKey = (row: (typeof rows)[number]) => row.isActive && !buildsLocalClient(row);
+  const byProvider = new Map(statuses.map((status) => [status.providerConfigId, status]));
+  const listed = rows.filter((row) => takesKey(row) || byProvider.has(row.id));
+  const approved = new Set(await applyOrgProviderPolicy(listed.map((row) => row.slug)));
   const saverById = new Map(savers.map((user) => [user.id, user]));
 
-  const providers = takesKey
+  const providers = listed
     .filter((row) => approved.has(row.slug) || byProvider.has(row.id))
     .map((row): ProviderKeyView => {
       const status = byProvider.get(row.id);
@@ -282,6 +318,7 @@ export async function providerKeysView(): Promise<ProviderKeysView> {
         name: row.name,
         slug: row.slug,
         approved: approved.has(row.slug),
+        takesKey: takesKey(row),
         key: status
           ? {
               hint: status.hint,

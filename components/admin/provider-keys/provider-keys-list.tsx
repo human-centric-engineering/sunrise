@@ -95,7 +95,7 @@ export function ProviderKeysList({ orgId, providers, canSave }: ProviderKeysList
           key={row.providerConfigId}
           orgId={orgId}
           row={row}
-          canSave={canSave && row.approved}
+          canSave={canSave && row.approved && row.takesKey}
           disabled={busy}
           onRemove={() => setRemoving(row)}
         />
@@ -162,8 +162,9 @@ function ProviderKeyCard({ orgId, row, canSave, disabled, onRemove }: ProviderKe
         API.ORGS.providerKeyTest(orgId, row.providerConfigId)
       );
       setOutcome(result);
-      // The state can have changed since the page loaded (a key that will not open).
-      router.refresh();
+      // A failed test can mean the state moved since the page loaded (a key
+      // that no longer opens); a passing one cannot.
+      if (!result.ok) router.refresh();
     } catch (err) {
       testRequest.report(err);
     } finally {
@@ -225,7 +226,7 @@ function ProviderKeyCard({ orgId, row, canSave, disabled, onRemove }: ProviderKe
                   {row.key ? 'Replace key' : 'Add your own key'}
                 </Button>
               )}
-              {row.key && row.approved && (
+              {row.key && row.approved && row.takesKey && (
                 <Button
                   size="sm"
                   variant="outline"

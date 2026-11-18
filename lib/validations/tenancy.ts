@@ -547,14 +547,18 @@ export const listOrgAuditLogQuerySchema = paginationQuerySchema.extend({
 export const providerKeyParamsSchema = z.object({ id: orgIdSchema, providerId: cuidSchema });
 
 /**
- * The longest AI key accepted. The same limit as the store's
- * (`ORG_PROVIDER_KEY_MAX_LENGTH` in `lib/orchestration/llm/org-provider-keys.ts`,
- * a server module this file cannot import); a test holds the two together.
+ * The longest AI key accepted, here and by the store
+ * (`lib/orchestration/llm/org-provider-keys.ts` reads it from this file, so
+ * the form, the route and the store have one limit).
  */
 export const PROVIDER_KEY_MAX_LENGTH = 1024;
 
+/**
+ * A line break or other control character: never part of a key, and never
+ * sendable as a header value. One pattern for the form, the route and the store.
+ */
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
-const KEY_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+export const KEY_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 /**
  * `PUT /api/v1/orgs/[id]/provider-keys/[providerId]` body (§137 t-1045): the

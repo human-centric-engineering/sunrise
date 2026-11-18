@@ -36,6 +36,7 @@ type Where = Partial<Pick<OrgKeyRow, 'id' | 'orgId' | 'providerConfigId' | 'seal
 export interface ProviderRelationRow {
   name: string;
   slug: string;
+  isActive: boolean;
 }
 
 /** `{ field: true }`, or `{ providerConfig: { select: { … } } }` for the relation. */

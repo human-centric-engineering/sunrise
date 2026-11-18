@@ -24,7 +24,7 @@ import {
   assertActsForOrgKeys,
   keyStoreFailure,
   loadKeyProvider,
-  resolveProviderKeysResource,
+  providerKeysGuard,
   runKeyTest,
 } from '@/lib/orchestration/llm/org-provider-key-admin';
 import { openOrgProviderKey } from '@/lib/orchestration/llm/org-provider-keys';
@@ -34,15 +34,9 @@ import { providerKeyParamsSchema } from '@/lib/validations/tenancy';
 
 type Params = { id: string; providerId: string };
 
-const RESOURCE = {
-  resource: async (_request: unknown, context?: { params: Promise<Params> }) =>
-    resolveProviderKeysResource(await context?.params),
-  ownership: {
-    decidedBy: 'resource',
-    because:
-      'The policy admitted the caller to the keys of the org the URL names, and the handler opens that org’s key only, in its own scope.',
-  },
-} as const;
+const RESOURCE = providerKeysGuard<Params>(
+  'The policy admitted the caller to the keys of the org the URL names, and the handler opens that org’s key only, in its own scope.'
+);
 
 export const POST = withAuth<Params>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);

@@ -26,8 +26,6 @@ vi.mock('@/lib/api/client', async (importOriginal) => ({
 
 import { ProviderKeyForm } from '@/components/admin/provider-keys/provider-key-form';
 import { apiClient, APIClientError } from '@/lib/api/client';
-import { ORG_PROVIDER_KEY_MAX_LENGTH } from '@/lib/orchestration/llm/org-provider-keys';
-import { PROVIDER_KEY_MAX_LENGTH } from '@/lib/validations/tenancy';
 
 const onDone = vi.fn();
 
@@ -108,9 +106,5 @@ describe('ProviderKeyForm', () => {
     expect(onDone).toHaveBeenCalled();
     expect(apiClient.put).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Test and replace' })).toBeInTheDocument();
-  });
-
-  it('accepts no longer a key than the store does', () => {
-    expect(PROVIDER_KEY_MAX_LENGTH).toBe(ORG_PROVIDER_KEY_MAX_LENGTH);
   });
 });

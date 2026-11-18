@@ -30,7 +30,7 @@ import {
   assertKeysCanBeSaved,
   keyStoreFailure,
   loadKeyProvider,
-  resolveProviderKeysResource,
+  providerKeysGuard,
   runKeyTest,
 } from '@/lib/orchestration/llm/org-provider-key-admin';
 import {
@@ -45,15 +45,9 @@ import { providerKeyParamsSchema, saveProviderKeySchema } from '@/lib/validation
 
 type Params = { id: string; providerId: string };
 
-const RESOURCE = {
-  resource: async (_request: unknown, context?: { params: Promise<Params> }) =>
-    resolveProviderKeysResource(await context?.params),
-  ownership: {
-    decidedBy: 'resource',
-    because:
-      'The policy admitted the caller to the keys of the org the URL names, and the handler writes that org’s key only, in its own scope.',
-  },
-} as const;
+const RESOURCE = providerKeysGuard<Params>(
+  'The policy admitted the caller to the keys of the org the URL names, and the handler writes that org’s key only, in its own scope.'
+);
 
 export const PUT = withAuth<Params>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);
