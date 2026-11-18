@@ -67,6 +67,8 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
 
 // Required for runLlmCall path used in A2
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  // The platform's key, never an org's own (§137).
+  usesOrgOwnKey: () => false,
   getProvider: vi.fn(),
 }));
 

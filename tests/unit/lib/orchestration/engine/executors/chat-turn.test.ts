@@ -48,6 +48,8 @@ vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) =>
 });
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  // The platform's key, never an org's own (§137).
+  usesOrgOwnKey: () => false,
   getProviderWithFallbacks: vi.fn(),
 }));
 

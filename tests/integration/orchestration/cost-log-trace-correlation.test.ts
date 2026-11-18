@@ -72,6 +72,8 @@ vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
 
 // Mock provider-manager so runLlmCall never tries to reach a real LLM
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  // The platform's key, never an org's own (§137).
+  usesOrgOwnKey: () => false,
   getProvider: vi.fn(),
 }));
 

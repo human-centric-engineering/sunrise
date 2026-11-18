@@ -50,6 +50,8 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
 }));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  // The platform's key, never an org's own (§137).
+  usesOrgOwnKey: () => false,
   getProvider: vi.fn(),
   isApiKeyEnvVarSet: vi.fn(),
 }));

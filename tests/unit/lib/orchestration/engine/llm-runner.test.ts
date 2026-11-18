@@ -25,6 +25,8 @@ vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
   hydrateFromDb: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  // The platform's key, never an org's own (§137).
+  usesOrgOwnKey: () => false,
   getProvider: vi.fn(),
 }));
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({

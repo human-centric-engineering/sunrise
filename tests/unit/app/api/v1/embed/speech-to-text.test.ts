@@ -52,6 +52,8 @@ vi.mock('@/lib/security/ip', () => ({
 }));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  // The platform's key, never an org's own (§137).
+  usesOrgOwnKey: () => false,
   getAudioProvider: vi.fn(),
 }));
 
