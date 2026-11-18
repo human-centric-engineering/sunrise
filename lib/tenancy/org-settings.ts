@@ -62,7 +62,10 @@ import {
   ORG_RETENTION_KEYS,
   MAX_ORG_PROTECTED_TERMS,
   entitlementKeySchema,
+  meterKeySchema,
+  meterLimitSchema,
   orgEntitlementsSchema,
+  orgMeterLimitsSchema,
   orgPrivacySettingsSchema,
   orgProtectedTermSchema,
   orgProviderPolicySchema,
@@ -204,7 +207,10 @@ export function applyOrgSettingsPatch(
 
   for (const [key, slice] of slices) {
     if (slice === undefined) continue;
-    const stored = definedEntries(slice);
+    const named = definedEntries(slice);
+    // The caps replace the caps, not the meter limits stored beside them
+    // (§135 t-1035): those have their own per-key writer.
+    const stored = key === ORG_QUOTAS_KEY ? withMeterLimitsOf(base[key], named) : named;
     if (stored === null) {
       delete base[key];
     } else {
@@ -406,9 +412,11 @@ export async function loadOrgQuotas(
  * helper a fork's billing or plan code calls to map a plan onto its caps.
  *
  * `quotas` is validated with `orgQuotasSchema`, so an out-of-range or unknown
- * key throws a `ZodError` and nothing is written. `null`, or `{}`, removes the
- * slice and leaves the org with no cap of its own. The slice is replaced
- * whole: a key the call leaves out is removed.
+ * key throws a `ZodError` and nothing is written. `null`, or `{}`, leaves the
+ * org with no cap of its own. The caps are replaced whole: a cap the call
+ * leaves out is removed. The meter limits stored beside them
+ * (`quotas.meters`, §135 t-1035) are kept; {@link writeOrgMeterLimits} sets
+ * those.
  *
  * **It decides nothing about who may.** It writes whatever it is given;
  * `PATCH /api/v1/admin/orgs/[id]` is where an org's own admins are refused.
@@ -433,9 +441,145 @@ export async function writeOrgQuotas(
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<{ previous: OrgQuotas; stored: OrgQuotas } | null> {
   const stored = definedEntries(quotas === null ? null : orgQuotasSchema.parse(quotas));
-  const replaced = await writeSettingsSlice(orgId, ORG_QUOTAS_KEY, stored, db);
+  const replaced = await updateSettingsSlice(
+    orgId,
+    ORG_QUOTAS_KEY,
+    (settings) =>
+      withMeterLimitsOf(isJsonObject(settings) ? settings[ORG_QUOTAS_KEY] : undefined, stored),
+    db
+  );
   if (replaced === null) return null;
   return { previous: readOrgQuotas(replaced.settings, { orgId }), stored: stored ?? {} };
+}
+
+/** Where an org's meter limits live inside its `quotas` slice (§135 t-1035). */
+export const ORG_METER_LIMITS_KEY = 'meters';
+
+/**
+ * A caps value to store, carrying the meter limits from the `quotas` slice it
+ * replaces: the caps writers replace the caps, and only
+ * {@link writeOrgMeterLimits} changes the limits. `null` when neither is left.
+ */
+function withMeterLimitsOf(
+  currentSlice: unknown,
+  caps: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  const limits = isJsonObject(currentSlice) ? currentSlice[ORG_METER_LIMITS_KEY] : undefined;
+  if (limits === undefined || limits === null) return caps;
+  return { ...(caps ?? {}), [ORG_METER_LIMITS_KEY]: limits };
+}
+
+/**
+ * Read an org's meter limits out of its `settings` (§135 t-1035).
+ *
+ * **Per key, and fails open to "no limit"**, as the caps do: a limit that
+ * cannot be read is dropped with a warning, so that meter does not limit the
+ * org. Refusing an org's work over a malformed write is the worse failure,
+ * and §110's AI budget still bounds what it can spend. Every writer validates
+ * with `orgMeterLimitsSchema` first. Keys for meters no app registers any
+ * more are returned too; a reader that cares filters them.
+ *
+ * @returns meter key → limit; `{}` when the org has none.
+ */
+export function readOrgMeterLimits(
+  settings: unknown,
+  context: Record<string, unknown> = {},
+  log: Logger = defaultLogger
+): Record<string, number> {
+  if (!isJsonObject(settings)) return {};
+  const slice = settings[ORG_QUOTAS_KEY];
+  if (!isJsonObject(slice)) return {};
+  const stored = slice[ORG_METER_LIMITS_KEY];
+  if (stored === null || stored === undefined) return {};
+  if (!isJsonObject(stored)) {
+    log.warn('Org meter limits are not an object; no meter limits the org', context);
+    return {};
+  }
+  const limits: Record<string, number> = {};
+  const dropped: string[] = [];
+  for (const [key, value] of Object.entries(stored)) {
+    const limit = meterLimitSchema.safeParse(value);
+    if (meterKeySchema.safeParse(key).success && limit.success) {
+      limits[key] = limit.data;
+    } else {
+      dropped.push(key);
+    }
+  }
+  if (dropped.length > 0) {
+    log.warn('Dropped malformed meter limits; those meters do not limit the org', {
+      ...context,
+      keys: dropped,
+    });
+  }
+  return limits;
+}
+
+/** One org's meter limits, or `null` when there is no such org. */
+export async function loadOrgMeterLimits(
+  orgId: string,
+  db: Pick<PrismaClient, 'org'> = prisma,
+  log: Logger = defaultLogger
+): Promise<Record<string, number> | null> {
+  // `Org` is a system model, so this read needs no tenant scope.
+  const org = await db.org.findUnique({ where: { id: orgId }, select: { settings: true } });
+  return org ? readOrgMeterLimits(org.settings, { orgId }, log) : null;
+}
+
+/**
+ * Set or clear the named meter limits on an org (§135 t-1035), leaving every
+ * other limit, and the caps beside them, as they are.
+ *
+ * `change` maps a meter key to its new limit, or `null` to clear it. Naming
+ * only what it decides is what stops a writer clearing a limit it did not
+ * know about: one for a meter registered after its form loaded, or by a newer
+ * build during a deploy. Keys are not checked against the meter registry
+ * here: a caller taking them from a request refuses unknown ones first, as
+ * the route does. A malformed key or limit throws a `ZodError` and nothing is
+ * written. A change that leaves the stored limits as they are writes nothing
+ * and says `changed: false`.
+ *
+ * **It decides nothing about who may**: ask `mayChangeOrgCommercialSettings()`
+ * (`lib/tenancy/shared-settings.ts`) after a platform-admin check, as the
+ * route does. A clash with a concurrent settings write throws `P2034`
+ * ({@link isSettingsWriteConflict}).
+ *
+ * @returns the limits before and after, and whether this changed them, or
+ *   `null` when the org does not exist.
+ */
+export async function writeOrgMeterLimits(
+  orgId: string,
+  change: Readonly<Record<string, number | null>>,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<{
+  previous: Record<string, number>;
+  stored: Record<string, number>;
+  changed: boolean;
+} | null> {
+  const checked = z.record(meterKeySchema, meterLimitSchema.nullable()).parse(change);
+  let previous: Record<string, number> = {};
+  let stored: Record<string, number> = {};
+  const replaced = await updateSettingsSlice(
+    orgId,
+    ORG_QUOTAS_KEY,
+    (settings) => {
+      previous = readOrgMeterLimits(settings, { orgId });
+      const next: Record<string, number> = { ...previous };
+      for (const [key, limit] of Object.entries(checked)) {
+        if (limit === null) delete next[key];
+        else next[key] = limit;
+      }
+      stored = orgMeterLimitsSchema.parse(next);
+      const slice = isJsonObject(settings) ? settings[ORG_QUOTAS_KEY] : undefined;
+      // The caps are carried as stored, whatever this read made of them.
+      const rest: Record<string, unknown> = isJsonObject(slice) ? { ...slice } : {};
+      delete rest[ORG_METER_LIMITS_KEY];
+      const value =
+        Object.keys(stored).length === 0 ? rest : { ...rest, [ORG_METER_LIMITS_KEY]: stored };
+      return Object.keys(value).length === 0 ? null : value;
+    },
+    db
+  );
+  return replaced === null ? null : { previous, stored, changed: replaced.written };
 }
 
 /** The key the org's LLM privacy settings live under in `Org.settings` (§127, t-1010). */

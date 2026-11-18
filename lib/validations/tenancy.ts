@@ -331,6 +331,63 @@ export const orgEntitlementsInputSchema = z
 
 export type OrgEntitlementsInput = z.infer<typeof orgEntitlementsInputSchema>;
 
+/**
+ * A meter's key (§135 t-1035): the same spelling as a switch key, such as
+ * `completed_conversations`. It is what an org's limit is stored under, so it
+ * must not change once orgs hold a limit for it.
+ */
+export const meterKeySchema = z
+  .string()
+  .regex(
+    ENTITLEMENT_KEY_PATTERN,
+    'A meter key is lower-case letters, digits and underscores, starting with a letter, at most 48 characters'
+  );
+
+/** The most meters an app may register. A sanity limit, not a product limit. */
+export const MAX_METERS = 50;
+
+/**
+ * One meter's limit: how many the org may have within the meter's window.
+ * Zero is allowed and refuses the first one. The upper bound is a sanity
+ * limit on a typo.
+ */
+export const meterLimitSchema = z
+  .number()
+  .int('A limit must be a whole number')
+  .min(0, 'A limit must be zero or more')
+  .max(1_000_000_000, 'A limit must be at most 1,000,000,000');
+
+/**
+ * The limits stored for one org, `Org.settings.quotas.meters` (§135 t-1035):
+ * meter key → limit. A meter with no entry has no limit. Bounded by a sanity
+ * limit on stored keys, since keys for meters an app no longer registers are
+ * kept by every save.
+ */
+export const orgMeterLimitsSchema = z
+  .record(meterKeySchema, meterLimitSchema)
+  .refine((limits) => Object.keys(limits).length <= 1000, 'Too many meter limits');
+
+export type OrgMeterLimits = z.infer<typeof orgMeterLimitsSchema>;
+
+/**
+ * `PATCH /api/v1/admin/orgs/[id]/meters` body: the limits to set, by meter
+ * key, `null` to clear one. A meter not named is left as it is, so a caller
+ * never clears a limit it did not know about. At least one key.
+ */
+export const orgMeterLimitsInputSchema = z
+  .object({
+    limits: z
+      .record(meterKeySchema, meterLimitSchema.nullable())
+      .refine((limits) => Object.keys(limits).length > 0, 'Name at least one meter')
+      .refine(
+        (limits) => Object.keys(limits).length <= MAX_METERS + 1,
+        `At most ${MAX_METERS + 1} meters`
+      ),
+  })
+  .strict();
+
+export type OrgMeterLimitsInput = z.infer<typeof orgMeterLimitsInputSchema>;
+
 /** The kinds of name an org may protect: people and organisations (§127, t-1010). */
 export const ORG_PROTECTED_TERM_TYPES = ['PERSON', 'ORG'] as const;
 
