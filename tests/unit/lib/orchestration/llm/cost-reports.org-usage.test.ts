@@ -248,6 +248,8 @@ describe('getOrgUsage at multi', () => {
     extraRows = [
       row(ACME, '2026-10-20T00:00:00.000Z', 6, true),
       row(ACME, '2026-11-02T00:00:00.000Z', 1000, true),
+      // Beta: 4 on the platform's keys, 100 on its own.
+      row(BETA, '2026-10-21T00:00:00.000Z', 100, true),
     ];
 
     const report = await getOrgUsage({ period: '2026-10' });
@@ -262,8 +264,10 @@ describe('getOrgUsage at multi', () => {
       // 5 / 10, not 11 / 10: the cap counts the platform's spend only.
       utilisation: 0.5,
     });
-    expect(report.orgs.find((o) => o.orgId === BETA)?.ownKeyCostUsd).toBe(0);
-    expect(report.totals).toMatchObject({ totalCostUsd: 20, ownKeyCostUsd: 6, count: 5 });
+    expect(report.orgs.find((o) => o.orgId === BETA)?.ownKeyCostUsd).toBe(100);
+    // Ordered by the platform's spend (5, 4, 0), not by all of it (11, 104, 0).
+    expect(report.orgs.map((o) => o.orgId)).toEqual([ACME, BETA, INSTALL_ORG_ID]);
+    expect(report.totals).toMatchObject({ totalCostUsd: 120, ownKeyCostUsd: 106, count: 6 });
   });
 
   it('returns zeros for a month with no spend', async () => {

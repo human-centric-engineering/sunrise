@@ -46,9 +46,11 @@ function OwnKeyLine({ value }: { value: number | undefined }) {
 }
 
 export function CostSummaryCards({ summary, now }: CostSummaryCardsProps) {
-  const today = summary ? summary.totals.today - summary.ownKey.today : null;
-  const week = summary ? summary.totals.week - summary.ownKey.week : null;
-  const month = summary ? summary.totals.month - summary.ownKey.month : null;
+  // Never below 0: the two sums are rounded apart.
+  const platform = (all: number, own: number) => Math.max(0, all - own);
+  const today = summary ? platform(summary.totals.today, summary.ownKey.today) : null;
+  const week = summary ? platform(summary.totals.week, summary.ownKey.week) : null;
+  const month = summary ? platform(summary.totals.month, summary.ownKey.month) : null;
   const effectiveNow = now ?? new Date();
   const projected =
     summary && Number.isFinite(month ?? NaN) && (month ?? 0) >= 0

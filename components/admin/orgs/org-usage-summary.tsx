@@ -30,7 +30,8 @@ export function OrgUsageSummary({ period, row }: OrgUsageSummaryProps) {
         <div>
           <dt className="text-muted-foreground">Spend ({period})</dt>
           <dd className="text-lg font-semibold">
-            <Usd value={row.totalCostUsd - row.ownKeyCostUsd} />
+            {/* Never below 0: the two sums are rounded apart. */}
+            <Usd value={Math.max(0, row.totalCostUsd - row.ownKeyCostUsd)} />
           </dd>
           {row.ownKeyCostUsd > 0 && (
             <dd className="text-muted-foreground text-xs" data-testid="org-usage-own-key">

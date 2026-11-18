@@ -715,7 +715,9 @@ export async function getOrgUsage(opts: OrgUsageOptions): Promise<OrgUsageReport
         cap !== null && cap > 0 ? (usage.totalCostUsd - usage.ownKeyCostUsd) / cap : null,
     };
   });
-  rows.sort((a, b) => b.totalCostUsd - a.totalCostUsd || a.name.localeCompare(b.name));
+  // By the platform's spend, the figure the table shows and the cap counts.
+  const platform = (r: UsageTotals) => r.totalCostUsd - r.ownKeyCostUsd;
+  rows.sort((a, b) => platform(b) - platform(a) || a.name.localeCompare(b.name));
 
   const totals = rows.reduce<UsageTotals>((acc, r) => addTotals(acc, r), emptyTotals());
   if (detached) addTotals(totals, detached);
