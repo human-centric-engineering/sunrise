@@ -4,8 +4,9 @@
  * PUT    /api/v1/orgs/[id]/provider-keys/[providerId] — save a key, or replace
  *        the saved one: `{ apiKey }`. The key is tested first with one cheap
  *        vendor call, and a key that fails is not stored (422
- *        `KEY_TEST_FAILED`). Refused while organisations' own keys are
- *        switched off, for a provider the org is not approved for, and from a
+ *        `KEY_TEST_FAILED`). Refused, before any vendor call, while
+ *        organisations' own keys are switched off or no master key is
+ *        configured, for a provider the org is not approved for, and from a
  *        support session.
  * DELETE /api/v1/orgs/[id]/provider-keys/[providerId] — remove the saved key.
  *        The org's calls on the provider go back to the platform's key, if it
@@ -26,7 +27,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   assertActsForOrgKeys,
   assertMaySaveKeys,
-  assertSwitchedOn,
+  assertKeysCanBeSaved,
   keyStoreFailure,
   loadKeyProvider,
   resolveProviderKeysResource,
@@ -63,7 +64,7 @@ export const PUT = withAuth<Params>(async (request, session, { params }) => {
   assertActsForOrgKeys(session, id);
   assertMaySaveKeys();
   const { apiKey } = await validateRequestBody(request, saveProviderKeySchema);
-  await assertSwitchedOn();
+  await assertKeysCanBeSaved();
   const config = await loadKeyProvider(providerId);
 
   const limit = providerKeyTestLimiter.check(`provider-key-test:org:${id}`);

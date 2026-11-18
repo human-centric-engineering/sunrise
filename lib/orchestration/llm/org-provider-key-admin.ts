@@ -125,16 +125,21 @@ export async function loadKeyProvider(providerConfigId: string): Promise<AiProvi
 }
 
 /**
- * Refuse a save while organisations' own keys are switched off: a key saved
- * then would refuse every one of the org's calls on the provider.
+ * Refuse a save that could not end in a usable key, before any vendor call:
+ * while organisations' own keys are switched off (a key saved then would
+ * refuse every one of the org's calls on the provider), and while no master
+ * key is configured (it could not be sealed).
  */
-export async function assertSwitchedOn(): Promise<void> {
+export async function assertKeysCanBeSaved(): Promise<void> {
   const settings = await getOrchestrationSettings();
   if (!settings.orgProviderKeysEnabled) {
     throw new ConflictError(
       'Organisations’ own AI keys are switched off on this platform, so a key cannot be saved',
       { reason: 'switched_off' }
     );
+  }
+  if (!isSealedSecretKeyConfigured()) {
+    throw keyStoreFailure(new SealedSecretKeyMissingError(), 'save', {});
   }
 }
 

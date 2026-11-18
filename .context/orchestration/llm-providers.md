@@ -855,7 +855,9 @@ it does every write.
 **Save is refused** while the switch is off (409 `switched_off`: the key would
 refuse every one of the org's calls), for a provider the org is not approved
 for (409 `not_approved`, before any vendor call), for an inactive or local
-provider (404), and with no master key (409 `master_key_missing`). Surrounding
+provider (404), and with no master key (409 `master_key_missing`), each
+before any vendor call. Test is refused the same way for a provider the org is
+not approved for, or an inactive one; remove never is. Surrounding
 whitespace from a paste is trimmed; a line break inside the key is refused.
 
 **Rate limit.** Save and test share `providerKeyTestLimiter`, 10 a minute per

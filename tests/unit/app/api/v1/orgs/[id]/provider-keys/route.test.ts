@@ -663,7 +663,7 @@ describe('without a master key', () => {
     delete envOverrides.SEALED_SECRET_ACTIVE_KEY;
   }
 
-  it('refuses a save after the test, saying platform staff must configure it, and stores nothing', async () => {
+  it('refuses a save before any vendor call, saying platform staff must configure it', async () => {
     actingAs(ORG_ADMIN_ROLE);
     noKeyring();
 
@@ -671,6 +671,7 @@ describe('without a master key', () => {
 
     expect(res.status).toBe(409);
     expect((await body(res)).error.details).toEqual({ reason: 'master_key_missing' });
+    expect(mockTestProviderKey).not.toHaveBeenCalled();
     expect(orgKeyTable.rows.size).toBe(0);
   });
 
