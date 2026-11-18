@@ -102,7 +102,10 @@ export interface SealedStoreResealResult {
   changedMeanwhile: number;
   /** Values that could not be moved, by row id. */
   failed: SealedStoreFailure[];
-  /** Set when listing the store threw; its counts stop where it did. */
+  /**
+   * Set when listing the store threw: the error's name and code, never its
+   * message. Its counts stop where it did.
+   */
   error?: string;
 }
 
@@ -278,7 +281,7 @@ async function resealStore(store: SealedStore, dryRun: boolean): Promise<SealedS
         result.failed.push({
           id: value.id,
           reason: 'write_failed',
-          detail: describeWriteError(err),
+          detail: describeError(err),
         });
         continue;
       }
@@ -288,13 +291,17 @@ async function resealStore(store: SealedStore, dryRun: boolean): Promise<SealedS
   } catch (err) {
     // A store whose listing broke is reported and the walk moves on: the
     // other stores' values still need moving. The run is then not `ok`.
-    result.error = err instanceof Error ? err.message : String(err);
+    result.error = describeError(err);
   }
   return result;
 }
 
-/** An error's name and code, for the report. Never its message: see {@link SealedStoreFailure}. */
-function describeWriteError(err: unknown): string {
+/**
+ * An error's name and code, for the report. Never its message, which can echo
+ * a query's arguments or a row, and so an envelope: the report promises
+ * neither leaves it.
+ */
+function describeError(err: unknown): string {
   if (!(err instanceof Error)) return typeof err;
   const code: unknown = 'code' in err ? err.code : undefined;
   return typeof code === 'string' || typeof code === 'number' ? `${err.name} ${code}` : err.name;

@@ -28,6 +28,19 @@ const STORE = {
   failed: [],
 };
 
+/**
+ * A stand-in for a stream's `write` that records non-empty chunks and calls
+ * the flush callback, wherever `write` was given it, as a real stream does.
+ */
+function capture(into: string[]) {
+  return ((chunk: string | Uint8Array, ...rest: unknown[]) => {
+    if (String(chunk) !== '') into.push(String(chunk));
+    const callback = rest.find((arg): arg is () => void => typeof arg === 'function');
+    callback?.();
+    return true;
+  }) as typeof process.stdout.write;
+}
+
 describe('scripts/secrets/reseal', () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
   let stdout: string[];
@@ -42,14 +55,8 @@ describe('scripts/secrets/reseal', () => {
     delete process.env.npm_config_dry_run;
     stdout = [];
     stderr = [];
-    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
-      stdout.push(String(chunk));
-      return true;
-    });
-    vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
-      stderr.push(String(chunk));
-      return true;
-    });
+    vi.spyOn(process.stdout, 'write').mockImplementation(capture(stdout));
+    vi.spyOn(process.stderr, 'write').mockImplementation(capture(stderr));
     exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
   });
 
@@ -67,9 +74,10 @@ describe('scripts/secrets/reseal', () => {
   }
 
   function storeLines(): Array<Record<string, unknown>> {
+    const prefix = 'secrets:reseal store ';
     return stdout
-      .filter((l) => l.startsWith('{'))
-      .map((l) => JSON.parse(l) as Record<string, unknown>);
+      .filter((l) => l.startsWith(prefix))
+      .map((l) => JSON.parse(l.slice(prefix.length)) as Record<string, unknown>);
   }
 
   it('prints each store and a clean summary, and exits 0', async () => {
@@ -113,6 +121,19 @@ describe('scripts/secrets/reseal', () => {
       expect(exitSpy).toHaveBeenCalledTimes(1);
     }
   );
+
+  it('exits only once its output has flushed', async () => {
+    // A stdout whose writes never report flushed, as a slow pipe would.
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array) => {
+      stdout.push(String(chunk));
+      return true;
+    });
+    mockReseal.mockResolvedValue(report({ stores: [STORE] }));
+    await run();
+
+    expect(stdout.join('')).toContain('done: every value is on key');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
 
   it('says there was nothing to move when no store is registered', async () => {
     mockReseal.mockResolvedValue(report());

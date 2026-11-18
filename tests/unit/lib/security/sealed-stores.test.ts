@@ -358,7 +358,8 @@ describe('resealSealedStores', () => {
       store: 'broken',
       scanned: 1,
       resealed: 1,
-      error: 'listing broken broke',
+      // The error's name, never its message, which could echo a row.
+      error: 'Error',
     });
     expect(report.stores[1]).toMatchObject({ store: 'fine', resealed: 1 });
     expect(report.stores[1].error).toBeUndefined();

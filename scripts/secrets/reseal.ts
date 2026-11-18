@@ -14,7 +14,14 @@
  * argument it does not know, or the app's store registration failed).
  *
  * **The report is printed, not logged**, so `LOG_LEVEL` cannot hide it: it is
- * what the operator decides on. One JSON line per store, then a summary line.
+ * what the operator decides on. Every report line starts `secrets:reseal `:
+ * one per store (`secrets:reseal store {json}`), then a summary. Log lines
+ * from the run (each store's walk enters `runAsSystem`, which logs) share
+ * stdout, so read the report by that prefix.
+ *
+ * It exits only once stdout and stderr have flushed: a write to a pipe is
+ * asynchronous on macOS, and `process.exit()` straight after one can cut the
+ * report off (`… | tee reseal.log`).
  *
  * Outside development, run it where the app's environment is set:
  * `npx tsx scripts/secrets/reseal.ts`.
@@ -27,12 +34,17 @@ import type { SealedStoresResealReport } from '@/lib/security/sealed-stores';
 
 /** Write a line of the report. The command's output, not a log line. */
 function print(line: string): void {
-  process.stdout.write(`${line}\n`);
+  process.stdout.write(`secrets:reseal ${line}\n`);
 }
 
 /** Write why the run could not start. */
 function printError(line: string): void {
   process.stderr.write(`secrets:reseal could not start: ${line}\n`);
+}
+
+/** Exit with `code` once everything written so far has flushed. */
+function finish(code: number): void {
+  process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));
 }
 
 /**
@@ -53,7 +65,7 @@ async function main(): Promise<void> {
   const dryRun = readDryRun(args);
   if (dryRun === null) {
     printError(`unknown argument(s) ${JSON.stringify(args)}; the only one is --dry-run.`);
-    return process.exit(2);
+    return finish(2);
   }
 
   // Loaded here rather than imported at the top, so that a module that fails
@@ -65,7 +77,7 @@ async function main(): Promise<void> {
     ({ resealSealedStores } = await import('@/lib/security/sealed-stores'));
   } catch (err) {
     printError(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
-    return process.exit(2);
+    return finish(2);
   }
 
   let report: SealedStoresResealReport;
@@ -73,20 +85,21 @@ async function main(): Promise<void> {
     report = await resealSealedStores({ dryRun });
   } catch (err) {
     printError(err instanceof Error ? err.message : String(err));
-    return process.exit(2);
+    return finish(2);
   }
 
   for (const store of report.stores) {
     print(
-      JSON.stringify({
-        store: store.store,
-        scanned: store.scanned,
-        alreadyCurrent: store.alreadyCurrent,
-        [dryRun ? 'wouldReseal' : 'resealed']: store.resealed,
-        changedMeanwhile: store.changedMeanwhile,
-        failed: store.failed,
-        ...(store.error ? { error: store.error } : {}),
-      })
+      'store ' +
+        JSON.stringify({
+          store: store.store,
+          scanned: store.scanned,
+          alreadyCurrent: store.alreadyCurrent,
+          [dryRun ? 'wouldReseal' : 'resealed']: store.resealed,
+          changedMeanwhile: store.changedMeanwhile,
+          failed: store.failed,
+          ...(store.error ? { error: store.error } : {}),
+        })
     );
   }
 
@@ -105,8 +118,8 @@ async function main(): Promise<void> {
       ? `dry run: every value can move onto key ${key}.`
       : `done: every value is on key ${key}.`;
   }
-  print(`secrets:reseal ${summary}`);
-  return process.exit(report.ok ? 0 : 1);
+  print(summary);
+  return finish(report.ok ? 0 : 1);
 }
 
 void main();

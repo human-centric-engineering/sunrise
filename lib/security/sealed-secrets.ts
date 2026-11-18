@@ -38,12 +38,14 @@
  *
  * ## Rotating the master key
  *
- * Add the new key to `SEALED_SECRET_KEYS` and point
- * `SEALED_SECRET_ACTIVE_KEY` at it. New values seal under it, and old ones
- * keep opening under theirs. To retire the old key, run `npm run
- * secrets:reseal`, which moves every registered store onto the active key
- * (`sealed-stores.ts`), then remove it. Removed too early, the values still
- * under it refuse to open (`unknown_key`) rather than open wrongly.
+ * In two deploys: add the new key to `SEALED_SECRET_KEYS` first, and only
+ * once every process has it, point `SEALED_SECRET_ACTIVE_KEY` at it. Doing
+ * both at once lets a new process seal a value an old one (mid-rollout, or
+ * after a rollback) cannot open. Old values keep opening under their keys.
+ * To retire the old key, run `npm run secrets:reseal`, which moves every
+ * registered store onto the active key (`sealed-stores.ts`), then remove it.
+ * Removed too early, the values still under it refuse to open
+ * (`unknown_key`) rather than open wrongly.
  *
  * ## Why it is async
  *
@@ -63,7 +65,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 
 import { env } from '@/lib/env';
-import { readSealedSecretKeyring } from '@/lib/security/sealed-secret-keys';
+import {
+  readSealedSecretKeyring,
+  SEALED_SECRET_KEY_ID_PATTERN,
+} from '@/lib/security/sealed-secret-keys';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
@@ -229,6 +234,9 @@ function parseEnvelope(sealed: string): ParsedEnvelope | null {
   if (parts[0] === 'v2' && parts.length === 5) {
     format = 'v2';
     keyId = parts[1];
+    // A garbled id is a corrupt value (`format`), not a retired key
+    // (`unknown_key`): the second would tell an operator to keep old keys.
+    if (!SEALED_SECRET_KEY_ID_PATTERN.test(keyId)) return null;
     encoded = parts.slice(2);
   } else if (parts[0] === 'v1' && parts.length === 4) {
     format = 'v1';

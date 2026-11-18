@@ -86,14 +86,25 @@ environment variable's value, not its name: core never reads a fork's env names.
 
 ## Rotating the master key
 
-1. Add the new key to `SEALED_SECRET_KEYS` and point
-   `SEALED_SECRET_ACTIVE_KEY` at it. Deploy. New values seal under it, and
-   everything already stored keeps opening under its old key.
-2. Run `npm run secrets:reseal -- --dry-run` to see how many values would move,
-   then `npm run secrets:reseal`. Outside development, run
+**Two deploys, not one.** Every process has to be able to open a value under
+the new key before any process seals one under it. During a rolling deploy,
+or on warm serverless instances, old and new processes run side by side, and a
+process whose `SEALED_SECRET_KEYS` lacks the new key cannot open what the new
+ones seal. A rollback would leave every such value unreadable.
+
+1. **Add** the new key to `SEALED_SECRET_KEYS`, leaving
+   `SEALED_SECRET_ACTIVE_KEY` on the old one. Deploy, and wait until no process
+   runs the previous environment.
+2. **Switch** `SEALED_SECRET_ACTIVE_KEY` to the new key. Deploy. New values
+   seal under it, and everything stored keeps opening under its old key. A
+   rollback of this step is safe: every process can still open both.
+3. **Reseal.** Run `npm run secrets:reseal -- --dry-run` to see how many values
+   would move, then `npm run secrets:reseal`. Outside development, run
    `npx tsx scripts/secrets/reseal.ts` where the app's environment is set.
-3. When a run exits `0`, remove the old key (and `SEALED_SECRET_LEGACY_KEY`, if
-   it named it).
+   Run it once step 2 is fully rolled out, or a process still on the old
+   active key may save values under it (the run reports those and exits `1`).
+4. **Remove** the old key (and `SEALED_SECRET_LEGACY_KEY`, if it named it) once
+   a run exits `0`.
 
 | Exit | Meaning                                                                                                                                           |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,11 +118,14 @@ the run exit `1` (`changedMeanwhile`): during a deploy, the process that saved
 it may still be sealing under the old key. The next run either finds it
 current or moves it.
 
-**The report is printed, not logged**, so `LOG_LEVEL` cannot hide it: one JSON
-line per store (counts, and each failed row as `{ id, reason }`, where
-`reason` is `format`, `unknown_key`, `mismatch`, `invalid_purpose` or
-`write_failed`, the last with the error's name and code), then a summary.
-Nothing in it is a plaintext or an envelope.
+**The report is printed, not logged**, so `LOG_LEVEL` cannot hide it. Every
+report line starts `secrets:reseal `: one `secrets:reseal store {json}` per
+store (counts, and each failed row as `{ id, reason }`, where `reason` is
+`format`, `unknown_key`, `mismatch`, `invalid_purpose` or `write_failed`, the
+last with the error's name and code; a store that could not be listed has
+`error`, also a name and code), then a summary. Log lines from the run share
+stdout, so pick the report out by that prefix. Nothing in it is a plaintext,
+an envelope or an error message.
 
 **Only `--dry-run` is accepted.** Anything else exits `2` without touching a
 store, so a typo never turns into a writing run. `npm run secrets:reseal

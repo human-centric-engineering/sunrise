@@ -100,8 +100,12 @@ export function readSealedSecretKeyring(
         'SEALED_SECRET_KEYS is not set, but SEALED_SECRET_ACTIVE_KEY or SEALED_SECRET_LEGACY_KEY is. Set it to the keys, as comma-separated id:secret pairs.',
     });
   } else {
+    // A trailing comma leaves an empty entry, which is skipped. An entirely
+    // empty value is not "unset": it is refused below, by the first entry.
     const entries = rawKeys.split(',').map((entry) => entry.trim());
+    const anyEntry = entries.some((entry) => entry.length > 0);
     entries.forEach((entry, index) => {
+      if (entry.length === 0 && anyEntry) return;
       const position = `entry ${index + 1}`;
       const separator = entry.indexOf(':');
       if (separator === -1) {
@@ -118,6 +122,17 @@ export function readSealedSecretKeyring(
         problems.push({
           variable: 'SEALED_SECRET_KEYS',
           message: `SEALED_SECRET_KEYS ${position} has an invalid id: use lowercase letters, digits and hyphens, at most 32 characters.`,
+        });
+        return;
+      }
+      if (secret !== secret.trim()) {
+        // Refused rather than trimmed: spaces would otherwise become key
+        // material, and tidying them away later would make every value stop
+        // opening.
+        refusedIds.add(id);
+        problems.push({
+          variable: 'SEALED_SECRET_KEYS',
+          message: `SEALED_SECRET_KEYS key "${id}" has spaces around its secret. Remove them.`,
         });
         return;
       }
@@ -148,14 +163,19 @@ export function readSealedSecretKeyring(
           'SEALED_SECRET_ACTIVE_KEY is not set. Set it to the id of the key new values are sealed under.',
       });
     }
-  } else if (!keys.has(active) && !refusedIds.has(active)) {
+  } else if (rawKeys !== undefined && !keys.has(active) && !refusedIds.has(active)) {
     problems.push({
       variable: 'SEALED_SECRET_ACTIVE_KEY',
       message: describeMissingId('SEALED_SECRET_ACTIVE_KEY', active),
     });
   }
 
-  if (legacy !== undefined && !keys.has(legacy) && !refusedIds.has(legacy)) {
+  if (
+    rawKeys !== undefined &&
+    legacy !== undefined &&
+    !keys.has(legacy) &&
+    !refusedIds.has(legacy)
+  ) {
     problems.push({
       variable: 'SEALED_SECRET_LEGACY_KEY',
       message: describeMissingId('SEALED_SECRET_LEGACY_KEY', legacy),

@@ -89,11 +89,34 @@ describe('readSealedSecretKeyring', () => {
     expectNoSecretIn(read, SECRET_A, SECRET_B);
   });
 
-  it('refuses the id or active key set without any keys', () => {
+  it('refuses the active or legacy id set without any keys, once', () => {
     const read = readSealedSecretKeyring({ SEALED_SECRET_ACTIVE_KEY: 'one' });
-    expect(problemsOf(read).map((p) => p.variable)).toContain('SEALED_SECRET_KEYS');
+    expect(problemsOf(read).map((p) => p.variable)).toEqual(['SEALED_SECRET_KEYS']);
     const legacyOnly = readSealedSecretKeyring({ SEALED_SECRET_LEGACY_KEY: 'one' });
-    expect(problemsOf(legacyOnly).map((p) => p.variable)).toContain('SEALED_SECRET_KEYS');
+    expect(problemsOf(legacyOnly).map((p) => p.variable)).toEqual(['SEALED_SECRET_KEYS']);
+  });
+
+  it('skips the empty entry a trailing comma leaves', () => {
+    const read = readSealedSecretKeyring({
+      SEALED_SECRET_KEYS: `one:${SECRET_A},`,
+      SEALED_SECRET_ACTIVE_KEY: 'one',
+    });
+    if (!read.ok || !read.keyring) throw new Error('expected a keyring');
+    expect([...read.keyring.keys.keys()]).toEqual(['one']);
+  });
+
+  it('refuses spaces around a secret rather than making them key material', () => {
+    const read = readSealedSecretKeyring({
+      SEALED_SECRET_KEYS: `one: ${SECRET_A}`,
+      SEALED_SECRET_ACTIVE_KEY: 'one',
+    });
+    expect(problemsOf(read)).toEqual([
+      expect.objectContaining({
+        variable: 'SEALED_SECRET_KEYS',
+        message: expect.stringMatching(/spaces around its secret/),
+      }),
+    ]);
+    expectNoSecretIn(read, SECRET_A);
   });
 
   it('refuses an empty value rather than reading it as unset', () => {

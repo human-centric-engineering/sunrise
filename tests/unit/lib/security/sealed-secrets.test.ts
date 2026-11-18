@@ -163,6 +163,8 @@ describe('sealSecret / openSecret', () => {
     ['characters outside base64url', 'v2.k2026.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AA+/'],
     ['a short IV', 'v2.k2026.AAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAA'],
     ['a short tag', 'v2.k2026.AAAAAAAAAAAAAAAA.AAAA.AAAA'],
+    ['an empty key id', 'v2..AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAA'],
+    ['a malformed key id', 'v2.K!2026.AAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAA.AAAA'],
   ])('refuses %s as format', async (_label, sealed) => {
     expect(await openFailure(sealed, PURPOSE)).toBe('format');
   });
