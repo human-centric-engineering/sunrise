@@ -9,8 +9,8 @@
  *
  * Exit codes: 0 every value is on the active key (or would be, on a dry run);
  * 1 some value could not be moved, or a store could not be read, so do NOT
- * remove the old key yet; 2 the run could not start (no keyring, or the app's
- * store registration failed).
+ * remove the old key yet; 2 the run could not start (no keyring, a keyring
+ * lib/env.ts refused, or the app's store registration failed).
  *
  * Outside development, run it where the app's environment is set:
  * `npx tsx scripts/secrets/reseal.ts`.

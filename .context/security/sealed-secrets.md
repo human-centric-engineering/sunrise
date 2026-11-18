@@ -95,11 +95,11 @@ environment variable's value, not its name: core never reads a fork's env names.
 3. When a run exits `0`, remove the old key (and `SEALED_SECRET_LEGACY_KEY`, if
    it named it).
 
-| Exit | Meaning                                                                                          |
-| ---- | ------------------------------------------------------------------------------------------------ |
-| `0`  | Every value is on the active key (or would be, on a dry run). Safe to remove old keys.           |
-| `1`  | Some value did not move, or a store could not be read. The report names them. Keep the old keys. |
-| `2`  | It could not start: no keyring, or the app's `initAppSealedStores` threw.                        |
+| Exit | Meaning                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------- |
+| `0`  | Every value is on the active key (or would be, on a dry run). Safe to remove old keys.                    |
+| `1`  | Some value did not move, or a store could not be read. The report names them. Keep the old keys.          |
+| `2`  | It could not start: no keyring, a keyring `lib/env.ts` refused, or the app's `initAppSealedStores` threw. |
 
 A run is safe to repeat. A value already on the active key is not touched, and
 a value someone saved during the run is left as they saved it
@@ -151,8 +151,8 @@ export function initAppSealedStores(): void {
 }
 ```
 
-Sunrise's own stores are registered in core as they are added. The first is
-the org AI key store (§137 t-1044).
+Sunrise registers its own stores in core as it adds them. The first will be
+the org AI key store (§137 t-1044); today none is registered.
 
 ## A managed key service
 
