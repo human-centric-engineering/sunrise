@@ -17,6 +17,9 @@
  * someone adds it and says which provider it asks about, or why it makes no
  * vendor call. Changing what a site asks about changes its key and fails too.
  *
+ * It skips a fork's own tiers (`lib/app/**`, `lib/framework/**` and their
+ * `components/` twins); a fork's calls elsewhere are its divergence to list.
+ *
  * What it cannot see: whether the provider a site asks about is the one it
  * called. `own-key-spend.test.ts` runs a chat turn, a workflow step and
  * embeddings end to end for that.
@@ -33,6 +36,12 @@ const REPO_ROOT = process.cwd();
 
 /** Not source. `tests` is excluded — a test may pass whatever it likes. */
 const NOT_SOURCE = new Set(['node_modules', '.next', '.git', 'coverage', 'tests', '.claude']);
+
+/**
+ * A fork's own tiers. Its `logCost` calls there are its own to mark, as the
+ * CHANGELOG asks, and listing them would make it edit this platform file.
+ */
+const FORK_TIERS = ['lib/app/', 'lib/framework/', 'components/app/', 'components/framework/'];
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -96,7 +105,9 @@ function findCallSites(): string[] {
   for (const file of walk(REPO_ROOT)) {
     const text = readFileSync(file, 'utf8');
     if (!text.includes('logCost')) continue;
-    keys.push(...keysIn(relative(REPO_ROOT, file).split(sep).join('/'), text));
+    const rel = relative(REPO_ROOT, file).split(sep).join('/');
+    if (FORK_TIERS.some((tier) => rel.startsWith(tier))) continue;
+    keys.push(...keysIn(rel, text));
   }
   return keys.sort();
 }

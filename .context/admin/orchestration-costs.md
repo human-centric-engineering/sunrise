@@ -145,7 +145,7 @@ An org can have a cap of its own: `monthlyBudgetUsd` under the `quotas` key of `
 - **Detached spend has its own bucket.** Rows with no org (an erased org's spend is kept and its `orgId` set to `NULL`) come back as `detached`, shown on the table as **No org**. They still count towards the global cap.
 - **At `single` it is one install-org row**, totalling every row in the month, `NULL`-org rows included, and `detached` is `null`. The page hides the table then, since the summary cards already show that total.
 - **Where it shows.** The costs page shows the per-org table when the endpoint returns more than one org, or any detached spend. If the endpoint refuses the caller, the table is not shown. The org detail page (`/admin/orgs/[id]`) asks for its own org (`?orgId=`) and shows month-to-date spend against the cap. In a customer org it says that usage can only be viewed from the install org.
-- **A cap of `0` has no utilisation.** It means "no paid calls", so `utilisation` is `null`, and both the table and the org page say **Paid calls off**.
+- **A cap of `0` has no utilisation.** It means "no paid calls on the platform's keys" (calls on the org's own key go on), so `utilisation` is `null`, and both the table and the org page say **Paid calls off (platform keys)**.
 - **Spend on an org's own AI key is reported apart** (§137 t-1046). Every bucket carries `ownKeyCostUsd`, the part of `totalCostUsd` made on the org's own key; `utilisation` is the rest over the cap, since that is what the cap counts. The table's **Spend** column and the org page's figure are the platform's spend, and the table gains an **Own keys** column once any org has some.
 
 ### What the chat user sees

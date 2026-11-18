@@ -7464,9 +7464,10 @@ describe('attachment gate', () => {
           { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
         ],
       ]);
+      // A fallback, not the agent's primary ('anthropic').
       (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
         provider: picked,
-        usedSlug: 'anthropic',
+        usedSlug: 'openai',
       });
       // Whatever the primary is, the row follows the provider the call went to.
       vi.mocked(providerUsesOrgOwnKey).mockResolvedValue(!onOwnKey);
@@ -7476,7 +7477,11 @@ describe('attachment gate', () => {
         await collect(streamChat({ ...baseRequest, attachments: [imageAttachment()] }));
 
         expect(logCost).toHaveBeenCalledWith(
-          expect.objectContaining({ operation: CostOperation.VISION, ownKey: onOwnKey })
+          expect.objectContaining({
+            operation: CostOperation.VISION,
+            provider: 'openai',
+            ownKey: onOwnKey,
+          })
         );
       } finally {
         vi.mocked(usesOrgOwnKey).mockImplementation(() => false);

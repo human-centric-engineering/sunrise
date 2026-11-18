@@ -79,6 +79,6 @@ describe('OrgUsageSummary', () => {
     expect(screen.queryByText('No cap set')).not.toBeInTheDocument();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     expect(screen.queryByText('No budget set')).not.toBeInTheDocument();
-    expect(screen.getByText('Paid calls off')).toBeInTheDocument();
+    expect(screen.getByText('Paid calls off (platform keys)')).toBeInTheDocument();
   });
 });

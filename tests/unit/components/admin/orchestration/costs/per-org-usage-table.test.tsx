@@ -81,7 +81,9 @@ describe('PerOrgUsageTable', () => {
     );
 
     expect(within(rowFor('Uncapped')).getByText('No budget set')).toBeInTheDocument();
-    expect(within(rowFor('Zeroed')).getByText('Paid calls off')).toBeInTheDocument();
+    expect(
+      within(rowFor('Zeroed')).getByText('Paid calls off (platform keys)')
+    ).toBeInTheDocument();
     expect(within(rowFor('Zeroed')).queryByText('No budget set')).not.toBeInTheDocument();
   });
 

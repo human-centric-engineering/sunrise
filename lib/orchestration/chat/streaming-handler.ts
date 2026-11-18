@@ -722,7 +722,7 @@ export class StreamingChatHandler {
       // Budget warning at 80%, for any turn that goes on with its agent's cap
       // not yet reached.
       if (
-        (budget.withinBudget || !refused) &&
+        !refused &&
         budget.limit !== null &&
         budget.limit > 0 &&
         budget.spent / budget.limit >= 0.8
@@ -1701,7 +1701,7 @@ export class StreamingChatHandler {
           conversationId: conversation.id,
           userId: userIdForUserRef(request.userId),
           model: resolvedModel,
-          provider: resolvedBinding.providerSlug,
+          provider: usedSlug,
           ownKey: usesOrgOwnKey(provider),
           inputTokens: 0,
           outputTokens: 0,

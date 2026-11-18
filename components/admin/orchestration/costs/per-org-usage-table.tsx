@@ -142,7 +142,9 @@ export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {
                 </TableCell>
                 <TableCell>
                   {row.monthlyBudgetUsd === 0 ? (
-                    <span className="text-muted-foreground text-xs">Paid calls off</span>
+                    <span className="text-muted-foreground text-xs">
+                      Paid calls off (platform keys)
+                    </span>
                   ) : (
                     <UtilisationBar utilisation={row.utilisation} />
                   )}

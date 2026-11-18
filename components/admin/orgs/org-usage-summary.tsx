@@ -67,7 +67,7 @@ export function OrgUsageSummary({ period, row }: OrgUsageSummaryProps) {
             )}
             {row.monthlyBudgetUsd === 0 && (
               <span className="text-muted-foreground block text-xs font-normal">
-                Paid calls off
+                Paid calls off (platform keys)
               </span>
             )}
           </dd>
