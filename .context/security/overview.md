@@ -13,20 +13,22 @@ For authentication-specific security (password hashing, sessions, OAuth), see [A
 
 All security utilities are located in `lib/security/`:
 
-| File                       | Purpose                                                   |
-| -------------------------- | --------------------------------------------------------- |
-| `constants.ts`             | Security constants (rate limits, CORS config)             |
-| `rate-limit.ts`            | Sliding window rate limiter primitives + tier registry    |
-| `rate-limit-policy.ts`     | Path-to-tier policy table (single source of truth)        |
-| `rate-limit-middleware.ts` | Dispatcher (`applyRateLimit`) consumed by `proxy.ts`      |
-| `rate-limit-stores/`       | Pluggable backing stores: memory (LRU, default) and Redis |
-| `headers.ts`               | CSP and security headers utilities                        |
-| `sanitize.ts`              | XSS prevention and input sanitization                     |
-| `cors.ts`                  | CORS configuration and utilities                          |
-| `ip.ts`                    | Client IP extraction with validation                      |
-| `redact.ts`                | PII redaction primitives ([details](./pii-redaction.md))  |
-| `safe-url.ts`              | SSRF guard for admin-settable outbound URLs               |
-| `index.ts`                 | Module exports                                            |
+| File                       | Purpose                                                     |
+| -------------------------- | ----------------------------------------------------------- |
+| `constants.ts`             | Security constants (rate limits, CORS config)               |
+| `rate-limit.ts`            | Sliding window rate limiter primitives + tier registry      |
+| `rate-limit-policy.ts`     | Path-to-tier policy table (single source of truth)          |
+| `rate-limit-middleware.ts` | Dispatcher (`applyRateLimit`) consumed by `proxy.ts`        |
+| `rate-limit-stores/`       | Pluggable backing stores: memory (LRU, default) and Redis   |
+| `headers.ts`               | CSP and security headers utilities                          |
+| `sanitize.ts`              | XSS prevention and input sanitization                       |
+| `cors.ts`                  | CORS configuration and utilities                            |
+| `ip.ts`                    | Client IP extraction with validation                        |
+| `redact.ts`                | PII redaction primitives ([details](./pii-redaction.md))    |
+| `safe-url.ts`              | SSRF guard for admin-settable outbound URLs                 |
+| `sealed-secrets.ts`        | Sealing stored credentials ([details](./sealed-secrets.md)) |
+| `sealed-stores.ts`         | Where sealed values live; the reseal walk                   |
+| `index.ts`                 | Module exports                                              |
 
 The project-root `proxy.ts` (Next.js 16's renamed middleware) wires `applyRateLimit` into the request lifecycle. See [Rate Limiting](./rate-limiting.md) for the layered model.
 

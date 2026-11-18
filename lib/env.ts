@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { appBrandName, appBrandLegalName, appBrandDescription } from '@/lib/app/brand';
 import { appEnvSchema } from '@/lib/app/env';
+import { readSealedSecretKeyring } from '@/lib/security/sealed-secret-keys';
 
 /**
  * Environment Variable Validation Schema
@@ -75,6 +76,27 @@ const serverEnvSchema = z.object({
     message:
       'BETTER_AUTH_SECRET must be at least 32 characters. Generate with: openssl rand -base64 32',
   }),
+
+  // Sealed secrets (see .context/security/sealed-secrets.md). Optional: with
+  // none set, nothing can be sealed and every feature that stores a secret
+  // refuses to. The three are checked together at boot (see
+  // `checkSealedSecretKeyring` below), never echoing a secret.
+  SEALED_SECRET_KEYS: z
+    .string()
+    .optional()
+    .describe(
+      'Master keys for sealed secrets, as comma-separated id:secret pairs (each secret 32+ characters; generate with: openssl rand -base64 32).'
+    ),
+  SEALED_SECRET_ACTIVE_KEY: z
+    .string()
+    .optional()
+    .describe('The id, in SEALED_SECRET_KEYS, of the key new secrets are sealed under.'),
+  SEALED_SECRET_LEGACY_KEY: z
+    .string()
+    .optional()
+    .describe(
+      'The id, in SEALED_SECRET_KEYS, that secrets sealed in the first format (v1., no key id) open under.'
+    ),
 
   // Signup model (see .context/auth/signup-modes.md)
   SIGNUP_MODE: z
@@ -314,6 +336,28 @@ const envSchema = serverEnvSchema.merge(appEnvSchema).merge(clientEnvSchema);
  */
 export type Env = z.infer<typeof envSchema>;
 
+/**
+ * The sealed-secret keyring's three variables, checked together: the active
+ * and legacy ids must name keys in `SEALED_SECRET_KEYS`, which a per-field
+ * schema cannot see. Checked beside the schema rather than as a refinement:
+ * a refined object loses the `.shape` and `.merge()` the app-extension seam
+ * depends on, and a refinement on the merged schema does not run when another
+ * variable has already failed, so a broken deploy would learn about its
+ * keyring one boot later. Each problem names its variable and never contains
+ * a secret.
+ */
+function checkSealedSecretKeyring(
+  values: Record<string, string | undefined>
+): Record<string, string[]> {
+  const read = readSealedSecretKeyring(values);
+  const errors: Record<string, string[]> = {};
+  if (read.ok) return errors;
+  for (const problem of read.problems) {
+    (errors[problem.variable] ??= []).push(problem.message);
+  }
+  return errors;
+}
+
 // Check if we're running in a browser
 /**
  * Drop blank `NEXT_PUBLIC_*` values, so "set but empty" means "unset" (#662).
@@ -383,11 +427,18 @@ const parsed = isBrowser
     )
   : envSchema.safeParse(withoutBlankClientValues(process.env));
 
-if (!parsed.success) {
+// Server-only: the browser never sees the keyring's variables.
+const keyringErrors = isBrowser ? {} : checkSealedSecretKeyring(process.env);
+
+if (!parsed.success || Object.keys(keyringErrors).length > 0) {
+  const fieldErrors: Record<string, string[] | undefined> = {
+    ...(parsed.success ? {} : parsed.error.flatten().fieldErrors),
+    ...keyringErrors,
+  };
   // eslint-disable-next-line no-console -- Startup logging before logger is initialized
   console.error('❌ Invalid environment variables:');
   // eslint-disable-next-line no-console -- Startup logging before logger is initialized
-  console.error(JSON.stringify(parsed.error.flatten().fieldErrors, null, 2));
+  console.error(JSON.stringify(fieldErrors, null, 2));
   throw new Error(
     'Environment validation failed - check configuration above or see .context/environment/overview.md'
   );

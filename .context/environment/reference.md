@@ -21,6 +21,9 @@ Complete reference for all environment variables used in Sunrise.
 | [`MIGRATE_DATABASE_URL`](./database-env.md)                      | ❌ No    | URL          | `DATABASE_URL`      | Owner DSN for migrations, seeds, `db:tenancy:*` |
 | [`BETTER_AUTH_URL`](./auth-env.md)                               | ✅ Yes   | URL          | -                   | Application base URL                            |
 | [`BETTER_AUTH_SECRET`](./auth-env.md)                            | ✅ Yes   | String (32+) | -                   | JWT signing secret                              |
+| [`SEALED_SECRET_KEYS`](../security/sealed-secrets.md)            | ❌ No    | String       | -                   | Master keys for stored secrets, `id:secret,…`   |
+| [`SEALED_SECRET_ACTIVE_KEY`](../security/sealed-secrets.md)      | ⚠️ Cond  | String       | -                   | Key id new secrets seal under                   |
+| [`SEALED_SECRET_LEGACY_KEY`](../security/sealed-secrets.md)      | ❌ No    | String       | -                   | Key id first-format (`v1.`) secrets open under  |
 | [`SIGNUP_MODE`](./auth-env.md)                                   | ❌ No    | Enum         | `open`              | Who may create an account                       |
 | [`GOOGLE_CLIENT_ID`](./auth-env.md)                              | ❌ No    | String       | -                   | Google OAuth client ID                          |
 | [`GOOGLE_CLIENT_SECRET`](./auth-env.md)                          | ❌ No    | String       | -                   | Google OAuth secret                             |

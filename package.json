@@ -58,6 +58,7 @@
     "db:tenancy:disable": "tsx --env-file=.env.local scripts/db/tenancy-enable.ts --disable",
     "db:tenancy:role": "tsx --env-file=.env.local scripts/db/tenancy-role.ts",
     "db:tenancy:install-floor": "tsx --env-file=.env.local scripts/db/tenancy-install-floor.ts",
+    "secrets:reseal": "tsx --env-file=.env.local scripts/secrets/reseal.ts",
     "smoke:chat": "tsx --env-file=.env.local scripts/smoke/chat.ts",
     "smoke:privacy": "tsx --env-file=.env.local scripts/smoke/privacy-leak.ts",
     "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",
