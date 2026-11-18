@@ -206,8 +206,19 @@ export async function orgHasSwitch(
   key: string,
   db: Pick<PrismaClient, 'org'> = prisma
 ): Promise<boolean> {
-  const org = await loadOrgSwitches(orgId, db);
-  return org !== null && org.on.includes(key);
+  return switchStateIn(await loadOrgSwitches(orgId, db), key) === 'on';
+}
+
+/**
+ * One switch in one org's resolved switches: the single rule both
+ * {@link orgHasSwitch} and {@link orgSwitchState} answer by, so access and
+ * what a refusal says cannot disagree. A slice that could not be read is
+ * `'unknown'`, and has nothing on; no org has nothing on.
+ */
+function switchStateIn(org: OrgSwitches | null, key: string): 'on' | 'off' | 'unknown' {
+  if (org === null) return 'off';
+  if (org.unreadable) return 'unknown';
+  return org.on.includes(key) ? 'on' : 'off';
 }
 
 /**
@@ -301,7 +312,10 @@ export const SWITCH_UNVERIFIED_REASON = 'entitlement_unverified';
 
 /** What a refusal says when the org's switches could not be read (t-1034). */
 export function switchUnverifiedMessage(key: string): string {
-  return `We could not check whether your organisation has ${switchLabel(key)}, so this was refused. Try again in a moment.`;
+  // No label when the app's switch init failed, which is one way to get here:
+  // say what it is for rather than show a reader an internal key.
+  const label = registeredEntitlementSwitches().find((s) => s.key === key)?.label;
+  return `We could not check whether your organisation has ${label ?? 'the feature this needs'}, so this was refused. Try again in a moment.`;
 }
 
 function switchLabel(key: string): string {
@@ -324,10 +338,7 @@ export async function orgSwitchState(
 ): Promise<'on' | 'off' | 'unknown'> {
   try {
     if (entitlementSwitchesFailed()) return 'unknown';
-    const org = await loadOrgSwitches(orgId, db);
-    if (org === null) return 'off';
-    if (org.unreadable) return 'unknown';
-    return org.on.includes(key) ? 'on' : 'off';
+    return switchStateIn(await loadOrgSwitches(orgId, db), key);
   } catch (error) {
     logger.error("entitlements: could not read an org's switches", {
       orgId,

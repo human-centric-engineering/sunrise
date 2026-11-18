@@ -32,10 +32,10 @@ release process.
   `details.reason: 'entitlement_unverified'`. `orgSwitchState()` reads one
   switch as `'on'`, `'off'` or `'unknown'`. `AdminReach` gains an
   optional `switchesMet`, filled only when a page requires a switch, and the
-  sidebar and gate take an optional `pageRequirements`. A landing (the org
-  admin's, or a named tier's) never requires a switch:
-  `orgAdminLandingProblem()` and `namedTierLandingProblem()` take an optional
-  list of page requirements and refuse one that does. The roster test fails
+  sidebar and gate take an optional `pageRequirements`. A landing that
+  requires a switch is used only where the viewer's org has it:
+  `orgAdminLanding()` and `heldTierLanding()` take an optional `SwitchMet`
+  predicate, and `/admin` passes the viewer's reach. The roster test fails
   on a `requires` that names no registered switch, that sits beside no
   `tier`, that it cannot read (not a literal, or in a spread), or on a nav
   item whose `requires` is not its page's. A surface that declares no `requires` answers exactly as before. A

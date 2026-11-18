@@ -493,17 +493,17 @@ the page are the reader's refusal, and the routes are the boundary.
 no app registers (on a route, a page or a nav item), on one beside no `tier`
 (a platform-tier route or item, where switches limit nobody), on a route's
 `requires` that is not a string literal (a spread or a shared options constant
-whose text names `requires` counts), on a nav item whose `requires` is not its
-page's, and on a named tier's `landing` that requires a switch. It cannot
+whose text names `requires` as a word counts), and on a nav item whose
+`requires` is not its page's. It cannot
 match a route's `requires` to its page's, since nothing ties an API path to
 the page that calls it: keeping those alike is yours.
 
-**A landing requires no switch.** `/admin` sends every admin of a tier to the
-same page, whatever their org has, so a landing that requires a switch would
-send one whose org lacks it to a refusal. A fork's org-admin landing or a
-named tier's `landing` that requires one is ignored and logged, as any other
-unusable landing is, and a tier with no `landing` lands on its first plain
-page that requires none.
+**A landing that requires a switch is used only where the org has it.**
+`/admin` chooses by the viewer's reach: a fork's org-admin landing that
+requires a switch the org lacks gives way to the platform default, and a
+named tier's `landing` (or default page) to the tier's next plain page they
+can open, then the next tier they hold. Neither is logged, since a landing
+some orgs cannot open is not a mistake.
 
 **The admin layout asks only about switches a page requires.** Its reach asks
 the policy once per admitted tier and per switch some page requires, not per

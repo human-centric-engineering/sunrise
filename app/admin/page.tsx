@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 
 import { requestAdminReach } from '@/lib/auth/admin-page-viewer';
 import { PLATFORM_ADMIN_LANDING, orgAdminLanding } from '@/lib/auth/admin-landing';
+import { reachesTier } from '@/lib/auth/admin-tier';
 
 /**
  * Admin Index Page (Phase 4.4)
@@ -12,11 +13,12 @@ import { PLATFORM_ADMIN_LANDING, orgAdminLanding } from '@/lib/auth/admin-landin
  * install-wide — every user and the process itself — so it is the platform's,
  * and its routes refuse an org admin. Someone who holds a fork's named tiers
  * and is not an org admin goes to the landing their first tier names (t-999);
- * the layout lets them in here only when there is one.
+ * the layout lets them in here only when there is one. A landing that requires
+ * an entitlement switch is used only where the viewer's org has it (t-1034).
  */
 export default async function AdminIndexPage() {
   const reach = await requestAdminReach();
   if (reach === 'platform') redirect(PLATFORM_ADMIN_LANDING);
   if (!reach.tiers.includes('org') && reach.landing !== null) redirect(reach.landing);
-  redirect(orgAdminLanding());
+  redirect(orgAdminLanding((tier, requires) => reachesTier(reach, tier, requires)));
 }

@@ -73,6 +73,14 @@ export interface SourceFile {
 
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 
+/**
+ * Text that names `requires` as a word of its own (`LEADS_REQUIRES`,
+ * `{ requires }`), not inside another (`requiresAudit`, `optionsRequiresNone`),
+ * so a constant that merely contains the letters is not reported. A spread
+ * whose name says nothing of a switch still slips past: write it inline.
+ */
+const MENTIONS_REQUIRES = /(?:^|[^a-z])requires(?:$|[^a-z])/i;
+
 /** One `withAdminAuth(…)` call that passes a `tier` option, or might. */
 export interface TierDeclaration {
   /** `path#METHOD`. */
@@ -251,7 +259,7 @@ export function adminAuthDeclarations(file: SourceFile): AdminAuthDeclaration[] 
       if (/tier/i.test(options.getText())) unreadable();
       // Likewise a switch (t-1034): a typo'd key in a shared constant would
       // otherwise shut the route to every org admin without a word.
-      else if (/requires/i.test(options.getText())) record(undefined, false, null);
+      else if (MENTIONS_REQUIRES.test(options.getText())) record(undefined, false, null);
       return;
     }
     const tier = options.properties.find((p) => keyText(p) === 'tier');
@@ -265,7 +273,7 @@ export function adminAuthDeclarations(file: SourceFile): AdminAuthDeclaration[] 
     const hiddenRequires = options.properties.some(
       (p) =>
         (ts.isSpreadAssignment(p) || (p.name && keyText(p) === null)) &&
-        /requires/i.test(p.getText())
+        MENTIONS_REQUIRES.test(p.getText())
     );
     const requires =
       requiresProp === undefined
@@ -547,12 +555,7 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   problems.push(...requirementProblems(input, allDeclarations, allPages));
   for (const { name, landing } of namedTiers) {
     if (landing === undefined) continue;
-    const problem = namedTierLandingProblem(
-      name,
-      landing,
-      namedPages,
-      input.appPageRequirements ?? []
-    );
+    const problem = namedTierLandingProblem(name, landing, namedPages);
     if (problem !== null) {
       problems.push(
         `named tier '${name}': its landing ${landing} ${problem} /admin would ignore it and log why.`

@@ -38,6 +38,7 @@ import {
   loadOrgSwitches,
   orgHasSwitch,
   orgSwitchState,
+  switchUnverifiedMessage,
   registerEntitlementSwitch,
   registeredEntitlementSwitches,
   resolveOrgSwitches,
@@ -504,5 +505,20 @@ describe('setOrgSwitches', () => {
 
     await expect(setOrgSwitches(ORG, { on: ['reports'], off: [] })).resolves.toBeNull();
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('switchUnverifiedMessage (t-1034)', () => {
+  it('names the switch by its label', () => {
+    registerBoth();
+    expect(switchUnverifiedMessage('leads')).toBe(
+      'We could not check whether your organisation has Lead generation, so this was refused. Try again in a moment.'
+    );
+  });
+
+  it('shows no internal key when there is no label, as when the app init failed', () => {
+    expect(switchUnverifiedMessage('leads')).toBe(
+      'We could not check whether your organisation has the feature this needs, so this was refused. Try again in a moment.'
+    );
   });
 });

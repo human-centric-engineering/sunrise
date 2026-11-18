@@ -1463,9 +1463,10 @@ export function withAdminAuth(
           });
           // Named only when the switch is the reason (§135 t-1034): the policy
           // would have admitted this caller without it. Asked again on the
-          // refusal path alone, so an admitted request pays nothing, and asked
-          // of the policy rather than worked out here, so a fork's policy that
-          // reads `requires` its own way is described by its own answer. A
+          // refusal path alone, so an admitted request pays nothing. Whether
+          // the switch is the reason is the policy's answer (it admits this
+          // caller without it); whether the org lacks it is a fact about the
+          // platform's switches, read below. A
           // caller refused for any other reason gets the ordinary refusal,
           // and learns nothing about the org's switches.
           //

@@ -376,9 +376,7 @@ describe('the tree', () => {
     // A landing outside the org tier turns an org admin away the moment they
     // arrive; /admin falls back to the default at runtime, and this says so in CI.
     const landing = appOrgAdminLandingRoute ?? defaultOrgAdminLanding(orgTierAdminPages());
-    expect(
-      orgAdminLandingProblem(landing, orgTierAdminPages(), adminPageRequirements())
-    ).toBeNull();
+    expect(orgAdminLandingProblem(landing, orgTierAdminPages())).toBeNull();
   });
 
   it('sees the tree it judges', () => {
@@ -597,7 +595,7 @@ describe('what it catches', () => {
 
     it.each([
       ['spread into the options', `{ tier: 'org', ...REQUIRES_LEAD_GEN, ${OWNED} }`, true],
-      ['under a computed key', `{ tier: 'org', [requiresKey]: 'lead_gen', ${OWNED} }`, true],
+      ['under a computed key', `{ tier: 'org', [KEYS.requires]: 'lead_gen', ${OWNED} }`, true],
       // No tier the scanner can see either, so it is not listed as org-tier.
       ['in a shared options constant', 'LEADS_REQUIRES_OPTIONS', false],
     ])('a requires review cannot read, %s', (_l, options, listed) => {
@@ -609,6 +607,15 @@ describe('what it catches', () => {
           })
         )
       ).toEqual([expect.stringContaining('its `requires` is not a string literal')]);
+    });
+
+    it.each([
+      ['a constant whose name only contains the letters', 'optionsRequiresNothing'],
+      ['an option that only starts with them', `{ tier: 'org', requiresAudit: true, ${OWNED} }`],
+    ])('says nothing of %s', (_l, options) => {
+      expect(tierDeclarations(leadsRoute(options)).filter((d) => d.requires !== undefined)).toEqual(
+        []
+      );
     });
 
     it.each([
@@ -630,19 +637,6 @@ describe('what it catches', () => {
           pageRequirements.length ? "'lead_gen'" : 'no switch'
         }. Register the page with the same { requires }, or drop it from the item.`,
       ]);
-    });
-
-    it('names a named tier landing that requires a switch', () => {
-      expect(
-        findAdminTierRosterProblems(
-          required({
-            routes: [leadsRoute(`{ tier: 'sales', requires: 'lead_gen', ${OWNED} }`)],
-            appNamedTierPages: [{ pattern: '/admin/leads', tier: 'sales' }],
-            namedTiers: [{ name: 'sales', landing: '/admin/leads' }],
-            navItems: [{ href: '/admin/leads', tier: 'sales', requires: 'lead_gen' }],
-          })
-        )
-      ).toEqual([expect.stringMatching(/^named tier 'sales': its landing .*requires the switch/)]);
     });
 
     it('says nothing of a surface that requires no switch', () => {

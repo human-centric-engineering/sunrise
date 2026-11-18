@@ -131,6 +131,12 @@ export type AdminReach =
        * `requires` opens only when its tier and switch are here. Absent or
        * empty, every surface that requires a switch is refused, which is the
        * safe reading of a reach built before switches existed.
+       *
+       * Only switches some registered page requires are asked about, so a
+       * switch no page requires is never here, and {@link reachesTier} says
+       * no to it for every org. A nav item's `requires` is its page's (the
+       * roster test holds them equal); anything else that asks about a
+       * switch should ask one a page requires, or read the org's switches.
        */
       readonly switchesMet?: readonly AdminSwitchGrant[];
     };

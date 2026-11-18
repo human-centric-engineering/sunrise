@@ -18,9 +18,12 @@
  * lands on the `landing` their first tier names ({@link heldTierLanding}),
  * held to the same rule against that tier's own pages.
  *
- * A landing never requires an entitlement switch (§135 t-1034): it is where
- * every admin of the tier lands, whatever their org has, and one whose org
- * lacks the switch would be sent from `/admin` to a page that refuses them.
+ * A landing that requires an entitlement switch (§135 t-1034) is used only
+ * for a viewer whose org has it, by the reach the layout already asked the
+ * policy for ({@link SwitchMet}). For anyone else it is passed over, without
+ * a log line, since a landing some orgs cannot open is not a mistake: an org
+ * admin goes to the platform default, and a tier holder to the tier's next
+ * page they can open.
  *
  * Server only: it reads the roster through `orgTierAdminPages()`, which runs
  * the fork's page init.
@@ -38,11 +41,32 @@ import {
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
 import {
+  adminPageRequirementOf,
   isPlainAdminPath,
-  type AdminPageRequirement,
   type DeclaredAdminTier,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
+
+/**
+ * Whether this viewer's org meets `requires` on a page of `tier`: in
+ * practice `reachesTier(reach, tier, requires)` (t-1034). The default, for a
+ * caller with no viewer, treats every switch as met, which is how landings
+ * were chosen before switches existed.
+ */
+export type SwitchMet = (tier: DeclaredAdminTier, requires: string) => boolean;
+
+const EVERY_SWITCH_MET: SwitchMet = () => true;
+
+/** Whether this viewer may land on `route`, a page of `tier`, as far as switches go. */
+function switchAllows(
+  route: string,
+  tier: DeclaredAdminTier,
+  pages: readonly string[],
+  met: SwitchMet
+): boolean {
+  const requires = adminPageRequirementOf(route, pages, adminPageRequirements());
+  return requires === null || met(tier, requires);
+}
 
 /** Where a platform admin lands. */
 export const PLATFORM_ADMIN_LANDING = '/admin/overview';
@@ -71,27 +95,11 @@ function plainPathProblem(route: unknown): string | null {
   return null;
 }
 
-/** Why a landing that requires a switch cannot be one, or `null` when it requires none. */
-function requiresProblem(
-  route: string,
-  requirements: readonly AdminPageRequirement[]
-): string | null {
-  const requires = requirements.find((r) => r.pattern === route)?.requires;
-  return requires === undefined
-    ? null
-    : `requires the switch '${requires}', so an admin whose org lacks it would be sent to a page that refuses them. Land on a page that requires no switch.`;
-}
-
 /**
  * Why an org admin could not land on this page, or `null` when they can.
- * Judges against the org-tier page patterns it is handed, and the switches
- * those pages require (t-1034).
+ * Judges against the org-tier page patterns it is handed.
  */
-export function orgAdminLandingProblem(
-  route: unknown,
-  pages: readonly string[],
-  requirements: readonly AdminPageRequirement[] = []
-): string | null {
+export function orgAdminLandingProblem(route: unknown, pages: readonly string[]): string | null {
   const pathProblem = plainPathProblem(route);
   if (pathProblem !== null || typeof route !== 'string') return pathProblem;
   // Exactly a listed page, not a URL an `[x]` pattern also names: a concrete
@@ -99,7 +107,7 @@ export function orgAdminLandingProblem(
   if (!pages.includes(route)) {
     return 'is not a page an org admin may open. Name a page listed as org-tier, word for word, or list it in lib/app/admin-tier.ts.';
   }
-  return requiresProblem(route, requirements);
+  return null;
 }
 
 /**
@@ -112,38 +120,41 @@ export function defaultOrgAdminLanding(pages: readonly string[]): string {
     : CLOSED_DEFAULT_ORG_ADMIN_LANDING;
 }
 
-/** Where an org admin lands: the fork's page if they may open it, else the platform default. */
-export function orgAdminLanding(): string {
+/**
+ * Where an org admin lands: the fork's page if they may open it, else the
+ * platform default. A fork's page that requires a switch is theirs only when
+ * `met` says their org has it (t-1034); otherwise they get the default, which
+ * is core's and requires none.
+ */
+export function orgAdminLanding(met: SwitchMet = EVERY_SWITCH_MET): string {
   const pages = orgTierAdminPages();
   const route = appOrgAdminLandingRoute;
   if (route === null) return defaultOrgAdminLanding(pages);
-  const problem = orgAdminLandingProblem(route, pages, adminPageRequirements());
+  const problem = orgAdminLandingProblem(route, pages);
   if (problem) {
     logger.error('admin-landing: ignoring the app org-admin landing', { route, problem });
     return defaultOrgAdminLanding(pages);
   }
-  return route;
+  return switchAllows(route, 'org', pages, met) ? route : defaultOrgAdminLanding(pages);
 }
 
 /**
  * Why `route` cannot be where `/admin` sends a holder of `tier` (t-999), or
  * `null` when it can: a plain `/admin/…` path, registered for that tier word
- * for word, and requiring no switch (t-1034). A page of another tier would
- * turn the holder away on arrival, and a concrete URL of an `[x]` page is one
- * row of one org.
+ * for word. A page of another tier would turn the holder away on arrival, and
+ * a concrete URL of an `[x]` page is one row of one org.
  */
 export function namedTierLandingProblem(
   tier: string,
   route: unknown,
-  named: readonly NamedTierAdminPage[],
-  requirements: readonly AdminPageRequirement[] = []
+  named: readonly NamedTierAdminPage[]
 ): string | null {
   const pathProblem = plainPathProblem(route);
   if (pathProblem !== null || typeof route !== 'string') return pathProblem;
   if (!named.some((page) => page.pattern === route && page.tier === tier)) {
     return `is not a page registered for tier ${JSON.stringify(tier)}. Name one registered with registerOrgTierAdminPage(pattern, { tier: ${JSON.stringify(tier)} }), word for word.`;
   }
-  return requiresProblem(route, requirements);
+  return null;
 }
 
 /** Landings already logged as unusable, so a misconfigured one is said once per process, not per request. */
@@ -158,31 +169,37 @@ export function __resetLandingLogForTests(): void {
  * Where `/admin` sends someone who holds these tiers and not `'org'` (t-999):
  * for the first named tier they hold, in registration order, its `landing`,
  * or, when it names none, the first page registered for it that has no `[x]`
- * segment and requires no switch (t-1034). A `landing` that is not one of the tier's own literal pages is
- * logged once and passed over for that default. `null` only when no tier they
- * hold has a literal page — then `/admin` is not theirs to open, as it is not
- * any MEMBER's.
+ * segment. A `landing` that is not one of the tier's own literal pages is
+ * logged once and passed over for that default. A page that requires a switch
+ * (t-1034), the `landing` or a default, is passed over without a log line
+ * when `met` says their org lacks it. `null` only when no tier they hold has a
+ * literal page they can open — then `/admin` is not theirs to open, as it is
+ * not any MEMBER's.
  */
-export function heldTierLanding(held: readonly DeclaredAdminTier[]): string | null {
+export function heldTierLanding(
+  held: readonly DeclaredAdminTier[],
+  met: SwitchMet = EVERY_SWITCH_MET
+): string | null {
   if (held.length === 0) return null;
   const named = namedTierAdminPages();
-  const requirements = adminPageRequirements();
-  const requiresSwitch = new Set(requirements.map((r) => r.pattern));
+  const pages = named.map((page) => page.pattern);
   for (const tier of namedAdminTiers()) {
     if (!held.includes(tier)) continue;
     const route = namedAdminTier(tier)?.landing;
     if (route !== undefined) {
-      const problem = namedTierLandingProblem(tier, route, named, requirements);
-      if (problem === null) return route;
+      const problem = namedTierLandingProblem(tier, route, named);
+      if (problem === null && switchAllows(route, tier, pages, met)) return route;
       const key = JSON.stringify([tier, route]);
-      if (!loggedLandingProblems.has(key)) {
+      if (problem !== null && !loggedLandingProblems.has(key)) {
         loggedLandingProblems.add(key);
         logger.error("admin-landing: ignoring a named tier's landing", { tier, route, problem });
       }
     }
     const first = named.find(
       (page) =>
-        page.tier === tier && isPlainAdminPath(page.pattern) && !requiresSwitch.has(page.pattern)
+        page.tier === tier &&
+        isPlainAdminPath(page.pattern) &&
+        switchAllows(page.pattern, tier, pages, met)
     );
     if (first) return first.pattern;
   }

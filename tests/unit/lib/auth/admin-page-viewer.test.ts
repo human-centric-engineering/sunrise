@@ -211,4 +211,23 @@ describe('requestAdminReach with entitlement switches (t-1034)', () => {
     await expect(requestAdminReach()).resolves.toEqual({ tiers: ['org'], landing: null });
     expect(canAdminister).toHaveBeenCalledTimes(1 + 1);
   });
+
+  it("chooses a named tier holder's landing by the switches their org has", async () => {
+    registerAdminTier('sales', { holds: () => true, landing: '/admin/sales/leads' });
+    registerOrgTierAdminPage('/admin/sales/leads', { tier: 'sales', requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/sales/contacts', { tier: 'sales' });
+    const withLeads = (has: boolean) =>
+      vi
+        .mocked(canAdminister)
+        .mockImplementation((_p, _r, scope?: AuthorizationScope) =>
+          Promise.resolve(scope?.tier === 'sales' && (scope.requires !== 'lead_gen' || has))
+        );
+
+    withLeads(true);
+    await expect(requestAdminReach()).resolves.toMatchObject({ landing: '/admin/sales/leads' });
+    withLeads(false);
+    await expect(requestAdminReach()).resolves.toMatchObject({
+      landing: '/admin/sales/contacts',
+    });
+  });
 });
