@@ -40,12 +40,15 @@ import {
   orgSwitchState,
   switchUnverifiedMessage,
   registerEntitlementSwitch,
+  registerMeter,
   registeredEntitlementSwitches,
+  registeredMeters,
   resolveOrgSwitches,
   setOrgSwitches,
   type EntitlementSwitch,
+  type MeterDefinition,
 } from '@/lib/tenancy/entitlements';
-import { MAX_ORG_ENTITLEMENT_SWITCHES } from '@/lib/validations/tenancy';
+import { MAX_METERS, MAX_ORG_ENTITLEMENT_SWITCHES } from '@/lib/validations/tenancy';
 
 const ORG = 'cmorg000000000000000acme1';
 
@@ -520,5 +523,183 @@ describe('switchUnverifiedMessage (t-1034)', () => {
     expect(switchUnverifiedMessage('leads')).toBe(
       'We could not check whether your organisation has the feature this needs, so this was refused. Try again in a moment.'
     );
+  });
+});
+
+describe('registerMeter (§135 t-1035)', () => {
+  const validMeter = (overrides: Partial<MeterDefinition> = {}): MeterDefinition => ({
+    key: 'convos',
+    label: 'Conversations',
+    period: 'month',
+    count: () => 0,
+    ...overrides,
+  });
+
+  /** Register through the init, as an app does, so a throw takes the rollback path. */
+  function initRegisters(fn: () => void) {
+    vi.mocked(initAppEntitlements).mockImplementation(fn);
+  }
+
+  it('ships with no meters', () => {
+    expect(registeredMeters()).toEqual([]);
+  });
+
+  it('stores a meter with its label and description trimmed and a missing description as empty', () => {
+    const count = vi.fn();
+    initRegisters(() => {
+      registerMeter(
+        validMeter({ label: '  Conversations  ', description: '  Finished this month.  ', count })
+      );
+      registerMeter(validMeter({ key: 'plain', label: 'Plain', period: 'standing' }));
+    });
+
+    const [first, second] = registeredMeters();
+
+    expect(first).toMatchObject({
+      key: 'convos',
+      label: 'Conversations',
+      description: 'Finished this month.',
+      period: 'month',
+      count,
+    });
+    expect(second).toMatchObject({ key: 'plain', description: '', period: 'standing' });
+    expect(Object.isFrozen(first)).toBe(true);
+  });
+
+  it('accepts a function period', () => {
+    const period = vi.fn();
+    initRegisters(() => registerMeter(validMeter({ period })));
+
+    expect(registeredMeters()[0].period).toBe(period);
+  });
+
+  it.each([
+    ['upper case', 'Convos'],
+    ['a hyphen', 'my-meter'],
+    ['a leading digit', '1convos'],
+    ['empty', ''],
+    ['not a string', 42],
+  ])('refuses a key that is %s', (_what, key) => {
+    initRegisters(() => registerMeter(validMeter({ key: key as never })));
+
+    expect(registeredMeters()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('threw'),
+      expect.objectContaining({ error: expect.stringContaining('must be lower-case') })
+    );
+  });
+
+  it.each([
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['missing', undefined],
+  ])('refuses a label that is %s', (_what, label) => {
+    initRegisters(() => registerMeter(validMeter({ label: label as never })));
+
+    expect(registeredMeters()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('threw'),
+      expect.objectContaining({ error: expect.stringContaining('needs a label') })
+    );
+  });
+
+  it.each([
+    ['an unknown word', 'weekly'],
+    ['a number', 7],
+    ['missing', undefined],
+  ])('refuses a period that is %s', (_what, period) => {
+    initRegisters(() => registerMeter(validMeter({ period: period as never })));
+
+    expect(registeredMeters()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('threw'),
+      expect.objectContaining({
+        error: expect.stringContaining("'month', 'standing' or a function"),
+      })
+    );
+  });
+
+  it('refuses a count that is not a function', () => {
+    initRegisters(() => registerMeter(validMeter({ count: 5 as never })));
+
+    expect(registeredMeters()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('threw'),
+      expect.objectContaining({ error: expect.stringContaining('needs a count function') })
+    );
+  });
+
+  it('refuses a meter past the cap, but lets a registered key be replaced at the cap', () => {
+    initRegisters(() => {
+      for (let i = 0; i < MAX_METERS; i += 1) {
+        registerMeter(validMeter({ key: `m${i}`, label: `Meter ${i}` }));
+      }
+      registerMeter(validMeter({ key: 'm0', label: 'Replaced' }));
+    });
+    expect(registeredMeters()).toHaveLength(MAX_METERS);
+    expect(registeredMeters()[0].label).toBe('Replaced');
+
+    __resetEntitlementRegistryForTests();
+    vi.mocked(logger.error).mockClear();
+    initRegisters(() => {
+      for (let i = 0; i <= MAX_METERS; i += 1) {
+        registerMeter(validMeter({ key: `m${i}`, label: `Meter ${i}` }));
+      }
+    });
+    expect(registeredMeters()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('threw'),
+      expect.objectContaining({ error: expect.stringContaining(`At most ${MAX_METERS} meters`) })
+    );
+  });
+
+  it('replaces a meter registered twice under one key, keeping its place', () => {
+    initRegisters(() => {
+      registerMeter(validMeter({ key: 'a', label: 'Old' }));
+      registerMeter(validMeter({ key: 'b', label: 'B' }));
+      registerMeter(validMeter({ key: 'a', label: 'New' }));
+    });
+
+    expect(registeredMeters().map((m) => [m.key, m.label])).toEqual([
+      ['a', 'New'],
+      ['b', 'B'],
+    ]);
+  });
+
+  it('rolls back meters and switches together when the init throws part-way', () => {
+    initRegisters(() => {
+      registerEntitlementSwitch({ key: 'reports', label: 'Reports', description: '' });
+      registerMeter(validMeter());
+      throw new Error('boom');
+    });
+
+    expect(registeredMeters()).toEqual([]);
+    expect(registeredEntitlementSwitches()).toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('entitlements: initAppEntitlements threw'),
+      expect.anything()
+    );
+  });
+
+  it('rolls back the switches when only a meter registration throws', () => {
+    initRegisters(() => {
+      registerEntitlementSwitch({ key: 'reports', label: 'Reports', description: '' });
+      registerMeter(validMeter({ label: '' }));
+    });
+
+    expect(registeredEntitlementSwitches()).toEqual([]);
+    expect(registeredMeters()).toEqual([]);
+    expect(entitlementSwitchesFailed()).toBe(true);
+  });
+
+  it('keeps both the switches and the meters when the init succeeds', () => {
+    initRegisters(() => {
+      registerEntitlementSwitch({ key: 'reports', label: 'Reports', description: '' });
+      registerMeter(validMeter());
+    });
+
+    expect(registeredEntitlementSwitches().map((s) => s.key)).toEqual(['reports']);
+    expect(registeredMeters().map((m) => m.key)).toEqual(['convos']);
+    expect(initAppEntitlements).toHaveBeenCalledOnce();
   });
 });
