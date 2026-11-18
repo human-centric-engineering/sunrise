@@ -18,6 +18,26 @@ release process.
 
 ### Added
 
+- **Sealed secrets: store a credential and read it back, under a master key
+  that can rotate (§137, t-1043).** `sealSecret(plaintext, purpose)` and
+  `openSecret(sealed, purpose)` in `lib/security/sealed-secrets.ts` seal with
+  AES-256-GCM, bound to a purpose, and fail closed: no keyring, an unknown key,
+  the wrong purpose or a changed byte throws `SealedSecretKeyMissingError` or
+  `SealedSecretOpenError` (`reason`: `format`, `unknown_key`, `mismatch`), and
+  nothing returns plaintext instead. Each envelope names its key
+  (`v2.<keyId>.…`). The keys are three new optional env vars, checked together
+  at boot: `SEALED_SECRET_KEYS` (`id:secret,…`), `SEALED_SECRET_ACTIVE_KEY`
+  and `SEALED_SECRET_LEGACY_KEY`. Values in ConQuest's `secret-box.ts` format
+  (`v1.…`) open unchanged under the legacy key, so an app adopting this
+  reseals nothing. To retire a key, `npm run secrets:reseal` moves every
+  registered store onto the active key. A new seam,
+  `lib/app/sealed-stores.ts` → `initAppSealedStores()` with
+  `registerSealedStore()`, is where an app says where its sealed values live.
+  If it throws, every reseal is refused until it is fixed. It ships empty, so
+  nothing changes until a keyring is set. Multi-tenancy design Q5 is amended:
+  Sunrise will hold an org's own vendor key when the operator turns it on
+  (storage arrives in t-1044). See `.context/security/sealed-secrets.md`.
+
 - **Confidential content is spotted and shown on the trace (§130, t-1036).**
   A new privacy adapter slot, `SensitivityClassifier`, registered with
   `registerSensitivityClassifier(classifier, { timeoutMs?, replace? })` from
