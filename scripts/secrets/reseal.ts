@@ -8,9 +8,13 @@
  * active key are left alone.
  *
  * Exit codes: 0 every value is on the active key (or would be, on a dry run);
- * 1 some value could not be moved, or a store could not be read, so do NOT
- * remove the old key yet; 2 the run could not start (no keyring, a keyring
- * lib/env.ts refused, or the app's store registration failed).
+ * 1 some value could not be moved, a store could not be read, or a value
+ * changed during the run, so do NOT remove the old key yet (run it again);
+ * 2 the run could not start (no keyring, a keyring lib/env.ts refused, an
+ * argument it does not know, or the app's store registration failed).
+ *
+ * **The report is printed, not logged**, so `LOG_LEVEL` cannot hide it: it is
+ * what the operator decides on. One JSON line per store, then a summary line.
  *
  * Outside development, run it where the app's environment is set:
  * `npx tsx scripts/secrets/reseal.ts`.
@@ -21,56 +25,87 @@
 
 import type { SealedStoresResealReport } from '@/lib/security/sealed-stores';
 
-async function main(): Promise<void> {
-  const dryRun = process.argv.includes('--dry-run');
+/** Write a line of the report. The command's output, not a log line. */
+function print(line: string): void {
+  process.stdout.write(`${line}\n`);
+}
 
-  // Loaded here rather than imported at the top, so that an environment
-  // lib/env.ts refuses (a malformed keyring) exits 2 like every other failure
-  // to start. lib/env.ts has already printed what is wrong by then, naming the
-  // variables and never a secret.
-  let modules;
-  try {
-    modules = {
-      ...(await import('@/lib/logging')),
-      ...(await import('@/lib/security/sealed-stores')),
-    };
-  } catch {
+/** Write why the run could not start. */
+function printError(line: string): void {
+  process.stderr.write(`secrets:reseal could not start: ${line}\n`);
+}
+
+/**
+ * Whether this is a dry run, or `null` for arguments it does not know.
+ *
+ * Strict on purpose: a mistyped `--dry-run` would otherwise be a real,
+ * writing run. And `npm run secrets:reseal --dry-run`, without the `--`, gives
+ * the flag to npm rather than to this script; npm then sets
+ * `npm_config_dry_run`, which is read here as the dry run it was meant to be.
+ */
+function readDryRun(args: readonly string[]): boolean | null {
+  if (args.some((arg) => arg !== '--dry-run')) return null;
+  return args.includes('--dry-run') || process.env.npm_config_dry_run === 'true';
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const dryRun = readDryRun(args);
+  if (dryRun === null) {
+    printError(`unknown argument(s) ${JSON.stringify(args)}; the only one is --dry-run.`);
     return process.exit(2);
   }
-  const { logger, resealSealedStores } = modules;
+
+  // Loaded here rather than imported at the top, so that a module that fails
+  // to load exits 2 like every other failure to start. For an environment
+  // lib/env.ts refused, it has already printed the variables at fault, never
+  // a secret; the name and message here say which module it was.
+  let resealSealedStores;
+  try {
+    ({ resealSealedStores } = await import('@/lib/security/sealed-stores'));
+  } catch (err) {
+    printError(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+    return process.exit(2);
+  }
 
   let report: SealedStoresResealReport;
   try {
     report = await resealSealedStores({ dryRun });
   } catch (err) {
-    logger.error(
-      `secrets:reseal could not start: ${err instanceof Error ? err.message : String(err)}`
-    );
+    printError(err instanceof Error ? err.message : String(err));
     return process.exit(2);
   }
 
   for (const store of report.stores) {
-    logger.info(`secrets:reseal ${store.store}`, {
-      scanned: store.scanned,
-      alreadyCurrent: store.alreadyCurrent,
-      [dryRun ? 'wouldReseal' : 'resealed']: store.resealed,
-      changedMeanwhile: store.changedMeanwhile,
-      failed: store.failed,
-      ...(store.error ? { error: store.error } : {}),
-    });
+    print(
+      JSON.stringify({
+        store: store.store,
+        scanned: store.scanned,
+        alreadyCurrent: store.alreadyCurrent,
+        [dryRun ? 'wouldReseal' : 'resealed']: store.resealed,
+        changedMeanwhile: store.changedMeanwhile,
+        failed: store.failed,
+        ...(store.error ? { error: store.error } : {}),
+      })
+    );
   }
+
   const key = `"${report.activeKeyId}"`;
+  const changed = report.stores.reduce((n, s) => n + s.changedMeanwhile, 0);
+  const stuck = report.stores.some((s) => s.error !== undefined || s.failed.length > 0);
   let summary: string;
-  if (!report.ok) {
+  if (stuck) {
     summary = `some values are NOT on key ${key}. Do not remove an old key until a run is clean.`;
+  } else if (!report.ok) {
+    summary = `${changed} value(s) changed during the run, so it cannot say they are on key ${key}. Run it again before removing an old key.`;
   } else if (report.stores.length === 0) {
-    summary = `no sealed stores are registered, so there was nothing to move.`;
+    summary = 'no sealed stores are registered, so there was nothing to move.';
   } else {
     summary = dryRun
       ? `dry run: every value can move onto key ${key}.`
       : `done: every value is on key ${key}.`;
   }
-  logger.info(`secrets:reseal ${summary}`, { stores: report.stores.length, dryRun });
+  print(`secrets:reseal ${summary}`);
   return process.exit(report.ok ? 0 : 1);
 }
 

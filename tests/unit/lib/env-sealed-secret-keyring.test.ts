@@ -82,6 +82,32 @@ describe('the sealed-secret keyring at boot', () => {
     expect(output).not.toContain(SECRET);
   });
 
+  it('reports a broken keyring on the same boot as another broken variable', async () => {
+    const printed: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      printed.push(args.map(String).join(' '));
+    });
+
+    await expect(
+      boot({
+        DATABASE_URL: 'not-a-url',
+        SEALED_SECRET_KEYS: `k2026:${SECRET}`,
+        SEALED_SECRET_ACTIVE_KEY: 'k2027',
+      })
+    ).rejects.toThrow(/Environment validation failed/);
+
+    const output = printed.join('\n');
+    expect(output).toContain('DATABASE_URL');
+    expect(output).toContain('SEALED_SECRET_ACTIVE_KEY');
+    expect(output).not.toContain(SECRET);
+  });
+
+  it('refuses the .env.example placeholder as it stands', async () => {
+    await expect(
+      boot({ SEALED_SECRET_KEYS: 'k2026:<replace-me>', SEALED_SECRET_ACTIVE_KEY: 'k2026' })
+    ).rejects.toThrow(/Environment validation failed/);
+  });
+
   it('refuses a malformed key entry without printing it', async () => {
     const printed: string[] = [];
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {

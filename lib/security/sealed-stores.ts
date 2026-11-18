@@ -20,10 +20,13 @@
  *   zeros, not an error.
  * - **Never overwrites a newer value.** `replace` is a compare-and-swap: a
  *   store writes only if the row still holds the envelope that was read. A
- *   value someone saved meanwhile was sealed under the active key already,
- *   and is counted as `changedMeanwhile`, not failed.
- * - **Reports, never hides.** A value that will not open is listed by its id
- *   with the reason, and the run is not `ok`. It is not rewritten, so the
+ *   value someone saved meanwhile is counted as `changedMeanwhile`, and makes
+ *   the run not `ok`: during a deploy the process that saved it may still be
+ *   sealing under the old key, so "someone saved it, so it is current" is not
+ *   something the walk can know. The next run settles it.
+ * - **Reports, never hides.** A value that will not open, or that a store
+ *   listed with no purpose, is listed by its id with the reason, and the run
+ *   is not `ok`. It is not rewritten, so the
  *   key it needs must not be removed yet.
  * - **Refuses when a fork's registration failed.** A walk that skipped a
  *   fork's stores would report `ok` while values were still sealed under the
@@ -90,12 +93,33 @@ export interface SealedStoreResealResult {
   alreadyCurrent: number;
   /** Values moved onto the active key (or, on a dry run, that would be). */
   resealed: number;
-  /** Values replaced by someone else between the read and the write. */
+  /**
+   * Values replaced by someone else between the read and the write. Not known
+   * to be on the active key (the writer may still run on the old one), so any
+   * makes the run not `ok`: run it again, and the next run either finds them
+   * current or moves them.
+   */
   changedMeanwhile: number;
   /** Values that could not be moved, by row id. */
-  failed: Array<{ id: string; reason: SealedSecretOpenFailure | 'write_failed' }>;
+  failed: SealedStoreFailure[];
   /** Set when listing the store threw; its counts stop where it did. */
   error?: string;
+}
+
+/** Why one value was not moved. Never carries the value or an error message. */
+export interface SealedStoreFailure {
+  id: string;
+  /**
+   * An open failure; `invalid_purpose` when the store listed a value with no
+   * purpose; `write_failed` when `replace` threw.
+   */
+  reason: SealedSecretOpenFailure | 'invalid_purpose' | 'write_failed';
+  /**
+   * For `write_failed`: the error's name and, when it has one, its code (a
+   * Prisma `P2025`, a Postgres `42501`). Not its message, which can echo the
+   * arguments the write was given.
+   */
+  detail?: string;
 }
 
 export interface SealedStoresResealReport {
@@ -103,7 +127,10 @@ export interface SealedStoresResealReport {
   /** The key every value was moved onto. */
   activeKeyId: string;
   stores: SealedStoreResealResult[];
-  /** Every store walked to the end, and every value is now on the active key. */
+  /**
+   * Every store walked to the end, every value is now on the active key, and
+   * none changed under the walk. Only then is an old key safe to remove.
+   */
   ok: boolean;
 }
 
@@ -152,9 +179,16 @@ export function registerSealedStore(store: SealedStore): void {
   stores.set(store.name, store);
 }
 
-/** The registered stores' names, in registration order. Runs the fork init first. */
+/**
+ * The registered stores' names, in registration order. Runs the fork init
+ * first.
+ *
+ * @throws SealedStoreRegistrationError when the fork's registration failed:
+ *   the rolled-back registry would otherwise read as "no stores".
+ */
 export function getSealedStoreNames(): string[] {
   appInit.ensure();
+  if (registrationFailed) throw new SealedStoreRegistrationError();
   return [...stores.keys()];
 }
 
@@ -191,7 +225,9 @@ export async function resealSealedStores(
     dryRun,
     activeKeyId,
     stores: results,
-    ok: results.every((r) => r.error === undefined && r.failed.length === 0),
+    ok: results.every(
+      (r) => r.error === undefined && r.failed.length === 0 && r.changedMeanwhile === 0
+    ),
   };
 }
 
@@ -209,6 +245,12 @@ async function resealStore(store: SealedStore, dryRun: boolean): Promise<SealedS
       result.scanned += 1;
       if (!needsReseal(value.sealed)) {
         result.alreadyCurrent += 1;
+        continue;
+      }
+
+      if (typeof value.purpose !== 'string' || value.purpose.length === 0) {
+        // One bad row is that row's failure, not the end of its store's walk.
+        result.failed.push({ id: value.id, reason: 'invalid_purpose' });
         continue;
       }
 
@@ -232,8 +274,12 @@ async function resealStore(store: SealedStore, dryRun: boolean): Promise<SealedS
       let wrote: boolean;
       try {
         wrote = await store.replace(value.id, value.sealed, next);
-      } catch {
-        result.failed.push({ id: value.id, reason: 'write_failed' });
+      } catch (err) {
+        result.failed.push({
+          id: value.id,
+          reason: 'write_failed',
+          detail: describeWriteError(err),
+        });
         continue;
       }
       if (wrote) result.resealed += 1;
@@ -245,4 +291,11 @@ async function resealStore(store: SealedStore, dryRun: boolean): Promise<SealedS
     result.error = err instanceof Error ? err.message : String(err);
   }
   return result;
+}
+
+/** An error's name and code, for the report. Never its message: see {@link SealedStoreFailure}. */
+function describeWriteError(err: unknown): string {
+  if (!(err instanceof Error)) return typeof err;
+  const code: unknown = 'code' in err ? err.code : undefined;
+  return typeof code === 'string' || typeof code === 'number' ? `${err.name} ${code}` : err.name;
 }

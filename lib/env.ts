@@ -339,21 +339,23 @@ export type Env = z.infer<typeof envSchema>;
 /**
  * The sealed-secret keyring's three variables, checked together: the active
  * and legacy ids must name keys in `SEALED_SECRET_KEYS`, which a per-field
- * schema cannot see. A refinement on the parse rather than on
- * `serverEnvSchema`, because a refined object loses the `.shape` and
- * `.merge()` the app-extension seam depends on. Each problem names its
- * variable and never contains a secret.
+ * schema cannot see. Checked beside the schema rather than as a refinement:
+ * a refined object loses the `.shape` and `.merge()` the app-extension seam
+ * depends on, and a refinement on the merged schema does not run when another
+ * variable has already failed, so a broken deploy would learn about its
+ * keyring one boot later. Each problem names its variable and never contains
+ * a secret.
  */
-function checkSealedSecretKeyring(values: Env, ctx: z.RefinementCtx): void {
+function checkSealedSecretKeyring(
+  values: Record<string, string | undefined>
+): Record<string, string[]> {
   const read = readSealedSecretKeyring(values);
-  if (read.ok) return;
+  const errors: Record<string, string[]> = {};
+  if (read.ok) return errors;
   for (const problem of read.problems) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: [problem.variable],
-      message: problem.message,
-    });
+    (errors[problem.variable] ??= []).push(problem.message);
   }
+  return errors;
 }
 
 // Check if we're running in a browser
@@ -423,15 +425,20 @@ const parsed = isBrowser
         NEXT_PUBLIC_COOKIE_CONSENT_ENABLED: process.env.NEXT_PUBLIC_COOKIE_CONSENT_ENABLED,
       })
     )
-  : envSchema
-      .superRefine(checkSealedSecretKeyring)
-      .safeParse(withoutBlankClientValues(process.env));
+  : envSchema.safeParse(withoutBlankClientValues(process.env));
 
-if (!parsed.success) {
+// Server-only: the browser never sees the keyring's variables.
+const keyringErrors = isBrowser ? {} : checkSealedSecretKeyring(process.env);
+
+if (!parsed.success || Object.keys(keyringErrors).length > 0) {
+  const fieldErrors: Record<string, string[] | undefined> = {
+    ...(parsed.success ? {} : parsed.error.flatten().fieldErrors),
+    ...keyringErrors,
+  };
   // eslint-disable-next-line no-console -- Startup logging before logger is initialized
   console.error('❌ Invalid environment variables:');
   // eslint-disable-next-line no-console -- Startup logging before logger is initialized
-  console.error(JSON.stringify(parsed.error.flatten().fieldErrors, null, 2));
+  console.error(JSON.stringify(fieldErrors, null, 2));
   throw new Error(
     'Environment validation failed - check configuration above or see .context/environment/overview.md'
   );

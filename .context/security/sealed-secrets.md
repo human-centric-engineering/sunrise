@@ -95,15 +95,28 @@ environment variable's value, not its name: core never reads a fork's env names.
 3. When a run exits `0`, remove the old key (and `SEALED_SECRET_LEGACY_KEY`, if
    it named it).
 
-| Exit | Meaning                                                                                                   |
-| ---- | --------------------------------------------------------------------------------------------------------- |
-| `0`  | Every value is on the active key (or would be, on a dry run). Safe to remove old keys.                    |
-| `1`  | Some value did not move, or a store could not be read. The report names them. Keep the old keys.          |
-| `2`  | It could not start: no keyring, a keyring `lib/env.ts` refused, or the app's `initAppSealedStores` threw. |
+| Exit | Meaning                                                                                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Every value is on the active key (or would be, on a dry run). Safe to remove old keys.                                                            |
+| `1`  | Some value did not move, a store could not be read, or a value changed during the run. The report names them. Keep the old keys and run it again. |
+| `2`  | It could not start: no keyring, a keyring `lib/env.ts` refused, an argument it does not know, or the app's `initAppSealedStores` threw.           |
 
 A run is safe to repeat. A value already on the active key is not touched, and
-a value someone saved during the run is left as they saved it
-(`changedMeanwhile`).
+a value someone saved during the run is left as they saved it. It still makes
+the run exit `1` (`changedMeanwhile`): during a deploy, the process that saved
+it may still be sealing under the old key. The next run either finds it
+current or moves it.
+
+**The report is printed, not logged**, so `LOG_LEVEL` cannot hide it: one JSON
+line per store (counts, and each failed row as `{ id, reason }`, where
+`reason` is `format`, `unknown_key`, `mismatch`, `invalid_purpose` or
+`write_failed`, the last with the error's name and code), then a summary.
+Nothing in it is a plaintext or an envelope.
+
+**Only `--dry-run` is accepted.** Anything else exits `2` without touching a
+store, so a typo never turns into a writing run. `npm run secrets:reseal
+--dry-run` without the `--` hands the flag to npm, and the script reads npm's
+flag as the dry run it was meant to be.
 
 **A failed app registration refuses the reseal.** If `initAppSealedStores`
 throws, the registry rolls back as every seam does, and then every reseal

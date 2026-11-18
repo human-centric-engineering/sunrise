@@ -59,7 +59,7 @@ const KEY_NEW = 'newer-master-key-ZYXWVUTSRQPONMLKJIHGFEDC';
 const CONQUEST_KEY = 'conquest-fixture-key-0123456789abcdefghij';
 const CONQUEST_V1 = 'v1.RUPx0zJaLwAvvy-M.MAz8vErQe-Ng9Xgb3s97IQ.V30IQu61xOvAo3_1sfn6KQ7XzgE';
 
-function useOldKeyOnly(): void {
+function configureOldKeyOnly(): void {
   mockEnv.SEALED_SECRET_KEYS = `old:${KEY_OLD},conquest:${CONQUEST_KEY}`;
   mockEnv.SEALED_SECRET_ACTIVE_KEY = 'old';
   mockEnv.SEALED_SECRET_LEGACY_KEY = 'conquest';
@@ -112,7 +112,7 @@ beforeEach(() => {
   __resetSealedStoresForTests();
   appInit.impl = () => {};
   scopes.reasons = [];
-  useOldKeyOnly();
+  configureOldKeyOnly();
 });
 
 describe('resealSealedStores', () => {
@@ -219,9 +219,33 @@ describe('resealSealedStores', () => {
 
     const report = await resealSealedStores();
 
-    expect(report.ok).toBe(true);
     expect(report.stores[0]).toMatchObject({ resealed: 0, changedMeanwhile: 1 });
     await expect(openSecret(crm.rows.get('a')!.sealed, 'test:a')).resolves.toBe('token-a-newer');
+  });
+
+  it('is not ok when a value changed under it, because the writer may be on the old key', async () => {
+    const crm = new MemoryStore('crm');
+    await crm.put('a', 'token-a');
+    registerSealedStore(crm);
+    rotateToNewKey();
+    crm.beforeReplace = async (id) => {
+      // A process not yet restarted onto the new key saves this row mid-walk.
+      configureOldKeyOnly();
+      await crm.put(id, 'token-a-from-old-process');
+      rotateToNewKey();
+      crm.beforeReplace = null;
+    };
+
+    const first = await resealSealedStores();
+
+    expect(first.ok).toBe(false);
+    expect(first.stores[0]).toMatchObject({ changedMeanwhile: 1, failed: [] });
+    expect(needsReseal(crm.rows.get('a')!.sealed)).toBe(true);
+
+    // Running it again, as the report says, moves it.
+    const second = await resealSealedStores();
+    expect(second.ok).toBe(true);
+    expect(needsReseal(crm.rows.get('a')!.sealed)).toBe(false);
   });
 
   it('reports a value that will not open by id and reason, leaves it, and is not ok', async () => {
@@ -274,8 +298,46 @@ describe('resealSealedStores', () => {
     expect(report.ok).toBe(false);
     expect(report.stores[0]).toMatchObject({
       resealed: 1,
-      failed: [{ id: 'a', reason: 'write_failed' }],
+      failed: [{ id: 'a', reason: 'write_failed', detail: 'Error' }],
     });
+  });
+
+  it('names a failed write by its error name and code, never its message', async () => {
+    const crm = new MemoryStore('crm');
+    await crm.put('a', 'token-a');
+    crm.replace = async (_id, _previous, next) => {
+      const err = new Error(`Invalid update: data { sealedToken: "${next}" }`);
+      err.name = 'PrismaClientKnownRequestError';
+      Object.assign(err, { code: 'P2025' });
+      throw err;
+    };
+    registerSealedStore(crm);
+    rotateToNewKey();
+
+    const report = await resealSealedStores();
+
+    expect(report.stores[0].failed).toEqual([
+      { id: 'a', reason: 'write_failed', detail: 'PrismaClientKnownRequestError P2025' },
+    ]);
+    expect(JSON.stringify(report)).not.toContain('sealedToken');
+  });
+
+  it('fails a row listed with no purpose, and walks on to the next', async () => {
+    const crm = new MemoryStore('crm');
+    crm.rows.set('no-purpose', { sealed: await sealSecret('token-x', 'test:x'), purpose: '' });
+    await crm.put('b', 'token-b');
+    registerSealedStore(crm);
+    rotateToNewKey();
+
+    const report = await resealSealedStores();
+
+    expect(report.ok).toBe(false);
+    expect(report.stores[0]).toMatchObject({
+      scanned: 2,
+      resealed: 1,
+      failed: [{ id: 'no-purpose', reason: 'invalid_purpose' }],
+    });
+    expect(report.stores[0].error).toBeUndefined();
   });
 
   it('reports a store whose listing breaks, and still walks the next store', async () => {
@@ -371,7 +433,8 @@ describe('the registry and the fork init', () => {
       throw new Error('fork bug');
     };
 
-    expect(getSealedStoreNames()).toEqual([]);
+    // Not "no stores": the rolled-back registry must not read as an empty one.
+    expect(() => getSealedStoreNames()).toThrow(SealedStoreRegistrationError);
     await expect(resealSealedStores()).rejects.toBeInstanceOf(SealedStoreRegistrationError);
     // Latched: the second call still refuses, rather than walking an empty registry.
     await expect(resealSealedStores()).rejects.toBeInstanceOf(SealedStoreRegistrationError);
