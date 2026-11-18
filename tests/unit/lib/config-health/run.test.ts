@@ -12,9 +12,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // env.NODE_ENV is read by the runner; mutate per test.
 // TENANCY_MODE and the sealed-secret keyring are read through it too (§137 t-1044).
-const envMock = vi.hoisted(() => ({
-  env: { NODE_ENV: 'production' },
-}));
+interface EnvMock {
+  env: Record<string, string | undefined>;
+}
+const envMock = vi.hoisted((): EnvMock => ({ env: { NODE_ENV: 'production' } }));
 vi.mock('@/lib/env', () => envMock);
 vi.mock('@/lib/logging', () => ({ logger: { error: vi.fn() } }));
 vi.mock('@/lib/email/client', () => ({ isEmailEnabled: vi.fn(() => true) }));
