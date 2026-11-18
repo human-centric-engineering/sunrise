@@ -11,9 +11,9 @@ in code. Platform staff set them on each org. The app reads them wherever it
 needs to know. When billing arrives it becomes a second writer of the same
 slice, and nothing that reads a switch changes.
 
-This page covers switches (t-1033). Requiring a switch on a page, route or
-menu item (t-1034) and quotas on app meters (t-1035) are the next tasks of
-the same feature.
+This page covers switches (t-1033) and requiring one on a page, route or menu
+item (t-1034). Quotas on app meters (t-1035) are the next task of the same
+feature.
 
 ## Quick Reference
 
@@ -30,6 +30,7 @@ the same feature.
 | Set it by hand                   | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered                     |
 | Did the app's registration fail? | `entitlementSwitchesFailed()`; the org page says so                                                         |
 | The audit row                    | `org.entitlements.update`, with what it replaced                                                            |
+| Require one on a surface         | `requires` beside `tier`: page, `withAdminAuth`, nav item; see [Requiring a switch](#requiring-a-switch)    |
 | Key format                       | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`                       |
 
 ### Anti-patterns
@@ -134,6 +135,38 @@ model, so it needs no tenant scope. Code checking several switches for one org
 in a request reads `loadOrgSwitches` once rather than calling `orgHasSwitch`
 per key.
 
+## Requiring a switch
+
+A page, route or menu item of the org's (or a named tier) can need a switch,
+so an org that has not bought an area is refused it and not shown it:
+
+```ts
+// lib/app/admin-tier.ts
+registerOrgTierAdminPage('/admin/questionnaires', { requires: 'authoring' });
+
+// app/api/v1/app/questionnaires/route.ts
+export const POST = withAdminAuth(handler, {
+  tier: 'org',
+  requires: 'authoring',
+  ownership: { decidedBy: 'policy' },
+});
+
+// lib/app/admin-nav.ts
+{ href: '/admin/questionnaires', tier: 'org', requires: 'authoring', … }
+```
+
+The guard and the admin layout hand the key to the authorization policy as
+`scope.requires`, and the default policy refuses an org admin or tier holder
+whose org lacks it. A platform admin is not limited by switches. The sidebar
+hides the item, the layout and the in-app gate refuse the page, and the route
+answers 403 naming the switch by its label, with `details.reason:
+'entitlement_required'` (`SWITCH_REQUIRED_REASON`). One switch per surface.
+How the three places stay in step, and what the roster test checks, is in
+[`../auth/authorization.md`](../auth/authorization.md#admin-tiers).
+
+Use the same key on the page, its routes and its item. The item and the page
+are what the reader sees; the routes are the boundary.
+
 ## What is stored, and how it fails
 
 The slice is `Org.settings.entitlements = { on: [...], off: [...] }`, beside
@@ -227,9 +260,6 @@ names, not personal data.
 
 ## Not here
 
-- **Refusing a request.** Nothing reads a switch to refuse anything yet. A
-  `requires` declaration beside `tier`, read by the authorization policy so
-  menus, pages and routes agree, is §135 t-1034.
 - **Counting and limiting.** Quotas on meters an app registers (sessions,
   questionnaires) and a core seats meter are §135 t-1035.
 - **A new org's starting switches.** No hook runs when an org is created yet;

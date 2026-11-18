@@ -18,6 +18,24 @@ release process.
 
 ### Added
 
+- **A page, route or menu item can require an entitlement switch (§135,
+  t-1034).** A `requires` option beside `tier` in the three places a surface
+  declares its tier: `registerOrgTierAdminPage(pattern, { tier, requires })`,
+  `withAdminAuth(handler, { tier, requires })` and `NavItem.requires`. The
+  guard and the admin layout pass it to the authorization policy as
+  `scope.requires`, and the default policy refuses an org admin or named-tier
+  holder whose org lacks the switch; a platform admin is not limited by
+  switches. The sidebar hides the item, the layout and `AdminTierGate` refuse
+  the page, and a route refused for the switch answers 403 naming it by its
+  label, with `details.reason: 'entitlement_required'`. `AdminReach` gains an
+  optional `switchesMet`, filled only when a switch is registered, and the
+  sidebar and gate take an optional `pageRequirements`. The roster test fails
+  on a `requires` that names no registered switch, or that sits beside no
+  `tier`. A surface that declares no `requires` answers exactly as before. A
+  fork that registers its own `canAdminister` should read `scope.requires`: a
+  policy that ignores it opens requiring surfaces to every org the tier
+  admits.
+
 - **Confidential content is spotted and shown on the trace (§130, t-1036).**
   A new privacy adapter slot, `SensitivityClassifier`, registered with
   `registerSensitivityClassifier(classifier, { timeoutMs?, replace? })` from
