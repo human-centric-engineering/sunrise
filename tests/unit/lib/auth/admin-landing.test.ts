@@ -224,6 +224,28 @@ describe('a landing that requires a switch (t-1034)', () => {
     expect(logger.error).not.toHaveBeenCalled();
   });
 
+  it('with no viewer to ask, meets no switch, and passes such a landing over', () => {
+    registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+    app.route = '/admin/leads';
+    expect(orgAdminLanding()).toBe(DEFAULT_ORG_ADMIN_LANDING);
+
+    registerAdminTier('sales', { holds, landing: '/admin/sales' });
+    registerOrgTierAdminPage('/admin/sales', { tier: 'sales', requires: 'lead_gen' });
+    expect(heldTierLanding(['sales'])).toBeNull();
+  });
+
+  it("asks about an org admin's landing in the page's own tier, as the layout does", () => {
+    registerAdminTier('sales', { holds });
+    registerOrgTierAdminPage('/admin/sales', { tier: 'sales', requires: 'lead_gen' });
+    app.route = '/admin/sales';
+    const asked: string[] = [];
+    orgAdminLanding((tier, requires) => {
+      asked.push(`${tier}:${requires}`);
+      return true;
+    });
+    expect(asked).toEqual(['sales:lead_gen']);
+  });
+
   it("uses a tier's landing that requires a switch for a holder whose org has it", () => {
     registerAdminTier('sales', { holds, landing: '/admin/leads' });
     registerOrgTierAdminPage('/admin/leads', { tier: 'sales', requires: 'lead_gen' });

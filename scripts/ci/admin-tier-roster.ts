@@ -74,12 +74,13 @@ export interface SourceFile {
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 
 /**
- * Text that names `requires` as a word of its own (`LEADS_REQUIRES`,
- * `{ requires }`), not inside another (`requiresAudit`, `optionsRequiresNone`),
- * so a constant that merely contains the letters is not reported. A spread
- * whose name says nothing of a switch still slips past: write it inline.
+ * Text that mentions `requires` anywhere, camelCase included
+ * (`leadGenRequires`, `[requiresKey]`). Broad on purpose: a constant that only
+ * contains the letters costs a rename, while one that hides a switch would let
+ * a typo'd key shut a route to every org admin unseen. A spread whose name
+ * says nothing of a switch still slips past: write it inline.
  */
-const MENTIONS_REQUIRES = /(?:^|[^a-z])requires(?:$|[^a-z])/i;
+const MENTIONS_REQUIRES = /requires/i;
 
 /** One `withAdminAuth(…)` call that passes a `tier` option, or might. */
 export interface TierDeclaration {

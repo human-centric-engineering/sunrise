@@ -1466,9 +1466,9 @@ export function withAdminAuth(
           // refusal path alone, so an admitted request pays nothing. Whether
           // the switch is the reason is the policy's answer (it admits this
           // caller without it); whether the org lacks it is a fact about the
-          // platform's switches, read below. A
-          // caller refused for any other reason gets the ordinary refusal,
-          // and learns nothing about the org's switches.
+          // platform's switches, read below. A caller refused for any other
+          // reason gets the ordinary refusal, and learns nothing about the
+          // org's switches.
           //
           // "Your organisation does not have X" is said only when the org's
           // switches were read and X is off. A read that failed also refuses

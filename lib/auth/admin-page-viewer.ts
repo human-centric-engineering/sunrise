@@ -34,6 +34,7 @@ import type {
   AdminViewerTier,
   DeclaredAdminTier,
 } from '@/lib/auth/admin-tier';
+import { reachesTier } from '@/lib/auth/admin-tier';
 import { adminPageRequirements, namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
 import { heldTierLanding } from '@/lib/auth/admin-landing';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
@@ -122,7 +123,7 @@ export const requestAdminReach = cache(async (): Promise<AdminReach> => {
   const landing = tiers.includes('org')
     ? null
     : heldTierLanding(tiers, (tier, requires) =>
-        switchesMet.some((g) => g.tier === tier && g.requires === requires)
+        reachesTier({ tiers, landing: null, switchesMet }, tier, requires)
       );
   // With no switch to ask about, the reach is exactly what it was before them.
   if (asked.length === 0) return { tiers, landing };

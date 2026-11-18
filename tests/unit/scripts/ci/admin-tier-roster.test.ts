@@ -595,7 +595,7 @@ describe('what it catches', () => {
 
     it.each([
       ['spread into the options', `{ tier: 'org', ...REQUIRES_LEAD_GEN, ${OWNED} }`, true],
-      ['under a computed key', `{ tier: 'org', [KEYS.requires]: 'lead_gen', ${OWNED} }`, true],
+      ['under a computed key', `{ tier: 'org', [requiresKey]: 'lead_gen', ${OWNED} }`, true],
       // No tier the scanner can see either, so it is not listed as org-tier.
       ['in a shared options constant', 'LEADS_REQUIRES_OPTIONS', false],
     ])('a requires review cannot read, %s', (_l, options, listed) => {
@@ -610,12 +610,17 @@ describe('what it catches', () => {
     });
 
     it.each([
-      ['a constant whose name only contains the letters', 'optionsRequiresNothing'],
-      ['an option that only starts with them', `{ tier: 'org', requiresAudit: true, ${OWNED} }`],
-    ])('says nothing of %s', (_l, options) => {
-      expect(tierDeclarations(leadsRoute(options)).filter((d) => d.requires !== undefined)).toEqual(
-        []
-      );
+      ['a camelCase spread', `{ tier: 'org', ...leadGenRequires, ${OWNED} }`, true],
+      ['a camelCase options constant', 'leadsRequiresOptions', false],
+    ])('a requires review cannot read, in %s', (_l, options, listed) => {
+      expect(
+        findAdminTierRosterProblems(
+          required({
+            routes: [leadsRoute(options)],
+            appListedRoutes: listed ? [`${LEADS}#GET`] : [],
+          })
+        )
+      ).toEqual([expect.stringContaining('its `requires` is not a string literal')]);
     });
 
     it.each([

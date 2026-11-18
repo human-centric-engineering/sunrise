@@ -300,7 +300,7 @@ export const SWITCH_REQUIRED_REASON = 'entitlement_required';
  * has no label; no org has it, so the refusal is still true.
  */
 export function switchRequiredMessage(key: string): string {
-  return `Your organisation does not have ${switchLabel(key)}. Ask whoever manages your organisation's account to switch it on.`;
+  return `Your organisation does not have ${labelOf(key) ?? key}. Ask whoever manages your organisation's account to switch it on.`;
 }
 
 /**
@@ -314,12 +314,12 @@ export const SWITCH_UNVERIFIED_REASON = 'entitlement_unverified';
 export function switchUnverifiedMessage(key: string): string {
   // No label when the app's switch init failed, which is one way to get here:
   // say what it is for rather than show a reader an internal key.
-  const label = registeredEntitlementSwitches().find((s) => s.key === key)?.label;
-  return `We could not check whether your organisation has ${label ?? 'the feature this needs'}, so this was refused. Try again in a moment.`;
+  return `We could not check whether your organisation has ${labelOf(key) ?? 'the feature this needs'}, so this was refused. Try again in a moment.`;
 }
 
-function switchLabel(key: string): string {
-  return registeredEntitlementSwitches().find((s) => s.key === key)?.label ?? key;
+/** A registered switch's label, or `undefined` for a key nothing registers. */
+function labelOf(key: string): string | undefined {
+  return registeredEntitlementSwitches().find((s) => s.key === key)?.label;
 }
 
 /**

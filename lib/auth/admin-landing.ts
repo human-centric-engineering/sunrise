@@ -41,7 +41,7 @@ import {
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
 import {
-  adminPageRequirementOf,
+  adminPageTierOf,
   isPlainAdminPath,
   type DeclaredAdminTier,
   type NamedTierAdminPage,
@@ -50,22 +50,25 @@ import {
 /**
  * Whether this viewer's org meets `requires` on a page of `tier`: in
  * practice `reachesTier(reach, tier, requires)` (t-1034). The default, for a
- * caller with no viewer, treats every switch as met, which is how landings
- * were chosen before switches existed.
+ * caller with no viewer to ask, meets none, so a landing that requires a
+ * switch is passed over rather than risked.
  */
 export type SwitchMet = (tier: DeclaredAdminTier, requires: string) => boolean;
 
-const EVERY_SWITCH_MET: SwitchMet = () => true;
+const NO_SWITCH_MET: SwitchMet = () => false;
 
-/** Whether this viewer may land on `route`, a page of `tier`, as far as switches go. */
-function switchAllows(
-  route: string,
-  tier: DeclaredAdminTier,
-  pages: readonly string[],
-  met: SwitchMet
-): boolean {
-  const requires = adminPageRequirementOf(route, pages, adminPageRequirements());
-  return requires === null || met(tier, requires);
+/**
+ * A test of whether this viewer may land on a page of `tier`, as far as
+ * switches go. The requirements are read once, and looked up by pattern
+ * exactly: a landing is a plain path listed word for word, so no pattern
+ * matching is needed.
+ */
+function switchAllows(met: SwitchMet): (route: string, tier: DeclaredAdminTier) => boolean {
+  const required = new Map(adminPageRequirements().map((r) => [r.pattern, r.requires]));
+  return (route, tier) => {
+    const requires = required.get(route);
+    return requires === undefined || met(tier, requires);
+  };
 }
 
 /** Where a platform admin lands. */
@@ -126,7 +129,7 @@ export function defaultOrgAdminLanding(pages: readonly string[]): string {
  * `met` says their org has it (t-1034); otherwise they get the default, which
  * is core's and requires none.
  */
-export function orgAdminLanding(met: SwitchMet = EVERY_SWITCH_MET): string {
+export function orgAdminLanding(met: SwitchMet = NO_SWITCH_MET): string {
   const pages = orgTierAdminPages();
   const route = appOrgAdminLandingRoute;
   if (route === null) return defaultOrgAdminLanding(pages);
@@ -135,7 +138,10 @@ export function orgAdminLanding(met: SwitchMet = EVERY_SWITCH_MET): string {
     logger.error('admin-landing: ignoring the app org-admin landing', { route, problem });
     return defaultOrgAdminLanding(pages);
   }
-  return switchAllows(route, 'org', pages, met) ? route : defaultOrgAdminLanding(pages);
+  // Asked of the page's own tier, as the layout asks it: the fork may name a
+  // named-tier page, which an org admin also opens.
+  const tier = adminPageTierOf(route, pages, namedTierAdminPages()) ?? 'org';
+  return switchAllows(met)(route, tier) ? route : defaultOrgAdminLanding(pages);
 }
 
 /**
@@ -178,17 +184,17 @@ export function __resetLandingLogForTests(): void {
  */
 export function heldTierLanding(
   held: readonly DeclaredAdminTier[],
-  met: SwitchMet = EVERY_SWITCH_MET
+  met: SwitchMet = NO_SWITCH_MET
 ): string | null {
   if (held.length === 0) return null;
   const named = namedTierAdminPages();
-  const pages = named.map((page) => page.pattern);
+  const allows = switchAllows(met);
   for (const tier of namedAdminTiers()) {
     if (!held.includes(tier)) continue;
     const route = namedAdminTier(tier)?.landing;
     if (route !== undefined) {
       const problem = namedTierLandingProblem(tier, route, named);
-      if (problem === null && switchAllows(route, tier, pages, met)) return route;
+      if (problem === null && allows(route, tier)) return route;
       const key = JSON.stringify([tier, route]);
       if (problem !== null && !loggedLandingProblems.has(key)) {
         loggedLandingProblems.add(key);
@@ -196,10 +202,7 @@ export function heldTierLanding(
       }
     }
     const first = named.find(
-      (page) =>
-        page.tier === tier &&
-        isPlainAdminPath(page.pattern) &&
-        switchAllows(page.pattern, tier, pages, met)
+      (page) => page.tier === tier && isPlainAdminPath(page.pattern) && allows(page.pattern, tier)
     );
     if (first) return first.pattern;
   }

@@ -35,7 +35,8 @@ release process.
   sidebar and gate take an optional `pageRequirements`. A landing that
   requires a switch is used only where the viewer's org has it:
   `orgAdminLanding()` and `heldTierLanding()` take an optional `SwitchMet`
-  predicate, and `/admin` passes the viewer's reach. The roster test fails
+  predicate (meeting none when omitted), and `/admin` passes the viewer's
+  reach. The roster test fails
   on a `requires` that names no registered switch, that sits beside no
   `tier`, that it cannot read (not a literal, or in a spread), or on a nav
   item whose `requires` is not its page's. A surface that declares no `requires` answers exactly as before. A
