@@ -55,6 +55,7 @@
  */
 import ts from 'typescript';
 import {
+  adminPageRequirementOf,
   adminPageTier,
   adminPageTierOf,
   adminSectionOf,
@@ -248,6 +249,9 @@ export function adminAuthDeclarations(file: SourceFile): AdminAuthDeclaration[] 
       // shared option constants stay quiet. A constant whose name says
       // nothing of a tier slips past: write the option inline.
       if (/tier/i.test(options.getText())) unreadable();
+      // Likewise a switch (t-1034): a typo'd key in a shared constant would
+      // otherwise shut the route to every org admin without a word.
+      else if (/requires/i.test(options.getText())) record(undefined, false, null);
       return;
     }
     const tier = options.properties.find((p) => keyText(p) === 'tier');
@@ -256,9 +260,18 @@ export function adminAuthDeclarations(file: SourceFile): AdminAuthDeclaration[] 
         (ts.isSpreadAssignment(p) || (p.name && keyText(p) === null)) && /tier/i.test(p.getText())
     );
     const requiresProp = options.properties.find((p) => keyText(p) === 'requires');
+    // A switch arriving in a spread or under a computed key is one the scanner
+    // cannot read, reported as such rather than passed over.
+    const hiddenRequires = options.properties.some(
+      (p) =>
+        (ts.isSpreadAssignment(p) || (p.name && keyText(p) === null)) &&
+        /requires/i.test(p.getText())
+    );
     const requires =
       requiresProp === undefined
-        ? undefined
+        ? hiddenRequires
+          ? null
+          : undefined
         : ts.isPropertyAssignment(requiresProp) && ts.isStringLiteralLike(requiresProp.initializer)
           ? requiresProp.initializer.text
           : null;
@@ -531,10 +544,15 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
       );
     }
   }
-  problems.push(...requirementProblems(input, allDeclarations));
+  problems.push(...requirementProblems(input, allDeclarations, allPages));
   for (const { name, landing } of namedTiers) {
     if (landing === undefined) continue;
-    const problem = namedTierLandingProblem(name, landing, namedPages);
+    const problem = namedTierLandingProblem(
+      name,
+      landing,
+      namedPages,
+      input.appPageRequirements ?? []
+    );
     if (problem !== null) {
       problems.push(
         `named tier '${name}': its landing ${landing} ${problem} /admin would ignore it and log why.`
@@ -549,11 +567,16 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
  * naming no registered switch, which no org has, so the surface is shut to
  * every org admin; one on a platform-tier route or nav item, where it means
  * nothing, since switches do not limit a platform admin; and a route's
- * `requires` that is not a string literal, which review cannot read.
+ * `requires` that is not a string literal (or arrives in a spread), which
+ * review cannot read; and a nav item requiring a switch its page does not,
+ * which hides the item from orgs that can open the page. A route's switch is
+ * not matched to its page's: nothing ties an API path to the page that calls
+ * it, so that agreement is the author's, as the docs say.
  */
 function requirementProblems(
   input: RosterInput,
-  declarations: readonly AdminAuthDeclaration[]
+  declarations: readonly AdminAuthDeclaration[],
+  allPages: readonly string[]
 ): string[] {
   const problems: string[] = [];
   const switches = new Set(input.switches ?? []);
@@ -580,8 +603,24 @@ function requirementProblems(
     if (item.requires === undefined) continue;
     if (item.tier === undefined) {
       problems.push(`nav item ${item.href}: requires '${item.requires}' but ${platform}`);
-    } else if (!switches.has(item.requires)) {
+      continue;
+    }
+    if (!switches.has(item.requires)) {
       problems.push(`nav item ${item.href}: ${unregistered(item.requires)}`);
+    }
+    // The sidebar already hides an item whose page requires a switch, so the
+    // item's own `requires` only has to agree with it. One that differs hides
+    // the item from orgs the page admits, or names a switch the admin layout
+    // never asks about, which hides it from everyone.
+    const pageRequires = adminPageRequirementOf(
+      item.href.split(/[?#]/)[0],
+      allPages,
+      input.appPageRequirements ?? []
+    );
+    if (pageRequires !== item.requires) {
+      problems.push(
+        `nav item ${item.href}: requires '${item.requires}' but its page requires ${pageRequires === null ? 'no switch' : `'${pageRequires}'`}. Register the page with the same { requires }, or drop it from the item.`
+      );
     }
   }
   return problems;

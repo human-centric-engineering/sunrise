@@ -157,10 +157,14 @@ describe('canAdminister with scope.requires (t-1034)', () => {
     ).resolves.toBe(false);
   });
 
-  it('refuses, and logs, when the org’s switches cannot be read', async () => {
+  it('refuses, and logs, when the org’s switches cannot be read — as a read, not a broken policy', async () => {
     mockPrisma.org.findUnique.mockRejectedValue(new Error('connection reset'));
     await expect(canAdminister(ORG_ADMIN, null, NEEDS_LEADS)).resolves.toBe(false);
-    expect(logger.error).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      "authorization: could not read the org's switches; refusing",
+      expect.objectContaining({ requires: 'lead_gen', error: 'connection reset' })
+    );
   });
 
   it('asks nothing of the org for a surface that requires no switch', async () => {

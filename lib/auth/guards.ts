@@ -1474,13 +1474,14 @@ export function withAdminAuth(
           // (the policy fails closed), but says it could not check, so an
           // admin whose org has the switch is not told to go and buy it. A
           // switch that reads on gets the ordinary refusal: a fork's policy
-          // refused for its own reason, which this cannot name.
-          if (resource !== UNRESOLVED && scope.requires !== undefined) {
+          // refused for its own reason, which this cannot name. So would a
+          // caller acting in no org, who has no organisation to tell about
+          // (none reaches here today: a session enters an org or is refused,
+          // and an admin key is a platform admin's).
+          if (resource !== UNRESOLVED && scope.requires !== undefined && principal.orgId) {
             const { requires: required, ...withoutSwitch } = scope;
             if (await canAdminister(principal, resource, withoutSwitch)) {
-              const state = principal.orgId
-                ? await orgSwitchState(principal.orgId, required)
-                : 'off';
+              const state = await orgSwitchState(principal.orgId, required);
               if (state === 'off') {
                 throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
                   reason: SWITCH_REQUIRED_REASON,

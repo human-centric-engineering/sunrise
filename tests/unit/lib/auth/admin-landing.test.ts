@@ -202,3 +202,50 @@ describe('heldTierLanding (t-999)', () => {
     );
   });
 });
+
+describe('a landing that requires a switch (t-1034)', () => {
+  const holds = (): boolean => true;
+  const requirements = [{ pattern: '/admin/leads', requires: 'lead_gen' }];
+
+  it('is no org admin landing: an admin whose org lacks it would be sent to a refusal', () => {
+    const pages = [...ORG_TIER_ADMIN_PAGES, '/admin/leads'];
+    expect(orgAdminLandingProblem('/admin/leads', pages)).toBeNull();
+    expect(orgAdminLandingProblem('/admin/leads', pages, requirements)).toContain(
+      "requires the switch 'lead_gen'"
+    );
+  });
+
+  it('falls back to the default when the fork names a page that requires one', () => {
+    registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+    app.route = '/admin/leads';
+
+    expect(orgAdminLanding()).toBe(DEFAULT_ORG_ADMIN_LANDING);
+    expect(logger.error).toHaveBeenCalledWith(
+      'admin-landing: ignoring the app org-admin landing',
+      expect.objectContaining({ route: '/admin/leads' })
+    );
+  });
+
+  it('is no named tier landing either', () => {
+    const named = [{ pattern: '/admin/leads', tier: 'sales' }];
+    expect(namedTierLandingProblem('sales', '/admin/leads', named, requirements)).toContain(
+      "requires the switch 'lead_gen'"
+    );
+  });
+
+  it("passes over the tier's landing and its pages that require one, for its first that does not", () => {
+    registerAdminTier('sales', { holds, landing: '/admin/leads' });
+    registerOrgTierAdminPage('/admin/leads', { tier: 'sales', requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/pipeline', { tier: 'sales', requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/contacts', { tier: 'sales' });
+
+    expect(heldTierLanding(['sales'])).toBe('/admin/contacts');
+  });
+
+  it('leaves a tier whose every page requires one with no landing, rather than a refusal', () => {
+    registerAdminTier('sales', { holds });
+    registerOrgTierAdminPage('/admin/leads', { tier: 'sales', requires: 'lead_gen' });
+
+    expect(heldTierLanding(['sales'])).toBeNull();
+  });
+});

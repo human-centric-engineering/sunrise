@@ -491,8 +491,25 @@ the page are the reader's refusal, and the routes are the boundary.
 
 **The roster test covers switches.** It fails on a `requires` naming a switch
 no app registers (on a route, a page or a nav item), on one beside no `tier`
-(a platform-tier route or item, where switches limit nobody), and on a route's
-`requires` that is not a string literal.
+(a platform-tier route or item, where switches limit nobody), on a route's
+`requires` that is not a string literal (a spread or a shared options constant
+whose text names `requires` counts), on a nav item whose `requires` is not its
+page's, and on a named tier's `landing` that requires a switch. It cannot
+match a route's `requires` to its page's, since nothing ties an API path to
+the page that calls it: keeping those alike is yours.
+
+**A landing requires no switch.** `/admin` sends every admin of a tier to the
+same page, whatever their org has, so a landing that requires a switch would
+send one whose org lacks it to a refusal. A fork's org-admin landing or a
+named tier's `landing` that requires one is ignored and logged, as any other
+unusable landing is, and a tier with no `landing` lands on its first plain
+page that requires none.
+
+**The admin layout asks only about switches a page requires.** Its reach asks
+the policy once per admitted tier and per switch some page requires, not per
+registered switch, so an app that registers many pays for the ones its pages
+use. A nav item's `requires` must be its page's (above), which is what lets
+the sidebar rely on those answers.
 
 **If you replace `canAdminister`,** read `scope.requires` too. A policy that
 ignores it opens every requiring surface to every org the tier admits, which

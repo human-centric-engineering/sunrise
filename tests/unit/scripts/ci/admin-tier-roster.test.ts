@@ -376,7 +376,9 @@ describe('the tree', () => {
     // A landing outside the org tier turns an org admin away the moment they
     // arrive; /admin falls back to the default at runtime, and this says so in CI.
     const landing = appOrgAdminLandingRoute ?? defaultOrgAdminLanding(orgTierAdminPages());
-    expect(orgAdminLandingProblem(landing, orgTierAdminPages())).toBeNull();
+    expect(
+      orgAdminLandingProblem(landing, orgTierAdminPages(), adminPageRequirements())
+    ).toBeNull();
   });
 
   it('sees the tree it judges', () => {
@@ -591,6 +593,56 @@ describe('what it catches', () => {
           required({ routes: [leadsRoute(`{ tier: 'org', requires: LEAD_GEN, ${OWNED} }`)] })
         )
       ).toEqual([expect.stringContaining('its `requires` is not a string literal')]);
+    });
+
+    it.each([
+      ['spread into the options', `{ tier: 'org', ...REQUIRES_LEAD_GEN, ${OWNED} }`, true],
+      ['under a computed key', `{ tier: 'org', [requiresKey]: 'lead_gen', ${OWNED} }`, true],
+      // No tier the scanner can see either, so it is not listed as org-tier.
+      ['in a shared options constant', 'LEADS_REQUIRES_OPTIONS', false],
+    ])('a requires review cannot read, %s', (_l, options, listed) => {
+      expect(
+        findAdminTierRosterProblems(
+          required({
+            routes: [leadsRoute(options)],
+            appListedRoutes: listed ? [`${LEADS}#GET`] : [],
+          })
+        )
+      ).toEqual([expect.stringContaining('its `requires` is not a string literal')]);
+    });
+
+    it.each([
+      ['a switch its page does not require', 'authoring', ['lead_gen', 'authoring']],
+      ['a switch over a page that requires none', 'lead_gen', ['lead_gen']],
+    ])('a nav item requiring %s, which hides it from orgs the page admits', (_l, key, switches) => {
+      const pageRequirements =
+        key === 'lead_gen' ? [] : [{ pattern: '/admin/leads', requires: 'lead_gen' }];
+      const problems = findAdminTierRosterProblems(
+        required({
+          routes: [leadsRoute(`{ tier: 'org', ${OWNED} }`)],
+          appPageRequirements: pageRequirements,
+          navItems: [{ href: '/admin/leads', tier: 'org', requires: key }],
+          switches,
+        })
+      );
+      expect(problems).toEqual([
+        `nav item /admin/leads: requires '${key}' but its page requires ${
+          pageRequirements.length ? "'lead_gen'" : 'no switch'
+        }. Register the page with the same { requires }, or drop it from the item.`,
+      ]);
+    });
+
+    it('names a named tier landing that requires a switch', () => {
+      expect(
+        findAdminTierRosterProblems(
+          required({
+            routes: [leadsRoute(`{ tier: 'sales', requires: 'lead_gen', ${OWNED} }`)],
+            appNamedTierPages: [{ pattern: '/admin/leads', tier: 'sales' }],
+            namedTiers: [{ name: 'sales', landing: '/admin/leads' }],
+            navItems: [{ href: '/admin/leads', tier: 'sales', requires: 'lead_gen' }],
+          })
+        )
+      ).toEqual([expect.stringMatching(/^named tier 'sales': its landing .*requires the switch/)]);
     });
 
     it('says nothing of a surface that requires no switch', () => {

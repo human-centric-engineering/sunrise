@@ -637,8 +637,10 @@ async function administersOrgTier(
  * declares no `requires` answers exactly as before. Asked only of a caller
  * the org or tier arm already admitted: a platform admin is not limited by
  * switches (the planning ruling), and nobody else gets this far. A principal
- * with no org has no switches. A failed read throws, and the policy's caller
- * refuses and logs it, so a switch that cannot be read opens nothing.
+ * with no org has no switches. A failed read refuses and is logged here, as
+ * the entitlement read it is: let through, it would reach `canAdminister`'s
+ * catch and be logged as a broken policy, sending an operator to
+ * `lib/app/authorization.ts` over a database blip.
  */
 async function orgHasRequiredSwitch(
   viewer: AuthorizationPrincipal,
@@ -646,7 +648,16 @@ async function orgHasRequiredSwitch(
 ): Promise<boolean> {
   if (scope.requires === undefined) return true;
   if (!viewer.orgId) return false;
-  return orgHasSwitch(viewer.orgId, scope.requires);
+  try {
+    return await orgHasSwitch(viewer.orgId, scope.requires);
+  } catch (error) {
+    logger.error("authorization: could not read the org's switches; refusing", {
+      orgId: viewer.orgId,
+      requires: scope.requires,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
 }
 
 /**

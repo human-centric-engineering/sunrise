@@ -144,6 +144,11 @@ describe('requestAdminReach with entitlement switches (t-1034)', () => {
     __resetEntitlementRegistryForTests();
     registerEntitlementSwitch({ key: 'lead_gen', label: 'Lead generation', description: '' });
     registerEntitlementSwitch({ key: 'authoring', label: 'Authoring', description: '' });
+    // Registered, but no page requires it: never asked about.
+    registerEntitlementSwitch({ key: 'exports', label: 'Exports', description: '' });
+    registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/leads/settings', { requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/authoring', { requires: 'authoring' });
   });
 
   it('asks the policy once per admitted tier and switch, and records what it admitted', async () => {
@@ -168,8 +173,14 @@ describe('requestAdminReach with entitlement switches (t-1034)', () => {
       tier: 'org',
       requires: 'authoring',
     });
-    // Platform, two tiers, and two switches for each admitted tier.
+    // Platform, two tiers, and the two switches pages require (once each,
+    // though two pages require lead_gen) for each admitted tier.
     expect(canAdminister).toHaveBeenCalledTimes(1 + 2 + 4);
+    expect(canAdminister).not.toHaveBeenCalledWith(
+      principal,
+      null,
+      expect.objectContaining({ requires: 'exports' })
+    );
   });
 
   it('asks no switch question of a tier the policy did not admit, nor of the platform', async () => {
@@ -190,5 +201,14 @@ describe('requestAdminReach with entitlement switches (t-1034)', () => {
     vi.mocked(canAdminister).mockResolvedValue(true);
     await expect(requestAdminReach()).resolves.toBe('platform');
     expect(canAdminister).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks no switch question when no page requires one, however many are registered', async () => {
+    __resetAppOrgTierAdminPagesForTests();
+    vi.mocked(canAdminister).mockImplementation((_p, _r, scope?: AuthorizationScope) =>
+      Promise.resolve(scope?.tier === 'org')
+    );
+    await expect(requestAdminReach()).resolves.toEqual({ tiers: ['org'], landing: null });
+    expect(canAdminister).toHaveBeenCalledTimes(1 + 1);
   });
 });
