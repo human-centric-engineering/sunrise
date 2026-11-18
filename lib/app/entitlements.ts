@@ -1,5 +1,6 @@
 /**
- * App entitlement switches: what an org can have (§135 t-1033).
+ * App entitlement switches and meters: what an org can have, and how much
+ * (§135 t-1033, t-1035).
  *
  * **Fork-owned scaffold** — Sunrise ships this empty and does NOT change it
  * after release, so your edits here merge cleanly on upgrade (the stable
@@ -20,15 +21,23 @@
  * switches it on; turn it on for an area every org already uses, so no org
  * that exists today loses it.
  *
+ * **Meters** (§135 t-1035) are registered here too. A meter counts something
+ * an org has, such as completed conversations this month, and platform staff
+ * set each org's limit for it beside its switches. Your code asks
+ * `checkMeterQuota()` (`lib/tenancy/meters.ts`) wherever it adds one, and
+ * decides what a refusal does. Seats are the platform's own meter; register
+ * `seats` only to count them differently.
+ *
  * Auto-wired: `lib/tenancy/entitlements.ts` calls this once, lazily, before
  * its first read. Register inside this function, not at the module's top
- * level, so a throw rolls back. If it throws, no switch is registered: the
+ * level, so a throw rolls back. If it throws, no switch or meter is registered: the
  * registry rolls back and logs why, and every org reads as having none of
  * yours.
  *
  * @example
  * ```ts
- * import { registerEntitlementSwitch } from '@/lib/tenancy/entitlements';
+ * import { prisma } from '@/lib/db/client';
+ * import { registerEntitlementSwitch, registerMeter } from '@/lib/tenancy/entitlements';
  *
  * export function initAppEntitlements(): void {
  *   registerEntitlementSwitch({
@@ -41,6 +50,16 @@
  *     label: 'Lead generation',
  *     description: 'Funnels, leads and lead briefs.',
  *     whenNothingSet: true, // every org already has this today
+ *   });
+ *   registerMeter({
+ *     key: 'completed_conversations',
+ *     label: 'Completed conversations',
+ *     description: 'Conversations finished this month.',
+ *     period: 'month', // or 'standing', or ({ orgId, now }) => ({ from, to })
+ *     count: ({ orgId, from, to }) =>
+ *       prisma.conversation.count({
+ *         where: { orgId, completedAt: { gte: from ?? undefined, lt: to ?? undefined } },
+ *       }),
  *   });
  * }
  * ```

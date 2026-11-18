@@ -121,9 +121,11 @@ import {
 } from '@/lib/account-sections/registry';
 import {
   registeredEntitlementSwitches,
+  registeredMeters,
   resolveOrgSwitches,
   __resetEntitlementRegistryForTests,
 } from '@/lib/tenancy/entitlements';
+import { allMeters } from '@/lib/tenancy/meters';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
 import { ORG_TIER_ADMIN_PAGES, adminPageTier } from '@/lib/auth/admin-tier';
 import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
@@ -586,13 +588,18 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/entitlements.ts',
-    risk: 'a stray switch would appear on every org page, and one on by default (whenNothingSet) would be granted to every org nobody had set it on, on every install',
+    risk: 'a stray switch would appear on every org page, and one on by default (whenNothingSet) would be granted to every org nobody had set it on, on every install; a stray `seats` meter would replace the platform’s own seats count, and so who the seats limit refuses',
     assert: () => {
       __resetEntitlementRegistryForTests();
       // The read triggers the lazy init, so this exercises the REAL seam.
       expect(registeredEntitlementSwitches()).toEqual([]);
       // …so nothing an org stores, or does not, gives it a switch.
       expect(resolveOrgSwitches({ on: [], off: [], unreadable: false }).on).toEqual([]);
+      // No meter either (t-1035), so the only one is the platform's own seats.
+      expect(registeredMeters()).toEqual([]);
+      expect(allMeters().map((m) => ({ key: m.key, core: m.core }))).toEqual([
+        { key: 'seats', core: true },
+      ]);
     },
   },
   {

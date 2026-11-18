@@ -98,6 +98,8 @@ export const API = {
     orgPrivacy: (id: string): string => `/api/v1/admin/orgs/${id}/privacy`,
     /** An org's entitlement switches (§135) */
     orgEntitlements: (id: string): string => `/api/v1/admin/orgs/${id}/entitlements`,
+    /** An org's meters and their limits (§135) */
+    orgMeters: (id: string): string => `/api/v1/admin/orgs/${id}/meters`,
     /**
      * Delete invitation by email. With `orgId` (`null` for the install org)
      * only that org's invitation goes; without it, every org's (#1199).

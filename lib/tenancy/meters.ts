@@ -40,6 +40,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 
+import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import {
@@ -269,6 +270,36 @@ export async function checkMeterQuota(
  */
 export function meterLimitMessage(check: Pick<MeterQuotaCheck, 'label' | 'limit'>): string {
   return `Your organisation has reached its limit of ${check.limit ?? 0} for ${check.label}. Ask whoever manages your organisation's account to raise it.`;
+}
+
+/**
+ * Refuse a new seat in an org at its seats limit: the check the org's own
+ * invitation and add-member routes make before either adds one. Throws a 403
+ * whose `details.reason` is {@link METER_LIMIT_REASON}.
+ *
+ * **Platform staff are not refused** (`platformAdmin`): the vendor setting an
+ * org up, or putting one right, must not be stopped by the limit it sold.
+ * The platform's own invite route does not call this for the same reason.
+ * With no seats limit set nothing is counted.
+ */
+export async function refuseOverSeatsLimit(
+  orgId: string,
+  actor: { platformAdmin: boolean }
+): Promise<void> {
+  if (actor.platformAdmin) return;
+  const check = await checkMeterQuota(orgId, SEATS_METER_KEY);
+  if (check.allowed) return;
+  logger.info('meters: refused a seat over the org seats limit', {
+    orgId,
+    used: check.used,
+    limit: check.limit,
+  });
+  throw new APIError(meterLimitMessage(check), ErrorCodes.FORBIDDEN, 403, {
+    reason: METER_LIMIT_REASON,
+    meter: SEATS_METER_KEY,
+    used: check.used,
+    limit: check.limit,
+  });
 }
 
 /** One meter's usage for one org, as the admin page shows it. */

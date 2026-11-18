@@ -4,6 +4,9 @@
  * GET  /api/v1/orgs/[id]/members — the roster: each member's id / name /
  *      email / image, their org role and when they joined.
  * POST /api/v1/orgs/[id]/members — add an existing user: `{ userId, role? }`.
+ *      An org's own admin is refused at the org's seats limit (403,
+ *      `details.reason: 'meter_limit_reached'`, §135 t-1035); a platform
+ *      admin is not.
  *
  * Who may call these is the authorization policy's decision, not this
  * file's: every route here hands the guard `resource: { kind: 'org', id,
@@ -41,6 +44,7 @@ import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { orgIdParamSchema, addOrgMemberSchema } from '@/lib/validations/tenancy';
 import { addMember, resolveOrgResource, membershipActorOf } from '@/lib/tenancy/lifecycle';
 import { getRouteLogger } from '@/lib/api/context';
+import { refuseOverSeatsLimit } from '@/lib/tenancy/meters';
 
 const RESOURCE = {
   resource: async (_request: unknown, context?: { params: Promise<{ id: string }> }) =>
@@ -94,7 +98,11 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
   const body = await validateRequestBody(request, addOrgMemberSchema);
 
-  const membership = await addMember(id, body.userId, body.role, membershipActorOf(session));
+  const actor = membershipActorOf(session);
+  // An org's own admin may not add past its seats limit (§135 t-1035);
+  // platform staff may.
+  await refuseOverSeatsLimit(id, actor);
+  const membership = await addMember(id, body.userId, body.role, actor);
 
   log.info('Org member added', {
     orgId: id,
