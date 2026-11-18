@@ -73,12 +73,14 @@
  * every caller — the exact churn a seam exists to avoid. This is the same call
  * Daybreak made fork-first in July, for the same reason.
  *
- * **`scope` is an open struct.** `{ ownership?, tier?, org? }`, every member
- * optional, `{}` meaning "the default view". #367 supplies `ownership`, #366
- * supplies `tier`, §106 supplies `org` — each without changing a signature.
- * The guards populate `org` (the entered org) and `tier` (`'org'` on a surface
- * that declares it, §111 t-810 — see `lib/auth/admin-tier.ts`); `ownership` is
- * still carried for the fork whose policy branches on it.
+ * **`scope` is an open struct.** `{ ownership?, tier?, requires?, org? }`,
+ * every member optional, `{}` meaning "the default view". #367 supplies
+ * `ownership`, #366 supplies `tier`, §135 supplies `requires`, §106 supplies
+ * `org` — each without changing a signature. The guards populate `org` (the
+ * entered org), `tier` (`'org'` on a surface that declares it, §111 t-810 —
+ * see `lib/auth/admin-tier.ts`) and `requires` (the switch such a surface
+ * needs, t-1034); `ownership` is still carried for the fork whose policy
+ * branches on it.
  *
  * **`subjectScope` returns `{}` for the unrestricted case, not a wildcard.**
  * `{ userId }` narrows to one subject; `{}` — no `userId` key at all — is every
@@ -127,6 +129,7 @@ import { isMultiTenant } from '@/lib/tenancy/context';
 import { createAppInitGate } from '@/lib/fork-init';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
 import { namedAdminTier } from '@/lib/auth/org-tier-admin-pages';
+import { orgHasSwitch } from '@/lib/tenancy/entitlements';
 
 /**
  * The ownership axis of #367: over whose data, within one tenant.
@@ -160,6 +163,20 @@ export interface AuthorizationScope {
    * safe failure.
    */
   tier?: string;
+  /**
+   * §135's switch input (t-1034): the entitlement switch the surface being
+   * used requires, by key (`lib/tenancy/entitlements.ts`).
+   *
+   * Absent ⇒ the surface requires none, and the policy answers as it did
+   * before switches existed. Passed only beside a `tier`: the guard from a
+   * route declared `withAdminAuth(…, { tier, requires })`, the admin layout
+   * from a page registered with `{ requires }`, and the layout's reach from
+   * each registered switch, for the sidebar and the gate. The default policy
+   * refuses an org admin or tier holder whose org lacks it, and does not
+   * limit a platform admin. A policy that ignores this key opens surfaces to
+   * orgs that lack the switch, so a fork's own policy should read it.
+   */
+  requires?: string;
   /** §106's org input. Absent ⇒ no org in context. */
   org?: string;
 }
@@ -615,8 +632,27 @@ async function administersOrgTier(
 }
 
 /**
+ * Whether the org this principal acts in has the switch the surface requires
+ * (§135 t-1034). True when the surface requires none, so a surface that
+ * declares no `requires` answers exactly as before. Asked only of a caller
+ * the org or tier arm already admitted: a platform admin is not limited by
+ * switches (the planning ruling), and nobody else gets this far. A principal
+ * with no org has no switches. A failed read throws, and the policy's caller
+ * refuses and logs it, so a switch that cannot be read opens nothing.
+ */
+async function orgHasRequiredSwitch(
+  viewer: AuthorizationPrincipal,
+  scope: AuthorizationScope
+): Promise<boolean> {
+  if (scope.requires === undefined) return true;
+  if (!viewer.orgId) return false;
+  return orgHasSwitch(viewer.orgId, scope.requires);
+}
+
+/**
  * Sunrise's own policy: what the guards did before this module existed, plus
- * the org arm (§106) and the tier arm (§111, with named tiers from t-999).
+ * the org arm (§106), the tier arm (§111, with named tiers from t-999) and the
+ * switch a surface requires (§135 t-1034), which narrows the two org arms.
  *
  * Platform admin administers everything and reads everyone; an org
  * OWNER/ADMIN administers the org-tier surfaces of the org they act in (see
@@ -635,8 +671,8 @@ async function administersOrgTier(
 export const DEFAULT_AUTHORIZATION_POLICY: AuthorizationPolicy = {
   canAdminister: async (viewer, resource, scope) =>
     administersEverything(viewer) ||
-    administersOrgOf(viewer, resource) ||
-    (await administersOrgTier(viewer, resource, scope)),
+    ((administersOrgOf(viewer, resource) || (await administersOrgTier(viewer, resource, scope))) &&
+      (await orgHasRequiredSwitch(viewer, scope))),
 
   canRead: (viewer, target) => {
     switch (target.kind) {

@@ -52,8 +52,10 @@ import {
 } from '@/lib/admin-nav/registry';
 import { initAppNav } from '@/lib/app/admin-nav';
 import {
+  adminPageRequirementOf,
   adminPageTierOf,
   reachesTier,
+  type AdminPageRequirement,
   type AdminReach,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
@@ -464,6 +466,12 @@ interface AdminSidebarProps {
    */
   namedTierPages?: readonly NamedTierAdminPage[];
   /**
+   * The switch each of the fork's pages requires (§135 t-1034), as the layout
+   * read them. An item is hidden when its page, or the item itself, requires
+   * a switch the viewer's org lacks. Empty unless a page declared `requires`.
+   */
+  pageRequirements?: readonly AdminPageRequirement[];
+  /**
    * The install runs `TENANCY_MODE=multi`. Items that only mean something
    * with more than one org (`MULTI_TENANT_ONLY`) are hidden otherwise, so the
    * console at `single` is what it was before them.
@@ -619,25 +627,31 @@ function injectBadges(
  * with a tier they hold whose page is listed in a tier they hold, and the
  * subgroups and sections that still hold one. For an org admin that is the
  * items marked `tier: 'org'` over org-tier pages, as before t-999; for a holder
- * of a fork's named tier, the items and pages declared for it. A platform
- * viewer gets the same array back, untouched.
+ * of a fork's named tier, the items and pages declared for it. An item whose
+ * page, or which itself, requires an entitlement switch is kept only where the
+ * reach records the viewer's org meeting it (§135 t-1034). A platform viewer
+ * gets the same array back, untouched.
  */
 export function sectionsForViewer(
   sections: NavSection[],
   reach: AdminReach,
   orgTierPages: readonly string[],
-  namedTierPages: readonly NamedTierAdminPage[] = []
+  namedTierPages: readonly NamedTierAdminPage[] = [],
+  pageRequirements: readonly AdminPageRequirement[] = []
 ): NavSection[] {
   if (reach === 'platform') return sections;
   const reachable = (items: NavItem[]) =>
-    items.filter(
-      (item) =>
-        reachesTier(reach, item.tier) &&
+    items.filter((item) => {
+      const page = item.href.split(/[?#]/)[0];
+      return (
+        reachesTier(reach, item.tier, item.requires) &&
         reachesTier(
           reach,
-          adminPageTierOf(item.href.split(/[?#]/)[0], orgTierPages, namedTierPages)
+          adminPageTierOf(page, orgTierPages, namedTierPages),
+          adminPageRequirementOf(page, orgTierPages, pageRequirements)
         )
-    );
+      );
+    });
   return sections.flatMap((section) => {
     const items = section.items ? reachable(section.items) : undefined;
     const subgroups = section.subgroups
@@ -656,12 +670,15 @@ export function sectionsForViewer(
 
 /** The default for {@link AdminSidebarProps.namedTierPages}: one array, so the memo below is not rebuilt each render. */
 const NO_NAMED_TIER_PAGES: readonly NamedTierAdminPage[] = Object.freeze([]);
+/** The default for {@link AdminSidebarProps.pageRequirements}, for the same reason. */
+const NO_PAGE_REQUIREMENTS: readonly AdminPageRequirement[] = Object.freeze([]);
 
 export function AdminSidebar({
   className,
   reach,
   orgTierPages,
   namedTierPages = NO_NAMED_TIER_PAGES,
+  pageRequirements = NO_PAGE_REQUIREMENTS,
   multiTenant = false,
   waitlistEnabled = false,
 }: AdminSidebarProps) {
@@ -683,7 +700,8 @@ export function AdminSidebar({
           ),
           reach,
           orgTierPages,
-          namedTierPages
+          namedTierPages,
+          pageRequirements
         ),
         {
           '/admin/orchestration/approvals': approvalCount,
@@ -696,6 +714,7 @@ export function AdminSidebar({
       reach,
       orgTierPages,
       namedTierPages,
+      pageRequirements,
       multiTenant,
       waitlistEnabled,
     ]

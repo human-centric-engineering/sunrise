@@ -49,6 +49,7 @@ import {
   subjectScope,
   type AuthorizationPrincipal,
   type AuthorizationResource,
+  type AuthorizationScope,
   type SubjectFilter,
 } from '@/lib/auth/authorization';
 import { resolveUnattributedReads, type UnattributedReads } from '@/lib/auth/orphan-reads';
@@ -75,6 +76,7 @@ import {
   SHARED_SETTINGS_REFUSAL,
   SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
+import { SWITCH_REQUIRED_REASON, switchRequiredMessage } from '@/lib/tenancy/entitlements';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -429,6 +431,21 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
    * nobody. Listed like an `'org'` route, in `lib/app/admin-tier-routes.ts`.
    */
   tier?: DeclaredAdminTier;
+  /**
+   * The entitlement switch this route needs (§135 t-1034), by its key in
+   * `lib/tenancy/entitlements.ts`. Passed to the policy as `scope.requires`
+   * beside `tier`, where the default policy refuses an org admin or tier
+   * holder whose org lacks it; a platform admin is not limited by it. A
+   * refusal for that reason answers 403 naming the switch by its label, with
+   * `details.reason: 'entitlement_required'`.
+   *
+   * Only beside a `tier`: a platform-tier route admits platform admins alone,
+   * whom switches do not limit, so there it means nothing and is not passed,
+   * and the roster test fails on it. So does one naming a switch the app does
+   * not register, which no org has. Mark the route's page and nav item with
+   * the same `requires`, so the menu, the page and the route agree.
+   */
+  requires?: string;
 }
 
 /**
@@ -440,13 +457,17 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
  */
 function tierScope(
   declared: DeclaredAdminTier | undefined,
+  requires: string | undefined,
   pathname: string | undefined
-): { tier?: DeclaredAdminTier } {
+): { tier?: DeclaredAdminTier; requires?: string } {
   // An undeclared route is the platform's whatever is closed: no need to run
   // the fork's init to learn that.
   if (!declared) return {};
   const tier = effectiveRouteTier(declared, pathname, closedCoreOrgTierSections());
-  return tier ? { tier } : {};
+  if (!tier) return {};
+  // A requirement narrows the tier, so it goes where the tier goes: a route
+  // that is the platform's (undeclared, or in a closed section) carries none.
+  return requires === undefined ? { tier } : { tier, requires };
 }
 
 /**
@@ -1415,13 +1436,15 @@ export function withAdminAuth(
         // resolver that named nothing, or a policy that refused — neither of which
         // is a missing scope, and telling an operator debugging safe mode to go
         // and look at their key would send them to the one place that is fine.
-        if (
-          resource === UNRESOLVED ||
-          !(await canAdminister(principal, resource, {
-            ...orgScope(entry),
-            ...tierScope(options?.tier, (request as NextRequest).nextUrl?.pathname),
-          }))
-        ) {
+        const scope: AuthorizationScope = {
+          ...orgScope(entry),
+          ...tierScope(
+            options?.tier,
+            options?.requires,
+            (request as NextRequest).nextUrl?.pathname
+          ),
+        };
+        if (resource === UNRESOLVED || !(await canAdminister(principal, resource, scope))) {
           // Same reason as the `canRead` refusal above: the guard owns the
           // decision, so it owns the record of refusing.
           logger.warn('authorization: canAdminister refused a request', {
@@ -1430,7 +1453,24 @@ export function withAdminAuth(
             resourceId: resource === UNRESOLVED ? undefined : resource?.id,
             userId: principal.userId,
             credential: principal.credential,
+            requires: scope.requires,
           });
+          // Named only when the switch is the reason (§135 t-1034): the policy
+          // would have admitted this caller without it. Asked again on the
+          // refusal path alone, so an admitted request pays nothing, and asked
+          // of the policy rather than worked out here, so a fork's policy that
+          // reads `requires` its own way is described by its own answer. A
+          // caller refused for any other reason gets the ordinary refusal,
+          // and learns nothing about the org's switches.
+          if (resource !== UNRESOLVED && scope.requires !== undefined) {
+            const { requires: required, ...withoutSwitch } = scope;
+            if (await canAdminister(principal, resource, withoutSwitch)) {
+              throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
+                reason: SWITCH_REQUIRED_REASON,
+                requires: required,
+              });
+            }
+          }
           throw new ForbiddenError('Admin access required');
         }
 

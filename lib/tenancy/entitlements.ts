@@ -20,8 +20,10 @@
  *
  * **What it does not do.** Nothing here refuses a request. Requiring a switch
  * on a page, route or menu item is the admin-tier declaration's job (§135
- * t-1034), read by the authorization policy so menus and routes agree. A
- * platform admin is not limited by switches.
+ * t-1034): `requires` beside `tier`, handed to the authorization policy as
+ * `scope.requires`, so menus, pages and routes agree. A platform admin is not
+ * limited by switches. What a refusal says is here
+ * ({@link switchRequiredMessage}), so every surface says it the same way.
  *
  * **Registration is synchronous and runs lazily** before the first read, in
  * whichever realm reads first (`platform.seam-realm`), through the shared
@@ -271,6 +273,22 @@ export async function setOrgSwitches(
     },
     db
   );
+}
+
+/**
+ * `details.reason` on the 403 a route answers when the caller's org lacks the
+ * switch it requires (t-1034), so a client can tell it from any other refusal.
+ */
+export const SWITCH_REQUIRED_REASON = 'entitlement_required';
+
+/**
+ * What a refusal for a missing switch says: the switch by its label, and who
+ * can change it (`HB10`). A key no app registers is named as itself, since it
+ * has no label; no org has it, so the refusal is still true.
+ */
+export function switchRequiredMessage(key: string): string {
+  const label = registeredEntitlementSwitches().find((s) => s.key === key)?.label ?? key;
+  return `Your organisation does not have ${label}. Ask whoever manages your organisation's account to switch it on.`;
 }
 
 /** Test-only: clear the registry and re-arm the one-shot app init. */

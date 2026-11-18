@@ -18,8 +18,14 @@ import { SupportBanner } from '@/components/admin/support-banner';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
-import { ADMIN_PATHNAME_HEADER, adminPageTierOf, reachesAdminPage } from '@/lib/auth/admin-tier';
 import {
+  ADMIN_PATHNAME_HEADER,
+  adminPageRequirementOf,
+  adminPageTierOf,
+  reachesAdminPage,
+} from '@/lib/auth/admin-tier';
+import {
+  adminPageRequirements,
   namedTierAdminPages,
   orgScopedAdminPages,
   orgTierAdminPages,
@@ -83,7 +89,9 @@ export default async function AdminLayout({
   // routes for every admitted caller. One difference is deliberate: where a
   // guard refuses a session whose org entry is refused, this asks with no org
   // facts, so a platform admin still reaches the console to switch org — see
-  // `lib/auth/session-principal.ts`.
+  // `lib/auth/session-principal.ts`. A page registered with `requires`
+  // (§135 t-1034) opens only where the reach records the policy admitting
+  // the viewer to that tier with that switch as `scope.requires`.
   //
   // This runs on a full load only — Next.js does not re-render a layout on
   // in-app navigation — so `AdminTierGate` below re-checks each navigation
@@ -94,8 +102,16 @@ export default async function AdminLayout({
   const pathname = requestHeaders.get(ADMIN_PATHNAME_HEADER);
   const orgTierPages = orgTierAdminPages();
   const namedTierPages = namedTierAdminPages();
+  const pageRequirements = adminPageRequirements();
   const reach = await requestAdminReach();
-  if (!reachesAdminPage(reach, pathname, adminPageTierOf(pathname, orgTierPages, namedTierPages))) {
+  if (
+    !reachesAdminPage(
+      reach,
+      pathname,
+      adminPageTierOf(pathname, orgTierPages, namedTierPages),
+      adminPageRequirementOf(pathname, orgTierPages, pageRequirements)
+    )
+  ) {
     redirect(AUTH_LANDING_ROUTE);
   }
 
@@ -135,6 +151,7 @@ export default async function AdminLayout({
           multiTenant={multiTenant}
           orgTierPages={orgTierPages}
           namedTierPages={namedTierPages}
+          pageRequirements={pageRequirements}
           waitlistEnabled={isWaitlistEnabled()}
         />
         <div className="flex flex-1 flex-col overflow-hidden">
@@ -159,6 +176,7 @@ export default async function AdminLayout({
                   reach={reach}
                   orgTierPages={orgTierPages}
                   namedTierPages={namedTierPages}
+                  pageRequirements={pageRequirements}
                 >
                   {children}
                 </AdminTierGate>
