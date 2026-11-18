@@ -68,21 +68,39 @@ describe('what each state says', () => {
     ['not_approved', 'Not in use: provider not approved', /not approved to use Anthropic.*refused/],
     ['will_not_open', 'Not in use: key unreadable', /can no longer be read.*Save the key again/],
   ])('state %s: badge and sentence', (state, badge, sentence) => {
-    render(<ProviderKeysList orgId={ORG} providers={[row(state)]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row(state)]}
+        canSave
+      />
+    );
 
     expect(screen.getByText(badge)).toBeInTheDocument();
     expect(screen.getByText(sentence)).toBeInTheDocument();
   });
 
   it('shows the saved key’s last four characters, and who saved it', () => {
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave
+      />
+    );
 
     expect(screen.getByText('…wxyz')).toBeInTheDocument();
     expect(screen.getByText(/by Ada Admin/)).toBeInTheDocument();
   });
 
   it('says so when the org is approved for no provider that takes a key', () => {
-    render(<ProviderKeysList orgId={ORG} providers={[]} canSave />);
+    render(
+      <ProviderKeysList canChange masterKeyMissing={false} orgId={ORG} providers={[]} canSave />
+    );
 
     expect(screen.getByText(/not approved for any provider/)).toBeInTheDocument();
   });
@@ -90,7 +108,15 @@ describe('what each state says', () => {
 
 describe('which actions are offered', () => {
   it('offers adding a key where none is saved, and nothing else', () => {
-    render(<ProviderKeysList orgId={ORG} providers={[row(null)]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row(null)]}
+        canSave
+      />
+    );
 
     expect(screen.getByRole('button', { name: 'Add your own key' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Test key/ })).not.toBeInTheDocument();
@@ -98,7 +124,15 @@ describe('which actions are offered', () => {
   });
 
   it('offers replace, test and remove on a saved key', () => {
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave
+      />
+    );
 
     expect(screen.getByRole('button', { name: 'Replace key' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Test key/ })).toBeInTheDocument();
@@ -106,7 +140,15 @@ describe('which actions are offered', () => {
   });
 
   it('offers no saving where saving is blocked, and keeps test and remove', () => {
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave={false} />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave={false}
+      />
+    );
 
     expect(screen.queryByRole('button', { name: 'Replace key' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Test key/ })).toBeInTheDocument();
@@ -116,6 +158,8 @@ describe('which actions are offered', () => {
   it('offers only removal on a key for a provider the org is not approved for', () => {
     render(
       <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
         orgId={ORG}
         providers={[row('not_approved', { approved: false })]}
         canSave
@@ -130,6 +174,8 @@ describe('which actions are offered', () => {
   it('offers only removal on a key for a provider that has been switched off or made local', () => {
     render(
       <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
         orgId={ORG}
         providers={[row('provider_off', { takesKey: false })]}
         canSave
@@ -143,7 +189,15 @@ describe('which actions are offered', () => {
 
   it('opens the save form for that provider', async () => {
     const user = userEvent.setup();
-    render(<ProviderKeysList orgId={ORG} providers={[row(null)]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row(null)]}
+        canSave
+      />
+    );
 
     await user.click(screen.getByRole('button', { name: 'Add your own key' }));
 
@@ -159,7 +213,15 @@ describe('testing a saved key', () => {
   it('posts the test and says the vendor accepted the key', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.post).mockResolvedValue({ ok: true });
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave
+      />
+    );
 
     await user.click(screen.getByRole('button', { name: /Test key/ }));
 
@@ -177,7 +239,15 @@ describe('testing a saved key', () => {
   ])('says what a failed test (%s) means', async (reason, sentence) => {
     const user = userEvent.setup();
     vi.mocked(apiClient.post).mockResolvedValue({ ok: false, reason });
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave
+      />
+    );
 
     await user.click(screen.getByRole('button', { name: /Test key/ }));
 
@@ -190,7 +260,15 @@ describe('testing a saved key', () => {
     vi.mocked(apiClient.post).mockRejectedValue(
       new APIClientError('Too many requests', 'RATE_LIMIT_EXCEEDED', 429)
     );
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave
+      />
+    );
 
     await user.click(screen.getByRole('button', { name: /Test key/ }));
 
@@ -202,11 +280,19 @@ describe('removing a key', () => {
   it('confirms, deletes and refreshes, saying calls go back to the platform’s key', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.delete).mockResolvedValue(undefined);
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave
+      />
+    );
 
     await user.click(screen.getByRole('button', { name: /Remove key/ }));
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent(/go back to the platform's key/);
+    expect(dialog).toHaveTextContent(/Within a minute.*go back to the platform's key/);
     await user.click(within(dialog).getByRole('button', { name: 'Remove key' }));
 
     await waitFor(() =>
@@ -219,6 +305,8 @@ describe('removing a key', () => {
     const user = userEvent.setup();
     render(
       <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
         orgId={ORG}
         providers={[row('not_approved', { approved: false })]}
         canSave
@@ -235,7 +323,15 @@ describe('removing a key', () => {
     vi.mocked(apiClient.delete).mockRejectedValue(
       new APIClientError('Access denied', 'FORBIDDEN', 403)
     );
-    render(<ProviderKeysList orgId={ORG} providers={[row('in_use')]} canSave />);
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave
+      />
+    );
 
     await user.click(screen.getByRole('button', { name: /Remove key/ }));
     const dialog = await screen.findByRole('alertdialog');
@@ -246,10 +342,67 @@ describe('removing a key', () => {
   });
 });
 
+describe('a read-only support session, and no master key', () => {
+  it('offers neither test, replace nor remove when nothing can be changed', () => {
+    render(
+      <ProviderKeysList
+        orgId={ORG}
+        providers={[row('in_use')]}
+        canSave={false}
+        canChange={false}
+        masterKeyMissing={false}
+      />
+    );
+
+    expect(screen.getByText('…wxyz')).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('tells the admin platform staff must fix an unreadable key when no master key is configured', () => {
+    render(
+      <ProviderKeysList
+        orgId={ORG}
+        providers={[row('will_not_open')]}
+        canSave={false}
+        canChange
+        masterKeyMissing
+      />
+    );
+
+    expect(
+      screen.getByText(/nowhere to keep keys safely.*Platform staff need to configure it/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Save the key again/)).not.toBeInTheDocument();
+  });
+
+  it('says calls stay refused when removing a key for a provider that has been switched off', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row('provider_off', { takesKey: false })]}
+        canSave
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /Remove key/ }));
+
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(/stay refused/);
+  });
+});
+
 describe('a card with nothing to offer', () => {
   it('draws no empty body when there is no key and saving is blocked', () => {
     const { container } = render(
-      <ProviderKeysList orgId={ORG} providers={[row(null)]} canSave={false} />
+      <ProviderKeysList
+        canChange
+        masterKeyMissing={false}
+        orgId={ORG}
+        providers={[row(null)]}
+        canSave={false}
+      />
     );
 
     expect(screen.getByText(/use the platform’s key/)).toBeInTheDocument();

@@ -105,8 +105,8 @@ export function ProviderKeyForm({
             </p>
             {replaces && (
               <p className="mt-2">
-                Saving replaces the current key straight away. Use this when a key has leaked or you
-                are moving to a new one.
+                Saving replaces the current key: this organisation&apos;s calls use the new key
+                within a minute. Use this when a key has leaked or you are moving to a new one.
               </p>
             )}
           </FieldHelp>

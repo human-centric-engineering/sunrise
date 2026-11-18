@@ -793,9 +793,12 @@ export async function testProvider(slugOrName: string): Promise<ProviderTestResu
  *
  * The client is built for this call alone and never cached, so a key that
  * fails is never held by the manager, and a key that passes is not used for
- * anything else until it is saved. No prompt is sent, so neither the call-time
- * gate nor the spend caps are asked; the caller decides whether the org may
- * use the provider at all.
+ * anything else until it is saved. No user content is sent, so neither the
+ * call-time gate nor the spend caps are asked; the caller decides whether the
+ * org may use the provider at all. The Anthropic check is a billed message,
+ * one token on the fixed ping model, so a key whose workspace cannot use that
+ * model fails it. A host that answers its model list without checking the key
+ * passes any key: the test proves the key only as far as that call does.
  *
  * The result's `error` is the vendor's own message, which can repeat part of
  * the key: never send it to the browser, and remove the key before logging it.

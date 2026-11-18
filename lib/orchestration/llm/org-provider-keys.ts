@@ -69,7 +69,7 @@ import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { openSecret, SealedSecretOpenError, sealSecret } from '@/lib/security/sealed-secrets';
 import type { SealedStore, SealedValue } from '@/lib/security/sealed-stores';
 import { isMultiTenant, requireTenantContext, runAsSystem } from '@/lib/tenancy/context';
-import { KEY_CONTROL_CHARACTER, PROVIDER_KEY_MAX_LENGTH } from '@/lib/validations/tenancy';
+import { KEY_DISALLOWED_CHARACTER, PROVIDER_KEY_MAX_LENGTH } from '@/lib/validations/tenancy';
 
 /** How long a looked-up key row answers before it is read again. */
 export const ORG_PROVIDER_KEY_TTL_MS = 60_000;
@@ -390,7 +390,7 @@ function writingOrg(): string {
  * the switch on. Validation of what a person typed is the caller's; this
  * refuses only what can never be a key.
  *
- * @throws when the key is empty, has surrounding spaces or is too long; when
+ * @throws when the key is empty, too long, or holds anything but printable ASCII; when
  *   no master key is configured (`SealedSecretKeyMissingError`); or when no
  *   org is in scope.
  */
@@ -402,27 +402,39 @@ export async function saveOrgProviderKey(input: {
   const { providerConfigId, apiKey, savedById } = input;
   if (
     apiKey.length === 0 ||
-    apiKey.trim() !== apiKey ||
     apiKey.length > ORG_PROVIDER_KEY_MAX_LENGTH ||
-    // A line break or other control character (a wrapped paste) can never be
-    // sent as a header value, so every call would fail at the vendor client.
-    KEY_CONTROL_CHARACTER.test(apiKey)
+    // Anything but printable ASCII (a space, a wrapped paste's line break, a
+    // zero-width space): no vendor key has one, and most cannot be sent as a
+    // header value, so every call would fail at the vendor client.
+    KEY_DISALLOWED_CHARACTER.test(apiKey)
   ) {
     throw new Error(
-      `An org's provider key must be 1–${ORG_PROVIDER_KEY_MAX_LENGTH} characters with no surrounding spaces or control characters.`
+      `An org's provider key must be 1–${ORG_PROVIDER_KEY_MAX_LENGTH} printable ASCII characters with no spaces.`
     );
   }
   const orgId = writingOrg();
   const sealedKey = await sealSecret(apiKey, orgProviderKeyPurpose(orgId, providerConfigId));
   const hint = orgProviderKeyHint(apiKey);
   const savedAt = new Date();
-  try {
-    return await prisma.aiOrgProviderKey.upsert({
+  const write = () =>
+    prisma.aiOrgProviderKey.upsert({
       where: { orgId_providerConfigId: { orgId, providerConfigId } },
       create: { orgId, providerConfigId, sealedKey, hint, savedById, savedAt },
       update: { sealedKey, hint, savedById, savedAt, version: { increment: 1 } },
       select: ORG_PROVIDER_KEY_SUMMARY_SELECT,
     });
+  try {
+    try {
+      return await write();
+    } catch (err) {
+      // Two first saves at once both take the create branch, and the loser
+      // hits the unique key. Once more takes the update branch: the later
+      // save replaces the earlier, as it would have a moment later.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return await write();
+      }
+      throw err;
+    }
   } finally {
     // Also on a failed write: whatever the row now holds is read fresh.
     forgetOrgProviderKey(orgId, providerConfigId);

@@ -69,7 +69,7 @@ release process.
   limiter, `providerKeyTestLimiter` (10 a minute per org,
   `RATE_LIMIT_PROVIDER_KEY_TEST`). The provider manager gains
   `testProviderKey(config, apiKey)`, which tests a key on a client it never
-  caches. See
+  caches. Every verb answers 409 `single_tenant` at `single`. See
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#the-orgs-page-and-api-137-t-1045).
   _Fork impact:_ `provider-keys` joins `CORE_ADMIN_SECTIONS`, so a fork page
   registered under `/admin/provider-keys` is now refused at init. A fork policy

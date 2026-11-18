@@ -47,9 +47,19 @@ export interface ProviderKeysListProps {
   providers: ProviderKeyRow[];
   /** Whether the viewer may save a key here (the API's `saveBlocked` is null). */
   canSave: boolean;
+  /** Whether the viewer may test or remove a key: not in a READ_ONLY support session. */
+  canChange: boolean;
+  /** No master key is configured, so no saved key opens. */
+  masterKeyMissing: boolean;
 }
 
-export function ProviderKeysList({ orgId, providers, canSave }: ProviderKeysListProps) {
+export function ProviderKeysList({
+  orgId,
+  providers,
+  canSave,
+  canChange,
+  masterKeyMissing,
+}: ProviderKeysListProps) {
   const router = useRouter();
   const [removing, setRemoving] = useState<ProviderKeyRow | null>(null);
   const [busy, setBusy] = useState(false);
@@ -96,6 +106,8 @@ export function ProviderKeysList({ orgId, providers, canSave }: ProviderKeysList
           orgId={orgId}
           row={row}
           canSave={canSave && row.approved && row.takesKey}
+          canChange={canChange}
+          masterKeyMissing={masterKeyMissing}
           disabled={busy}
           onRemove={() => setRemoving(row)}
         />
@@ -106,10 +118,7 @@ export function ProviderKeysList({ orgId, providers, canSave }: ProviderKeysList
           <AlertDialogHeader>
             <AlertDialogTitle>Remove the {removing?.name} key</AlertDialogTitle>
             <AlertDialogDescription>
-              {removing?.approved
-                ? `This organisation's calls to ${removing.name} go back to the platform's key straight away.`
-                : `This organisation is not approved for ${removing?.name ?? 'this provider'}, so its calls to it stay refused.`}{' '}
-              The key is deleted: to use it again, save it again.
+              {removeConsequence(removing)} The key is deleted: to use it again, save it again.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <SaveError failure={removeSave.failure} />
@@ -132,17 +141,42 @@ export function ProviderKeysList({ orgId, providers, canSave }: ProviderKeysList
   );
 }
 
+/**
+ * What removing a key does to the org's calls. "Within a minute", not "now":
+ * another server process can keep the old answer for up to a minute.
+ */
+function removeConsequence(row: ProviderKeyRow | null): string {
+  if (!row) return '';
+  if (!row.takesKey) {
+    return `${row.name} is not available to this organisation's calls with any key, so they stay refused.`;
+  }
+  if (!row.approved) {
+    return `This organisation is not approved for ${row.name}, so its calls to it stay refused.`;
+  }
+  return `Within a minute, this organisation's calls to ${row.name} go back to the platform's key.`;
+}
+
 interface ProviderKeyCardProps {
   orgId: string;
   row: ProviderKeyRow;
   canSave: boolean;
+  canChange: boolean;
+  masterKeyMissing: boolean;
   disabled: boolean;
   onRemove: () => void;
 }
 
 type TestOutcome = { ok: true } | { ok: false; reason: 'test_failed' | 'will_not_open' };
 
-function ProviderKeyCard({ orgId, row, canSave, disabled, onRemove }: ProviderKeyCardProps) {
+function ProviderKeyCard({
+  orgId,
+  row,
+  canSave,
+  canChange,
+  masterKeyMissing,
+  disabled,
+  onRemove,
+}: ProviderKeyCardProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -184,7 +218,7 @@ function ProviderKeyCard({ orgId, row, canSave, disabled, onRemove }: ProviderKe
             {badge.label}
           </Badge>
         </div>
-        <CardDescription>{stateSentence(row)}</CardDescription>
+        <CardDescription>{stateSentence(row, { masterKeyMissing })}</CardDescription>
       </CardHeader>
       {/* Nothing to show or do: no key, and saving is not offered here. */}
       {(row.key || canSave) && (
@@ -226,7 +260,7 @@ function ProviderKeyCard({ orgId, row, canSave, disabled, onRemove }: ProviderKe
                   {row.key ? 'Replace key' : 'Add your own key'}
                 </Button>
               )}
-              {row.key && row.approved && row.takesKey && (
+              {canChange && row.key && row.approved && row.takesKey && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -237,7 +271,7 @@ function ProviderKeyCard({ orgId, row, canSave, disabled, onRemove }: ProviderKe
                   {testing ? 'Testing…' : 'Test key'}
                 </Button>
               )}
-              {row.key && (
+              {canChange && row.key && (
                 <Button size="sm" variant="outline" disabled={disabled} onClick={onRemove}>
                   <Trash2 className="mr-2 h-4 w-4" />
                   Remove key

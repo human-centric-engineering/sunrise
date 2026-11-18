@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { ProviderKeysList } from '@/components/admin/provider-keys/provider-keys-list';
 import {
+  READ_ONLY_SENTENCE,
   SAVE_BLOCKED_SENTENCE,
   type ProviderKeyRow,
   type ProviderKeySaveBlocked,
@@ -18,8 +19,8 @@ export const metadata: Metadata = {
 };
 
 interface ProviderKeysData {
-  switchedOn: boolean;
   saveBlocked: ProviderKeySaveBlocked | null;
+  readOnly: boolean;
   providers: ProviderKeyRow[];
 }
 
@@ -76,15 +77,23 @@ export default async function ProviderKeysPage() {
         </p>
       ) : (
         <>
-          {data.saveBlocked && (
+          {data.readOnly ? (
             <p role="note" className="rounded-md border p-3 text-sm">
-              {SAVE_BLOCKED_SENTENCE[data.saveBlocked]}
+              {READ_ONLY_SENTENCE}
             </p>
+          ) : (
+            data.saveBlocked && (
+              <p role="note" className="rounded-md border p-3 text-sm">
+                {SAVE_BLOCKED_SENTENCE[data.saveBlocked]}
+              </p>
+            )
           )}
           <ProviderKeysList
             orgId={org.id}
             providers={data.providers}
-            canSave={data.saveBlocked === null}
+            canSave={data.saveBlocked === null && !data.readOnly}
+            canChange={!data.readOnly}
+            masterKeyMissing={data.saveBlocked === 'master_key_missing'}
           />
         </>
       )}

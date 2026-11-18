@@ -57,9 +57,9 @@ const PROVIDERS = [
   },
 ];
 
-function keysAre(saveBlocked: string | null, switchedOn = saveBlocked !== 'switched_off') {
+function keysAre(saveBlocked: string | null, readOnly = false) {
   vi.mocked(serverFetch).mockResolvedValue(
-    apiSuccess({ orgId: ORG.id, switchedOn, saveBlocked, providers: PROVIDERS })
+    apiSuccess({ orgId: ORG.id, saveBlocked, readOnly, providers: PROVIDERS })
   );
 }
 
@@ -77,7 +77,13 @@ describe('ProviderKeysPage', () => {
 
     expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe('/api/v1/orgs/org-entered/provider-keys');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('AI keys for Acme');
-    expect(listProps).toHaveBeenCalledWith({ orgId: ORG.id, providers: PROVIDERS, canSave: true });
+    expect(listProps).toHaveBeenCalledWith({
+      orgId: ORG.id,
+      providers: PROVIDERS,
+      canSave: true,
+      canChange: true,
+      masterKeyMissing: false,
+    });
     expect(screen.queryByRole('note')).not.toBeInTheDocument();
   });
 
@@ -92,6 +98,25 @@ describe('ProviderKeysPage', () => {
 
     expect(screen.getByRole('note')).toHaveTextContent(sentence);
     expect(listProps).toHaveBeenCalledWith(expect.objectContaining({ canSave: false }));
+  });
+
+  it('tells a read-only support session it can change nothing, and lets it change nothing', async () => {
+    keysAre('support_session', true);
+
+    render(await ProviderKeysPage());
+
+    expect(screen.getByRole('note')).toHaveTextContent(/read-only.*not test, replace or remove/);
+    expect(listProps).toHaveBeenCalledWith(
+      expect.objectContaining({ canSave: false, canChange: false })
+    );
+  });
+
+  it('tells the list when no master key is configured', async () => {
+    keysAre('master_key_missing');
+
+    render(await ProviderKeysPage());
+
+    expect(listProps).toHaveBeenCalledWith(expect.objectContaining({ masterKeyMissing: true }));
   });
 
   it('explains, and fetches nothing, in the install org', async () => {

@@ -47,8 +47,15 @@ export function stateBadge(row: ProviderKeyRow): { label: string; problem: boole
   }
 }
 
-/** What the state means for this organisation's calls to the provider. */
-export function stateSentence(row: ProviderKeyRow): string {
+/**
+ * What the state means for this organisation's calls to the provider.
+ * `masterKeyMissing`: no saved key opens because the platform has no master
+ * key, which saving again cannot fix.
+ */
+export function stateSentence(
+  row: ProviderKeyRow,
+  { masterKeyMissing = false }: { masterKeyMissing?: boolean } = {}
+): string {
   const name = row.name;
   if (!row.key) {
     return `No key saved. This organisation’s calls to ${name} use the platform’s key.`;
@@ -63,7 +70,9 @@ export function stateSentence(row: ProviderKeyRow): string {
     case 'not_approved':
       return `This organisation is not approved to use ${name}, so its calls to ${name} are refused and the key is not used. Platform staff approve providers.`;
     case 'will_not_open':
-      return `The saved key can no longer be read, so this organisation’s calls to ${name} are refused. Save the key again to fix this.`;
+      return masterKeyMissing
+        ? `The saved key cannot be read, because the platform has nowhere to keep keys safely, so this organisation’s calls to ${name} are refused. Platform staff need to configure it.`
+        : `The saved key can no longer be read, so this organisation’s calls to ${name} are refused. Save the key again to fix this.`;
   }
 }
 
@@ -76,6 +85,10 @@ export const SAVE_BLOCKED_SENTENCE: Record<ProviderKeySaveBlocked, string> = {
   support_session:
     'You are working in this organisation as platform support. Support can see and test its keys, and remove one, but cannot save or replace a key.',
 };
+
+/** Why nothing can be changed here: a READ_ONLY support session. */
+export const READ_ONLY_SENTENCE =
+  'Your support access to this organisation is read-only: you can see its keys, but not test, replace or remove them.';
 
 /** What a failed test means, by the reason the test route gives. */
 export function testFailureSentence(name: string, reason: 'test_failed' | 'will_not_open'): string {

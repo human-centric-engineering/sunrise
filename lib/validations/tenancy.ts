@@ -554,17 +554,19 @@ export const providerKeyParamsSchema = z.object({ id: orgIdSchema, providerId: c
 export const PROVIDER_KEY_MAX_LENGTH = 1024;
 
 /**
- * A line break or other control character: never part of a key, and never
- * sendable as a header value. One pattern for the form, the route and the store.
+ * Anything but printable ASCII: a space, a line break, a zero-width space or
+ * any other character pasted in from a document. Vendor keys are printable
+ * ASCII, and a header value cannot carry most of the rest, so a key holding one
+ * would fail at the vendor client as if the vendor had refused it. One
+ * pattern for the form, the route and the store.
  */
-// eslint-disable-next-line no-control-regex -- matching control characters is the point
-export const KEY_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+export const KEY_DISALLOWED_CHARACTER = /[^\x21-\x7e]/;
 
 /**
  * `PUT /api/v1/orgs/[id]/provider-keys/[providerId]` body (§137 t-1045): the
  * key to save, or to replace the saved one with. Surrounding spaces and line
- * breaks from a paste are trimmed; one inside the key is refused, since it can
- * never be sent to the vendor.
+ * breaks from a paste are trimmed; anything inside the key that is not
+ * printable ASCII is refused, since no vendor key has it.
  */
 export const saveProviderKeySchema = z.object({
   apiKey: z
@@ -572,7 +574,7 @@ export const saveProviderKeySchema = z.object({
     .trim()
     .min(1, 'Paste the key')
     .max(PROVIDER_KEY_MAX_LENGTH, `A key is at most ${PROVIDER_KEY_MAX_LENGTH} characters`)
-    .refine((key) => !KEY_CONTROL_CHARACTER.test(key), {
-      message: 'The key contains a line break or other hidden character',
+    .refine((key) => !KEY_DISALLOWED_CHARACTER.test(key), {
+      message: 'The key contains a space, a line break or a hidden character, which no key has',
     }),
 });

@@ -330,8 +330,8 @@ describe('GET — the org’s keys and their state', () => {
     expect(res.status).toBe(200);
     expect(json.data).toEqual({
       orgId: ORG,
-      switchedOn: true,
       saveBlocked: null,
+      readOnly: false,
       providers: [
         {
           providerConfigId: ANTHROPIC.id,
@@ -369,7 +369,6 @@ describe('GET — the org’s keys and their state', () => {
 
     const json = await body(await list());
 
-    expect(json.data.switchedOn).toBe(false);
     expect(json.data.saveBlocked).toBe('switched_off');
     expect(json.data.providers[0].key.state).toBe('switched_off');
   });
@@ -472,6 +471,15 @@ describe('GET — the org’s keys and their state', () => {
     expect(res.status).toBe(200);
     expect(json.data.saveBlocked).toBe('support_session');
     expect(json.data.providers[0].key.state).toBe('in_use');
+    expect(json.data.readOnly).toBe(false);
+  });
+
+  it('marks a read-only support session read-only, so the page offers it nothing to change', async () => {
+    inSupportSession('READ_ONLY');
+
+    const json = await body(await list());
+
+    expect(json.data.readOnly).toBe(true);
   });
 
   it('refuses a MEMBER', async () => {
@@ -694,6 +702,10 @@ describe('PUT — save and replace', () => {
 
     const res = await save(OPENAI.id, 'sk-half\nsk-other-half');
     expect(res.status).toBe(400);
+    // A zero-width space from a rich-text paste is a field error too, never a
+    // vendor call that fails as if the vendor refused the key.
+    expect((await save(OPENAI.id, 'sk-pasted\u200b-key-0000000000')).status).toBe(400);
+    expect(mockTestProviderKey).toHaveBeenCalledTimes(1);
     expect(orgKeyTable.get(ORG, OPENAI.id)).toBeUndefined();
   });
 

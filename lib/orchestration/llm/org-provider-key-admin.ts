@@ -265,9 +265,13 @@ export interface ProviderKeyView {
 export type SaveBlocked = 'switched_off' | 'master_key_missing' | 'support_session' | null;
 
 export interface ProviderKeysView {
-  /** Whether organisations' own keys are switched on for the install. */
-  switchedOn: boolean;
   saveBlocked: SaveBlocked;
+  /**
+   * A READ_ONLY support session: the viewer may see the keys and do nothing
+   * else, since the guard refuses every write under such a grant (test and
+   * remove included).
+   */
+  readOnly: boolean;
   providers: ProviderKeyView[];
 }
 
@@ -339,5 +343,6 @@ export async function providerKeysView(): Promise<ProviderKeysView> {
         ? 'support_session'
         : null;
 
-  return { switchedOn: settings.orgProviderKeysEnabled, saveBlocked, providers };
+  const readOnly = inSupportSession() && getTenantContext()?.support?.level === 'READ_ONLY';
+  return { saveBlocked, readOnly, providers };
 }
