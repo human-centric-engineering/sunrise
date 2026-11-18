@@ -542,3 +542,33 @@ export const listOrgAuditLogQuerySchema = paginationQuerySchema.extend({
     .transform((types) => (types.length > 0 ? types : undefined))
     .optional(),
 });
+
+/** `[id]/provider-keys/[providerId]` segments (§137 t-1045). */
+export const providerKeyParamsSchema = z.object({ id: orgIdSchema, providerId: cuidSchema });
+
+/**
+ * The longest AI key accepted. The same limit as the store's
+ * (`ORG_PROVIDER_KEY_MAX_LENGTH` in `lib/orchestration/llm/org-provider-keys.ts`,
+ * a server module this file cannot import); a test holds the two together.
+ */
+export const PROVIDER_KEY_MAX_LENGTH = 1024;
+
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const KEY_CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+
+/**
+ * `PUT /api/v1/orgs/[id]/provider-keys/[providerId]` body (§137 t-1045): the
+ * key to save, or to replace the saved one with. Surrounding spaces and line
+ * breaks from a paste are trimmed; one inside the key is refused, since it can
+ * never be sent to the vendor.
+ */
+export const saveProviderKeySchema = z.object({
+  apiKey: z
+    .string()
+    .trim()
+    .min(1, 'Paste the key')
+    .max(PROVIDER_KEY_MAX_LENGTH, `A key is at most ${PROVIDER_KEY_MAX_LENGTH} characters`)
+    .refine((key) => !KEY_CONTROL_CHARACTER.test(key), {
+      message: 'The key contains a line break or other hidden character',
+    }),
+});

@@ -483,6 +483,21 @@ export const cleanupRefineLimiter = createRateLimiter({
 });
 
 /**
+ * Rate limiter for saving or testing an org's own AI key (§137 t-1045).
+ * Limit: 10 per minute per org.
+ *
+ * Each save and each test makes one vendor call on the key, and the section
+ * cap would let a script try 100 keys a minute against a vendor through the
+ * page. Keyed per org (`provider-key-test:org:${orgId}`), so several admins of
+ * one org share it.
+ */
+export const providerKeyTestLimiter = createRateLimiter({
+  interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
+  maxRequests: SECURITY_CONSTANTS.RATE_LIMIT.LIMITS.PROVIDER_KEY_TEST,
+  uniqueTokenPerInterval: SECURITY_CONSTANTS.RATE_LIMIT.MAX_UNIQUE_TOKENS,
+});
+
+/**
  * Inbound trigger limiter — 60 requests per minute per (channel + remote IP).
  * Slack can burst on app-mention storms; Postmark inbound is steadier. The
  * limit lives above expected steady traffic but caps runaway loops or

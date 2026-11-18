@@ -23,7 +23,7 @@
  *     `RATE_LIMIT_INVITE` (10), `RATE_LIMIT_CSP_REPORT` (20),
  *     `RATE_LIMIT_CHAT` (20), `RATE_LIMIT_CONSUMER_CHAT` (10),
  *     `RATE_LIMIT_AUDIO` (10), `RATE_LIMIT_EXPORT` (10), `RATE_LIMIT_IMAGE` (20),
- *     `RATE_LIMIT_CLEANUP_REFINE` (12)
+ *     `RATE_LIMIT_CLEANUP_REFINE` (12), `RATE_LIMIT_PROVIDER_KEY_TEST` (10)
  *
  * The `*_INTERVAL` windows are intentionally NOT env-tunable — they encode
  * OWASP-aligned brute-force/abuse windows that shouldn't drift per deployment.
@@ -124,6 +124,13 @@ export const SECURITY_CONSTANTS = {
        * capability dispatcher — gets the same protection.
        */
       CLEANUP_REFINE: envInt('RATE_LIMIT_CLEANUP_REFINE', 12),
+      /**
+       * An org's own AI key, saved or tested (§137 t-1045): 10 per minute per
+       * org (override with `RATE_LIMIT_PROVIDER_KEY_TEST`). Each one makes a
+       * vendor call on the key, so a script cannot use the page to try keys
+       * against a vendor at the section cap's pace.
+       */
+      PROVIDER_KEY_TEST: envInt('RATE_LIMIT_PROVIDER_KEY_TEST', 10),
     },
   },
 

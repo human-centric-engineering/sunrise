@@ -787,6 +787,30 @@ export async function testProvider(slugOrName: string): Promise<ProviderTestResu
 }
 
 /**
+ * Test a key someone is about to save for a provider row (§137 t-1045), with
+ * the row's one cheap connection check: a one-token message for Anthropic, the
+ * model list for every other type.
+ *
+ * The client is built for this call alone and never cached, so a key that
+ * fails is never held by the manager, and a key that passes is not used for
+ * anything else until it is saved. No prompt is sent, so neither the call-time
+ * gate nor the spend caps are asked; the caller decides whether the org may
+ * use the provider at all.
+ *
+ * The result's `error` is the vendor's own message, which can repeat part of
+ * the key: never send it to the browser, and remove the key before logging it.
+ *
+ * @throws ProviderError when no client can be built for the row (an unsafe
+ *   base URL, an unknown provider type).
+ */
+export async function testProviderKey(
+  config: AiProviderConfig,
+  apiKey: string
+): Promise<ProviderTestResult> {
+  return buildProviderFromConfig(config, apiKey).testConnection();
+}
+
+/**
  * Resolve a provider instance, falling back through a list of
  * alternatives if the primary's circuit breaker is open, or if it is paid and
  * a monthly spend cap has been reached (then only a local candidate serves).

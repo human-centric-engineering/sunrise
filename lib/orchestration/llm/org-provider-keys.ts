@@ -280,11 +280,101 @@ export async function resolveOrgProviderKey(
   return { apiKey, identity: orgProviderKeyIdentity(orgId, stored.id, stored.version) };
 }
 
-/** The org a write acts for: the one in scope. A write needs one. */
+/**
+ * What an org's saved key does on its next call, in the order
+ * {@link resolveOrgProviderKey} checks: `in_use`, or the reason it is refused.
+ * The lookup failing is not a state; reading the states fails instead.
+ */
+export type OrgProviderKeyState = 'in_use' | 'switched_off' | 'not_approved' | 'will_not_open';
+
+/** A saved key as the people administering the org see it: the summary and its state. */
+export interface OrgProviderKeyStatus extends OrgProviderKeySummary {
+  state: OrgProviderKeyState;
+}
+
+/**
+ * Every key the org in scope has saved, each with its state (§137 t-1045).
+ * The same checks as the call path, so the page says what the next call will
+ * do: but read fresh rather than from the lookup cache, and the key is opened
+ * only to learn whether it opens. Nothing returned carries it.
+ *
+ * @throws when the keys, the settings or the org's approvals cannot be read.
+ */
+export async function orgProviderKeyStatuses(): Promise<OrgProviderKeyStatus[]> {
+  const orgId = writingOrg();
+  const rows = await prisma.aiOrgProviderKey.findMany({
+    where: { orgId },
+    select: {
+      ...ORG_PROVIDER_KEY_SUMMARY_SELECT,
+      sealedKey: true,
+      providerConfig: { select: { slug: true } },
+    },
+    orderBy: { savedAt: 'asc' },
+  });
+  if (rows.length === 0) return [];
+  const [settings, permitted] = await Promise.all([
+    getOrchestrationSettings(),
+    applyOrgProviderPolicy(rows.map((row) => row.providerConfig.slug)),
+  ]);
+  const approved = new Set(permitted);
+  return Promise.all(
+    rows.map(async ({ sealedKey, providerConfig, ...summary }) => {
+      let state: OrgProviderKeyState = 'in_use';
+      if (!settings.orgProviderKeysEnabled) state = 'switched_off';
+      else if (!approved.has(providerConfig.slug)) state = 'not_approved';
+      else if (!(await opens(sealedKey, orgId, summary.providerConfigId))) state = 'will_not_open';
+      return { ...summary, state };
+    })
+  );
+}
+
+/** Whether a stored envelope opens for this org and row. */
+async function opens(sealedKey: string, orgId: string, providerConfigId: string): Promise<boolean> {
+  try {
+    await openSecret(sealedKey, orgProviderKeyPurpose(orgId, providerConfigId));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The org-in-scope's saved key for a provider row, opened, for the on-demand
+ * test (§137 t-1045): `null` when it has none, and `apiKey: null` when it is
+ * saved but will not open. The key is for a vendor call on the server only;
+ * never return it to a browser or log it.
+ *
+ * @throws when the row cannot be read, or opening fails for any reason but
+ *   the envelope itself (a missing master key is thrown, not reported).
+ */
+export async function openOrgProviderKey(
+  providerConfigId: string
+): Promise<{ apiKey: string | null; summary: OrgProviderKeySummary } | null> {
+  const orgId = writingOrg();
+  const row = await prisma.aiOrgProviderKey.findUnique({
+    where: { orgId_providerConfigId: { orgId, providerConfigId } },
+    select: { ...ORG_PROVIDER_KEY_SUMMARY_SELECT, sealedKey: true },
+  });
+  if (!row) return null;
+  const { sealedKey, ...summary } = row;
+  try {
+    return {
+      apiKey: await openSecret(sealedKey, orgProviderKeyPurpose(orgId, providerConfigId)),
+      summary,
+    };
+  } catch (err) {
+    if (err instanceof SealedSecretOpenError) return { apiKey: null, summary };
+    throw err;
+  }
+}
+
+/** The org a read or write of its own keys acts for: the one in scope. It needs one. */
 function writingOrg(): string {
   const { orgId } = requireTenantContext();
   if (orgId === null) {
-    throw new Error('An org’s own provider key is saved or removed inside that org’s scope.');
+    throw new Error(
+      'An org’s own provider keys are read, saved or removed inside that org’s scope.'
+    );
   }
   return orgId;
 }
