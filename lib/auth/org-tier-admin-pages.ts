@@ -33,6 +33,7 @@ import { createAppInitGate, type AppInitState } from '@/lib/fork-init';
 import { initAppOrgTierAdminPages } from '@/lib/app/admin-tier';
 import {
   ORG_TIER_ADMIN_PAGES,
+  registeredAppAdminPageRequirements,
   registeredAppNamedTierAdminPages,
   registeredAppOrgTierAdminPages,
   registeredClosedCoreOrgTierSections,
@@ -42,6 +43,7 @@ import {
   restoreClosedCoreOrgTierSections,
   restoreNamedAdminTiers,
   withoutClosedSections,
+  type AdminPageRequirement,
   type ClosableCoreOrgTierSection,
   type NamedAdminTier,
   type NamedAdminTierDefinition,
@@ -60,12 +62,13 @@ const appInit = createAppInitGate({
   snapshot: () => ({
     pages: registeredAppOrgTierAdminPages(),
     pageTiers: registeredAppNamedTierAdminPages(),
+    requirements: registeredAppAdminPageRequirements(),
     tiers: registeredNamedAdminTiers(),
     closed: registeredClosedCoreOrgTierSections(),
   }),
-  restore: ({ pages, pageTiers, tiers, closed }) => {
+  restore: ({ pages, pageTiers, requirements, tiers, closed }) => {
     restoreNamedAdminTiers(tiers);
-    restoreAppOrgTierAdminPages(pages, pageTiers);
+    restoreAppOrgTierAdminPages(pages, pageTiers, requirements);
     restoreClosedCoreOrgTierSections(closed);
   },
 });
@@ -136,6 +139,17 @@ export function orgScopedAdminPages(): readonly string[] {
 export function namedTierAdminPages(): readonly NamedTierAdminPage[] {
   appInit.ensure();
   return registeredAppNamedTierAdminPages();
+}
+
+/**
+ * The switch each of the fork's pages requires (§135 t-1034): a subset of
+ * {@link orgTierAdminPages}. Empty unless a page declared `requires`. The
+ * layout hands it to the gate and the sidebar beside that list, so they can
+ * tell which switch a page needs (`adminPageRequirementOf()`).
+ */
+export function adminPageRequirements(): readonly AdminPageRequirement[] {
+  appInit.ensure();
+  return registeredAppAdminPageRequirements();
 }
 
 /** The names of the fork's named tiers (t-999), in registration order: empty unless it registered one. */

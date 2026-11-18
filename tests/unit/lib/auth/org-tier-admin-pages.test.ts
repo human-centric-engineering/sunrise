@@ -27,6 +27,7 @@ import {
 } from '@/lib/auth/admin-tier';
 import {
   __resetAppOrgTierAdminPagesForTests,
+  adminPageRequirements,
   appOrgTierAdminPagesInitState,
   closedCoreOrgTierSections,
   getAppOrgTierAdminPages,
@@ -261,6 +262,39 @@ describe('named tiers (t-999)', () => {
       expect.objectContaining({
         error: expect.stringContaining('register the tier before its pages'),
       })
+    );
+  });
+});
+
+describe('pages that require a switch (t-1034)', () => {
+  it('requires none as shipped', () => {
+    expect(adminPageRequirements()).toEqual([]);
+  });
+
+  it('reads them through the same lazy init', () => {
+    fork.init = () => {
+      registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+      registerOrgTierAdminPage('/admin/reports');
+    };
+    expect(adminPageRequirements()).toEqual([{ pattern: '/admin/leads', requires: 'lead_gen' }]);
+    expect(orgTierAdminPages()).toEqual([
+      ...ORG_TIER_ADMIN_PAGES,
+      '/admin/leads',
+      '/admin/reports',
+    ]);
+  });
+
+  it('rolls a requirement back with its page when the init throws part-way', () => {
+    fork.init = () => {
+      registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+      registerOrgTierAdminPage('/admin/briefs', { requires: 'Lead Gen' });
+    };
+    expect(adminPageRequirements()).toEqual([]);
+    expect(getAppOrgTierAdminPages()).toEqual([]);
+    expect(appOrgTierAdminPagesInitState()).toBe('failed');
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('initAppOrgTierAdminPages threw'),
+      expect.objectContaining({ error: expect.stringContaining('is not a switch key') })
     );
   });
 });

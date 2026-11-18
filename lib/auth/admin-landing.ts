@@ -18,6 +18,13 @@
  * lands on the `landing` their first tier names ({@link heldTierLanding}),
  * held to the same rule against that tier's own pages.
  *
+ * A landing that requires an entitlement switch (§135 t-1034) is used only
+ * for a viewer whose org has it, by the reach the layout already asked the
+ * policy for ({@link SwitchMet}). For anyone else it is passed over, without
+ * a log line, since a landing some orgs cannot open is not a mistake: an org
+ * admin goes to the platform default, and a tier holder to the tier's next
+ * page they can open.
+ *
  * Server only: it reads the roster through `orgTierAdminPages()`, which runs
  * the fork's page init.
  *
@@ -27,16 +34,42 @@
 import { logger } from '@/lib/logging';
 import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
 import {
+  adminPageRequirements,
   namedAdminTier,
   namedAdminTiers,
   namedTierAdminPages,
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
 import {
+  adminPageTierOf,
   isPlainAdminPath,
   type DeclaredAdminTier,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
+
+/**
+ * Whether this viewer's org meets `requires` on a page of `tier`: in
+ * practice `reachesTier(reach, tier, requires)` (t-1034). The default, for a
+ * caller with no viewer to ask, meets none, so a landing that requires a
+ * switch is passed over rather than risked.
+ */
+export type SwitchMet = (tier: DeclaredAdminTier, requires: string) => boolean;
+
+const NO_SWITCH_MET: SwitchMet = () => false;
+
+/**
+ * A test of whether this viewer may land on a page of `tier`, as far as
+ * switches go. The requirements are read once, and looked up by pattern
+ * exactly: a landing is a plain path listed word for word, so no pattern
+ * matching is needed.
+ */
+function switchAllows(met: SwitchMet): (route: string, tier: DeclaredAdminTier) => boolean {
+  const required = new Map(adminPageRequirements().map((r) => [r.pattern, r.requires]));
+  return (route, tier) => {
+    const requires = required.get(route);
+    return requires === undefined || met(tier, requires);
+  };
+}
 
 /** Where a platform admin lands. */
 export const PLATFORM_ADMIN_LANDING = '/admin/overview';
@@ -90,8 +123,13 @@ export function defaultOrgAdminLanding(pages: readonly string[]): string {
     : CLOSED_DEFAULT_ORG_ADMIN_LANDING;
 }
 
-/** Where an org admin lands: the fork's page if they may open it, else the platform default. */
-export function orgAdminLanding(): string {
+/**
+ * Where an org admin lands: the fork's page if they may open it, else the
+ * platform default. A fork's page that requires a switch is theirs only when
+ * `met` says their org has it (t-1034); otherwise they get the default, which
+ * is core's and requires none.
+ */
+export function orgAdminLanding(met: SwitchMet = NO_SWITCH_MET): string {
   const pages = orgTierAdminPages();
   const route = appOrgAdminLandingRoute;
   if (route === null) return defaultOrgAdminLanding(pages);
@@ -100,7 +138,10 @@ export function orgAdminLanding(): string {
     logger.error('admin-landing: ignoring the app org-admin landing', { route, problem });
     return defaultOrgAdminLanding(pages);
   }
-  return route;
+  // Asked of the page's own tier, as the layout asks it: the fork may name a
+  // named-tier page, which an org admin also opens.
+  const tier = adminPageTierOf(route, pages, namedTierAdminPages()) ?? 'org';
+  return switchAllows(met)(route, tier) ? route : defaultOrgAdminLanding(pages);
 }
 
 /**
@@ -135,26 +176,34 @@ export function __resetLandingLogForTests(): void {
  * for the first named tier they hold, in registration order, its `landing`,
  * or, when it names none, the first page registered for it that has no `[x]`
  * segment. A `landing` that is not one of the tier's own literal pages is
- * logged once and passed over for that default. `null` only when no tier they
- * hold has a literal page — then `/admin` is not theirs to open, as it is not
- * any MEMBER's.
+ * logged once and passed over for that default. A page that requires a switch
+ * (t-1034), the `landing` or a default, is passed over without a log line
+ * when `met` says their org lacks it. `null` only when no tier they hold has a
+ * literal page they can open — then `/admin` is not theirs to open, as it is
+ * not any MEMBER's.
  */
-export function heldTierLanding(held: readonly DeclaredAdminTier[]): string | null {
+export function heldTierLanding(
+  held: readonly DeclaredAdminTier[],
+  met: SwitchMet = NO_SWITCH_MET
+): string | null {
   if (held.length === 0) return null;
   const named = namedTierAdminPages();
+  const allows = switchAllows(met);
   for (const tier of namedAdminTiers()) {
     if (!held.includes(tier)) continue;
     const route = namedAdminTier(tier)?.landing;
     if (route !== undefined) {
       const problem = namedTierLandingProblem(tier, route, named);
-      if (problem === null) return route;
+      if (problem === null && allows(route, tier)) return route;
       const key = JSON.stringify([tier, route]);
-      if (!loggedLandingProblems.has(key)) {
+      if (problem !== null && !loggedLandingProblems.has(key)) {
         loggedLandingProblems.add(key);
         logger.error("admin-landing: ignoring a named tier's landing", { tier, route, problem });
       }
     }
-    const first = named.find((page) => page.tier === tier && isPlainAdminPath(page.pattern));
+    const first = named.find(
+      (page) => page.tier === tier && isPlainAdminPath(page.pattern) && allows(page.pattern, tier)
+    );
     if (first) return first.pattern;
   }
   return null;

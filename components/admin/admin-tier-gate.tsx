@@ -6,7 +6,8 @@
  * The admin layout decides, on a full load, whether this viewer may open the
  * page: a platform admin any page, an org admin only one listed as org-tier,
  * by core or by the fork, and a holder of a fork's named tier only one
- * declared for a tier they hold (t-999). Next.js does not re-render a layout on in-app
+ * declared for a tier they hold (t-999), and on a page that requires an
+ * entitlement switch, only where their org has it (§135 t-1034). Next.js does not re-render a layout on in-app
  * navigation, so without this an org admin following a link from an org-tier
  * page to a platform page would get that page's shell, with every API call
  * on it refused.
@@ -26,8 +27,10 @@ import { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
 import {
+  adminPageRequirementOf,
   adminPageTierOf,
   reachesAdminPage,
+  type AdminPageRequirement,
   type AdminReach,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
@@ -40,6 +43,8 @@ export interface AdminTierGateProps {
   orgTierPages: readonly string[];
   /** The fork's pages declared for a named tier (t-999), as the layout read them. Empty unless it registered one. */
   namedTierPages?: readonly NamedTierAdminPage[];
+  /** The switch each of the fork's pages requires (t-1034), as the layout read them. Empty unless one declared `requires`. */
+  pageRequirements?: readonly AdminPageRequirement[];
   children: React.ReactNode;
 }
 
@@ -47,6 +52,7 @@ export function AdminTierGate({
   reach,
   orgTierPages,
   namedTierPages = [],
+  pageRequirements = [],
   children,
 }: AdminTierGateProps) {
   const pathname = usePathname();
@@ -54,7 +60,8 @@ export function AdminTierGate({
   const allowed = reachesAdminPage(
     reach,
     pathname,
-    adminPageTierOf(pathname, orgTierPages, namedTierPages)
+    adminPageTierOf(pathname, orgTierPages, namedTierPages),
+    adminPageRequirementOf(pathname, orgTierPages, pageRequirements)
   );
 
   useEffect(() => {

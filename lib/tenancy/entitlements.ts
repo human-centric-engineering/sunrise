@@ -20,8 +20,11 @@
  *
  * **What it does not do.** Nothing here refuses a request. Requiring a switch
  * on a page, route or menu item is the admin-tier declaration's job (§135
- * t-1034), read by the authorization policy so menus and routes agree. A
- * platform admin is not limited by switches.
+ * t-1034): `requires` beside `tier`, handed to the authorization policy as
+ * `scope.requires`, so menus, pages and routes agree. A platform admin is not
+ * limited by switches. What a refusal says is here
+ * ({@link switchRequiredMessage}, {@link switchUnverifiedMessage}), so every
+ * surface says it the same way.
  *
  * **Registration is synchronous and runs lazily** before the first read, in
  * whichever realm reads first (`platform.seam-realm`), through the shared
@@ -37,6 +40,7 @@ import type { PrismaClient } from '@prisma/client';
 import { initAppEntitlements } from '@/lib/app/entitlements';
 import { prisma } from '@/lib/db/client';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
+import { logger } from '@/lib/logging';
 import {
   loadOrgEntitlements,
   writeOrgEntitlements,
@@ -202,8 +206,19 @@ export async function orgHasSwitch(
   key: string,
   db: Pick<PrismaClient, 'org'> = prisma
 ): Promise<boolean> {
-  const org = await loadOrgSwitches(orgId, db);
-  return org !== null && org.on.includes(key);
+  return switchStateIn(await loadOrgSwitches(orgId, db), key) === 'on';
+}
+
+/**
+ * One switch in one org's resolved switches: the single rule both
+ * {@link orgHasSwitch} and {@link orgSwitchState} answer by, so access and
+ * what a refusal says cannot disagree. A slice that could not be read is
+ * `'unknown'`, and has nothing on; no org has nothing on.
+ */
+function switchStateIn(org: OrgSwitches | null, key: string): 'on' | 'off' | 'unknown' {
+  if (org === null) return 'off';
+  if (org.unreadable) return 'unknown';
+  return org.on.includes(key) ? 'on' : 'off';
 }
 
 /**
@@ -271,6 +286,67 @@ export async function setOrgSwitches(
     },
     db
   );
+}
+
+/**
+ * `details.reason` on the 403 a route answers when the caller's org lacks the
+ * switch it requires (t-1034), so a client can tell it from any other refusal.
+ */
+export const SWITCH_REQUIRED_REASON = 'entitlement_required';
+
+/**
+ * What a refusal for a missing switch says: the switch by its label, and who
+ * can change it (`HB10`). A key no app registers is named as itself, since it
+ * has no label; no org has it, so the refusal is still true.
+ */
+export function switchRequiredMessage(key: string): string {
+  return `Your organisation does not have ${labelOf(key) ?? key}. Ask whoever manages your organisation's account to switch it on.`;
+}
+
+/**
+ * `details.reason` on the 403 a route answers when it could not tell whether
+ * the caller's org has the switch it requires (t-1034): the org's switches
+ * could not be read, so access was refused without saying the switch is off.
+ */
+export const SWITCH_UNVERIFIED_REASON = 'entitlement_unverified';
+
+/** What a refusal says when the org's switches could not be read (t-1034). */
+export function switchUnverifiedMessage(key: string): string {
+  // No label when the app's switch init failed, which is one way to get here:
+  // say what it is for rather than show a reader an internal key.
+  return `We could not check whether your organisation has ${labelOf(key) ?? 'the feature this needs'}, so this was refused. Try again in a moment.`;
+}
+
+/** A registered switch's label, or `undefined` for a key nothing registers. */
+function labelOf(key: string): string | undefined {
+  return registeredEntitlementSwitches().find((s) => s.key === key)?.label;
+}
+
+/**
+ * Whether an org has one switch, with "could not tell" kept apart from "off"
+ * (t-1034), for a refusal that has to say which. `'unknown'` when the read
+ * throws, when the stored slice could not be read, or when the app's
+ * `initAppEntitlements()` failed: each reads as off for access, but saying
+ * the org lacks the switch would not be true. An org that does not exist, or
+ * a key no app registers, is `'off'`, as {@link orgHasSwitch} answers false.
+ * Never throws; a failed read is logged.
+ */
+export async function orgSwitchState(
+  orgId: string,
+  key: string,
+  db: Pick<PrismaClient, 'org'> = prisma
+): Promise<'on' | 'off' | 'unknown'> {
+  try {
+    if (entitlementSwitchesFailed()) return 'unknown';
+    return switchStateIn(await loadOrgSwitches(orgId, db), key);
+  } catch (error) {
+    logger.error("entitlements: could not read an org's switches", {
+      orgId,
+      key,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 'unknown';
+  }
 }
 
 /** Test-only: clear the registry and re-arm the one-shot app init. */
