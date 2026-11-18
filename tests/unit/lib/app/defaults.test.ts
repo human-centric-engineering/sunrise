@@ -84,6 +84,7 @@ import {
 } from '@/lib/privacy/org-source-registry';
 import { getAppJobs, __resetAppJobsForTests } from '@/lib/orchestration/maintenance/app-jobs';
 import { __resetSealedStoresForTests, getSealedStoreNames } from '@/lib/security/sealed-stores';
+import { CORE_SEALED_STORES } from '@/lib/security/core-sealed-stores';
 import {
   getAppStaleWriters,
   getErasureCleanupHooks,
@@ -531,7 +532,8 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     assert: () => {
       __resetSealedStoresForTests();
       // getSealedStoreNames() triggers the lazy init, so this exercises the REAL seam.
-      expect(getSealedStoreNames()).toEqual([]);
+      // Core's own stores (§137 t-1044) are registered first; the app adds none.
+      expect(getSealedStoreNames()).toEqual(CORE_SEALED_STORES.map((store) => store.name));
     },
   },
   {

@@ -212,6 +212,13 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "Each org's approved-provider policy, filled by a `findUnique` on the org id, so a system-scoped fill returns the same row an org scope would; and each provider row's id and jurisdiction, global config keyed by a slug unique install-wide (§120 t-742). A write through the org providers API clears that org's entry and a provider-row write clears the row's; the 60-second TTL is the window in which another process may still answer with a revoked grant. Read only at multi.",
   },
   {
+    file: 'lib/orchestration/llm/org-provider-keys.ts',
+    holders: ['lookupCache'],
+    posture: 'row-keyed',
+    keyedBy: 'org id and provider row id',
+    why: "Each org's saved-key row for a provider row — its id, version and sealed key, never the opened key — filled by a `findUnique` on (orgId, providerConfigId), so an entry is that org's whatever scope filled it (§137 t-1044). A save or removal through the module clears that entry, and a reseal clears every one; the 60-second TTL is how long another process may still use a removed or replaced key, or not yet use a new one. Read only at multi, for an org in scope.",
+  },
+  {
     file: 'lib/orchestration/llm/spend-caps.ts',
     holders: ['orgEntries', 'orgCapEntries'],
     posture: 'row-keyed',

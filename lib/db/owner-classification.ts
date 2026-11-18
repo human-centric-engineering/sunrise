@@ -324,6 +324,11 @@ export const OWNER_CLASSIFICATION = {
     kind: 'not-personal',
     because: 'Global config shared by every org; createdBy is authorship.',
   },
+  AiOrgProviderKey: {
+    kind: 'not-personal',
+    because:
+      "An org's own vendor key for a provider row; savedBy records which of its admins last saved it. Read by the org's admins and on the call path, not owner-scoped.",
+  },
 
   // ── workflows ─────────────────────────────────────────────────────────────
   AiWorkflow: {

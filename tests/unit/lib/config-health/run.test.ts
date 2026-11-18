@@ -11,7 +11,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // env.NODE_ENV is read by the runner; mutate per test.
-const envMock = vi.hoisted(() => ({ env: { NODE_ENV: 'production' } }));
+// TENANCY_MODE and the sealed-secret keyring are read through it too (§137 t-1044).
+const envMock = vi.hoisted(() => ({
+  env: { NODE_ENV: 'production' },
+}));
 vi.mock('@/lib/env', () => envMock);
 vi.mock('@/lib/logging', () => ({ logger: { error: vi.fn() } }));
 vi.mock('@/lib/email/client', () => ({ isEmailEnabled: vi.fn(() => true) }));
@@ -82,7 +85,7 @@ function check(checks: EvaluatedConfigCheck[], key: string): EvaluatedConfigChec
 
 beforeEach(() => {
   vi.clearAllMocks();
-  envMock.env.NODE_ENV = 'production';
+  envMock.env = { NODE_ENV: 'production' };
   appSeam.appConfigHealthChecks = [FORK_CRON_CHECK];
   (isEmailEnabled as Mock).mockReturnValue(true);
   (prisma.aiProviderConfig.findMany as Mock).mockResolvedValue([providerRow()]);
@@ -112,6 +115,7 @@ describe('runConfigHealthChecks', () => {
     expect(report.checks.map((c) => c.key)).toEqual([
       'llm_provider',
       'confidential_model',
+      'org_provider_keys_master_key',
       'email',
       'db_pooler',
     ]);
@@ -122,6 +126,7 @@ describe('runConfigHealthChecks', () => {
     expect(report.checks.map((c) => c.key)).toEqual([
       'llm_provider',
       'confidential_model',
+      'org_provider_keys_master_key',
       'email',
       'db_pooler',
       'CRON_SECRET',
@@ -356,5 +361,51 @@ describe('the model for confidential messages (§130 t-1038)', () => {
     const report = await runConfigHealthChecks();
     expect(check(report.checks, 'confidential_model').present).toBe(true);
     expect(confidentialModelProblem).toHaveBeenCalledWith(MODEL);
+  });
+});
+
+describe("organisations' own AI keys need a master key (§137 t-1044)", () => {
+  const KEYRING = { SEALED_SECRET_KEYS: `k1:${'m'.repeat(40)}`, SEALED_SECRET_ACTIVE_KEY: 'k1' };
+
+  function switchedOn(on: boolean) {
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      privacyConfidentialPersonal: 'warn',
+      privacyConfidentialCommercial: 'allow',
+      confidentialModel: null,
+      orgProviderKeysEnabled: on,
+    } as never);
+  }
+
+  it('flags the switch on with no master key, as critical, at multi', async () => {
+    envMock.env.TENANCY_MODE = 'multi';
+    switchedOn(true);
+    const report = await runConfigHealthChecks();
+    const found = check(report.checks, 'org_provider_keys_master_key');
+    expect(found).toMatchObject({ applicable: true, present: false, severity: 'critical' });
+    expect(report.summary.critical).toBe(1);
+  });
+
+  it('is satisfied with the switch on and a master key configured', async () => {
+    Object.assign(envMock.env, { TENANCY_MODE: 'multi', ...KEYRING });
+    switchedOn(true);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'org_provider_keys_master_key').present).toBe(true);
+  });
+
+  it('is satisfied with the switch off, master key or not', async () => {
+    envMock.env.TENANCY_MODE = 'multi';
+    switchedOn(false);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'org_provider_keys_master_key').present).toBe(true);
+  });
+
+  it('does not apply at single, where no org key is ever read', async () => {
+    envMock.env.TENANCY_MODE = 'single';
+    switchedOn(true);
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'org_provider_keys_master_key')).toMatchObject({
+      applicable: false,
+      present: true,
+    });
   });
 });
