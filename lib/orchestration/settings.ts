@@ -138,6 +138,7 @@ export function hydrateSettings(row: {
   privacyConfidentialCommercial?: string | null;
   confidentialModelProvider?: string | null;
   confidentialModel?: string | null;
+  orgProviderKeysEnabled?: boolean | null;
   createdAt: Date;
   updatedAt: Date;
 }): OrchestrationSettings {
@@ -238,6 +239,8 @@ export function hydrateSettings(row: {
       row.confidentialModelProvider,
       row.confidentialModel
     ),
+    // Absent on a row shape from before the column: off, its default.
+    orgProviderKeysEnabled: row.orgProviderKeysEnabled === true,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

@@ -4,7 +4,8 @@
  * The stores are in-memory, but the sealing is real: a value is resealed only
  * if it really opens, and "on the active key" is read back from the stored
  * envelope, not from a counter. What is mocked is the fork's init (so a
- * registration and a throwing one can both be exercised), the tenancy scope
+ * registration and a throwing one can both be exercised), core's store list
+ * (empty unless a test fills it), the tenancy scope
  * (recorded, so the walk is shown to run as the platform) and the logger.
  *
  * @see lib/security/sealed-stores.ts
@@ -21,6 +22,15 @@ const mockEnv = vi.hoisted((): KeyringEnv => ({}));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 const appInit = vi.hoisted(() => ({ impl: (): void => {} }));
+
+// Core's own stores (§137 t-1044) are real database stores; here the list is
+// one the tests fill, read again on every reset as the module reads it.
+const core = vi.hoisted(() => ({ stores: [] as unknown[] }));
+vi.mock('@/lib/security/core-sealed-stores', () => ({
+  get CORE_SEALED_STORES() {
+    return core.stores;
+  },
+}));
 vi.mock('@/lib/app/sealed-stores', () => ({
   initAppSealedStores: () => appInit.impl(),
 }));
@@ -109,6 +119,7 @@ class MemoryStore implements SealedStore {
 }
 
 beforeEach(() => {
+  core.stores = [];
   __resetSealedStoresForTests();
   appInit.impl = () => {};
   scopes.reasons = [];
@@ -447,6 +458,34 @@ describe('the registry and the fork init', () => {
     registerSealedStore(store);
     expect(() => registerSealedStore(new MemoryStore('crm'))).toThrow(/already registered/);
     expect(getSealedStoreNames()).toEqual(['crm']);
+  });
+
+  it("walks core's stores first, and keeps them through a fork init that throws", async () => {
+    const coreStore = new MemoryStore('core-keys');
+    await coreStore.put('k', 'org-key');
+    core.stores = [coreStore];
+    __resetSealedStoresForTests();
+    const forkStore = new MemoryStore('fork-crm');
+    appInit.impl = () => registerSealedStore(forkStore);
+
+    expect(getSealedStoreNames()).toEqual(['core-keys', 'fork-crm']);
+
+    // Re-armed with a fork init that throws: the rollback keeps core's store
+    // registered, and the walk still refuses rather than walk core's alone.
+    __resetSealedStoresForTests();
+    appInit.impl = () => {
+      registerSealedStore(forkStore);
+      throw new Error('fork bug');
+    };
+    await expect(resealSealedStores()).rejects.toBeInstanceOf(SealedStoreRegistrationError);
+  });
+
+  it("refuses a fork store under a core store's name", async () => {
+    core.stores = [new MemoryStore('core-keys')];
+    __resetSealedStoresForTests();
+    appInit.impl = () => registerSealedStore(new MemoryStore('core-keys'));
+
+    expect(() => getSealedStoreNames()).toThrow(SealedStoreRegistrationError);
   });
 
   it('refuses a store with no name', () => {

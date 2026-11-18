@@ -34,7 +34,12 @@ export const metadata: Metadata = {
  * save those defaults over the real settings (#518).
  */
 /** The singleton, with the escalation list's version a save of it sends back (§122 t-899). */
-type LoadedSettings = FullOrchestrationSettings & { escalationVersion: string };
+type LoadedSettings = FullOrchestrationSettings & {
+  escalationVersion: string;
+  /** For the switch for organisations' own AI keys (§137 t-1044). */
+  orgsWithProviderKeys: number;
+  sealedSecretKeyConfigured: boolean;
+};
 
 async function getSettings(): Promise<LoadedSettings> {
   const { data } = await requireServerData<LoadedSettings>(API.ADMIN.ORCHESTRATION.SETTINGS);
@@ -324,6 +329,7 @@ export default async function OrchestrationSettingsPage() {
         confidentialModelOptions={
           models.ok && providers.ok ? confidentialModelOptions(models.data, providers.data) : null
         }
+        showOrgProviderKeys={env.TENANCY_MODE === 'multi'}
       />
 
       <BackupPanel />

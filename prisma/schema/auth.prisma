@@ -91,6 +91,7 @@ model User {
   aiDatasets                        AiDataset[]                        @relation("AiDatasetUser")
   aiEvaluationRuns                  AiEvaluationRun[]                  @relation("AiEvaluationRunUser")
   aiProviderConfigs                 AiProviderConfig[]                 @relation("AiProviderConfigCreator")
+  aiOrgProviderKeysSaved            AiOrgProviderKey[]                 @relation("AiOrgProviderKeySavedBy")
   aiWebhookSubscriptions            AiWebhookSubscription[]            @relation("AiWebhookUser")
   aiInviteTokens                    AiAgentInviteToken[]               @relation("InviteTokenCreator")
   aiAgentVersions                   AiAgentVersion[]                   @relation("AgentVersionCreator")

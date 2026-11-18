@@ -1794,6 +1794,12 @@ export interface OrchestrationSettings {
    * `null` when not set, and then such a turn is refused.
    */
   confidentialModel: ConfidentialModelBinding | null;
+  /**
+   * Organisations' own AI keys (§137 t-1044): while on, an org's calls on a
+   * provider row it has saved a key for go out on that key. Off by default;
+   * turned on only while a sealed-secret master key is configured.
+   */
+  orgProviderKeysEnabled: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
