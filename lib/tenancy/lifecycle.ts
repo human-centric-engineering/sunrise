@@ -62,12 +62,13 @@ import {
   hasOwnerStanding,
   healSignupRecord,
   initialMembershipFor,
+  isPlatformStaff,
   takesFirstOwnership,
 } from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
 import { applyOrgSettingsPatch, definedEntries } from '@/lib/tenancy/org-settings';
-import { refuseOverSeatsLimit } from '@/lib/tenancy/meters';
-import { invitationOrgSlot, pendingInvitationsFor } from '@/lib/utils/invitation-token';
+import { invitationTakesSeat, refuseOverSeatsLimit } from '@/lib/tenancy/meters';
+import { pendingInvitationsFor } from '@/lib/utils/invitation-token';
 import {
   DEFAULT_ORG_ROLE,
   ORG_OWNER_ROLE,
@@ -455,7 +456,7 @@ export async function updateOrgReportingPrevious(
  * **The org's seats limit (§135 t-1035)** refuses an actor who is not
  * platform staff with a 403 (`refuseOverSeatsLimit`), after the checks above
  * so a request wrong for another reason is told that reason. A user who is
- * platform staff takes no seat. A user with an open invitation into the org
+ * platform staff (a platform `ADMIN`) takes no seat. A user with an open invitation into the org
  * already holds one, so the org need only be within its limit. Accepting an
  * invitation passes `seatHeld`: it was counted when issued, and is honoured
  * even if the limit was lowered since.
@@ -498,9 +499,10 @@ export async function addMember(
       : DEFAULT_ORG_ROLE;
   }
 
-  if (!options.seatHeld && !actor.platformAdmin && !isPlatformAdmin(user)) {
-    const invited = await holdsInvitationInto(orgId, user.email);
-    await refuseOverSeatsLimit(orgId, actor, { adding: invited ? 0 : 1 });
+  if (!options.seatHeld && !isPlatformStaff(user)) {
+    await refuseOverSeatsLimit(orgId, actor, {
+      alreadyHeld: () => holdsInvitationInto(orgId, user.email),
+    });
   }
 
   // Placed by hand: a signup record that survived a failed write is paid and
@@ -533,15 +535,15 @@ export async function addMember(
 }
 
 /**
- * Does an open invitation into the org already hold this address's seat? A
- * read that fails answers yes, so the seats check asks only whether the org
- * is within its limit: a limit fails open (`lib/tenancy/meters.ts`).
+ * Does an open invitation into the org already hold this address's seat, by
+ * the seats count's own rule (`invitationTakesSeat`)? A read that fails
+ * answers yes, so the seats check asks only whether the org is within its
+ * limit: a limit fails open (`lib/tenancy/meters.ts`).
  */
 async function holdsInvitationInto(orgId: string, email: string): Promise<boolean> {
   try {
     const { readable } = await pendingInvitationsFor(email.toLowerCase());
-    const slot = invitationOrgSlot(orgId);
-    return readable.some((inv) => invitationOrgSlot(inv.metadata.orgId) === slot);
+    return readable.some((inv) => invitationTakesSeat(inv.metadata, orgId));
   } catch (error) {
     logger.error("lifecycle: could not read a user's open invitations for the seats check", {
       orgId,

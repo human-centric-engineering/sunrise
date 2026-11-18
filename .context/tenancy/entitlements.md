@@ -320,7 +320,9 @@ the asker's. A meter is an org-wide total that returns a number.
 Seats are the platform's own meter, because the platform owns the ways a
 person joins an org: members who are not platform staff, plus unexpired
 invitations into it. An invitation that grants the platform `ADMIN` role makes
-staff, so it takes no seat, and nor does one whose metadata cannot be read.
+staff, so it takes no seat, and nor does one whose metadata cannot be read
+(`invitationTakesSeat()`). Nor does one for an address that is already a
+member of the org, or already platform staff: each person is counted once.
 An invitation takes a seat as soon as it is pending, so accepting one is not
 checked again, even if the limit was lowered since.
 
@@ -329,14 +331,16 @@ With a seats limit set, an org's own admin is refused at the limit: a 403 with
 `used` and `limit`. Two places refuse:
 
 - **A new invitation**, in `POST /api/v1/orgs/[id]/invitations`, after its
-  own checks. A resend is not refused.
+  own checks. A resend is not refused, nor an invitation to an account that is
+  already platform staff.
 - **Adding a member**, in `addMember()` (`lib/tenancy/lifecycle.ts`), after
   its own checks, so a user who is already a member or does not exist is told
   that instead. Every caller gets it, `POST /api/v1/orgs/[id]/members` and a
   fork's own route alike. A user who is platform staff takes no seat and is
   not checked. A user with an open invitation into the org already holds a
-  seat, so the org need only be within its limit. Accepting an invitation
-  passes `seatHeld`.
+  seat, so the org need only be within its limit; that invitation is looked
+  up only when the add would otherwise be refused (`refuseOverSeatsLimit()`'s
+  `alreadyHeld`). Accepting an invitation passes `seatHeld`.
 
 **A platform admin is never refused**, and the platform's own invite route
 does not check: the vendor setting an org up must not be stopped by the limit

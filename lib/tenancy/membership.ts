@@ -181,17 +181,17 @@ export function takesFirstOwnership(
   nonStaffMembers: number | null,
   grantorHasOwnerStanding: boolean
 ): boolean {
-  return nonStaffMembers === 0 && grantorHasOwnerStanding && !isStaff(newcomer);
+  return nonStaffMembers === 0 && grantorHasOwnerStanding && !isPlatformStaff(newcomer);
 }
 
 /** Platform staff, as the bootstrap reads it: a platform `ADMIN`, or a SERVICE account. */
-function isStaff(user: NewUserShape): boolean {
+export function isPlatformStaff(user: NewUserShape): boolean {
   return isPlatformAdmin(user) || user.accountType === serviceAccountWhere.accountType;
 }
 
 /**
  * How many of an org's members are not platform staff: the count
- * {@link takesFirstOwnership} reads. The same test as `isStaff`, in the query,
+ * {@link takesFirstOwnership} reads. The same test as {@link isPlatformStaff}, in the query,
  * built from the shared account fragment (`lib/auth/account.ts`).
  */
 export function countNonStaffMembers(

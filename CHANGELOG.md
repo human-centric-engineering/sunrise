@@ -90,7 +90,8 @@ release process.
   and is logged). `meterLimitMessage()` and `METER_LIMIT_REASON`
   (`'meter_limit_reached'`) let an app's refusals read alike. **Seats are a
   platform meter**: members who are not platform staff plus open invitations
-  that do not grant the platform `ADMIN` role (`countSeats()`); an app may
+  that do not grant the platform `ADMIN` role, each person once
+  (`countSeats()`, `invitationTakesSeat()`); an app may
   register `seats` to count them its own way. A meter's count runs as the org
   counted and across its owners, whoever asks. With a seats limit set, an
   org's own admin is refused a new invitation

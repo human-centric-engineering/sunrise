@@ -363,9 +363,14 @@ export const meterLimitSchema = z
  * limit on stored keys, since keys for meters an app no longer registers are
  * kept by every save.
  */
+const MAX_STORED_METER_LIMITS = 1000;
+
 export const orgMeterLimitsSchema = z
   .record(meterKeySchema, meterLimitSchema)
-  .refine((limits) => Object.keys(limits).length <= 1000, 'Too many meter limits');
+  .refine(
+    (limits) => Object.keys(limits).length <= MAX_STORED_METER_LIMITS,
+    'Too many meter limits'
+  );
 
 export type OrgMeterLimits = z.infer<typeof orgMeterLimitsSchema>;
 
@@ -379,9 +384,11 @@ export const orgMeterLimitsInputSchema = z
     limits: z
       .record(meterKeySchema, meterLimitSchema.nullable())
       .refine((limits) => Object.keys(limits).length > 0, 'Name at least one meter')
+      // Clearing names kept keys too, so the bound is what can be stored; a
+      // limit set on a key nothing registers is refused by the route.
       .refine(
-        (limits) => Object.keys(limits).length <= MAX_METERS + 1,
-        `At most ${MAX_METERS + 1} meters`
+        (limits) => Object.keys(limits).length <= MAX_STORED_METER_LIMITS,
+        `At most ${MAX_STORED_METER_LIMITS} meters`
       ),
   })
   .strict();

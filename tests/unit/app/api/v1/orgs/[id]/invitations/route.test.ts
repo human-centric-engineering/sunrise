@@ -23,7 +23,7 @@ vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Header
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    user: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findMany: vi.fn() },
     org: { findUnique: vi.fn() },
     orgMembership: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     verification: { findMany: vi.fn() },
@@ -359,7 +359,12 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
 
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: 'jane@example.com' },
-      select: { id: true, orgMemberships: { where: { orgId: ORG }, select: { id: true } } },
+      select: {
+        id: true,
+        role: true,
+        accountType: true,
+        orgMemberships: { where: { orgId: ORG }, select: { id: true } },
+      },
     });
   });
 
@@ -581,8 +586,12 @@ describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', ()
     } as never);
     vi.mocked(prisma.orgMembership.count).mockResolvedValue(members);
     vi.mocked(prisma.verification.findMany).mockResolvedValue(
-      Array.from({ length: invitations }, () => pendingRow({ orgId: ORG })) as never
+      Array.from({ length: invitations }, (_, i) => ({
+        ...pendingRow({ orgId: ORG }),
+        identifier: `invitation:p${i}@example.com`,
+      })) as never
     );
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
   }
 
   it("refuses an org's own admin a new invitation at the limit, delivering nothing", async () => {
@@ -636,6 +645,23 @@ describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', ()
     expect(updateInvitationToken).toHaveBeenCalledTimes(1);
     expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a resend takes no new seat, so seats are not counted
     expect(prisma.verification.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a resend takes no new seat, so seats are not counted
+  });
+
+  it('does not refuse an invitation to an account that is already platform staff', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+    seats(1, 1, 0);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'cmuser000000000000000stf1',
+      role: PLATFORM_ADMIN_ROLE,
+      accountType: 'HUMAN',
+      orgMemberships: [],
+    } as never);
+
+    const res = await post(invitee);
+
+    expect(res.status).toBe(201);
+    expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — staff take no seat, so nothing is counted
   });
 
   it('does not refuse a platform admin at the limit', async () => {

@@ -238,14 +238,13 @@ describe('meter limits (§135 t-1035)', () => {
     expect(orgMeterLimitsInputSchema.safeParse({ limits: { seats: 1 }, extra: 1 }).success).toBe(
       false
     );
-    const tooMany = Object.fromEntries(
-      Array.from({ length: MAX_METERS + 2 }, (_, i) => [`m${i}`, null])
-    );
+    // Bounded by what can be stored, not what can be registered, so clearing
+    // every kept limit is one request.
+    const tooMany = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`m${i}`, null]));
     expect(orgMeterLimitsInputSchema.safeParse({ limits: tooMany }).success).toBe(false);
-    const most = Object.fromEntries(
-      Array.from({ length: MAX_METERS + 1 }, (_, i) => [`m${i}`, null])
-    );
+    const most = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`m${i}`, null]));
     expect(orgMeterLimitsInputSchema.safeParse({ limits: most }).success).toBe(true);
+    expect(MAX_METERS).toBeLessThan(1000);
   });
 });
 

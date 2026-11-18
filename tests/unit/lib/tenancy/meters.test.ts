@@ -19,6 +19,7 @@ vi.mock('@/lib/logging', () => ({
 const mockPrisma = vi.hoisted(() => ({
   orgMembership: { count: vi.fn() },
   verification: { findMany: vi.fn() },
+  user: { findMany: vi.fn() },
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 
@@ -61,10 +62,13 @@ const invitationMeta = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-/** `n` open invitations into the org, as the seats count reads them. */
+/** An invitation row as the seats count reads it. */
+const row = (email: string, metadata: unknown) => ({ identifier: `invitation:${email}`, metadata });
+
+/** `n` open invitations into the org, for addresses with no account. */
 function pendingInvitations(n: number, orgId: string = ORG) {
   mockPrisma.verification.findMany.mockResolvedValue(
-    Array.from({ length: n }, () => ({ metadata: invitationMeta({ orgId }) }))
+    Array.from({ length: n }, (_, i) => row(`p${i}@example.com`, invitationMeta({ orgId })))
   );
 }
 
@@ -94,6 +98,7 @@ beforeEach(() => {
   vi.mocked(initAppEntitlements).mockImplementation(() => {});
   mockPrisma.orgMembership.count.mockResolvedValue(0);
   mockPrisma.verification.findMany.mockResolvedValue([]);
+  mockPrisma.user.findMany.mockResolvedValue([]);
   mockLoadLimits.mockResolvedValue({});
 });
 
@@ -240,26 +245,79 @@ describe('countSeats', () => {
   it('takes no seat for an invitation that makes platform staff, or one it cannot read', async () => {
     mockPrisma.orgMembership.count.mockResolvedValue(1);
     mockPrisma.verification.findMany.mockResolvedValue([
-      { metadata: invitationMeta({ orgId: ORG }) },
-      { metadata: invitationMeta({ orgId: ORG, role: 'ADMIN' }) },
-      { metadata: { orgId: ORG } },
-      { metadata: null },
+      row('a@example.com', invitationMeta({ orgId: ORG })),
+      row('b@example.com', invitationMeta({ orgId: ORG, role: 'ADMIN' })),
+      row('c@example.com', { orgId: ORG }),
+      row('d@example.com', null),
     ]);
 
     expect(await countSeats(ORG)).toBe(1 + 1);
   });
 
+  it('takes no seat for an invitation to someone already a member, or already staff', async () => {
+    mockPrisma.orgMembership.count.mockResolvedValue(2);
+    mockPrisma.verification.findMany.mockResolvedValue([
+      row('member@example.com', invitationMeta({ orgId: ORG })),
+      row('staff@example.com', invitationMeta({ orgId: ORG })),
+      row('service@example.com', invitationMeta({ orgId: ORG })),
+      row('elsewhere@example.com', invitationMeta({ orgId: ORG })),
+      row('new@example.com', invitationMeta({ orgId: ORG })),
+    ]);
+    mockPrisma.user.findMany.mockResolvedValue([
+      {
+        email: 'member@example.com',
+        role: 'USER',
+        accountType: 'HUMAN',
+        orgMemberships: [{ id: 'm' }],
+      },
+      { email: 'staff@example.com', role: 'ADMIN', accountType: 'HUMAN', orgMemberships: [] },
+      { email: 'service@example.com', role: 'USER', accountType: 'SERVICE', orgMemberships: [] },
+      // An account, but not in this org: their seat is still to come.
+      { email: 'elsewhere@example.com', role: 'USER', accountType: 'HUMAN', orgMemberships: [] },
+    ]);
+
+    // 2 members + elsewhere@ + new@
+    expect(await countSeats(ORG)).toBe(2 + 2);
+    expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          email: {
+            in: [
+              'member@example.com',
+              'staff@example.com',
+              'service@example.com',
+              'elsewhere@example.com',
+              'new@example.com',
+            ],
+          },
+        },
+        select: expect.objectContaining({
+          orgMemberships: { where: { orgId: ORG }, select: { id: true } },
+        }),
+      })
+    );
+  });
+
+  it('looks up no accounts when no invitation takes a seat', async () => {
+    mockPrisma.verification.findMany.mockResolvedValue([
+      row('b@example.com', invitationMeta({ orgId: ORG, role: 'ADMIN' })),
+    ]);
+
+    expect(await countSeats(ORG)).toBe(0);
+    expect(mockPrisma.user.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to match, so no read
+  });
+
   it('reads and filters the install org invitations, counting those naming no org or the install org', async () => {
     mockPrisma.orgMembership.count.mockResolvedValue(2);
     mockPrisma.verification.findMany.mockResolvedValue([
-      { metadata: invitationMeta() },
-      { metadata: invitationMeta({ orgId: INSTALL_ORG_ID }) },
-      { metadata: invitationMeta({ orgId: '' }) },
-      { metadata: invitationMeta({ orgId: 'cmother' }) },
-      { metadata: invitationMeta({ role: 'ADMIN' }) },
-      { metadata: null },
-      { metadata: [] },
-      { metadata: { orgId: 42 } },
+      row('a@example.com', invitationMeta()),
+      row('b@example.com', invitationMeta({ orgId: INSTALL_ORG_ID })),
+      row('c@example.com', invitationMeta({ orgId: '' })),
+      row('d@example.com', invitationMeta({ orgId: 'cmother' })),
+      row('e@example.com', invitationMeta({ role: 'ADMIN' })),
+      row('f@example.com', null),
+      row('g@example.com', []),
+      row('h@example.com', { orgId: 42 }),
     ]);
 
     // none, install and '' = 3; another org's, a staff invitation and the
@@ -277,8 +335,9 @@ describe('countSeats', () => {
     const db = {
       orgMembership: { count: vi.fn().mockResolvedValue(1) },
       verification: {
-        findMany: vi.fn().mockResolvedValue([{ metadata: invitationMeta({ orgId: ORG }) }]),
+        findMany: vi.fn().mockResolvedValue([row('a@example.com', invitationMeta({ orgId: ORG }))]),
       },
+      user: { findMany: vi.fn().mockResolvedValue([]) },
     };
 
     expect(await countSeats(ORG, db as never)).toBe(2);
@@ -629,19 +688,51 @@ describe('refuseOverSeatsLimit', () => {
     await expect(refuseOverSeatsLimit(ORG, { platformAdmin: false })).resolves.toBeUndefined();
   });
 
-  it('with adding 0, refuses only an org already past its limit', async () => {
+  it('asks alreadyHeld only when refusing, and lets a held seat in while within the limit', async () => {
+    mockLoadLimits.mockResolvedValue({ seats: 3 });
+    mockPrisma.orgMembership.count.mockResolvedValue(2);
+    pendingInvitations(1);
+    const alreadyHeld = vi.fn().mockResolvedValue(true);
+
+    await expect(
+      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { alreadyHeld })
+    ).resolves.toBeUndefined();
+    expect(alreadyHeld).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses when the seat is not already held', async () => {
     mockLoadLimits.mockResolvedValue({ seats: 3 });
     mockPrisma.orgMembership.count.mockResolvedValue(2);
     pendingInvitations(1);
 
     await expect(
-      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { adding: 0 })
-    ).resolves.toBeUndefined();
-
-    mockLoadLimits.mockResolvedValue({ seats: 2 });
-    await expect(
-      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { adding: 0 })
+      refuseOverSeatsLimit(
+        ORG,
+        { platformAdmin: false },
+        { alreadyHeld: vi.fn().mockResolvedValue(false) }
+      )
     ).rejects.toBeInstanceOf(APIError);
+  });
+
+  it('refuses even a held seat when the org is already past its limit, without asking', async () => {
+    mockLoadLimits.mockResolvedValue({ seats: 2 });
+    mockPrisma.orgMembership.count.mockResolvedValue(2);
+    pendingInvitations(1);
+    const alreadyHeld = vi.fn().mockResolvedValue(true);
+
+    await expect(
+      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { alreadyHeld })
+    ).rejects.toBeInstanceOf(APIError);
+    expect(alreadyHeld).not.toHaveBeenCalled(); // test-review:accept no_arg_called — over the limit, a held seat does not help
+  });
+
+  it('does not ask alreadyHeld while there is room', async () => {
+    mockLoadLimits.mockResolvedValue({ seats: 10 });
+    const alreadyHeld = vi.fn();
+
+    await refuseOverSeatsLimit(ORG, { platformAdmin: false }, { alreadyHeld });
+
+    expect(alreadyHeld).not.toHaveBeenCalled(); // test-review:accept no_arg_called — lazy: room means no lookup
   });
 
   it('resolves, counting nothing, when the org has no seats limit', async () => {

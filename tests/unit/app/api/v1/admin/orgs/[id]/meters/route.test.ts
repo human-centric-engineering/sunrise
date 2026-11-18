@@ -35,6 +35,7 @@ const mockPrisma = vi.hoisted(() => {
     org: { findUnique: vi.fn(), update: vi.fn() },
     orgMembership: { findUnique: vi.fn(), count: vi.fn() },
     verification: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
     $transaction: vi.fn(),
   };
   db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(db));
@@ -132,7 +133,8 @@ beforeEach(() => {
   });
   mockPrisma.orgMembership.count.mockResolvedValue(3);
   mockPrisma.verification.findMany.mockResolvedValue(
-    [1, 2].map(() => ({
+    [1, 2].map((i) => ({
+      identifier: `invitation:p${i}@example.com`,
       metadata: {
         name: 'Invitee',
         role: 'USER',
@@ -142,6 +144,7 @@ beforeEach(() => {
       },
     }))
   );
+  mockPrisma.user.findMany.mockResolvedValue([]);
   mockPrisma.org.update.mockResolvedValue({});
 });
 
