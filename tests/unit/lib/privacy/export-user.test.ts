@@ -997,6 +997,8 @@ describe('exportUserData', () => {
       OrgMembership: ['org'],
       // The name of the org each grant the subject gave or revoked was for.
       OrgSupportGrant: ['org'],
+      // The org, and the provider row's name, of each key the subject last saved (§137).
+      AiOrgProviderKey: ['org', 'providerConfig'],
       // The messages and share link of the subject's own conversations.
       AiConversation: ['messages', 'share'],
     };

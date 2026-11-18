@@ -482,6 +482,7 @@ describe('org-data source manifest', () => {
       AiWebhookSubscription: 'secret',
       AiWorkflowTrigger: 'signingSecret',
       AiWorkflowExecution: 'leaseToken',
+      AiOrgProviderKey: 'sealedKey',
     };
     const MAPPED_SOURCES = new Set(['AiEventHook']);
     const lowerFirst = (name: string) => name[0].toLowerCase() + name.slice(1);

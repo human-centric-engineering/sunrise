@@ -400,6 +400,20 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.webhooks[0].url).toBe('https://example.com/hook');
   });
 
+  it("carries no org's own AI key and not the switch for them (§137 t-1044)", async () => {
+    mockFindMany.mockResolvedValue([]);
+    mockFindUnique.mockResolvedValue(settingsRow);
+
+    await exportOrchestrationConfig(SHARED_SCOPE);
+
+    // The keys' table is never read, so no key or envelope can reach a backup.
+    expect(queryLog.entries.map((entry) => entry.model)).not.toContain('aiOrgProviderKey');
+    // The switch is this install's custody decision: never asked for, so never
+    // written out. (The mock ignores `select`, so the query is what is asserted.)
+    const [settingsQuery] = mockFindUnique.mock.calls[0] as [{ select: Record<string, unknown> }];
+    expect(settingsQuery.select).not.toHaveProperty('orgProviderKeysEnabled');
+  });
+
   it('narrows an email-channel webhook to the "email" literal', async () => {
     mockFindMany
       .mockResolvedValueOnce([]) // agents

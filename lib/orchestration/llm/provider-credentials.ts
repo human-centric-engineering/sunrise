@@ -7,11 +7,19 @@
  * workload federation registers a resolver from
  * `lib/app/provider-credentials.ts` instead of editing the provider manager.
  *
- * **Sunrise stores no tenant's vendor key, and this seam does not change that**
- * (multi-tenancy design Q5: credential custody is declined as policy). A
- * resolver fetches a credential from wherever the fork keeps it, at the moment
- * a provider is needed; Sunrise holds the constructed client in memory for the
- * instance cache's TTL, as it always has, and writes the key nowhere.
+ * **An org's own key comes first** (§137 t-1044). At `multi`, for an org in
+ * scope, `org-provider-keys.ts` is asked before anything else: an org that has
+ * saved a key for the row gets that key (identity
+ * `org-key:<orgId>:<keyRowId>:<version>`) or a refusal, and never the app's
+ * resolver or the env var. An org with no key for the row resolves as below,
+ * exactly as before. It is asked here, not registered through
+ * {@link registerProviderCredentialResolver}, because that one slot is the
+ * app's (multi-tenancy design Q5 as amended: Sunrise holds an org's key only
+ * when the install switches it on).
+ *
+ * A registered resolver fetches a credential from wherever the fork keeps it,
+ * at the moment a provider is needed; Sunrise holds the constructed client in
+ * memory for the instance cache's TTL, as it always has.
  *
  * ## The identity is the half that matters for isolation
  *
@@ -28,6 +36,9 @@
  *
  * ## Default and failure behaviour
  *
+ * - An org with a saved key, at `multi`: that key, or `credential_unavailable`
+ *   when it cannot be used (switched off, provider not approved, will not
+ *   open, or could not be read). See `org-provider-keys.ts`.
  * - Nothing registered: the row's env var, identity `''` (the shared
  *   credential, whose cache and breaker key is the bare slug). Byte-identical
  *   to before the seam existed.
@@ -56,6 +67,7 @@ import { z } from 'zod';
 import { initAppProviderCredentials } from '@/lib/app/provider-credentials';
 import { createAppInitGate } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
+import { resolveOrgProviderKey } from '@/lib/orchestration/llm/org-provider-keys';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -151,6 +163,18 @@ export function hasProviderCredentialResolver(): boolean {
   return appResolver !== null;
 }
 
+/**
+ * Whether the credential for a row can be anything but the shared one in the
+ * current context: a resolver is registered, or an org is in scope at `multi`,
+ * where it may have saved its own key (§137 t-1044). When this is `false`
+ * every row resolves to the shared identity, whose breaker key is the bare
+ * slug, so the provider manager may check that breaker before fetching.
+ */
+export function credentialMayBeOrgSpecific(): boolean {
+  if (hasProviderCredentialResolver()) return true;
+  return isMultiTenant() && currentCredentialContext().orgId !== null;
+}
+
 /** The env-var default: exactly what the provider manager did before the seam. */
 function credentialFromEnv(config: ProviderCredentialConfig): ProviderCredential {
   return { apiKey: readEnvKey(config.apiKeyEnvVar), identity: '' };
@@ -177,11 +201,13 @@ function currentCredentialContext(): ProviderCredentialContext {
 }
 
 /**
- * Resolve the credential for `config` in the current async context.
+ * Resolve the credential for `config` in the current async context: the
+ * org's own key if it has saved one (at `multi`), else the app's resolver,
+ * else the row's env var.
  *
- * @throws ProviderError `credential_unavailable` when a registered resolver
- *   throws or returns something that is not a credential. Never falls back to
- *   the env var.
+ * @throws ProviderError `credential_unavailable` when the org's own key
+ *   cannot be used, or a registered resolver throws or returns something that
+ *   is not a credential. Never falls back to another key.
  */
 export async function resolveProviderCredential(
   config: ProviderCredentialConfig
@@ -199,10 +225,16 @@ export async function resolveProviderCredential(
       retriable: false,
     });
   }
+  const context = currentCredentialContext();
+  // At `single` the one org's key is the install's: nothing to look up.
+  if (context.orgId !== null && isMultiTenant()) {
+    const own = await resolveOrgProviderKey(config, context.orgId);
+    if (own) return own;
+  }
+
   const resolver = appResolver;
   if (!resolver) return credentialFromEnv(config);
 
-  const context = currentCredentialContext();
   let returned: unknown;
   try {
     returned = await resolver(config, context);

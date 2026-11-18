@@ -31,6 +31,9 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     org: { findUnique: vi.fn() },
     aiProviderConfig: { findMany: vi.fn() },
+    // No org here has saved its own AI key (§137 t-1044): the credential seam
+    // asks, at multi, for every org in scope.
+    aiOrgProviderKey: { findUnique: vi.fn(async () => null) },
   },
 }));
 

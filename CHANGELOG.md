@@ -18,6 +18,42 @@ release process.
 
 ### Added
 
+- **Organisations can send their AI calls on their own vendor keys (§137,
+  t-1044).** A new tenant-owned model, `AiOrgProviderKey`, holds one sealed key
+  per org per provider row (sealed with `sealSecret()` for the purpose
+  `org-provider-key:<orgId>:<providerConfigId>`), with a version that rises
+  each time the key is replaced, a hint (its last four characters, for a key
+  of 16 or more), and who saved it and when. It is isolated by
+  `org_isolation`, erased with its org, listed in the org export without the key and in the subject
+  export as an attribution, and registered with `npm run secrets:reseal` as
+  core's first sealed store. A new orchestration setting,
+  `orgProviderKeysEnabled` (off by default; the settings API refuses turning it
+  on while no master key is configured), is the install's switch. At `multi`,
+  `resolveProviderCredential()` now asks for the org's own key **before** the
+  `lib/app/provider-credentials.ts` resolver: an org with a key for the row
+  gets it under the identity `org-key:<orgId>:<keyRowId>:<version>` (so its
+  client, breaker and in-flight count are its own, and a replaced key never
+  reuses the old client), or `credential_unavailable` when the switch is off,
+  the provider is not approved for the org, the key will not open, or the
+  lookup failed. It is never moved to the install's key or handed to your
+  resolver. An org with no key resolves as before, and nothing is read at
+  `single`. The lookup is cached for 60 seconds per org and row; a save or
+  removal clears it in the writing process. A permanent delete of a provider
+  row is refused (409, `details.orgKeyCount`) while orgs hold keys for it.
+  Config Health gains a critical check for the switch on with no master key.
+  Saving keys through the product arrives with t-1045. See
+  [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#organisations-own-keys).
+  _Fork impact:_ if you registered a credential resolver, it is no longer asked
+  for an org that has saved its own key while that key is in use. At `single`
+  nothing changes. At `multi`, even with the switch off and no keys saved,
+  each provider fetch or reachability check for an org now also reads (cached
+  for 60 seconds) whether it holds a key, and a read that fails refuses that
+  org's credential rather than assume it holds none, local rows included. So a
+  unit test that mocks `@/lib/db/client` and fetches a provider for an org at
+  `multi` needs `aiOrgProviderKey: { findUnique: async () => null }` in its
+  mock. The migration adds a table and a column, and enables RLS on the table if your install has already run
+  `db:tenancy:enable`.
+
 - **A page, route or menu item can require an entitlement switch (§135,
   t-1034).** A `requires` option beside `tier` in the three places a surface
   declares its tier: `registerOrgTierAdminPage(pattern, { tier, requires })`,

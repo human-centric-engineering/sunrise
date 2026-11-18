@@ -116,6 +116,15 @@ export interface OrchestrationSettings {
   privacyConfidentialCommercial?: string;
   /** The model for confidential messages (§130 t-1038); `null` when none is set. */
   confidentialModel?: { providerSlug: string; model: string } | null;
+  /** Organisations' own AI keys (§137 t-1044). */
+  orgProviderKeysEnabled?: boolean;
+  /**
+   * How many orgs hold a saved key: what turning the switch off would refuse.
+   * `null` when it could not be counted.
+   */
+  orgsWithProviderKeys?: number | null;
+  /** Whether a sealed-secret master key is configured, so the switch can be turned on. */
+  sealedSecretKeyConfigured?: boolean;
 }
 
 /** A model that can be the model for confidential messages: on a local or trusted provider. */
@@ -232,6 +241,12 @@ export interface SettingsFormProps {
    * could not be loaded: the select then shows only what is saved.
    */
   confidentialModelOptions?: ConfidentialModelOption[] | null;
+  /**
+   * Whether to show the switch for organisations' own AI keys (§137 t-1044):
+   * at `TENANCY_MODE=multi` only. At `single` there is one org, whose key is
+   * the install's, and the switch would change nothing.
+   */
+  showOrgProviderKeys?: boolean;
 }
 
 // ─── Client-side validation schema ──────────────────────────────────────────
@@ -312,6 +327,7 @@ const settingsFormSchema = z
     privacyConfidentialPersonal: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
     privacyConfidentialCommercial: z.enum(CONFIDENTIAL_POLICIES_BY_STRICTNESS),
     confidentialModel: z.string(),
+    orgProviderKeysEnabled: z.boolean(),
     // Limits
     globalMonthlyBudgetUsd: nullableNumber.pipe(z.number().nonnegative().max(1_000_000).nullable()),
     // Per-execution / per-turn defaults (improvement #39 runaway-loop
@@ -456,6 +472,7 @@ export function SettingsForm({
   allowPrivateEscalationWebhook = false,
   embeddingProviderIsLocal = null,
   confidentialModelOptions = null,
+  showOrgProviderKeys = false,
 }: SettingsFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
@@ -464,6 +481,12 @@ export function SettingsForm({
   // when it differs from this, never from the stale load-time value.
   const [savedConfidentialKey, setSavedConfidentialKey] = React.useState(() =>
     confidentialModelKey(initialSettings.confidentialModel)
+  );
+  // What the server holds for organisations' own keys. Sent only when it
+  // differs: turning it on is refused while no master key is configured, and
+  // that must not stop a save of anything else on a page loaded with it on.
+  const [savedOrgKeysEnabled, setSavedOrgKeysEnabled] = React.useState(
+    initialSettings.orgProviderKeysEnabled === true
   );
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
     initialSettings.escalationConfig?.emailAddresses ?? []
@@ -594,6 +617,7 @@ export function SettingsForm({
         initialSettings.privacyConfidentialCommercial
       ),
       confidentialModel: confidentialModelKey(initialSettings.confidentialModel),
+      orgProviderKeysEnabled: initialSettings.orgProviderKeysEnabled === true,
       globalMonthlyBudgetUsd: toStr(initialSettings.globalMonthlyBudgetUsd),
       defaultMaxCostPerExecutionUsd: toStr(initialSettings.defaultMaxCostPerExecutionUsd),
       defaultMaxCostPerTurnUsd: toStr(initialSettings.defaultMaxCostPerTurnUsd),
@@ -664,6 +688,11 @@ export function SettingsForm({
   // t-1038): such a message is refused instead. Said, not stopped: refusing
   // may be what the administrator wants.
   const watchedConfidentialModel = watch('confidentialModel');
+  const watchedOrgKeysEnabled = watch('orgProviderKeysEnabled');
+  // `undefined` (a page from before the field) reads as none; `null` as not known.
+  const orgsWithProviderKeys =
+    initialSettings.orgsWithProviderKeys === undefined ? 0 : initialSettings.orgsWithProviderKeys;
+  const orgKeysMasterKeyMissing = initialSettings.sealedSecretKeyConfigured === false;
   const movingPolicy = (policy: string) => policy === 'approved_only' || policy === 'local_only';
   const confidentialRefusedForNoModel =
     watchedConfidentialModel === NO_CONFIDENTIAL_MODEL &&
@@ -751,6 +780,9 @@ export function SettingsForm({
             ...(values.confidentialModel !== savedConfidentialKey
               ? { confidentialModel: confidentialModelFromKey(values.confidentialModel) }
               : {}),
+            ...(values.orgProviderKeysEnabled !== savedOrgKeysEnabled
+              ? { orgProviderKeysEnabled: values.orgProviderKeysEnabled }
+              : {}),
             globalMonthlyBudgetUsd: values.globalMonthlyBudgetUsd,
             defaultMaxCostPerExecutionUsd: values.defaultMaxCostPerExecutionUsd,
             defaultMaxCostPerTurnUsd: values.defaultMaxCostPerTurnUsd,
@@ -780,6 +812,7 @@ export function SettingsForm({
       );
       reset(undefined, { keepValues: true });
       setSavedConfidentialKey(values.confidentialModel);
+      setSavedOrgKeysEnabled(values.orgProviderKeysEnabled);
       if (values.privacyMode !== KEEP_STORED_MODE) setStoredPrivacyModeShown(true);
       setSavedEmails([...escalationEmails]);
       // Only a save that wrote the list moves this page's copy of it on. One
@@ -1184,6 +1217,95 @@ export function SettingsForm({
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Organisations' own AI keys (§137) ──────────────────────────── */}
+      {showOrgProviderKeys && (
+        <Card data-testid="org-provider-keys-section">
+          <CardHeader>
+            <CardTitle className="text-base">Organisations&apos; own AI keys</CardTitle>
+            <p className="text-muted-foreground text-xs">
+              Whether an organisation can send its AI calls on its own account with a provider.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Controller
+                name="orgProviderKeysEnabled"
+                control={control}
+                render={({ field }) => (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={field.value}
+                      // Turning it on needs a master key; turning it off never
+                      // does. Judged on the saved value, so an accidental
+                      // untick on a page loaded with it on can be undone.
+                      disabled={orgKeysMasterKeyMissing && !savedOrgKeysEnabled}
+                      onChange={(e) => field.onChange(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    Let organisations use their own AI keys
+                    <FieldHelp title="Organisations' own AI keys">
+                      <p>
+                        Default: off. When on, an organisation that has saved its own key for a
+                        provider has its calls on that provider sent with that key, so the vendor
+                        bills it and its own agreement with the vendor applies. Other organisations
+                        use this install&apos;s keys as before.
+                      </p>
+                      <p className="mt-2">
+                        Saving a key does not approve a provider: an organisation still uses only
+                        the providers you have approved for it. Keys are stored encrypted under the
+                        install&apos;s master key, so this can be turned on only once that key is
+                        configured.
+                      </p>
+                      <p className="mt-2">
+                        Turning it off does not move those organisations onto this install&apos;s
+                        keys. Their calls on those providers are refused until it is back on, or
+                        until they remove their keys.
+                      </p>
+                    </FieldHelp>
+                  </label>
+                )}
+              />
+            </div>
+            {orgKeysMasterKeyMissing && !savedOrgKeysEnabled && (
+              <p
+                className="text-muted-foreground text-xs"
+                data-testid="org-provider-keys-no-master"
+              >
+                No master key is configured for storing keys, so this can&apos;t be turned on yet.
+                Set <code>SEALED_SECRET_KEYS</code> and <code>SEALED_SECRET_ACTIVE_KEY</code>.
+              </p>
+            )}
+            {savedOrgKeysEnabled && !watchedOrgKeysEnabled && orgsWithProviderKeys === null && (
+              <p
+                className="text-sm text-amber-700 dark:text-amber-400"
+                data-testid="org-provider-keys-turning-off"
+              >
+                How many organisations have saved their own keys could not be read. Any that have
+                will have their AI calls on those providers refused once this is saved, until it is
+                turned back on.
+              </p>
+            )}
+            {savedOrgKeysEnabled &&
+              !watchedOrgKeysEnabled &&
+              orgsWithProviderKeys !== null &&
+              orgsWithProviderKeys > 0 && (
+                <p
+                  className="text-sm text-amber-700 dark:text-amber-400"
+                  data-testid="org-provider-keys-turning-off"
+                >
+                  {orgsWithProviderKeys === 1
+                    ? '1 organisation has'
+                    : `${orgsWithProviderKeys} organisations have`}{' '}
+                  saved their own keys. Once this is saved, their AI calls on those providers are
+                  refused until it is turned back on. They are not moved onto this install&apos;s
+                  keys.
+                </p>
+              )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Voice input ────────────────────────────────────────────────── */}
       <Card>

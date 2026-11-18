@@ -706,6 +706,22 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
         orderBy: { changedAt: 'asc' },
       }),
   },
+  {
+    model: 'AiOrgProviderKey',
+    section: 'providerKeys',
+    disposition: 'export',
+    description:
+      'The organisation’s own AI provider keys: which provider row each is for, its last four characters, its version, and who saved it and when. The keys themselves are not included.',
+    // The sealed key is withheld (§137 t-1044): an export is read by whoever
+    // downloads it, and the key opens nowhere but the call path. `orgId` is
+    // required on this table, so there is no NULL-org row to read.
+    fetch: ({ orgId }) =>
+      prisma.aiOrgProviderKey.findMany({
+        where: { orgId },
+        omit: { sealedKey: true },
+        orderBy: byCreatedAt,
+      }),
+  },
 ];
 
 /**

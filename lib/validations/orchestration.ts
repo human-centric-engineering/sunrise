@@ -3156,6 +3156,9 @@ export const updateOrchestrationSettingsSchema = z
       .strict()
       .nullable()
       .optional(),
+    // Organisations' own AI keys (§137 t-1044). The route refuses turning it
+    // on while no sealed-secret master key is configured.
+    orgProviderKeysEnabled: z.boolean().optional(),
     // Write path: the refined variant, so an unsafe target is rejected at the
     // API boundary rather than only when the stored value is next used (#553).
     escalationConfig: escalationConfigWriteSchema.nullable().optional(),
@@ -3248,7 +3251,8 @@ export const updateOrchestrationSettingsSchema = z
       v.privacyEmbeddingsPolicy !== undefined ||
       v.privacyConfidentialPersonal !== undefined ||
       v.privacyConfidentialCommercial !== undefined ||
-      v.confidentialModel !== undefined,
+      v.confidentialModel !== undefined ||
+      v.orgProviderKeysEnabled !== undefined,
     {
       message: 'At least one field must be provided',
     }

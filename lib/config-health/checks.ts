@@ -19,6 +19,8 @@ import { prisma } from '@/lib/db/client';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
+import { isMultiTenant } from '@/lib/tenancy/context';
 import type { ConfigHealthCheck } from '@/lib/config-health/types';
 
 /**
@@ -115,6 +117,25 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
         settings.confidentialModel !== null &&
         (await confidentialModelProblem(settings.confidentialModel)) === null
       );
+    },
+  },
+  {
+    key: 'org_provider_keys_master_key',
+    label: "Master key for organisations' own AI keys",
+    severity: 'critical',
+    // Only multi reads orgs' keys: at single the one org's key is the install's.
+    applicable: () => isMultiTenant(),
+    description:
+      "Organisations' own AI keys are switched on, and no master key to open them is configured, " +
+      'so every AI call from an organisation that has saved its own key is refused.',
+    remediation:
+      'Configure SEALED_SECRET_KEYS and SEALED_SECRET_ACTIVE_KEY with the master key the saved ' +
+      'keys were sealed under. If it is lost, those organisations must save their keys again.',
+    docsPath: '.context/security/sealed-secrets.md',
+    // §137 t-1044. Satisfied while the switch is off: then nothing needs it.
+    detect: async (): Promise<boolean> => {
+      const settings = await getOrchestrationSettings();
+      return !settings.orgProviderKeysEnabled || isSealedSecretKeyConfigured();
     },
   },
   {

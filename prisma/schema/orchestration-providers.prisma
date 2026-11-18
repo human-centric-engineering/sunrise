@@ -92,12 +92,61 @@ model AiProviderConfig {
   updatedAt              DateTime @updatedAt
 
   // Relations
-  creator User? @relation("AiProviderConfigCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  creator User?              @relation("AiProviderConfigCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+  // Orgs' own keys for this row (§137 t-1044). A key is for one row, so it goes with it.
+  orgKeys AiOrgProviderKey[]
 
   @@index([createdBy])
   @@index([providerType])
   @@index([isActive])
   @@map("ai_provider_config")
+}
+
+/// An org's own API key for one provider row (§137 t-1044), used for that
+/// org's calls on the row in place of the install's key, while the install's
+/// switch (`AiOrchestrationSettings.orgProviderKeysEnabled`) is on.
+///
+/// The key is held only sealed (`lib/security/sealed-secrets.ts`), for the
+/// purpose `org-provider-key:<orgId>:<providerConfigId>`, so an envelope
+/// copied to another org's or another row's record does not open. It is
+/// opened in `lib/orchestration/llm/org-provider-keys.ts` and nowhere else,
+/// and appears in no export, backup, log line or API response; `hint` is what
+/// a person is shown.
+///
+/// Tenant-owned: one org's, isolated by `org_isolation`, and erased with it.
+/// `orgId` is required, unlike the tables §107 backfilled: a key with no org
+/// would be nobody's. Kept standing when the person who saved it is erased
+/// (`SetNull`): the key is the org's, not theirs.
+model AiOrgProviderKey {
+  id               String           @id @default(cuid())
+  providerConfigId String
+  providerConfig   AiProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  /// The sealed envelope. Never selected outside org-provider-keys.ts.
+  sealedKey        String
+  /// Starts at 1 and rises by one each time the key is replaced. Part of the
+  /// credential identity, so a replaced key is never served by a client built
+  /// with the one before it.
+  version          Int              @default(1)
+  /// The key's last four characters, for display; empty for a key shorter
+  /// than 16 characters. Not enough to use it.
+  hint             String
+  /// Who last saved it, and when. Retained, detached, when they are erased.
+  /// `savedAt` and not `updatedAt`, which a reseal onto a new master key
+  /// moves too.
+  savedById        String?
+  savedBy          User?            @relation("AiOrgProviderKeySavedBy", fields: [savedById], references: [id], onDelete: SetNull)
+  savedAt          DateTime         @default(now())
+
+  orgId String
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orgId, providerConfigId])
+  @@index([providerConfigId])
+  @@index([savedById])
+  @@map("ai_org_provider_key")
 }
 
 // Provider model matrix — per-model landscape analysis
@@ -307,6 +356,14 @@ model AiOrchestrationSettings {
   // is, so a backup carries it to another install.
   confidentialModelProvider     String?
   confidentialModel             String?
+  // Orgs' own AI keys (§137 t-1044): while on, an org that has saved a key
+  // for a provider row has its calls on that row sent with it. Off by
+  // default, and turned on only while a sealed-secret master key is
+  // configured (the settings API checks). Turning it off with keys saved
+  // refuses those orgs' calls on those rows rather than moving them to the
+  // install's key. Not carried by a backup: it is this install's custody
+  // decision, and the keys it governs do not travel either.
+  orgProviderKeysEnabled        Boolean   @default(false)
   createdAt                     DateTime  @default(now())
   updatedAt                     DateTime  @updatedAt
 

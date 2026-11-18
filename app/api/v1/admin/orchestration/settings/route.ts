@@ -36,6 +36,8 @@ import {
 } from '@/lib/validations/orchestration';
 import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import { requireIfMatch } from '@/lib/api/record-version';
+import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
+import { countOrgsWithProviderKeys } from '@/lib/orchestration/llm/org-provider-keys';
 import { assertUnchangedSince, escalationVersion } from '@/lib/orchestration/config-versions';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
@@ -53,17 +55,29 @@ export const GET = withAdminAuth(async (request) => {
   // cache `getOrchestrationSettings` serves the rest from: the cache is per process, so on another instance it can still hold
   // a list an erasure has since scrubbed, and a stale list beside a current
   // version would pass the save's check and write the person back.
-  const [settings, stored] = await Promise.all([
+  const [settings, stored, orgsWithProviderKeys] = await Promise.all([
     getOrchestrationSettings(),
     prisma.aiOrchestrationSettings.findUnique({
       where: { slug: 'global' },
       select: { escalationConfig: true },
+    }),
+    // What turning organisations' own keys off would refuse (§137 t-1044).
+    // Only a warning line reads it, so a failed count shows as unknown rather
+    // than failing the whole page.
+    countOrgsWithProviderKeys().catch((err: unknown) => {
+      log.warn('Could not count the orgs holding their own AI keys', {
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      return null;
     }),
   ]);
   const body = {
     ...settings,
     escalationConfig: parseEscalationConfig(stored?.escalationConfig),
     escalationVersion: escalationVersion(stored?.escalationConfig),
+    orgsWithProviderKeys,
+    // Whether the switch can be turned on. Presence only, as Config Health reports it.
+    sealedSecretKeyConfigured: isSealedSecretKeyConfigured(),
   };
 
   const etag = computeETag(body);
@@ -222,6 +236,27 @@ export const PATCH = withAdminAuth(
     // overlay the patch.
     const existing = await prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
 
+    // Organisations' own AI keys (§137 t-1044) are held sealed, so they can be
+    // switched ON only while there is a master key to seal them with. Only a
+    // change from off is refused: a client resending the `true` it read must
+    // still be able to save everything else after the master key has gone.
+    // Turning them off is always allowed: it refuses the orgs that hold keys
+    // rather than moving them to the install's key.
+    if (
+      body.orgProviderKeysEnabled === true &&
+      existing?.orgProviderKeysEnabled !== true &&
+      !isSealedSecretKeyConfigured()
+    ) {
+      return errorResponse(
+        "Organisations' own AI keys can't be turned on: no master key for sealing them is configured. Set SEALED_SECRET_KEYS and SEALED_SECRET_ACTIVE_KEY, then try again.",
+        {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+          details: { field: 'orgProviderKeysEnabled' },
+        }
+      );
+    }
+
     // Retention coupling: cost logs must outlive the executions that reference
     // them, or the cost breakdown empties out under executions still on file
     // (see the refine on `updateOrchestrationSettingsSchema`). The schema catches
@@ -370,6 +405,9 @@ export const PATCH = withAdminAuth(
       updateData.confidentialModelProvider = body.confidentialModel?.providerSlug ?? null;
       updateData.confidentialModel = body.confidentialModel?.model ?? null;
     }
+    if (body.orgProviderKeysEnabled !== undefined) {
+      updateData.orgProviderKeysEnabled = body.orgProviderKeysEnabled;
+    }
     if (body.escalationConfig !== undefined) {
       updateData.escalationConfig =
         body.escalationConfig === null ? Prisma.JsonNull : body.escalationConfig;
@@ -428,6 +466,9 @@ export const PATCH = withAdminAuth(
                 confidentialModelProvider: body.confidentialModel.providerSlug,
                 confidentialModel: body.confidentialModel.model,
               }
+            : {}),
+          ...(body.orgProviderKeysEnabled !== undefined
+            ? { orgProviderKeysEnabled: body.orgProviderKeysEnabled }
             : {}),
         },
         update: updateData,

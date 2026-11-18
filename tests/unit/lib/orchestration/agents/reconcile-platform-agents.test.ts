@@ -275,6 +275,9 @@ const fake = vi.hoisted(() => {
         return state.models;
       },
     },
+    // No org here has saved its own AI key (§137 t-1044): the credential seam
+    // asks, at multi, for every org in scope.
+    aiOrgProviderKey: { findUnique: async () => null },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
   };
   return { state, db };

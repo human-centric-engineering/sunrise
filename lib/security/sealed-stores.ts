@@ -10,7 +10,8 @@
  * key. The store owns the queries; this module owns the walk.
  *
  * A fork registers its own stores from `lib/app/sealed-stores.ts`. Sunrise's
- * own stores are registered here, in code, as they are added.
+ * own stores are listed in `lib/security/core-sealed-stores.ts` and registered
+ * here first, so a fork's store cannot take a core store's name.
  *
  * ## What the walk guarantees
  *
@@ -47,6 +48,7 @@
  */
 
 import { initAppSealedStores } from '@/lib/app/sealed-stores';
+import { CORE_SEALED_STORES } from '@/lib/security/core-sealed-stores';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import {
   activeSealedSecretKeyId,
@@ -151,6 +153,12 @@ export class SealedStoreRegistrationError extends Error {
 const stores = new Map<string, SealedStore>();
 let registrationFailed = false;
 
+/** Core's stores, before the fork's init runs: its snapshot then keeps them through a rollback. */
+function registerCoreStores(): void {
+  for (const store of CORE_SEALED_STORES) stores.set(store.name, store);
+}
+registerCoreStores();
+
 const appInit = createAppInitGate({
   label: 'sealed-stores: initAppSealedStores',
   subject: 'the app’s sealed stores',
@@ -198,6 +206,7 @@ export function getSealedStoreNames(): string[] {
 /** Test-only: clear the registry and re-arm the fork init. */
 export function __resetSealedStoresForTests(): void {
   stores.clear();
+  registerCoreStores();
   registrationFailed = false;
   appInit.reset();
 }

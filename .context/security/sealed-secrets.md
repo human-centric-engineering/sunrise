@@ -178,8 +178,14 @@ export function initAppSealedStores(): void {
 }
 ```
 
-Sunrise registers its own stores in core as it adds them. The first will be
-the org AI key store (§137 t-1044); today none is registered.
+Sunrise's own stores are listed in `lib/security/core-sealed-stores.ts` and
+registered before the fork's init runs, so a fork store cannot take a core
+store's name, and a fork init that throws keeps them registered (the walk
+still refuses until it is fixed). The first is `org-provider-keys`,
+organisations' own AI keys (§137 t-1044): its `replace` compares and swaps on
+the envelope and leaves the key's version alone, so a resealed key keeps its
+credential identity and its client. A new core store goes on that list in the
+same change that starts sealing into it.
 
 ## A managed key service
 

@@ -45,6 +45,10 @@ vi.mock('@/lib/db/client', () => ({
     aiCostLog: {
       count: vi.fn(),
     },
+    // Orgs' own keys for the row (§137 t-1044), counted before a permanent delete.
+    aiOrgProviderKey: {
+      count: vi.fn(),
+    },
   },
 }));
 
@@ -565,6 +569,27 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () =
     // Default to "no references found" — individual tests override.
     vi.mocked(prisma.aiAgent.count).mockResolvedValue(0);
     vi.mocked(prisma.aiCostLog.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOrgProviderKey.count).mockResolvedValue(0);
+  });
+
+  it('refuses while orgs hold their own key for it, which the delete would silently take (§137 t-1044)', async () => {
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+    vi.mocked(prisma.aiOrgProviderKey.count).mockResolvedValue(2);
+
+    const response = await DELETE(
+      makeRequest('DELETE', undefined, { permanent: 'true' }),
+      makeParams(PROVIDER_ID)
+    );
+
+    expect(response.status).toBe(409);
+    const data = await parseJson<{ error: { message: string; details: unknown } }>(response);
+    expect(data.error.message).toMatch(/2 organisations have saved their own key for it/);
+    expect(data.error.details).toMatchObject({ orgKeyCount: 2 });
+    // Counted by the row's id, across every org.
+    expect(prisma.aiOrgProviderKey.count).toHaveBeenCalledWith({
+      where: { providerConfigId: PROVIDER_ID },
+    });
+    expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
   });
 
   it('hard-deletes when no agents or cost logs reference the slug', async () => {

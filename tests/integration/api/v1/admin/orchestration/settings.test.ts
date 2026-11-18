@@ -21,6 +21,8 @@ import { NextRequest } from 'next/server';
 import { GET, PATCH } from '@/app/api/v1/admin/orchestration/settings/route';
 import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
+import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
+import { countOrgsWithProviderKeys } from '@/lib/orchestration/llm/org-provider-keys';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -43,6 +45,8 @@ vi.mock('@/lib/db/client', () => {
       findUnique: vi.fn(),
       upsert: vi.fn(),
     },
+    // Orgs holding their own AI keys, counted for the switch (§137 t-1044)
+    aiOrgProviderKey: { findMany: vi.fn(async () => []) },
     // Watched so a test can show a save asks erasure nothing (t-899)
     dataErasureReceipt: { findMany: vi.fn(async () => []) },
     // The row lock a versioned save of the escalation list takes (t-899)
@@ -72,6 +76,21 @@ vi.mock('@/lib/db/client', () => {
   prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
   return { prisma };
 });
+
+// Whether a sealed-secret master key is configured decides whether orgs' own
+// AI keys can be switched on (§137 t-1044); scripted per test, off by default.
+vi.mock('@/lib/security/sealed-secrets', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/security/sealed-secrets')>()),
+  isSealedSecretKeyConfigured: vi.fn(() => false),
+}));
+
+// How many orgs hold their own AI keys (§137 t-1044): its query, and that it
+// counts nothing at single, are the module's own tests. Here only what the
+// route does with the answer.
+vi.mock('@/lib/orchestration/llm/org-provider-keys', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-keys')>()),
+  countOrgsWithProviderKeys: vi.fn(async () => 0),
+}));
 
 // Whether a model can be the model for confidential messages (§130 t-1038)
 // reads the provider rows; its own tests prove which it accepts. Usable unless
@@ -554,6 +573,8 @@ describe('Admin Orchestration — /settings', () => {
           value: { providerSlug: 'ollama-local', model: 'llama3.1:8b' },
           writes: 'confidentialModelProvider',
         },
+        // Off: turning it on needs a master key, which its own tests script.
+        orgProviderKeysEnabled: { value: false },
       };
       // Written only under If-Match against the list's version (§122): its
       // own tests below send one and assert the write.
@@ -1567,6 +1588,106 @@ describe('Admin Orchestration — /settings', () => {
       expect(res.status).toBe(200);
       const upsertCall = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
       expect(upsertCall?.update.embedAllowedOrigins).toEqual([]);
+    });
+  });
+
+  describe("organisations' own AI keys (§137 t-1044)", () => {
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+    });
+
+    it('refuses to turn them on while no master key is configured, writing nothing', async () => {
+      vi.mocked(isSealedSecretKeyConfigured).mockReturnValue(false);
+
+      const res = await PATCH(makePatch({ orgProviderKeysEnabled: true }));
+
+      expect(res.status).toBe(400);
+      const body = await parseJson<{ error: { code: string; details: unknown } }>(res);
+      expect(body.error).toMatchObject({
+        code: 'VALIDATION_ERROR',
+        details: { field: 'orgProviderKeysEnabled' },
+      });
+      expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+    });
+
+    it('turns them on once a master key is configured, on a first save as well', async () => {
+      vi.mocked(isSealedSecretKeyConfigured).mockReturnValue(true);
+
+      const res = await PATCH(makePatch({ orgProviderKeysEnabled: true }));
+
+      expect(res.status).toBe(200);
+      const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(args?.update).toMatchObject({ orgProviderKeysEnabled: true });
+      expect(args?.create).toMatchObject({ orgProviderKeysEnabled: true });
+    });
+
+    it('accepts a resent `true` with no master key, so other settings still save', async () => {
+      vi.mocked(isSealedSecretKeyConfigured).mockReturnValue(false);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+        ...makeSettingsRow(),
+        orgProviderKeysEnabled: true,
+      } as never);
+
+      const res = await PATCH(
+        makePatch({ orgProviderKeysEnabled: true, globalMonthlyBudgetUsd: 500 })
+      );
+
+      expect(res.status).toBe(200);
+      const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(args?.update).toMatchObject({ globalMonthlyBudgetUsd: 500 });
+    });
+
+    it('still answers the settings when the orgs holding keys cannot be counted', async () => {
+      vi.mocked(countOrgsWithProviderKeys).mockRejectedValueOnce(new Error('relation missing'));
+
+      const res = await GET(makeGet());
+
+      expect(res.status).toBe(200);
+      const { data } = await parseJson<{ data: Record<string, unknown> }>(res);
+      expect(data.orgsWithProviderKeys).toBeNull();
+    });
+
+    it('turns them off with no master key: switching off never needs one', async () => {
+      vi.mocked(isSealedSecretKeyConfigured).mockReturnValue(false);
+
+      const res = await PATCH(makePatch({ orgProviderKeysEnabled: false }));
+
+      expect(res.status).toBe(200);
+      const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(args?.update).toMatchObject({ orgProviderKeysEnabled: false });
+    });
+
+    it('leaves the switch alone on a save that does not name it', async () => {
+      const res = await PATCH(makePatch({ globalMonthlyBudgetUsd: 10 }));
+
+      expect(res.status).toBe(200);
+      const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(args?.update).not.toHaveProperty('orgProviderKeysEnabled');
+    });
+
+    it('reads the switch, how many orgs hold keys, and whether a master key is configured', async () => {
+      vi.mocked(isSealedSecretKeyConfigured).mockReturnValue(true);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+        ...makeSettingsRow(),
+        orgProviderKeysEnabled: true,
+      } as never);
+      vi.mocked(countOrgsWithProviderKeys).mockResolvedValueOnce(2);
+
+      const res = await GET(makeGet());
+
+      expect(res.status).toBe(200);
+      const { data } = await parseJson<{ data: Record<string, unknown> }>(res);
+      expect(data).toMatchObject({
+        orgProviderKeysEnabled: true,
+        orgsWithProviderKeys: 2,
+        sealedSecretKeyConfigured: true,
+      });
     });
   });
 });

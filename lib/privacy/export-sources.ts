@@ -491,6 +491,32 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     },
   },
   {
+    // `SetNull`: the key is the org's, not the person's (§137 t-1044). What
+    // the subject receives is that they last saved it, never the key or its hint.
+    model: 'AiOrgProviderKey',
+    section: 'orgProviderKeysSaved',
+    disposition: 'attribution',
+    description:
+      'AI provider keys the subject last saved for an organisation, as one of its administrators. The keys are not included.',
+    fetch: async ({ userId }: SubjectQuery): Promise<AttributionRow[]> => {
+      const rows = await prisma.aiOrgProviderKey.findMany({
+        where: { savedById: userId },
+        select: {
+          id: true,
+          savedAt: true,
+          providerConfig: { select: { name: true } },
+          org: { select: { name: true } },
+        },
+        orderBy: { savedAt: 'asc' },
+      });
+      return rows.map((row) => ({
+        id: row.id,
+        label: `Saved ${row.org.name}'s key for ${row.providerConfig.name}`,
+        createdAt: row.savedAt,
+      }));
+    },
+  },
+  {
     // Two `User` FKs, both `SetNull`: the grant is the org's consent record,
     // not the person's, so it outlives them (§121 t-823). What the subject
     // receives is each act of theirs — granting, revoking — as its own row,
