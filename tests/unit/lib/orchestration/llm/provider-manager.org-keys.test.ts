@@ -72,16 +72,23 @@ vi.mock('@/lib/logging', () => ({
 
 /** Every Anthropic client constructed, with the key it was built with. */
 const clients = vi.hoisted(() => [] as { apiKey: unknown; create: ReturnType<typeof vi.fn> }[]);
+/** An error the next vendor call throws, once. */
+const sdkFailure = vi.hoisted((): { next: Error | null } => ({ next: null }));
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages: { create: ReturnType<typeof vi.fn> };
     constructor(opts: { apiKey?: unknown }) {
-      const create = vi.fn(async () => ({
-        content: [{ type: 'text', text: 'ok' }],
-        usage: { input_tokens: 1, output_tokens: 1 },
-        model: 'm',
-        stop_reason: 'end_turn',
-      }));
+      const create = vi.fn(async () => {
+        const failure = sdkFailure.next;
+        sdkFailure.next = null;
+        if (failure) throw failure;
+        return {
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+          model: 'm',
+          stop_reason: 'end_turn',
+        };
+      });
       this.messages = { create };
       clients.push({ apiKey: opts.apiKey, create });
     }
@@ -111,6 +118,7 @@ import {
   clearCache,
   getProvider,
   getProviderWithFallbacks,
+  testProviderKey,
 } from '@/lib/orchestration/llm/provider-manager';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { orgKeyTable } from '@/tests/helpers/org-provider-key-table';
@@ -159,6 +167,7 @@ function callsByKey(): unknown[] {
 beforeEach(() => {
   vi.clearAllMocks();
   clients.length = 0;
+  sdkFailure.next = null;
   clearCache();
   resetAllBreakers();
   __resetInFlightCountersForTests();
@@ -386,5 +395,33 @@ describe('at single', () => {
 
     expect(orgKeyTable.delegate.findUnique).not.toHaveBeenCalled();
     expect(callsByKey()).toEqual(['shared-install-key']);
+  });
+});
+
+describe('testing a key before it is saved (t-1045)', () => {
+  it('pings the vendor once on the submitted key, on a client the manager never caches', async () => {
+    const result = await testProviderKey(ROW as never, KEY_B);
+
+    expect(result.ok).toBe(true);
+    expect(clients.map((c) => c.apiKey)).toEqual([KEY_B]);
+    expect(clients[0].create).toHaveBeenCalledTimes(1);
+    expect(clients[0].create).toHaveBeenCalledWith(expect.objectContaining({ max_tokens: 1 }));
+
+    // The org's next call is built afresh on its own key, never on the tested one.
+    await save(ORG_A, KEY_A);
+    await chat(ORG_A);
+    expect(clients.map((c) => c.apiKey)).toEqual([KEY_B, KEY_A]);
+    expect(clients[0].create).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers a refused key as a failed test, with the vendor’s message for the caller to scrub', async () => {
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockClear();
+    sdkFailure.next = new Error(`401 invalid x-api-key ${KEY_B}`);
+
+    const result = await testProviderKey(ROW as never, KEY_B);
+
+    expect(result).toEqual({ ok: false, models: [], error: `401 invalid x-api-key ${KEY_B}` });
+    // Built from the row it was handed: no read of the provider table.
+    expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
   });
 });

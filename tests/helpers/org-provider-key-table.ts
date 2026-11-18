@@ -4,7 +4,8 @@
  * Implements only the calls `lib/orchestration/llm/org-provider-keys.ts`
  * makes, with the semantics that matter to it: the (orgId, providerConfigId)
  * unique key, `version: { increment }` on update, a compare-and-swap
- * `updateMany`, and cursor paging. Each method is a `vi.fn`, so a test can
+ * `updateMany`, cursor paging, and the `providerConfig` relation's select
+ * (from {@link createTable}'s `providers`, which a test fills; t-1045). Each method is a `vi.fn`, so a test can
  * count reads or make one fail.
  *
  * Usage, in a `vi.mock` factory (the helper module is one instance per test
@@ -31,11 +32,34 @@ export interface OrgKeyRow {
 
 type Where = Partial<Pick<OrgKeyRow, 'id' | 'orgId' | 'providerConfigId' | 'sealedKey'>>;
 
-function pick(row: OrgKeyRow, select?: Record<string, boolean>): Partial<OrgKeyRow> {
+/** A provider row a key's `providerConfig` relation selects from. */
+export interface ProviderRelationRow {
+  name: string;
+  slug: string;
+}
+
+/** `{ field: true }`, or `{ providerConfig: { select: { … } } }` for the relation. */
+type Select = Record<string, boolean | { select: Record<string, boolean> }>;
+
+function pick(
+  row: OrgKeyRow,
+  select: Select | undefined,
+  providers: ReadonlyMap<string, ProviderRelationRow>
+): Record<string, unknown> {
   if (!select) return { ...row };
   const out: Record<string, unknown> = {};
   for (const [field, on] of Object.entries(select)) {
-    if (on) out[field] = row[field as keyof OrgKeyRow];
+    if (field === 'providerConfig' && typeof on === 'object') {
+      const provider = providers.get(row.providerConfigId);
+      if (!provider) throw new Error(`No provider relation row for ${row.providerConfigId}`);
+      out[field] = Object.fromEntries(
+        Object.entries(on.select)
+          .filter(([, wanted]) => wanted)
+          .map(([key]) => [key, provider[key as keyof ProviderRelationRow]])
+      );
+    } else if (on) {
+      out[field] = row[field as keyof OrgKeyRow];
+    }
   }
   return out;
 }
@@ -46,6 +70,8 @@ function matches(row: OrgKeyRow, where: Where = {}): boolean {
 
 function createTable() {
   const rows = new Map<string, OrgKeyRow>();
+  /** What `select: { providerConfig: … }` reads, by provider row id: set by a test that needs it. */
+  const providers = new Map<string, ProviderRelationRow>();
   let seq = 0;
 
   const find = (orgId: string, providerConfigId: string) =>
@@ -55,11 +81,11 @@ function createTable() {
     findUnique: vi.fn(
       async (args: {
         where: { orgId_providerConfigId: { orgId: string; providerConfigId: string } };
-        select?: Record<string, boolean>;
+        select?: Select;
       }) => {
         const { orgId, providerConfigId } = args.where.orgId_providerConfigId;
         const row = find(orgId, providerConfigId);
-        return row ? pick(row, args.select) : null;
+        return row ? pick(row, args.select, providers) : null;
       }
     ),
     upsert: vi.fn(
@@ -69,7 +95,7 @@ function createTable() {
         update: Pick<OrgKeyRow, 'sealedKey' | 'hint' | 'savedById' | 'savedAt'> & {
           version: { increment: number };
         };
-        select?: Record<string, boolean>;
+        select?: Select;
       }) => {
         const { orgId, providerConfigId } = args.where.orgId_providerConfigId;
         let row = find(orgId, providerConfigId);
@@ -81,7 +107,7 @@ function createTable() {
           row = { id: `key${seq}`, version: 1, createdAt: new Date(), ...args.create };
           rows.set(row.id, row);
         }
-        return pick(row, args.select);
+        return pick(row, args.select, providers);
       }
     ),
     deleteMany: vi.fn(async (args: { where: Where }) => {
@@ -112,7 +138,7 @@ function createTable() {
       async (
         args: {
           where?: Where;
-          select?: Record<string, boolean>;
+          select?: Select;
           distinct?: Array<keyof OrgKeyRow>;
           take?: number;
           skip?: number;
@@ -136,13 +162,14 @@ function createTable() {
           });
         }
         if (args.take !== undefined) list = list.slice(0, args.take);
-        return list.map((row) => pick(row, args.select));
+        return list.map((row) => pick(row, args.select, providers));
       }
     ),
   };
 
   return {
     rows,
+    providers,
     delegate,
     /** The row for an org and provider row, as stored. */
     get(orgId: string, providerConfigId: string): OrgKeyRow | undefined {
@@ -150,6 +177,7 @@ function createTable() {
     },
     clear(): void {
       rows.clear();
+      providers.clear();
       seq = 0;
       for (const fn of Object.values(delegate)) fn.mockClear();
     },
