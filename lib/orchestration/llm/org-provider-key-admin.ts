@@ -207,9 +207,25 @@ export async function runKeyTest(
   return ok;
 }
 
-/** `text` with every occurrence of `apiKey` replaced. */
+/**
+ * `text` with every occurrence of `apiKey` replaced: as typed, and as a vendor
+ * might echo it JSON-escaped or URL-encoded (a key may hold `"`, `\\` or `%`).
+ */
 export function withoutKey(text: string, apiKey: string): string {
-  return apiKey.length === 0 ? text : text.split(apiKey).join('[key]');
+  if (apiKey.length === 0) return text;
+  const forms = new Set([apiKey, JSON.stringify(apiKey).slice(1, -1), encodeURIComponent(apiKey)]);
+  let out = text;
+  for (const form of forms) out = out.split(form).join('[key]');
+  return out;
+}
+
+/**
+ * The rate-limit bucket for saves, or for tests, of one org's keys. Separate,
+ * so testing keys (a support engineer's, or another admin's) never uses up the
+ * org's chance to replace a leaked one.
+ */
+export function providerKeyLimitToken(flow: 'save' | 'test', orgId: string): string {
+  return `provider-key-${flow}:org:${orgId}`;
 }
 
 const PAST = { save: 'saved', remove: 'removed', read: 'read', test: 'tested' } as const;

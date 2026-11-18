@@ -237,7 +237,7 @@ function ProviderKeyCard({
             </p>
           )}
 
-          {editing ? (
+          {editing && canSave ? (
             <ProviderKeyForm
               orgId={orgId}
               providerConfigId={row.providerConfigId}

@@ -187,6 +187,23 @@ describe('which actions are offered', () => {
     expect(screen.getByRole('button', { name: /Remove key/ })).toBeInTheDocument();
   });
 
+  it('closes an open save form once saving is no longer offered', async () => {
+    const user = userEvent.setup();
+    const props = {
+      orgId: ORG,
+      providers: [row('in_use')],
+      canChange: true,
+      masterKeyMissing: false,
+    };
+    const { rerender } = render(<ProviderKeysList {...props} canSave />);
+    await user.click(screen.getByRole('button', { name: 'Replace key' }));
+    expect(screen.getByRole('button', { name: /Test and replace/ })).toBeInTheDocument();
+
+    rerender(<ProviderKeysList {...props} canSave={false} />);
+
+    expect(screen.queryByRole('button', { name: /Test and replace/ })).not.toBeInTheDocument();
+  });
+
   it('opens the save form for that provider', async () => {
     const user = userEvent.setup();
     render(

@@ -19,7 +19,7 @@
 
 import { withAuth } from '@/lib/auth/guards';
 import { getRouteLogger } from '@/lib/api/context';
-import { APIError, NotFoundError } from '@/lib/api/errors';
+import { APIError, ConflictError, NotFoundError } from '@/lib/api/errors';
 import { successResponse } from '@/lib/api/responses';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { prisma } from '@/lib/db/client';
@@ -30,6 +30,7 @@ import {
   assertKeysCanBeSaved,
   keyStoreFailure,
   loadKeyProvider,
+  providerKeyLimitToken,
   providerKeysGuard,
   runKeyTest,
 } from '@/lib/orchestration/llm/org-provider-key-admin';
@@ -61,7 +62,7 @@ export const PUT = withAuth<Params>(async (request, session, { params }) => {
   await assertKeysCanBeSaved();
   const config = await loadKeyProvider(providerId);
 
-  const limit = providerKeyTestLimiter.check(`provider-key-test:org:${id}`);
+  const limit = providerKeyTestLimiter.check(providerKeyLimitToken('save', id));
   if (!limit.success) {
     log.warn('Org AI key save rate-limited', { orgId: id, userId: session.user.id });
     return createRateLimitResponse(limit);
@@ -161,7 +162,11 @@ export const DELETE = withAuth<Params>(async (request, session, { params }) => {
         providerConfig: { select: { name: true, slug: true } },
       },
     });
-    removed = existing ? await removeOrgProviderKey(providerId) : false;
+    // Pinned to the key just read, so a key replaced in between is left alone
+    // and the audit row below never names a key other than the one removed.
+    removed = existing
+      ? await removeOrgProviderKey(providerId, { id: existing.id, version: existing.version })
+      : false;
   } catch (err) {
     throw keyStoreFailure(err, 'remove', {
       orgId: id,
@@ -169,8 +174,13 @@ export const DELETE = withAuth<Params>(async (request, session, { params }) => {
       userId: session.user.id,
     });
   }
-  if (!existing || !removed)
-    throw new NotFoundError('This organisation has no key saved for that provider');
+  if (!existing) throw new NotFoundError('This organisation has no key saved for that provider');
+  if (!removed) {
+    throw new ConflictError(
+      'This key was replaced or removed while you were removing it. Reload to see the key saved now.',
+      { reason: 'key_changed' }
+    );
+  }
 
   logAdminAction({
     userId: session.user.id,

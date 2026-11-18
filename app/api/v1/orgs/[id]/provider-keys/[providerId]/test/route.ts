@@ -24,6 +24,7 @@ import {
   assertActsForOrgKeys,
   keyStoreFailure,
   loadKeyProvider,
+  providerKeyLimitToken,
   providerKeysGuard,
   runKeyTest,
 } from '@/lib/orchestration/llm/org-provider-key-admin';
@@ -47,7 +48,7 @@ export const POST = withAuth<Params>(async (request, session, { params }) => {
   assertActsForOrgKeys(session, id);
   const config = await loadKeyProvider(providerId);
 
-  const limit = providerKeyTestLimiter.check(`provider-key-test:org:${id}`);
+  const limit = providerKeyTestLimiter.check(providerKeyLimitToken('test', id));
   if (!limit.success) {
     log.warn('Org AI key test rate-limited', { orgId: id, userId: session.user.id });
     return createRateLimitResponse(limit);
@@ -65,14 +66,17 @@ export const POST = withAuth<Params>(async (request, session, { params }) => {
   }
   if (!opened) throw new NotFoundError('This organisation has no key saved for that provider');
 
-  const ok =
-    opened.apiKey !== null &&
-    (await runKeyTest(config, opened.apiKey, {
-      orgId: id,
-      userId: session.user.id,
-      during: 'test',
-    }));
-  const reason = ok ? undefined : opened.apiKey === null ? 'will_not_open' : 'test_failed';
+  const reason =
+    opened.apiKey === null
+      ? 'will_not_open'
+      : (await runKeyTest(config, opened.apiKey, {
+            orgId: id,
+            userId: session.user.id,
+            during: 'test',
+          }))
+        ? undefined
+        : 'test_failed';
+  const ok = reason === undefined;
 
   logAdminAction({
     userId: session.user.id,

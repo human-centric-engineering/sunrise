@@ -66,7 +66,12 @@ import { logger } from '@/lib/logging';
 import { applyOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { openSecret, SealedSecretOpenError, sealSecret } from '@/lib/security/sealed-secrets';
+import {
+  openSecret,
+  SealedSecretKeyMissingError,
+  SealedSecretOpenError,
+  sealSecret,
+} from '@/lib/security/sealed-secrets';
 import type { SealedStore, SealedValue } from '@/lib/security/sealed-stores';
 import { isMultiTenant, requireTenantContext, runAsSystem } from '@/lib/tenancy/context';
 import { KEY_DISALLOWED_CHARACTER, PROVIDER_KEY_MAX_LENGTH } from '@/lib/validations/tenancy';
@@ -330,13 +335,21 @@ export async function orgProviderKeyStatuses(): Promise<OrgProviderKeyStatus[]> 
   );
 }
 
-/** Whether a stored envelope opens for this org and row. */
+/**
+ * Whether a stored envelope opens for this org and row: false when the
+ * envelope is not this org's or this row's, or no master key is configured
+ * (what the call path refuses as `will_not_open`). Anything else throws, so a
+ * broken keyring reads as a failed read, not as every key needing saving again.
+ */
 async function opens(sealedKey: string, orgId: string, providerConfigId: string): Promise<boolean> {
   try {
     await openSecret(sealedKey, orgProviderKeyPurpose(orgId, providerConfigId));
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (err instanceof SealedSecretOpenError || err instanceof SealedSecretKeyMissingError) {
+      return false;
+    }
+    throw err;
   }
 }
 
@@ -444,13 +457,21 @@ export async function saveOrgProviderKey(input: {
 /**
  * Remove the org-in-scope's key for a provider row, returning the org to the
  * install's key for it (if it is approved for the provider). Clears this
- * process's cached lookup. Answers whether there was a key.
+ * process's cached lookup. Answers whether a key was removed.
+ *
+ * `expected` pins the removal to the key the caller read (its row id and
+ * version): a key replaced or saved again since is then left alone, and the
+ * answer is `false`, so an audit row never names a key other than the one
+ * removed.
  */
-export async function removeOrgProviderKey(providerConfigId: string): Promise<boolean> {
+export async function removeOrgProviderKey(
+  providerConfigId: string,
+  expected?: { id: string; version: number }
+): Promise<boolean> {
   const orgId = writingOrg();
   try {
     const { count } = await prisma.aiOrgProviderKey.deleteMany({
-      where: { orgId, providerConfigId },
+      where: { orgId, providerConfigId, ...(expected ?? {}) },
     });
     return count > 0;
   } finally {

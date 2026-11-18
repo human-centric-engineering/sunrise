@@ -65,9 +65,9 @@ release process.
   `org.providerKeys` (by default the org's OWNER and ADMIN acting in it), and
   on top of any policy the caller must be acting in the org, a support session
   cannot save or replace a key, and the install org is refused. Every action is
-  audited with the hint, never the key. Save and test share a new per-flow
-  limiter, `providerKeyTestLimiter` (10 a minute per org,
-  `RATE_LIMIT_PROVIDER_KEY_TEST`). The provider manager gains
+  audited with the hint, never the key. Saves and tests are capped by a new per-flow
+  limiter, `providerKeyTestLimiter`, in separate buckets of 10 a minute per org
+  (`RATE_LIMIT_PROVIDER_KEY_TEST`). The provider manager gains
   `testProviderKey(config, apiKey)`, which tests a key on a client it never
   caches. Every verb answers 409 `single_tenant` at `single`. See
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#the-orgs-page-and-api-137-t-1045).

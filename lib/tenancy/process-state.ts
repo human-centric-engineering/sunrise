@@ -351,7 +351,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     ],
     posture: 'shared-by-decision',
     keyedBy:
-      'the caller token each limiter is checked with — a session user id, or a client IP; `providerKeyTestLimiter` is checked with the org id, so an org’s admins share one cap on vendor calls made on its keys',
+      'the caller token each limiter is checked with — a session user id, or a client IP; `providerKeyTestLimiter` is checked with the org id (one bucket for saves, one for tests), so an org’s admins share each cap on vendor calls made on its keys',
     why: "Each section and per-flow limiter closes over its OWN LRU of caller tokens — not the pluggable store, which only the two async limiters use — and the cap protects this deployment's endpoint rather than any org, so the key is who is calling rather than which org they are acting in; an IP is shared by everyone behind it, orgs included. The one exception is `providerKeyTestLimiter`, keyed by org on purpose: it caps vendor calls made on one org's keys, however many of its admins make them.",
   },
   {

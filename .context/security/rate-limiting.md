@@ -162,28 +162,28 @@ MCP and webhook traffic **is** counted: it is the tenant's own credentials calli
 
 These are NOT tiers. They're tighter caps on specific expensive operations, applied additively inside route handlers. The middleware's section tier still applies on top.
 
-| Limiter                     | Cap                     | Used in                                                             |
-| --------------------------- | ----------------------- | ------------------------------------------------------------------- |
-| `chatLimiter`               | 20/min per user         | Admin chat streaming                                                |
-| `consumerChatLimiter`       | 10/min per user         | Consumer chat streaming                                             |
-| `embedChatLimiter`          | 10/min per token+IP     | Embed widget chat                                                   |
-| `audioLimiter`              | 10/min per user         | Voice transcription (Whisper calls)                                 |
-| `imageLimiter`              | 20/min per user         | Chat turns carrying image / PDF attachments                         |
-| `contactLimiter`            | 5/hour per IP           | Contact form submissions                                            |
-| `waitlistLimiter`           | 5/hour per IP           | Waitlist joins (§125)                                               |
-| `waitlistInviteWaveLimiter` | 5/hour per admin        | Waitlist invite waves, up to 50 invitations each (§125)             |
-| `inboundLimiter`            | 60/min per channel+IP   | Slack / Postmark / generic HMAC inbound                             |
-| `passwordResetLimiter`      | 3/15min per IP          | Password reset requests                                             |
-| `verificationEmailLimiter`  | 3/15min per IP          | Email verification resends                                          |
-| `acceptInviteLimiter`       | 5/15min per IP          | Invitation acceptance                                               |
-| `inviteLimiter`             | 10/15min per IP         | Sending invitations                                                 |
-| `uploadLimiter`             | 10/15min per IP         | File uploads                                                        |
-| `cspReportLimiter`          | 20/min per IP           | CSP violation reports                                               |
-| `exportLimiter`             | 10/min per calling user | Bulk-export endpoints (conversations export, subject-access export) |
-| `cleanupRefineLimiter`      | 12/min per user         | Document Clean Up section-refine (inline editor's direct LLM call)  |
-| `providerKeyTestLimiter`    | 10/min per org          | Saving or testing an org's own AI key (one vendor call each, §137)  |
-| `agentChatLimiter`          | per-agent RPM (dynamic) | Consumer chat with `rateLimitRpm` override                          |
-| `apiKeyChatLimiter`         | per-key RPM (dynamic)   | Webhook triggers with `rateLimitRpm` override                       |
+| Limiter                     | Cap                      | Used in                                                             |
+| --------------------------- | ------------------------ | ------------------------------------------------------------------- |
+| `chatLimiter`               | 20/min per user          | Admin chat streaming                                                |
+| `consumerChatLimiter`       | 10/min per user          | Consumer chat streaming                                             |
+| `embedChatLimiter`          | 10/min per token+IP      | Embed widget chat                                                   |
+| `audioLimiter`              | 10/min per user          | Voice transcription (Whisper calls)                                 |
+| `imageLimiter`              | 20/min per user          | Chat turns carrying image / PDF attachments                         |
+| `contactLimiter`            | 5/hour per IP            | Contact form submissions                                            |
+| `waitlistLimiter`           | 5/hour per IP            | Waitlist joins (§125)                                               |
+| `waitlistInviteWaveLimiter` | 5/hour per admin         | Waitlist invite waves, up to 50 invitations each (§125)             |
+| `inboundLimiter`            | 60/min per channel+IP    | Slack / Postmark / generic HMAC inbound                             |
+| `passwordResetLimiter`      | 3/15min per IP           | Password reset requests                                             |
+| `verificationEmailLimiter`  | 3/15min per IP           | Email verification resends                                          |
+| `acceptInviteLimiter`       | 5/15min per IP           | Invitation acceptance                                               |
+| `inviteLimiter`             | 10/15min per IP          | Sending invitations                                                 |
+| `uploadLimiter`             | 10/15min per IP          | File uploads                                                        |
+| `cspReportLimiter`          | 20/min per IP            | CSP violation reports                                               |
+| `exportLimiter`             | 10/min per calling user  | Bulk-export endpoints (conversations export, subject-access export) |
+| `cleanupRefineLimiter`      | 12/min per user          | Document Clean Up section-refine (inline editor's direct LLM call)  |
+| `providerKeyTestLimiter`    | 10/min per org, per flow | Saving, and separately testing, an org's own AI key (§137)          |
+| `agentChatLimiter`          | per-agent RPM (dynamic)  | Consumer chat with `rateLimitRpm` override                          |
+| `apiKeyChatLimiter`         | per-key RPM (dynamic)    | Webhook triggers with `rateLimitRpm` override                       |
 
 Per-flow caps are token-prefixed (`audio:user:${userId}`, `embed:user:${token}:${ip}`, etc.) so they don't collide with the middleware's section tier buckets.
 

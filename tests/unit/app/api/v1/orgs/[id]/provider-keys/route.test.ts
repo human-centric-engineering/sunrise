@@ -288,6 +288,7 @@ beforeEach(() => {
   keyring();
   switchState.on = true;
   approvals.slugs = new Set(['anthropic', 'openai']);
+  providerKeyTestLimiter.reset(`provider-key-save:org:${ORG}`);
   providerKeyTestLimiter.reset(`provider-key-test:org:${ORG}`);
 
   mockDb.aiApiKey.findFirst.mockResolvedValue(null);
@@ -709,14 +710,36 @@ describe('PUT — save and replace', () => {
     expect(orgKeyTable.get(ORG, OPENAI.id)).toBeUndefined();
   });
 
-  it('caps saves and tests at 10 a minute per org, before the vendor call', async () => {
+  it('caps saves at 10 a minute per org, before the vendor call, and never lets testing use up saving', async () => {
     actingAs(ORG_ADMIN_ROLE);
+    await storedKey(OPENAI);
+    // Ten tests (support's, or another admin's) first: the org can still save.
+    for (let i = 0; i < 10; i += 1) expect((await test(OPENAI.id)).status).toBe(200);
+    expect((await test(OPENAI.id)).status).toBe(429);
     for (let i = 0; i < 10; i += 1) expect((await save(ANTHROPIC.id)).status).toBeLessThan(300);
     mockTestProviderKey.mockClear();
 
     expect((await save(ANTHROPIC.id)).status).toBe(429);
-    expect((await test(ANTHROPIC.id)).status).toBe(429);
     expect(mockTestProviderKey).not.toHaveBeenCalled();
+  });
+
+  it('cuts a key a vendor echoes JSON-escaped out of the log line', async () => {
+    actingAs(ORG_ADMIN_ROLE);
+    const quoted = 'sk-quoted"key\\with-escapes-000000';
+    mockTestProviderKey.mockResolvedValue({
+      ok: false,
+      models: [],
+      error: JSON.stringify({ error: `bad key ${quoted}` }),
+    });
+
+    expect((await save(ANTHROPIC.id, quoted)).status).toBe(422);
+
+    const logged = everythingLoggedOrAudited();
+    expect(logged).not.toContain(JSON.stringify(quoted).slice(1, -1));
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      'An org’s AI key failed its test call',
+      expect.objectContaining({ detail: expect.stringContaining('[key]') })
+    );
   });
 
   it('answers a database failure generically, and logs the error’s name, never its message', async () => {
@@ -912,6 +935,25 @@ describe('DELETE — remove', () => {
       })
     );
     expectNoKeyAnywhere('', KEY);
+  });
+
+  it('leaves a key replaced while it was being removed, and says so', async () => {
+    actingAs(ORG_ADMIN_ROLE);
+    await storedKey(ANTHROPIC);
+    // Another admin replaces the key between this removal's read and its delete.
+    const read = orgKeyTable.delegate.findUnique.getMockImplementation()!;
+    orgKeyTable.delegate.findUnique.mockImplementationOnce(async (args) => {
+      const row = await read(args);
+      orgKeyTable.get(ORG, ANTHROPIC.id)!.version = 2;
+      return row;
+    });
+
+    const res = await remove(ANTHROPIC.id);
+
+    expect(res.status).toBe(409);
+    expect((await body(res)).error.details).toEqual({ reason: 'key_changed' });
+    expect(orgKeyTable.get(ORG, ANTHROPIC.id)?.version).toBe(2);
+    expect(mockAudit).not.toHaveBeenCalled();
   });
 
   it('answers 404 when there is no key to remove', async () => {

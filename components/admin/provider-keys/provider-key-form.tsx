@@ -114,7 +114,9 @@ export function ProviderKeyForm({
         <Input
           id={inputId}
           type="password"
-          autoComplete="off"
+          // Not "off": browsers ignore it on a password field and fill in the
+          // admin's own login, which would then be sent to the vendor.
+          autoComplete="new-password"
           spellCheck={false}
           {...register('apiKey')}
         />

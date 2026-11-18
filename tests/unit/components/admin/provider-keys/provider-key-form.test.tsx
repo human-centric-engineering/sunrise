@@ -66,6 +66,15 @@ describe('ProviderKeyForm', () => {
     expect(mockRefresh).toHaveBeenCalled();
   });
 
+  it('asks password managers not to fill in the admin’s own login', () => {
+    renderForm();
+
+    expect(screen.getByLabelText(/Anthropic key/, { selector: 'input' })).toHaveAttribute(
+      'autocomplete',
+      'new-password'
+    );
+  });
+
   it('refuses an empty key before sending anything', async () => {
     const user = userEvent.setup();
     renderForm();

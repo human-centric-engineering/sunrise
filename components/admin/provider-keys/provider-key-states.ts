@@ -5,7 +5,7 @@
  */
 
 import type { OrgProviderKeyState } from '@/lib/orchestration/llm/org-provider-keys';
-import type { SaveBlocked } from '@/lib/orchestration/llm/org-provider-key-admin';
+import type { ProviderKeyView, SaveBlocked } from '@/lib/orchestration/llm/org-provider-key-admin';
 
 /** A saved key's state, as `GET /api/v1/orgs/[id]/provider-keys` reports it. */
 export type ProviderKeyState = OrgProviderKeyState;
@@ -13,22 +13,14 @@ export type ProviderKeyState = OrgProviderKeyState;
 /** Why the viewer cannot save a key, as the same route reports it. */
 export type ProviderKeySaveBlocked = NonNullable<SaveBlocked>;
 
-/** One provider as the list route returns it (dates as JSON strings). */
-export interface ProviderKeyRow {
-  providerConfigId: string;
-  name: string;
-  slug: string;
-  approved: boolean;
-  /** Whether a key can be saved or tested for the row (active, not local). */
-  takesKey: boolean;
-  key: {
-    hint: string;
-    version: number;
-    savedAt: string;
-    savedBy: { id: string; name: string } | null;
-    state: ProviderKeyState;
-  } | null;
-}
+/**
+ * One provider as the list route returns it: the server's
+ * {@link ProviderKeyView}, with its date as the JSON string it arrives as.
+ * Derived, so a field added or renamed there is a type error here.
+ */
+export type ProviderKeyRow = Omit<ProviderKeyView, 'key'> & {
+  key: (Omit<NonNullable<ProviderKeyView['key']>, 'savedAt'> & { savedAt: string }) | null;
+};
 
 /** The short label on a provider's badge, and whether it reads as a problem. */
 export function stateBadge(row: ProviderKeyRow): { label: string; problem: boolean } {

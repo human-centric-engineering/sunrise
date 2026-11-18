@@ -488,8 +488,10 @@ export const cleanupRefineLimiter = createRateLimiter({
  *
  * Each save and each test makes one vendor call on the key, and the section
  * cap would let a script try 100 keys a minute against a vendor through the
- * page. Keyed per org (`provider-key-test:org:${orgId}`), so several admins of
- * one org share it.
+ * page. Saves and tests are separate buckets, each keyed per org
+ * (`provider-key-save:org:<orgId>`, `provider-key-test:org:<orgId>`): several
+ * admins of one org share each, and testing never uses up the org's chance to
+ * replace a leaked key.
  */
 export const providerKeyTestLimiter = createRateLimiter({
   interval: SECURITY_CONSTANTS.RATE_LIMIT.DEFAULT_INTERVAL,
