@@ -646,12 +646,14 @@ describe('addMember — the seats limit (§135 t-1035)', () => {
     expect(db.orgMembership.create).toHaveBeenCalledTimes(1);
   });
 
-  it('honours an accepted invitation, whose seat was counted when it was issued', async () => {
-    mockRefuseSeats.mockRejectedValue(seatsRefusal());
-
+  it("passes an accepted invitation's held seat to the seats check, which decides", async () => {
     await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER, undefined, { seatHeld: true });
 
-    expect(mockRefuseSeats).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the invitation's seat is already counted
+    expect(mockRefuseSeats).toHaveBeenCalledWith(
+      ORG,
+      AS_OWNER,
+      expect.objectContaining({ seatHeld: true })
+    );
     expect(db.orgMembership.create).toHaveBeenCalledTimes(1);
   });
 

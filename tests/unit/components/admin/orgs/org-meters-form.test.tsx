@@ -354,6 +354,50 @@ describe('OrgMetersForm', () => {
     expect(screen.queryByRole('button', { name: 'Clear it' })).not.toBeInTheDocument();
   });
 
+  it('keeps an unsaved limit edit when clearing the unregistered ones', async () => {
+    vi.mocked(apiClient.patch).mockResolvedValue(view({ unregistered: {} }));
+    const user = renderForm(view({ unregistered: { retired: 7 } }));
+
+    await user.clear(box('seats'));
+    await user.type(box('seats'), '20');
+    await user.click(screen.getByRole('button', { name: 'Clear it' }));
+
+    expect(apiClient.patch).toHaveBeenCalledWith(PATH, { body: { limits: { retired: null } } });
+    expect(await screen.findByText('Cleared')).toBeInTheDocument();
+    expect(box('seats')).toHaveValue('20');
+    expect(saveButton()).toBeEnabled();
+  });
+
+  it('shows what is stored now in boxes the admin did not edit, after a save', async () => {
+    vi.mocked(apiClient.patch).mockResolvedValue(
+      view({
+        meters: [
+          meter({ limit: 8 }),
+          meter({ key: 'reports', label: 'Reports', core: false, limit: 30 }),
+        ],
+      })
+    );
+    const user = renderForm();
+
+    await user.clear(box('seats'));
+    await user.type(box('seats'), '8');
+    await user.click(saveButton());
+
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(box('seats')).toHaveValue('8');
+    // Changed elsewhere meanwhile, and not edited here: the stored value.
+    expect(box('reports')).toHaveValue('30');
+  });
+
+  it('offers no clear while the app registration has failed, saying the limits may be its own', () => {
+    renderForm(view({ registrationFailed: true, unregistered: { completed_conversations: 500 } }));
+
+    expect(screen.getByText('completed_conversations (500)')).toBeInTheDocument();
+    expect(screen.getByText(/this may be a limit for one of them/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing registers/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear it' })).not.toBeInTheDocument();
+  });
+
   it('says the app meters failed to register', () => {
     renderForm(view({ registrationFailed: true }));
 

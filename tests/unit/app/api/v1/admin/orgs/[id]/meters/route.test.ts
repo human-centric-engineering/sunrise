@@ -323,6 +323,36 @@ describe('PATCH /api/v1/admin/orgs/[id]/meters', () => {
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
+  it('refuses to clear a kept limit while the app registration has failed, since it may be the app meter', async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('boom');
+    });
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { quotas: { meters: { seats: 10, convos: 500 } } },
+    });
+
+    const res = await patch({ limits: { convos: null } });
+    const body = await json(res);
+
+    expect(res.status).toBe(409);
+    expect(body.error?.message).toMatch(/cannot be set or cleared/);
+    expect(body.error?.details?.unknownMeters).toEqual(['convos']);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
+  it('still sets seats while the app registration has failed', async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const res = await patch({ limits: { seats: 4 } });
+
+    expect(res.status).toBe(200);
+    expect(storedSettings()).toMatchObject({ quotas: { meters: { seats: 4 } } });
+  });
+
   it('audits the stored limits as they were when a save tidies one the read could not use', async () => {
     mockPrisma.org.findUnique.mockResolvedValue({
       settings: { quotas: { meters: { seats: 10, broken: -1 } } },

@@ -459,7 +459,8 @@ export async function updateOrgReportingPrevious(
  * platform staff (a platform `ADMIN`) takes no seat. A user with an open invitation into the org
  * already holds one, so the org need only be within its limit. Accepting an
  * invitation passes `seatHeld`: it was counted when issued, and is honoured
- * even if the limit was lowered since.
+ * even if the limit was lowered since. Both hold for the platform's own seats
+ * count only; with an app's `seats`, every joining member is a new seat.
  */
 export async function addMember(
   orgId: string,
@@ -499,8 +500,9 @@ export async function addMember(
       : DEFAULT_ORG_ROLE;
   }
 
-  if (!options.seatHeld && !isPlatformStaff(user)) {
+  if (!isPlatformStaff(user)) {
     await refuseOverSeatsLimit(orgId, actor, {
+      seatHeld: options.seatHeld,
       alreadyHeld: () => holdsInvitationInto(orgId, user.email),
     });
   }

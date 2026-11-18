@@ -351,11 +351,14 @@ export const MAX_METERS = 50;
  * Zero is allowed and refuses the first one. The upper bound is a sanity
  * limit on a typo.
  */
+/** The largest limit a meter may have: a sanity bound, not a plan. */
+export const MAX_METER_LIMIT = 1_000_000_000;
+
 export const meterLimitSchema = z
   .number()
   .int('A limit must be a whole number')
   .min(0, 'A limit must be zero or more')
-  .max(1_000_000_000, 'A limit must be at most 1,000,000,000');
+  .max(MAX_METER_LIMIT, 'A limit must be at most 1,000,000,000');
 
 /**
  * The limits stored for one org, `Org.settings.quotas.meters` (§135 t-1035):

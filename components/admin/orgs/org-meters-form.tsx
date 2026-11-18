@@ -34,6 +34,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { MAX_METER_LIMIT } from '@/lib/validations/tenancy';
 
 /** `GET /api/v1/admin/orgs/[id]/meters`, as the route reports it. */
 export interface OrgMetersView {
@@ -98,7 +99,7 @@ function parseLimit(text: string): number | null | undefined {
   if (trimmed === '') return null;
   if (!/^\d+$/.test(trimmed)) return undefined;
   const value = Number(trimmed);
-  return value <= 1_000_000_000 ? value : undefined;
+  return value <= MAX_METER_LIMIT ? value : undefined;
 }
 
 export function OrgMetersForm({ orgId, meters: initial }: OrgMetersFormProps) {
@@ -131,8 +132,19 @@ export function OrgMetersForm({ orgId, meters: initial }: OrgMetersFormProps) {
       const updated = await apiClient.patch<OrgMetersView>(API.ADMIN.orgMeters(orgId), {
         body: { limits },
       });
+      // A box the admin edited but this save did not name keeps its edit;
+      // every other box shows what is stored now.
+      const before = draftsOf(view);
+      const after = draftsOf(updated);
+      setDrafts((current) =>
+        Object.fromEntries(
+          Object.entries(after).map(([key, stored]) => {
+            const edited = !(key in limits) && key in current && current[key] !== before[key];
+            return [key, edited ? current[key] : stored];
+          })
+        )
+      );
       setView(updated);
-      setDrafts(draftsOf(updated));
       setDone(said);
     } catch (err) {
       saveFailure.report(err);
@@ -235,10 +247,22 @@ export function OrgMetersForm({ orgId, meters: initial }: OrgMetersFormProps) {
             <span className="font-mono">
               {unregisteredKeys.map((k) => `${k} (${view.unregistered[k]})`).join(', ')}
             </span>
-            . Nothing registers {unregisteredKeys.length === 1 ? 'that meter' : 'those meters'} any
-            more, so {unregisteredKeys.length === 1 ? 'it limits' : 'they limit'} nothing. Saving
-            keeps {unregisteredKeys.length === 1 ? 'it' : 'them'}.
-            {view.mayChange && (
+            .{' '}
+            {view.registrationFailed ? (
+              <>
+                The app&apos;s meters failed to register, so{' '}
+                {unregisteredKeys.length === 1 ? 'this may be a limit' : 'these may be limits'} for
+                one of them. {unregisteredKeys.length === 1 ? 'It is' : 'They are'} kept, and cannot
+                be cleared until the registration is fixed.
+              </>
+            ) : (
+              <>
+                Nothing registers {unregisteredKeys.length === 1 ? 'that meter' : 'those meters'}{' '}
+                any more, so {unregisteredKeys.length === 1 ? 'it limits' : 'they limit'} nothing.
+                Saving keeps {unregisteredKeys.length === 1 ? 'it' : 'them'}.
+              </>
+            )}
+            {view.mayChange && !view.registrationFailed && (
               <>
                 {' '}
                 <button

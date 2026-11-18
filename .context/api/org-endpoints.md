@@ -618,8 +618,8 @@ has within its window, and its limit (§135 t-1035). A `PATCH` takes
 `{ limits: { [key]: number | null } }`: a whole number from 0 sets a limit,
 `null` clears one, and a meter not named is left as it is. Limits stored for
 keys nothing registers are kept, and only `null` may name one; when the app's
-registration failed, naming one it would have registered is a `409` saying
-so. Each write that changes something writes an `org.meters.update` audit row
+registration has failed, naming any key nothing registers is a `409`, to set
+or to clear, since it may be one of the app's. Each write that changes something writes an `org.meters.update` audit row
 with the limits before (as stored) and after. At `multi` the write comes only from the install org
 or an unbound admin API key, as for the switches.
 

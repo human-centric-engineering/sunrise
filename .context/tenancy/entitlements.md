@@ -349,7 +349,12 @@ cannot add more until it is back under.
 
 An app that reads a seat differently (not counting invitations, or one role)
 registers `seats` with its own `count`, which replaces the platform's
-everywhere, its refusals included.
+everywhere, its refusals included. The held-seat rules above (an accepted
+invitation, an open one for the person added) follow from the platform's
+count including invitations, so with the app's count they do not apply:
+every joining member, an accepted invitation included, is checked as a new
+seat. An app whose count includes invitations will see an acceptance refused
+when the org is exactly full.
 
 ### What is stored, and how it fails
 
@@ -378,8 +383,10 @@ limit is set), and `countFailed` when it could not be counted; plus
 `unregistered`, `mayChange` and `registrationFailed`. `PATCH` takes
 `{ limits: { [key]: number | null } }` and changes only the keys it names. A
 key nothing registers is a 400, unless its value is `null` (clearing a kept
-limit). When the app's registration failed, a key it would have registered is
-a 409 saying so, rather than a 400 saying no meter has that key. The same refusals as the switches apply: platform admins only, writes
+limit). While the app's registration has failed, any key nothing registers is a
+409, whether set or cleared: it may be one of the app's meters, and clearing
+it would lose a limit the app reads again once it registers. The admin page
+then offers no clear for the limits it lists as stored. The same refusals as the switches apply: platform admins only, writes
 from the install org or an unbound admin API key (`mayChangeOrgCommercialSettings`),
 refused before the body is read. A write that changes something is audited as
 `org.meters.update` with the limits before, as stored, and after. A write

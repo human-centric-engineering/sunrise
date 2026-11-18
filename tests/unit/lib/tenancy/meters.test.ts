@@ -740,6 +740,31 @@ describe('refuseOverSeatsLimit', () => {
     expect(mockPrisma.orgMembership.count).not.toHaveBeenCalled();
   });
 
+  it('lets a held seat in, without counting, on the platform count', async () => {
+    mockLoadLimits.mockResolvedValue({ seats: 1 });
+    mockPrisma.orgMembership.count.mockResolvedValue(5);
+
+    await expect(
+      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { seatHeld: true })
+    ).resolves.toBeUndefined();
+    expect(mockLoadLimits).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a held seat is not checked
+  });
+
+  it('checks every joining member as a new seat when the app counts seats its own way', async () => {
+    // Members only, so an invitation never held a seat in this count.
+    appRegisters(meter('seats', () => 5));
+    mockLoadLimits.mockResolvedValue({ seats: 5 });
+    const alreadyHeld = vi.fn().mockResolvedValue(true);
+
+    await expect(
+      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { seatHeld: true })
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { alreadyHeld })
+    ).rejects.toMatchObject({ status: 403 });
+    expect(alreadyHeld).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the app's count is not the platform's to read
+  });
+
   it('refuses on an app seats count, which replaces the core one', async () => {
     appRegisters(meter('seats', () => 10));
     mockLoadLimits.mockResolvedValue({ seats: 10 });

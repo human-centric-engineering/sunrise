@@ -100,16 +100,22 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   // Clearing a key nothing registers is how a kept limit is tidied away;
   // setting one would store a limit nothing reads.
   const registered = new Set(allMeters().map((m) => m.key));
+  // While the app's registration has failed, a key it does not know may be
+  // one of the app's own meters, so it is neither set nor cleared: clearing
+  // it would lose a limit the app reads again once it registers.
+  if (entitlementSwitchesFailed()) {
+    const unknownWhileFailed = Object.keys(limits).filter((key) => !registered.has(key));
+    if (unknownWhileFailed.length > 0) {
+      return errorResponse(
+        `The app's meters failed to register, so ${unknownWhileFailed.join(', ')} cannot be set or cleared. The server log says why.`,
+        { code: 'CONFLICT', status: 409, details: { unknownMeters: unknownWhileFailed } }
+      );
+    }
+  }
   const unknownMeters = Object.entries(limits)
     .filter(([key, limit]) => limit !== null && !registered.has(key))
     .map(([key]) => key);
   if (unknownMeters.length > 0) {
-    if (entitlementSwitchesFailed()) {
-      return errorResponse(
-        `The app's meters failed to register, so ${unknownMeters.join(', ')} cannot be set. The server log says why.`,
-        { code: 'CONFLICT', status: 409, details: { unknownMeters } }
-      );
-    }
     const message = `No meter has the key ${unknownMeters.join(', ')}`;
     // A VALIDATION_ERROR's details are fields (lib/api/errors.ts), so the
     // message goes in the list shape and the keys ride beside it.
