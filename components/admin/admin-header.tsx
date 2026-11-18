@@ -44,6 +44,7 @@ const segmentLabels: Record<string, string> = {
   members: 'Members',
   // Named as the sidebar names them, where title-casing would get them wrong.
   orgs: 'Organisations',
+  'provider-keys': 'AI keys',
   orchestration: 'AI Orchestration',
   mcp: 'MCP Server',
   dlq: 'Dead Letter Queue',

@@ -69,6 +69,14 @@ export const API = {
       `/api/v1/orgs/${id}/support-grants/${grantId}`,
     /** What support did under the org's grants (who reads the grants reads this) */
     supportActivity: (id: string): string => `/api/v1/orgs/${id}/support-grants/activity`,
+    /** The org's own AI keys and their state (OWNER/ADMIN acting in the org, by default) */
+    providerKeys: (id: string): string => `/api/v1/orgs/${id}/provider-keys`,
+    /** One provider's key: save or replace (PUT), remove (DELETE) */
+    providerKey: (id: string, providerId: string): string =>
+      `/api/v1/orgs/${id}/provider-keys/${providerId}`,
+    /** Test one provider's saved key with one cheap vendor call */
+    providerKeyTest: (id: string, providerId: string): string =>
+      `/api/v1/orgs/${id}/provider-keys/${providerId}/test`,
   },
 
   /** Admin endpoints */

@@ -371,9 +371,29 @@ describe('saveOrgProviderKey', () => {
     ['a key longer than any vendor issues', 'k'.repeat(1025)],
     ['a key with a line break inside it', 'sk-ant-wrapped-0000\n00000000000000000000'],
     ['a key with a tab inside it', 'sk-ant-tabbed-0000\t000000000000000000000'],
+    ['a key with a space inside it', 'sk-ant-spaced-0000 000000000000000000000'],
+    ['a key with a zero-width space inside it', 'sk-ant-pasted-0000\u200b00000000000000000000'],
+    ['a key with a non-ASCII letter in it', 'sk-ant-accent-0000é00000000000000000000'],
   ])('refuses %s, writing nothing', async (_label, apiKey) => {
-    await expect(save(ORG_A, apiKey)).rejects.toThrow(/1–1024 characters/);
+    await expect(save(ORG_A, apiKey)).rejects.toThrow(/1–1024 printable ASCII characters/);
     expect(orgKeyTable.rows.size).toBe(0);
+  });
+
+  it('takes the update when a concurrent first save created the row first', async () => {
+    const { Prisma } = await import('@prisma/client');
+    await save(ORG_A, KEY_A);
+    // The other save's create landed between this one's read and write.
+    orgKeyTable.delegate.upsert.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+
+    const saved = await save(ORG_A, KEY_B);
+
+    expect(saved.version).toBe(2);
+    expect(orgKeyTable.rows.size).toBe(1);
   });
 
   it('refuses with no master key configured, writing nothing', async () => {

@@ -28,7 +28,7 @@ const ORG_REACH: AdminReach = { tiers: ['org'], landing: null };
 const pathnameMock = vi.fn(() => '/admin/overview');
 
 /** The nav items shown at `multi` only: Members (t-813) and Support access (§121 t-823). */
-const MULTI_ONLY = ['/admin/members', '/admin/support-access'];
+const MULTI_ONLY = ['/admin/members', '/admin/provider-keys', '/admin/support-access'];
 
 vi.mock('next/navigation', () => ({
   usePathname: () => pathnameMock(),
@@ -483,7 +483,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
       .getAllByRole('link')
       .map((link) => link.getAttribute('href'))
       .filter((href): href is string => href?.startsWith('/admin/') ?? false);
-    expect(hrefs).toEqual(['/admin/members', '/admin/support-access']);
+    expect(hrefs).toEqual(['/admin/members', '/admin/provider-keys', '/admin/support-access']);
     expect(screen.queryByText('AI Orchestration')).not.toBeInTheDocument();
   });
 
@@ -650,6 +650,11 @@ describe('AdminSidebar — Members at multi (t-813)', () => {
       '/admin/support-access'
     );
     expect(single).not.toContain('/admin/support-access');
+    expect(screen.getByRole('link', { name: /AI keys/ })).toHaveAttribute(
+      'href',
+      '/admin/provider-keys'
+    );
+    expect(single).not.toContain('/admin/provider-keys');
     expect(multi.filter((h) => !MULTI_ONLY.includes(h))).toEqual(single);
   });
 

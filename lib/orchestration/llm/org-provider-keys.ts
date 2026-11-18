@@ -66,18 +66,21 @@ import { logger } from '@/lib/logging';
 import { applyOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { openSecret, SealedSecretOpenError, sealSecret } from '@/lib/security/sealed-secrets';
+import {
+  openSecret,
+  SealedSecretKeyMissingError,
+  SealedSecretOpenError,
+  sealSecret,
+} from '@/lib/security/sealed-secrets';
 import type { SealedStore, SealedValue } from '@/lib/security/sealed-stores';
 import { isMultiTenant, requireTenantContext, runAsSystem } from '@/lib/tenancy/context';
+import { KEY_DISALLOWED_CHARACTER, PROVIDER_KEY_MAX_LENGTH } from '@/lib/validations/tenancy';
 
 /** How long a looked-up key row answers before it is read again. */
 export const ORG_PROVIDER_KEY_TTL_MS = 60_000;
 
-// eslint-disable-next-line no-control-regex -- matching control characters is the point
-const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
-
 /** The longest key accepted. Vendor keys are well under this; a longer value is a paste error. */
-export const ORG_PROVIDER_KEY_MAX_LENGTH = 1024;
+export const ORG_PROVIDER_KEY_MAX_LENGTH = PROVIDER_KEY_MAX_LENGTH;
 
 /** The provider row a key is looked up for: its id names the key, its slug the policy and logs. */
 export interface OrgProviderKeyConfig {
@@ -228,7 +231,7 @@ function refuse(
 }
 
 /** An error's name and code. Never its message, which can echo a query or a value. */
-function describeError(err: unknown): string {
+export function describeError(err: unknown): string {
   if (err instanceof SealedSecretOpenError) return `${err.name} ${err.reason}`;
   if (!(err instanceof Error)) return typeof err;
   const code: unknown = 'code' in err ? err.code : undefined;
@@ -280,11 +283,113 @@ export async function resolveOrgProviderKey(
   return { apiKey, identity: orgProviderKeyIdentity(orgId, stored.id, stored.version) };
 }
 
-/** The org a write acts for: the one in scope. A write needs one. */
+/**
+ * What an org's saved key does on its next call: `in_use`, or the reason the
+ * call is refused, in the order the call path checks. `provider_off` comes
+ * first because the provider manager refuses an inactive row before any
+ * credential is asked for; the rest are {@link resolveOrgProviderKey}'s.
+ * The lookup failing is not a state; reading the states fails instead.
+ */
+export type OrgProviderKeyState =
+  'in_use' | 'provider_off' | 'switched_off' | 'not_approved' | 'will_not_open';
+
+/** A saved key as the people administering the org see it: the summary and its state. */
+export interface OrgProviderKeyStatus extends OrgProviderKeySummary {
+  state: OrgProviderKeyState;
+}
+
+/**
+ * Every key the org in scope has saved, each with its state (§137 t-1045).
+ * The same checks as the call path, so the page says what the next call will
+ * do: but read fresh rather than from the lookup cache, and the key is opened
+ * only to learn whether it opens. Nothing returned carries it.
+ *
+ * @throws when the keys, the settings or the org's approvals cannot be read.
+ */
+export async function orgProviderKeyStatuses(): Promise<OrgProviderKeyStatus[]> {
+  const orgId = writingOrg();
+  const rows = await prisma.aiOrgProviderKey.findMany({
+    where: { orgId },
+    select: {
+      ...ORG_PROVIDER_KEY_SUMMARY_SELECT,
+      sealedKey: true,
+      providerConfig: { select: { slug: true, isActive: true } },
+    },
+    orderBy: { savedAt: 'asc' },
+  });
+  if (rows.length === 0) return [];
+  const [settings, permitted] = await Promise.all([
+    getOrchestrationSettings(),
+    applyOrgProviderPolicy(rows.map((row) => row.providerConfig.slug)),
+  ]);
+  const approved = new Set(permitted);
+  return Promise.all(
+    rows.map(async ({ sealedKey, providerConfig, ...summary }) => {
+      let state: OrgProviderKeyState = 'in_use';
+      if (!providerConfig.isActive) state = 'provider_off';
+      else if (!settings.orgProviderKeysEnabled) state = 'switched_off';
+      else if (!approved.has(providerConfig.slug)) state = 'not_approved';
+      else if (!(await opens(sealedKey, orgId, summary.providerConfigId))) state = 'will_not_open';
+      return { ...summary, state };
+    })
+  );
+}
+
+/**
+ * Whether a stored envelope opens for this org and row: false when the
+ * envelope is not this org's or this row's, or no master key is configured
+ * (what the call path refuses as `will_not_open`). Anything else throws, so a
+ * broken keyring reads as a failed read, not as every key needing saving again.
+ */
+async function opens(sealedKey: string, orgId: string, providerConfigId: string): Promise<boolean> {
+  try {
+    await openSecret(sealedKey, orgProviderKeyPurpose(orgId, providerConfigId));
+    return true;
+  } catch (err) {
+    if (err instanceof SealedSecretOpenError || err instanceof SealedSecretKeyMissingError) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
+ * The org-in-scope's saved key for a provider row, opened, for the on-demand
+ * test (§137 t-1045): `null` when it has none, and `apiKey: null` when it is
+ * saved but will not open. The key is for a vendor call on the server only;
+ * never return it to a browser or log it.
+ *
+ * @throws when the row cannot be read, or opening fails for any reason but
+ *   the envelope itself (a missing master key is thrown, not reported).
+ */
+export async function openOrgProviderKey(
+  providerConfigId: string
+): Promise<{ apiKey: string | null; summary: OrgProviderKeySummary } | null> {
+  const orgId = writingOrg();
+  const row = await prisma.aiOrgProviderKey.findUnique({
+    where: { orgId_providerConfigId: { orgId, providerConfigId } },
+    select: { ...ORG_PROVIDER_KEY_SUMMARY_SELECT, sealedKey: true },
+  });
+  if (!row) return null;
+  const { sealedKey, ...summary } = row;
+  try {
+    return {
+      apiKey: await openSecret(sealedKey, orgProviderKeyPurpose(orgId, providerConfigId)),
+      summary,
+    };
+  } catch (err) {
+    if (err instanceof SealedSecretOpenError) return { apiKey: null, summary };
+    throw err;
+  }
+}
+
+/** The org a read or write of its own keys acts for: the one in scope. It needs one. */
 function writingOrg(): string {
   const { orgId } = requireTenantContext();
   if (orgId === null) {
-    throw new Error('An org’s own provider key is saved or removed inside that org’s scope.');
+    throw new Error(
+      'An org’s own provider keys are read, saved or removed inside that org’s scope.'
+    );
   }
   return orgId;
 }
@@ -298,7 +403,7 @@ function writingOrg(): string {
  * the switch on. Validation of what a person typed is the caller's; this
  * refuses only what can never be a key.
  *
- * @throws when the key is empty, has surrounding spaces or is too long; when
+ * @throws when the key is empty, too long, or holds anything but printable ASCII; when
  *   no master key is configured (`SealedSecretKeyMissingError`); or when no
  *   org is in scope.
  */
@@ -310,27 +415,39 @@ export async function saveOrgProviderKey(input: {
   const { providerConfigId, apiKey, savedById } = input;
   if (
     apiKey.length === 0 ||
-    apiKey.trim() !== apiKey ||
     apiKey.length > ORG_PROVIDER_KEY_MAX_LENGTH ||
-    // A line break or other control character (a wrapped paste) can never be
-    // sent as a header value, so every call would fail at the vendor client.
-    CONTROL_CHARACTER.test(apiKey)
+    // Anything but printable ASCII (a space, a wrapped paste's line break, a
+    // zero-width space): no vendor key has one, and most cannot be sent as a
+    // header value, so every call would fail at the vendor client.
+    KEY_DISALLOWED_CHARACTER.test(apiKey)
   ) {
     throw new Error(
-      `An org's provider key must be 1–${ORG_PROVIDER_KEY_MAX_LENGTH} characters with no surrounding spaces or control characters.`
+      `An org's provider key must be 1–${ORG_PROVIDER_KEY_MAX_LENGTH} printable ASCII characters with no spaces.`
     );
   }
   const orgId = writingOrg();
   const sealedKey = await sealSecret(apiKey, orgProviderKeyPurpose(orgId, providerConfigId));
   const hint = orgProviderKeyHint(apiKey);
   const savedAt = new Date();
-  try {
-    return await prisma.aiOrgProviderKey.upsert({
+  const write = () =>
+    prisma.aiOrgProviderKey.upsert({
       where: { orgId_providerConfigId: { orgId, providerConfigId } },
       create: { orgId, providerConfigId, sealedKey, hint, savedById, savedAt },
       update: { sealedKey, hint, savedById, savedAt, version: { increment: 1 } },
       select: ORG_PROVIDER_KEY_SUMMARY_SELECT,
     });
+  try {
+    try {
+      return await write();
+    } catch (err) {
+      // Two first saves at once both take the create branch, and the loser
+      // hits the unique key. Once more takes the update branch: the later
+      // save replaces the earlier, as it would have a moment later.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return await write();
+      }
+      throw err;
+    }
   } finally {
     // Also on a failed write: whatever the row now holds is read fresh.
     forgetOrgProviderKey(orgId, providerConfigId);
@@ -340,13 +457,21 @@ export async function saveOrgProviderKey(input: {
 /**
  * Remove the org-in-scope's key for a provider row, returning the org to the
  * install's key for it (if it is approved for the provider). Clears this
- * process's cached lookup. Answers whether there was a key.
+ * process's cached lookup. Answers whether a key was removed.
+ *
+ * `expected` pins the removal to the key the caller read (its row id and
+ * version): a key replaced or saved again since is then left alone, and the
+ * answer is `false`, so an audit row never names a key other than the one
+ * removed.
  */
-export async function removeOrgProviderKey(providerConfigId: string): Promise<boolean> {
+export async function removeOrgProviderKey(
+  providerConfigId: string,
+  expected?: { id: string; version: number }
+): Promise<boolean> {
   const orgId = writingOrg();
   try {
     const { count } = await prisma.aiOrgProviderKey.deleteMany({
-      where: { orgId, providerConfigId },
+      where: { orgId, providerConfigId, ...(expected ?? {}) },
     });
     return count > 0;
   } finally {

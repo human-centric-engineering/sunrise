@@ -264,6 +264,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   // page a pattern names on the list by name.
   '/admin/orchestration/executions/live',
   '/admin/members',
+  '/admin/provider-keys',
   '/admin/support-access',
   '/admin/waitlist',
 ]);
@@ -284,6 +285,7 @@ export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
   'orchestration',
   'orgs',
   'overview',
+  'provider-keys',
   'support-access',
   'users',
   'waitlist',
@@ -647,9 +649,9 @@ export function restoreNamedAdminTiers(
  * viewer's sidebar, and the tier from every route under `/api/v1/admin/<section>/`,
  * so the pages, the nav and the routes stay in step.
  *
- * Orchestration only. Members and Support access are not here: an org admin
- * needs Members to invite their own people, and Support access is the org's
- * consent to the vendor. Their routes (`/api/v1/orgs/[id]/…`) are admitted by
+ * Orchestration only. Members, AI keys and Support access are not here: an org
+ * admin needs Members to invite their own people, AI keys are the org's own
+ * accounts with a vendor, and Support access is the org's consent to the vendor. Their routes (`/api/v1/orgs/[id]/…`) are admitted by
  * the policy's org arm, not by a declared tier, so closing their pages would
  * leave the API open anyway. `/admin` itself is in no section and stays open,
  * so it can send an org admin to their landing.

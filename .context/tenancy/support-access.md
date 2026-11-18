@@ -31,6 +31,7 @@ audit row made inside names the grant, for the vendor and for the org (t-825).
 | The banner               | `components/admin/support-banner.tsx`, fed by `requestSupportSession()`                           |
 | An audit row's grant     | `AiAdminAuditLog.supportGrantId` / `supportOrgId`, stamped by `logAdminAction()`                  |
 | What support did         | `GET /api/v1/orgs/[id]/support-grants/activity`, `listSupportActivity()`                          |
+| The org's AI keys        | support sees their state, tests and removes; never saves or replaces one (§137 t-1045)            |
 
 ### Anti-patterns
 

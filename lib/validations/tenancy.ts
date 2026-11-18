@@ -542,3 +542,39 @@ export const listOrgAuditLogQuerySchema = paginationQuerySchema.extend({
     .transform((types) => (types.length > 0 ? types : undefined))
     .optional(),
 });
+
+/** `[id]/provider-keys/[providerId]` segments (§137 t-1045). */
+export const providerKeyParamsSchema = z.object({ id: orgIdSchema, providerId: cuidSchema });
+
+/**
+ * The longest AI key accepted, here and by the store
+ * (`lib/orchestration/llm/org-provider-keys.ts` reads it from this file, so
+ * the form, the route and the store have one limit).
+ */
+export const PROVIDER_KEY_MAX_LENGTH = 1024;
+
+/**
+ * Anything but printable ASCII: a space, a line break, a zero-width space or
+ * any other character pasted in from a document. Vendor keys are printable
+ * ASCII, and a header value cannot carry most of the rest, so a key holding one
+ * would fail at the vendor client as if the vendor had refused it. One
+ * pattern for the form, the route and the store.
+ */
+export const KEY_DISALLOWED_CHARACTER = /[^\x21-\x7e]/;
+
+/**
+ * `PUT /api/v1/orgs/[id]/provider-keys/[providerId]` body (§137 t-1045): the
+ * key to save, or to replace the saved one with. Surrounding spaces and line
+ * breaks from a paste are trimmed; anything inside the key that is not
+ * printable ASCII is refused, since no vendor key has it.
+ */
+export const saveProviderKeySchema = z.object({
+  apiKey: z
+    .string()
+    .trim()
+    .min(1, 'Paste the key')
+    .max(PROVIDER_KEY_MAX_LENGTH, `A key is at most ${PROVIDER_KEY_MAX_LENGTH} characters`)
+    .refine((key) => !KEY_DISALLOWED_CHARACTER.test(key), {
+      message: 'The key contains a space, a line break or a hidden character, which no key has',
+    }),
+});
