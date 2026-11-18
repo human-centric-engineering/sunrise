@@ -41,6 +41,15 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const mockRefuseSeats = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/tenancy/meters', () => ({ refuseOverSeatsLimit: mockRefuseSeats }));
+
+const mockPendingFor = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
+  pendingInvitationsFor: mockPendingFor,
+}));
+
 const mockReconcile = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgents: mockReconcile,
@@ -82,6 +91,7 @@ const AS_ADMIN = { platformAdmin: false, orgRole: ORG_ADMIN_ROLE } as const;
 
 const human = (id: string, role: string = DEFAULT_USER_ROLE) => ({
   id,
+  email: `${id}@example.com`,
   role,
   accountType: 'HUMAN',
 });
@@ -98,6 +108,8 @@ async function refusal(fn: () => Promise<unknown>): Promise<OrgLifecycleError> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRefuseSeats.mockReset().mockResolvedValue(undefined);
+  mockPendingFor.mockReset().mockResolvedValue({ readable: [], unreadable: 0 });
   mockReconcile.mockReset().mockResolvedValue({});
   // The transaction client IS the double, so writes inside are visible.
   db.$transaction.mockImplementation((fn: (tx: typeof db) => Promise<unknown>) => fn(db));
@@ -501,6 +513,118 @@ describe('addMember', () => {
       // The count arm is not consulted: the install org's rule is the platform role.
       expect(db.orgMembership.count).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('addMember — the seats limit (§135 t-1035)', () => {
+  const seatsRefusal = () =>
+    new APIError('Your organisation has reached its limit of 3 for Seats.', 'FORBIDDEN', 403, {
+      reason: 'meter_limit_reached',
+    });
+  /** An open invitation for OTHER into `orgId`, as pendingInvitationsFor reads it. */
+  const invitedInto = (orgId: string | undefined) =>
+    mockPendingFor.mockResolvedValue({
+      readable: [
+        {
+          id: 'inv-1',
+          email: `${OTHER}@example.com`,
+          metadata: { name: 'O', role: DEFAULT_USER_ROLE, invitedBy: OWNER, invitedAt: 'x', orgId },
+          expiresAt: new Date(),
+          createdAt: new Date(),
+        },
+      ],
+      unreadable: 0,
+    });
+
+  beforeEach(() => {
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.user.findUnique.mockResolvedValue(human(OTHER));
+    db.orgMembership.findUnique.mockResolvedValue(null);
+    db.orgMembership.create.mockImplementation(({ data }: { data: object }) =>
+      Promise.resolve({ id: 'm1', createdAt: new Date(), updatedAt: new Date(), ...data })
+    );
+  });
+
+  it('refuses an org admin at the limit, and adds nobody', async () => {
+    mockRefuseSeats.mockRejectedValue(seatsRefusal());
+
+    const error = await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN).catch((e) => e);
+
+    expect(error).toBeInstanceOf(APIError);
+    expect(error.status).toBe(403);
+    expect(mockRefuseSeats).toHaveBeenCalledWith(ORG, AS_ADMIN, { adding: 1 });
+    expect(db.orgMembership.create).not.toHaveBeenCalled();
+  });
+
+  it('answers a request wrong for another reason with that reason, not the limit', async () => {
+    mockRefuseSeats.mockRejectedValue(seatsRefusal());
+    db.orgMembership.findUnique.mockResolvedValue({ id: 'existing' });
+
+    expect((await refusal(() => addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN))).code).toBe(
+      'ALREADY_MEMBER'
+    );
+
+    db.user.findUnique.mockResolvedValue(null);
+    expect((await refusal(() => addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN))).code).toBe(
+      'USER_NOT_FOUND'
+    );
+    expect(mockRefuseSeats).not.toHaveBeenCalled();
+  });
+
+  it('asks only that the org be within its limit for a user whose invitation already holds a seat', async () => {
+    invitedInto(ORG);
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+
+    expect(mockPendingFor).toHaveBeenCalledWith(`${OTHER}@example.com`);
+    expect(mockRefuseSeats).toHaveBeenCalledWith(ORG, AS_ADMIN, { adding: 0 });
+  });
+
+  it("counts a new seat when the user's invitation is into another org", async () => {
+    invitedInto('cmorg000000000000000elsew');
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+
+    expect(mockRefuseSeats).toHaveBeenCalledWith(ORG, AS_ADMIN, { adding: 1 });
+  });
+
+  it('reads a failed invitation lookup as a held seat, and logs it', async () => {
+    mockPendingFor.mockRejectedValue(new Error('db down'));
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+
+    expect(mockRefuseSeats).toHaveBeenCalledWith(ORG, AS_ADMIN, { adding: 0 });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('seats check'),
+      expect.objectContaining({ orgId: ORG, error: 'db down' })
+    );
+  });
+
+  it('takes no seat for a user who is platform staff', async () => {
+    db.user.findUnique.mockResolvedValue(human(OTHER, PLATFORM_ADMIN_ROLE));
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+
+    expect(mockRefuseSeats).not.toHaveBeenCalled(); // test-review:accept no_arg_called — staff take no seat, so nothing is checked
+    expect(db.orgMembership.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('honours an accepted invitation, whose seat was counted when it was issued', async () => {
+    mockRefuseSeats.mockRejectedValue(seatsRefusal());
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER, undefined, { seatHeld: true });
+
+    expect(mockRefuseSeats).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the invitation's seat is already counted
+    expect(db.orgMembership.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not check for platform staff adding, who are never refused', async () => {
+    mockRefuseSeats.mockRejectedValue(seatsRefusal());
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_PLATFORM);
+
+    expect(mockPendingFor).not.toHaveBeenCalled(); // test-review:accept no_arg_called — staff are never refused, so nothing is read
+    expect(db.orgMembership.create).toHaveBeenCalledTimes(1);
   });
 });
 

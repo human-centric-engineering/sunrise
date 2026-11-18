@@ -30,8 +30,7 @@ vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Header
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     org: { findUnique: vi.fn() },
-    orgMembership: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn() },
-    verification: { count: vi.fn(), findMany: vi.fn() },
+    orgMembership: { findUnique: vi.fn(), findMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
   },
 }));
@@ -53,7 +52,6 @@ vi.mock('@/lib/logging', () => ({ logger: mockLog }));
 
 import { GET, POST } from '@/app/api/v1/orgs/[id]/members/route';
 import { prisma } from '@/lib/db/client';
-import { METER_LIMIT_REASON } from '@/lib/tenancy/meters';
 import { createMockAuthSession } from '@/tests/helpers/auth';
 
 const ORG = 'cmorg000000000000000other';
@@ -333,57 +331,5 @@ describe('POST /api/v1/orgs/[id]/members', () => {
     expect(res.status).toBe(403);
     expect(JSON.parse(await res.text()).error.message).toMatch(/browser session/);
     expect(mockAddMember).not.toHaveBeenCalled();
-  });
-});
-
-describe('POST /api/v1/orgs/[id]/members — seats limit (§135 t-1035)', () => {
-  /** The org's seats limit, and what it already holds: members, then open invitations. */
-  function seats(limit: number, members: number, invitations: number) {
-    vi.mocked(prisma.org.findUnique).mockResolvedValue({
-      id: ORG,
-      settings: { quotas: { meters: { seats: limit } } },
-    } as never);
-    vi.mocked(prisma.orgMembership.count).mockResolvedValue(members);
-    vi.mocked(prisma.verification.count).mockResolvedValue(invitations);
-  }
-
-  it("refuses an org's own admin at the limit, and adds nobody", async () => {
-    mockGetSession.mockResolvedValue(session('USER', ORG));
-    memberOf(ORG_ADMIN_ROLE);
-    seats(3, 2, 1);
-
-    const res = await post({ userId: NEW_MEMBER });
-    const json = JSON.parse(await res.text());
-
-    expect(res.status).toBe(403);
-    expect(json.error.details).toMatchObject({
-      reason: METER_LIMIT_REASON,
-      meter: 'seats',
-      used: 3,
-      limit: 3,
-    });
-    expect(mockAddMember).not.toHaveBeenCalled();
-  });
-
-  it('lets an org admin add while a seat is free', async () => {
-    mockGetSession.mockResolvedValue(session('USER', ORG));
-    memberOf(ORG_ADMIN_ROLE);
-    seats(4, 2, 1);
-
-    const res = await post({ userId: NEW_MEMBER });
-
-    expect(res.status).toBe(201);
-    expect(mockAddMember).toHaveBeenCalledTimes(1);
-  });
-
-  it('lets a platform admin add at the limit, without counting', async () => {
-    mockGetSession.mockResolvedValue(session(PLATFORM_ADMIN_ROLE, null));
-    seats(1, 1, 0);
-
-    const res = await post({ userId: NEW_MEMBER });
-
-    expect(res.status).toBe(201);
-    expect(mockAddMember).toHaveBeenCalledTimes(1);
-    expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — platform staff are never counted against the limit
   });
 });

@@ -66,6 +66,8 @@ import {
 } from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
 import { applyOrgSettingsPatch, definedEntries } from '@/lib/tenancy/org-settings';
+import { refuseOverSeatsLimit } from '@/lib/tenancy/meters';
+import { invitationOrgSlot, pendingInvitationsFor } from '@/lib/utils/invitation-token';
 import {
   DEFAULT_ORG_ROLE,
   ORG_OWNER_ROLE,
@@ -220,10 +222,10 @@ async function requireOrg(orgId: string, db: LifecycleDb): Promise<OrgRecord> {
 async function requireManageableUser(
   userId: string,
   db: LifecycleDb
-): Promise<{ id: string; role: string | null; accountType: string }> {
+): Promise<{ id: string; email: string; role: string | null; accountType: string }> {
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { id: true, role: true, accountType: true },
+    select: { id: true, email: true, role: true, accountType: true },
   });
   if (!user || user.accountType === 'SERVICE') {
     throw new OrgLifecycleError('USER_NOT_FOUND', 'User not found');
@@ -449,13 +451,22 @@ export async function updateOrgReportingPrevious(
  * On the install org the role is never the caller's to pick — it follows the
  * platform role — so a body `role` is refused and the rule's answer is
  * written instead. An explicit `OWNER` needs the actor's owner standing.
+ *
+ * **The org's seats limit (§135 t-1035)** refuses an actor who is not
+ * platform staff with a 403 (`refuseOverSeatsLimit`), after the checks above
+ * so a request wrong for another reason is told that reason. A user who is
+ * platform staff takes no seat. A user with an open invitation into the org
+ * already holds one, so the org need only be within its limit. Accepting an
+ * invitation passes `seatHeld`: it was counted when issued, and is honoured
+ * even if the limit was lowered since.
  */
 export async function addMember(
   orgId: string,
   userId: string,
   role: OrgRole | undefined,
   actor: MembershipActor,
-  db: LifecycleDb = prisma
+  db: LifecycleDb = prisma,
+  options: { seatHeld?: boolean } = {}
 ): Promise<MembershipRecord> {
   if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'add a member as an owner');
   await requireOrg(orgId, db);
@@ -487,6 +498,11 @@ export async function addMember(
       : DEFAULT_ORG_ROLE;
   }
 
+  if (!options.seatHeld && !actor.platformAdmin && !isPlatformAdmin(user)) {
+    const invited = await holdsInvitationInto(orgId, user.email);
+    await refuseOverSeatsLimit(orgId, actor, { adding: invited ? 0 : 1 });
+  }
+
   // Placed by hand: a signup record that survived a failed write is paid and
   // cleared first (t-838), in the same transaction.
   const membership = await db.$transaction(async (tx) => {
@@ -514,6 +530,25 @@ export async function addMember(
 
   logger.info('Org member added', { orgId, userId, role: membership.role });
   return membership;
+}
+
+/**
+ * Does an open invitation into the org already hold this address's seat? A
+ * read that fails answers yes, so the seats check asks only whether the org
+ * is within its limit: a limit fails open (`lib/tenancy/meters.ts`).
+ */
+async function holdsInvitationInto(orgId: string, email: string): Promise<boolean> {
+  try {
+    const { readable } = await pendingInvitationsFor(email.toLowerCase());
+    const slot = invitationOrgSlot(orgId);
+    return readable.some((inv) => invitationOrgSlot(inv.metadata.orgId) === slot);
+  } catch (error) {
+    logger.error("lifecycle: could not read a user's open invitations for the seats check", {
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return true;
+  }
 }
 
 /**

@@ -26,7 +26,7 @@ vi.mock('@/lib/db/client', () => ({
     user: { findUnique: vi.fn() },
     org: { findUnique: vi.fn() },
     orgMembership: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn() },
-    verification: { count: vi.fn(), findMany: vi.fn() },
+    verification: { findMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
   },
 }));
@@ -580,7 +580,9 @@ describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', ()
       settings: { quotas: { meters: { seats: limit } } },
     } as never);
     vi.mocked(prisma.orgMembership.count).mockResolvedValue(members);
-    vi.mocked(prisma.verification.count).mockResolvedValue(invitations);
+    vi.mocked(prisma.verification.findMany).mockResolvedValue(
+      Array.from({ length: invitations }, () => pendingRow({ orgId: ORG })) as never
+    );
   }
 
   it("refuses an org's own admin a new invitation at the limit, delivering nothing", async () => {
@@ -601,9 +603,11 @@ describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', ()
       limit: 3,
     });
     // The count is of this org's invitations, not every org's.
-    expect(prisma.verification.count).toHaveBeenCalledWith({
-      where: expect.objectContaining({ metadata: { path: ['orgId'], equals: ORG } }),
-    });
+    expect(prisma.verification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ metadata: { path: ['orgId'], equals: ORG } }),
+      })
+    );
     expect(generateInvitationToken).not.toHaveBeenCalled();
     expect(updateInvitationToken).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
@@ -631,7 +635,7 @@ describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', ()
     expect(res.status).toBe(201);
     expect(updateInvitationToken).toHaveBeenCalledTimes(1);
     expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a resend takes no new seat, so seats are not counted
-    expect(prisma.verification.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a resend takes no new seat, so seats are not counted
+    expect(prisma.verification.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a resend takes no new seat, so seats are not counted
   });
 
   it('does not refuse a platform admin at the limit', async () => {

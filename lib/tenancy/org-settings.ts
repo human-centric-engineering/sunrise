@@ -536,15 +536,17 @@ export async function loadOrgMeterLimits(
  * here: a caller taking them from a request refuses unknown ones first, as
  * the route does. A malformed key or limit throws a `ZodError` and nothing is
  * written. A change that leaves the stored limits as they are writes nothing
- * and says `changed: false`.
+ * and says `changed: false`. The comparison is with the stored JSON, so a
+ * write that only drops an entry the read could not use is a change, and
+ * `previousStored` is that JSON as it was, for an audit row to show what went.
  *
  * **It decides nothing about who may**: ask `mayChangeOrgCommercialSettings()`
  * (`lib/tenancy/shared-settings.ts`) after a platform-admin check, as the
  * route does. A clash with a concurrent settings write throws `P2034`
  * ({@link isSettingsWriteConflict}).
  *
- * @returns the limits before and after, and whether this changed them, or
- *   `null` when the org does not exist.
+ * @returns the limits before (read, and `previousStored` as stored) and
+ *   after, and whether this changed them, or `null` when the org does not exist.
  */
 export async function writeOrgMeterLimits(
   orgId: string,
@@ -552,11 +554,13 @@ export async function writeOrgMeterLimits(
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<{
   previous: Record<string, number>;
+  previousStored: unknown;
   stored: Record<string, number>;
   changed: boolean;
 } | null> {
   const checked = z.record(meterKeySchema, meterLimitSchema.nullable()).parse(change);
   let previous: Record<string, number> = {};
+  let previousStored: unknown = null;
   let stored: Record<string, number> = {};
   const replaced = await updateSettingsSlice(
     orgId,
@@ -570,6 +574,7 @@ export async function writeOrgMeterLimits(
       }
       stored = orgMeterLimitsSchema.parse(next);
       const slice = isJsonObject(settings) ? settings[ORG_QUOTAS_KEY] : undefined;
+      previousStored = (isJsonObject(slice) ? slice[ORG_METER_LIMITS_KEY] : undefined) ?? null;
       // The caps are carried as stored, whatever this read made of them.
       const rest: Record<string, unknown> = isJsonObject(slice) ? { ...slice } : {};
       delete rest[ORG_METER_LIMITS_KEY];
@@ -579,7 +584,7 @@ export async function writeOrgMeterLimits(
     },
     db
   );
-  return replaced === null ? null : { previous, stored, changed: replaced.written };
+  return replaced === null ? null : { previous, previousStored, stored, changed: replaced.written };
 }
 
 /** The key the org's LLM privacy settings live under in `Org.settings` (§127, t-1010). */

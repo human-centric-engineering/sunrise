@@ -31,7 +31,14 @@
  *
  * **Tenancy posture:** stateless; nothing is cached. The limits are on `Org`
  * and the seats count reads `OrgMembership` and `Verification`, all system
- * models, filtered on the org id.
+ * models, filtered on the org id. A meter's `count` and `period` run as the
+ * org being counted (`runAsOrg`) and across its owners (`runAcrossOwners`),
+ * whoever asks: platform staff on the admin page are in their own org, and an
+ * org's member would otherwise count only their own rows of an org-wide total.
+ *
+ * **Not atomic.** A check and the write it allows are separate, so requests
+ * racing at the limit can each be allowed and pass it by as many as raced. A
+ * limit is a plan's cap, not an invariant: the next check refuses.
  *
  * @see lib/tenancy/entitlements.ts — `registerMeter()` and the registry
  * @see lib/tenancy/org-settings.ts — the stored limits
@@ -41,6 +48,8 @@
 import type { PrismaClient } from '@prisma/client';
 
 import { APIError, ErrorCodes } from '@/lib/api/errors';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import {
@@ -51,9 +60,10 @@ import {
   type RegisteredMeter,
 } from '@/lib/tenancy/entitlements';
 import { countNonStaffMembers } from '@/lib/tenancy/membership';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { runAsOrg } from '@/lib/tenancy/context';
 import { loadOrgMeterLimits } from '@/lib/tenancy/org-settings';
 import { INVITATION_IDENTIFIER_PREFIX, invitationOrgSlot } from '@/lib/utils/invitation-token';
+import { parseInvitationMetadata } from '@/lib/validations/admin';
 
 /** The platform's own meter: the people in an org, and those invited into it. */
 export const SEATS_METER_KEY = 'seats';
@@ -115,36 +125,37 @@ export function meterOf(key: string): Meter | undefined {
 
 /**
  * Members who are not platform staff (support entering an org does not take
- * one of its seats), plus unexpired invitations into the org. An invitation
- * with no org, or naming the install org, is the install org's.
+ * one of its seats), plus unexpired invitations into the org that will make a
+ * member who takes one. An invitation with no org, or naming the install org,
+ * is the install org's. One granting the platform `ADMIN` role makes staff,
+ * so it takes no seat, and one whose metadata cannot be read cannot be
+ * accepted, so it takes none either.
  */
 export async function countSeats(
   orgId: string,
   db: Pick<PrismaClient, 'orgMembership' | 'verification'> = prisma
 ): Promise<number> {
-  const now = new Date();
-  const pendingWhere = {
-    identifier: { startsWith: INVITATION_IDENTIFIER_PREFIX },
-    expiresAt: { gt: now },
-  };
-  const invitations =
-    orgId === INSTALL_ORG_ID
-      ? // The install org's invitations may not name it, which a JSON filter
-        // cannot match, so they are read and sorted here. A platform's own
-        // pending invitations are few.
-        (
-          await db.verification.findMany({ where: pendingWhere, select: { metadata: true } })
-        ).filter((row) => invitationOrgSlot(orgIdIn(row.metadata)) === null).length
-      : await db.verification.count({
-          where: { ...pendingWhere, metadata: { path: ['orgId'], equals: orgId } },
-        });
+  const slot = invitationOrgSlot(orgId);
+  const pending = await db.verification.findMany({
+    where: {
+      identifier: { startsWith: INVITATION_IDENTIFIER_PREFIX },
+      expiresAt: { gt: new Date() },
+      // The install org's invitations may not name it, which a JSON filter
+      // cannot match, so they are all read and sorted below. A platform's
+      // own pending invitations are few.
+      ...(slot === null ? {} : { metadata: { path: ['orgId'], equals: orgId } }),
+    },
+    select: { metadata: true },
+  });
+  const invitations = pending.filter((row) => {
+    const metadata = parseInvitationMetadata(row.metadata);
+    return (
+      metadata !== null &&
+      metadata.role !== PLATFORM_ADMIN_ROLE &&
+      invitationOrgSlot(metadata.orgId) === slot
+    );
+  }).length;
   return (await countNonStaffMembers(orgId, db)) + invitations;
-}
-
-function orgIdIn(metadata: unknown): string | null {
-  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return null;
-  const orgId: unknown = (metadata as Record<string, unknown>).orgId;
-  return typeof orgId === 'string' ? orgId : null;
 }
 
 /**
@@ -185,8 +196,22 @@ function isWindow(value: unknown): value is MeterWindow {
   );
 }
 
-/** One meter's count for one org: its window and how many. Throws as the app's code does. */
-async function countIn(
+/**
+ * One meter's count for one org: its window and how many. Throws as the app's
+ * code does. Runs as that org and across its owners, whoever is asking (see
+ * the module's tenancy posture).
+ */
+function countIn(
+  meter: Meter,
+  orgId: string,
+  now: Date
+): Promise<{ used: number; window: MeterWindow }> {
+  return runAcrossOwners("meters: an org's usage is counted across all its members", () =>
+    runAsOrg(orgId, () => countAsOrg(meter, orgId, now))
+  );
+}
+
+async function countAsOrg(
   meter: Meter,
   orgId: string,
   now: Date
@@ -274,20 +299,23 @@ export function meterLimitMessage(check: Pick<MeterQuotaCheck, 'label' | 'limit'
 
 /**
  * Refuse a new seat in an org at its seats limit: the check the org's own
- * invitation and add-member routes make before either adds one. Throws a 403
- * whose `details.reason` is {@link METER_LIMIT_REASON}.
+ * invitation route makes before issuing one, and `addMember()` before adding
+ * one. Throws a 403 whose `details.reason` is {@link METER_LIMIT_REASON}.
  *
  * **Platform staff are not refused** (`platformAdmin`): the vendor setting an
  * org up, or putting one right, must not be stopped by the limit it sold.
  * The platform's own invite route does not call this for the same reason.
- * With no seats limit set nothing is counted.
+ * With no seats limit set nothing is counted. `adding: 0` asks only whether
+ * the org is within its limit now: for a seat already counted, such as an
+ * open invitation's.
  */
 export async function refuseOverSeatsLimit(
   orgId: string,
-  actor: { platformAdmin: boolean }
+  actor: { platformAdmin: boolean },
+  options: { adding?: number } = {}
 ): Promise<void> {
   if (actor.platformAdmin) return;
-  const check = await checkMeterQuota(orgId, SEATS_METER_KEY);
+  const check = await checkMeterQuota(orgId, SEATS_METER_KEY, { adding: options.adding });
   if (check.allowed) return;
   logger.info('meters: refused a seat over the org seats limit', {
     orgId,

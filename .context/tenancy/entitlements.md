@@ -308,19 +308,40 @@ check and the add are not one transaction, so two adds at the same moment can
 both pass at the last free place; a hard limit that must never be passed by
 one needs the app's own lock.
 
+A meter's `count` and `period` run **as the org being counted**
+(`runAsOrg`) and **across its owners** (`runAcrossOwners`), whoever asks.
+Platform staff reading the admin page are in their own org, and a member's
+request is narrowed to that member's own rows, so without both the count above
+would read another org's conversations through the wrong org, or count only
+the asker's. A meter is an org-wide total that returns a number.
+
 ### Seats
 
 Seats are the platform's own meter, because the platform owns the ways a
 person joins an org: members who are not platform staff, plus unexpired
-invitations into it. An invitation takes a seat as soon as it is pending, so
-accepting one does not need a second check. With a seats limit set, an org's
-own admin is refused a **new** invitation (`POST /api/v1/orgs/[id]/invitations`;
-a resend is not refused) and adding a member (`POST /api/v1/orgs/[id]/members`)
-at the limit: a 403 with `details.reason: 'meter_limit_reached'` (`METER_LIMIT_REASON`),
-`meter`, `used` and `limit`. **A platform admin is never refused**, and the
-platform's own invite route does not check: the vendor setting an org up must
-not be stopped by the limit it sold. Lowering a limit below what an org
-already has removes nobody; it cannot add more until it is back under.
+invitations into it. An invitation that grants the platform `ADMIN` role makes
+staff, so it takes no seat, and nor does one whose metadata cannot be read.
+An invitation takes a seat as soon as it is pending, so accepting one is not
+checked again, even if the limit was lowered since.
+
+With a seats limit set, an org's own admin is refused at the limit: a 403 with
+`details.reason: 'meter_limit_reached'` (`METER_LIMIT_REASON`), `meter`,
+`used` and `limit`. Two places refuse:
+
+- **A new invitation**, in `POST /api/v1/orgs/[id]/invitations`, after its
+  own checks. A resend is not refused.
+- **Adding a member**, in `addMember()` (`lib/tenancy/lifecycle.ts`), after
+  its own checks, so a user who is already a member or does not exist is told
+  that instead. Every caller gets it, `POST /api/v1/orgs/[id]/members` and a
+  fork's own route alike. A user who is platform staff takes no seat and is
+  not checked. A user with an open invitation into the org already holds a
+  seat, so the org need only be within its limit. Accepting an invitation
+  passes `seatHeld`.
+
+**A platform admin is never refused**, and the platform's own invite route
+does not check: the vendor setting an org up must not be stopped by the limit
+it sold. Lowering a limit below what an org already has removes nobody; it
+cannot add more until it is back under.
 
 An app that reads a seat differently (not counting invitations, or one role)
 registers `seats` with its own `count`, which replaces the platform's
@@ -353,11 +374,13 @@ limit is set), and `countFailed` when it could not be counted; plus
 `unregistered`, `mayChange` and `registrationFailed`. `PATCH` takes
 `{ limits: { [key]: number | null } }` and changes only the keys it names. A
 key nothing registers is a 400, unless its value is `null` (clearing a kept
-limit). The same refusals as the switches apply: platform admins only, writes
+limit). When the app's registration failed, a key it would have registered is
+a 409 saying so, rather than a 400 saying no meter has that key. The same refusals as the switches apply: platform admins only, writes
 from the install org or an unbound admin API key (`mayChangeOrgCommercialSettings`),
 refused before the body is read. A write that changes something is audited as
-`org.meters.update` with the limits before and after; one that changes nothing
-writes nothing. A settings write clash is a 409.
+`org.meters.update` with the limits before, as stored, and after. A write
+that only drops an entry the read could not use is a change, so the row shows
+what went. One that changes nothing writes nothing. A settings write clash is a 409.
 
 `/admin/orgs/[id]` always shows a **Limits** section, since seats is always a
 meter: each meter's usage against its limit, marked at or over its limit, with

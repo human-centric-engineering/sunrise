@@ -18,7 +18,7 @@ vi.mock('@/lib/logging', () => ({
 
 const mockPrisma = vi.hoisted(() => ({
   orgMembership: { count: vi.fn() },
-  verification: { count: vi.fn(), findMany: vi.fn() },
+  verification: { findMany: vi.fn() },
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 
@@ -46,9 +46,27 @@ import {
   type MeterDefinition,
 } from '@/lib/tenancy/entitlements';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
+import { getSubjectReadScope, runAsSubject } from '@/lib/auth/subject-context';
 
 const ORG = 'cmorg000000000000000acme1';
 const NOW = new Date('2026-03-15T10:30:00.000Z');
+
+/** An invitation row's metadata as the invite routes write it. */
+const invitationMeta = (extra: Record<string, unknown> = {}) => ({
+  name: 'Invitee',
+  role: 'USER',
+  invitedBy: 'cmuser000000000000000adm1',
+  invitedAt: '2026-03-01T00:00:00.000Z',
+  ...extra,
+});
+
+/** `n` open invitations into the org, as the seats count reads them. */
+function pendingInvitations(n: number, orgId: string = ORG) {
+  mockPrisma.verification.findMany.mockResolvedValue(
+    Array.from({ length: n }, () => ({ metadata: invitationMeta({ orgId }) }))
+  );
+}
 
 /** Have the app register these meters when the registry first loads. */
 function appRegisters(...defs: MeterDefinition[]) {
@@ -75,7 +93,6 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(initAppEntitlements).mockImplementation(() => {});
   mockPrisma.orgMembership.count.mockResolvedValue(0);
-  mockPrisma.verification.count.mockResolvedValue(0);
   mockPrisma.verification.findMany.mockResolvedValue([]);
   mockLoadLimits.mockResolvedValue({});
 });
@@ -92,7 +109,7 @@ describe('allMeters / meterOf', () => {
 
   it('counts the core seats meter through countSeats for the org it is asked about', async () => {
     mockPrisma.orgMembership.count.mockResolvedValue(3);
-    mockPrisma.verification.count.mockResolvedValue(2);
+    pendingInvitations(2);
 
     const used = await meterOf('seats')!.count({ orgId: ORG, from: null, to: null });
 
@@ -185,9 +202,9 @@ describe('meterWindow', () => {
 });
 
 describe('countSeats', () => {
-  it('counts non-staff members plus unexpired invitations naming the org by a JSON path filter', async () => {
+  it('counts non-staff members plus open invitations naming the org by a JSON path filter', async () => {
     mockPrisma.orgMembership.count.mockResolvedValue(4);
-    mockPrisma.verification.count.mockResolvedValue(2);
+    pendingInvitations(2);
 
     const seats = await countSeats(ORG);
 
@@ -197,13 +214,12 @@ describe('countSeats', () => {
     };
     expect(memberWhere.orgId).toBe(ORG);
     expect(memberWhere.user).toMatchObject({ role: { not: 'ADMIN' } });
-    const { where } = mockPrisma.verification.count.mock.calls[0][0] as {
+    const { where } = mockPrisma.verification.findMany.mock.calls[0][0] as {
       where: Record<string, unknown>;
     };
     expect(where.identifier).toEqual({ startsWith: 'invitation:' });
     expect((where.expiresAt as { gt: Date }).gt).toBeInstanceOf(Date);
     expect(where.metadata).toEqual({ path: ['orgId'], equals: ORG });
-    expect(mockPrisma.verification.findMany).not.toHaveBeenCalled();
   });
 
   it('counts only unexpired invitations, as of now', async () => {
@@ -215,43 +231,59 @@ describe('countSeats', () => {
       vi.useRealTimers();
     }
 
-    const { where } = mockPrisma.verification.count.mock.calls[0][0] as {
+    const { where } = mockPrisma.verification.findMany.mock.calls[0][0] as {
       where: { expiresAt: { gt: Date } };
     };
     expect(where.expiresAt.gt).toEqual(NOW);
   });
 
+  it('takes no seat for an invitation that makes platform staff, or one it cannot read', async () => {
+    mockPrisma.orgMembership.count.mockResolvedValue(1);
+    mockPrisma.verification.findMany.mockResolvedValue([
+      { metadata: invitationMeta({ orgId: ORG }) },
+      { metadata: invitationMeta({ orgId: ORG, role: 'ADMIN' }) },
+      { metadata: { orgId: ORG } },
+      { metadata: null },
+    ]);
+
+    expect(await countSeats(ORG)).toBe(1 + 1);
+  });
+
   it('reads and filters the install org invitations, counting those naming no org or the install org', async () => {
     mockPrisma.orgMembership.count.mockResolvedValue(2);
     mockPrisma.verification.findMany.mockResolvedValue([
-      { metadata: {} },
-      { metadata: { orgId: null } },
-      { metadata: { orgId: '' } },
-      { metadata: { orgId: INSTALL_ORG_ID } },
-      { metadata: { orgId: 'cmother' } },
+      { metadata: invitationMeta() },
+      { metadata: invitationMeta({ orgId: INSTALL_ORG_ID }) },
+      { metadata: invitationMeta({ orgId: '' }) },
+      { metadata: invitationMeta({ orgId: 'cmother' }) },
+      { metadata: invitationMeta({ role: 'ADMIN' }) },
       { metadata: null },
       { metadata: [] },
       { metadata: { orgId: 42 } },
     ]);
 
-    // none, null, '', install, null metadata, array, non-string = 7; 'cmother' excluded
-    expect(await countSeats(INSTALL_ORG_ID)).toBe(2 + 7);
-    expect(mockPrisma.verification.count).not.toHaveBeenCalled();
+    // none, install and '' = 3; another org's, a staff invitation and the
+    // unreadable rows take none.
+    expect(await countSeats(INSTALL_ORG_ID)).toBe(2 + 3);
     const arg = mockPrisma.verification.findMany.mock.calls[0][0] as {
-      where: { identifier: unknown; expiresAt: { gt: Date } };
+      where: { identifier: unknown; expiresAt: { gt: Date }; metadata?: unknown };
     };
     expect(arg.where.identifier).toEqual({ startsWith: 'invitation:' });
     expect(arg.where.expiresAt.gt).toBeInstanceOf(Date);
+    expect(arg.where.metadata).toBeUndefined();
   });
 
   it('uses a db it is handed rather than the default', async () => {
     const db = {
       orgMembership: { count: vi.fn().mockResolvedValue(1) },
-      verification: { count: vi.fn().mockResolvedValue(1), findMany: vi.fn() },
+      verification: {
+        findMany: vi.fn().mockResolvedValue([{ metadata: invitationMeta({ orgId: ORG }) }]),
+      },
     };
 
     expect(await countSeats(ORG, db as never)).toBe(2);
     expect(mockPrisma.orgMembership.count).not.toHaveBeenCalled();
+    expect(mockPrisma.verification.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -357,7 +389,7 @@ describe('checkMeterQuota', () => {
 
   it('refuses a seat when members plus invitations reach the seats limit', async () => {
     mockPrisma.orgMembership.count.mockResolvedValue(2);
-    mockPrisma.verification.count.mockResolvedValue(1);
+    pendingInvitations(1);
     mockLoadLimits.mockResolvedValue({ seats: 3 });
 
     expect(await checkMeterQuota(ORG, 'seats')).toMatchObject({
@@ -366,6 +398,51 @@ describe('checkMeterQuota', () => {
       limit: 3,
       label: 'Seats',
     });
+  });
+
+  it("counts as the org being counted, not the caller's org", async () => {
+    let countedAs: string | null | undefined;
+    let windowAs: string | null | undefined;
+    appRegisters(
+      meter(
+        'conversations',
+        () => {
+          countedAs = getTenantContext()?.orgId;
+          return 0;
+        },
+        ({ now }) => {
+          windowAs = getTenantContext()?.orgId;
+          return { from: new Date(now.getTime() - 1000), to: now };
+        }
+      )
+    );
+    mockLoadLimits.mockResolvedValue({ conversations: 10 });
+
+    await runAsOrg(INSTALL_ORG_ID, () => checkMeterQuota(ORG, 'conversations', { now: NOW }));
+
+    expect(countedAs).toBe(ORG);
+    expect(windowAs).toBe(ORG);
+  });
+
+  it("counts across the org's owners, not narrowed to the member asking", async () => {
+    let scopeKind: string | undefined;
+    appRegisters(
+      meter('conversations', async () => {
+        scopeKind = (await getSubjectReadScope()).kind;
+        return 0;
+      })
+    );
+    mockLoadLimits.mockResolvedValue({ conversations: 10 });
+    const member = {
+      principal: {} as never,
+      filter: { userId: 'cmuser000000000000000mem1' },
+      resolveFilter: vi.fn(),
+      unattributedReads: {} as never,
+    };
+
+    await runAsSubject(member, () => checkMeterQuota(ORG, 'conversations'));
+
+    expect(scopeKind).toBe('admitted');
   });
 
   it('allows an unknown meter key, using the key as its label, and logs a warning', async () => {
@@ -524,7 +601,7 @@ describe('refuseOverSeatsLimit', () => {
   it('throws a 403 with the meter_limit_reached details for an org admin at the limit', async () => {
     mockLoadLimits.mockResolvedValue({ seats: 3 });
     mockPrisma.orgMembership.count.mockResolvedValue(2);
-    mockPrisma.verification.count.mockResolvedValue(1);
+    pendingInvitations(1);
 
     const error = await refuseOverSeatsLimit(ORG, { platformAdmin: false }).catch((e) => e);
 
@@ -547,9 +624,24 @@ describe('refuseOverSeatsLimit', () => {
   it('resolves when there is room for one more', async () => {
     mockLoadLimits.mockResolvedValue({ seats: 3 });
     mockPrisma.orgMembership.count.mockResolvedValue(1);
-    mockPrisma.verification.count.mockResolvedValue(1);
+    pendingInvitations(1);
 
     await expect(refuseOverSeatsLimit(ORG, { platformAdmin: false })).resolves.toBeUndefined();
+  });
+
+  it('with adding 0, refuses only an org already past its limit', async () => {
+    mockLoadLimits.mockResolvedValue({ seats: 3 });
+    mockPrisma.orgMembership.count.mockResolvedValue(2);
+    pendingInvitations(1);
+
+    await expect(
+      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { adding: 0 })
+    ).resolves.toBeUndefined();
+
+    mockLoadLimits.mockResolvedValue({ seats: 2 });
+    await expect(
+      refuseOverSeatsLimit(ORG, { platformAdmin: false }, { adding: 0 })
+    ).rejects.toBeInstanceOf(APIError);
   });
 
   it('resolves, counting nothing, when the org has no seats limit', async () => {

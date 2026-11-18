@@ -1088,6 +1088,7 @@ describe('the org meter limits (§135 t-1035)', () => {
 
       expect(written).toEqual({
         previous: { seats: 3 },
+        previousStored: { seats: 3 },
         stored: { seats: 3, convos: 20 },
         changed: true,
       });
@@ -1132,6 +1133,7 @@ describe('the org meter limits (§135 t-1035)', () => {
 
       expect(written).toEqual({
         previous: { seats: 3, convos: 20 },
+        previousStored: { seats: 3, convos: 20 },
         stored: { convos: 20 },
         changed: true,
       });
@@ -1192,6 +1194,7 @@ describe('the org meter limits (§135 t-1035)', () => {
 
       expect(await writeOrgMeterLimits(ORG_A, { seats: 3 }, db)).toEqual({
         previous: { seats: 3 },
+        previousStored: { seats: 3 },
         stored: { seats: 3 },
         changed: false,
       });
@@ -1203,10 +1206,28 @@ describe('the org meter limits (§135 t-1035)', () => {
 
       expect(await writeOrgMeterLimits(ORG_A, { seats: null }, db)).toEqual({
         previous: {},
+        previousStored: null,
         stored: {},
         changed: false,
       });
       expect(tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing changed, nothing written
+    });
+
+    it('hands back the stored JSON as it was when a write drops an entry the read could not use', async () => {
+      const { tx, db } = txOver({ quotas: { meters: { seats: 3, broken: -1 } } });
+
+      const written = await writeOrgMeterLimits(ORG_A, { seats: 3 }, db);
+
+      expect(written).toEqual({
+        previous: { seats: 3 },
+        previousStored: { seats: 3, broken: -1 },
+        stored: { seats: 3 },
+        changed: true,
+      });
+      expect(tx.org.update).toHaveBeenCalledWith({
+        where: { id: ORG_A },
+        data: { settings: { quotas: { meters: { seats: 3 } } } },
+      });
     });
 
     it.each([

@@ -34,7 +34,7 @@ const mockPrisma = vi.hoisted(() => {
   const db = {
     org: { findUnique: vi.fn(), update: vi.fn() },
     orgMembership: { findUnique: vi.fn(), count: vi.fn() },
-    verification: { count: vi.fn(), findMany: vi.fn() },
+    verification: { findMany: vi.fn() },
     $transaction: vi.fn(),
   };
   db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(db));
@@ -131,7 +131,17 @@ beforeEach(() => {
     org: { status: 'ACTIVE' },
   });
   mockPrisma.orgMembership.count.mockResolvedValue(3);
-  mockPrisma.verification.count.mockResolvedValue(2);
+  mockPrisma.verification.findMany.mockResolvedValue(
+    [1, 2].map(() => ({
+      metadata: {
+        name: 'Invitee',
+        role: 'USER',
+        invitedBy: 'cmuser000000000000000adm1',
+        invitedAt: '2026-03-01T00:00:00.000Z',
+        orgId: OTHER,
+      },
+    }))
+  );
   mockPrisma.org.update.mockResolvedValue({});
 });
 
@@ -292,6 +302,37 @@ describe('PATCH /api/v1/admin/orgs/[id]/meters', () => {
     expect(body.error?.details?.unknownMeters).toEqual(['repots']);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
     expect(mockLogAdminAction).not.toHaveBeenCalled();
+  });
+
+  it('says the app registration failed, rather than that the key does not exist', async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('boom');
+    });
+
+    const res = await patch({ limits: { convos: 100 } });
+    const body = await json(res);
+
+    expect(res.status).toBe(409);
+    expect(body.error?.code).toBe('CONFLICT');
+    expect(body.error?.message).toMatch(/failed to register/);
+    expect(body.error?.details?.unknownMeters).toEqual(['convos']);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
+  it('audits the stored limits as they were when a save tidies one the read could not use', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { quotas: { meters: { seats: 10, broken: -1 } } },
+    });
+
+    const res = await patch({ limits: { seats: 10 } });
+
+    expect(res.status).toBe(200);
+    expect(mockLogAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: { meterLimits: { from: { seats: 10, broken: -1 }, to: { seats: 10 } } },
+      })
+    );
   });
 
   it.each([

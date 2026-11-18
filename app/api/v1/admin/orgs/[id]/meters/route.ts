@@ -104,6 +104,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     .filter(([key, limit]) => limit !== null && !registered.has(key))
     .map(([key]) => key);
   if (unknownMeters.length > 0) {
+    if (entitlementSwitchesFailed()) {
+      return errorResponse(
+        `The app's meters failed to register, so ${unknownMeters.join(', ')} cannot be set. The server log says why.`,
+        { code: 'CONFLICT', status: 409, details: { unknownMeters } }
+      );
+    }
     const message = `No meter has the key ${unknownMeters.join(', ')}`;
     // A VALIDATION_ERROR's details are fields (lib/api/errors.ts), so the
     // message goes in the list shape and the keys ride beside it.
@@ -139,7 +145,8 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       actingOrgId: id,
       changes: {
         meterLimits: {
-          from: Object.keys(written.previous).length === 0 ? null : written.previous,
+          // As stored, so a write that tidied an unusable entry shows what went.
+          from: written.previousStored,
           to: Object.keys(written.stored).length === 0 ? null : written.stored,
         },
       },

@@ -233,7 +233,9 @@ only that a cuid — unguessable — does not name a user.
 **Error Responses**: `400` with code `INSTALL_ORG_MEMBERSHIP` (a role on the
 install org) · `403 OWNER_STANDING` · `403 FORBIDDEN` with
 `details.reason: 'meter_limit_reached'` (the org is at its seats limit, §135
-t-1035; a platform admin is not refused) · `404 USER_NOT_FOUND` ·
+t-1035; asked after the checks below, so they answer first. A platform admin
+is not refused, a user who is platform staff takes no seat, and a user with
+an open invitation into the org already holds one) · `404 USER_NOT_FOUND` ·
 `409 ALREADY_MEMBER`.
 
 ### Invite someone into the org
@@ -615,9 +617,10 @@ Every meter (the platform's seats first, then the app's), how many the org
 has within its window, and its limit (§135 t-1035). A `PATCH` takes
 `{ limits: { [key]: number | null } }`: a whole number from 0 sets a limit,
 `null` clears one, and a meter not named is left as it is. Limits stored for
-keys nothing registers are kept, and only `null` may name one. Each write
-that changes something writes an `org.meters.update` audit row with the
-limits before and after. At `multi` the write comes only from the install org
+keys nothing registers are kept, and only `null` may name one; when the app's
+registration failed, naming one it would have registered is a `409` saying
+so. Each write that changes something writes an `org.meters.update` audit row
+with the limits before (as stored) and after. At `multi` the write comes only from the install org
 or an unbound admin API key, as for the switches.
 
 Both return `{ orgId, mayChange, registrationFailed, meters, unregistered }`,
