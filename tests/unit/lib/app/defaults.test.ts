@@ -83,6 +83,7 @@ import {
   __resetAppOrgSourceRegistryForTests,
 } from '@/lib/privacy/org-source-registry';
 import { getAppJobs, __resetAppJobsForTests } from '@/lib/orchestration/maintenance/app-jobs';
+import { __resetSealedStoresForTests, getSealedStoreNames } from '@/lib/security/sealed-stores';
 import {
   getAppStaleWriters,
   getErasureCleanupHooks,
@@ -522,6 +523,15 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       );
       expect(adapters.observers.map((o) => o.id)).toEqual(core.observers.map((o) => o.id));
       expect(adapters.replacedCoreDetectors).toEqual([]);
+    },
+  },
+  {
+    seam: 'lib/app/sealed-stores.ts',
+    risk: 'a stray store would have every install\u2019s reseal walk read, and rewrite, rows it never asked it to touch',
+    assert: () => {
+      __resetSealedStoresForTests();
+      // getSealedStoreNames() triggers the lazy init, so this exercises the REAL seam.
+      expect(getSealedStoreNames()).toEqual([]);
     },
   },
   {

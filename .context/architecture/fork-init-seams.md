@@ -1,10 +1,10 @@
 # Fork Init Seams
 
-Twenty-two `initApp*()` functions, in twenty-one of the `lib/app/*` scaffolds Sunrise
+Twenty-three `initApp*()` functions, in twenty-two of the `lib/app/*` scaffolds Sunrise
 ships (`evaluations.ts` holds two), are reached the same way: a core registry runs
 the fork's function **once, lazily, before its first read**. (Most of `lib/app/`
 is not this — the majority of those files are value and config scaffolds with no
-init function at all, and two of the twenty-four `initApp*` exports are different
+init function at all, and two of the twenty-five `initApp*` exports are different
 shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -72,6 +72,7 @@ Three properties come with it:
 | `platform-agents.ts`               | `initAppPlatformAgents`              | `lib/orchestration/agents/platform-agents.ts`               | roll back, log, degrade        |
 | `privacy-adapters.ts`              | `initAppPrivacyAdapters`             | `lib/privacy/adapters/registry.ts`                          | roll back, log, **refuse**     |
 | `provider-credentials.ts`          | `initAppProviderCredentials`         | `lib/orchestration/llm/provider-credentials.ts`             | roll back, log, **refuse**     |
+| `sealed-stores.ts`                 | `initAppSealedStores`                | `lib/security/sealed-stores.ts`                             | roll back, log, **refuse**     |
 | `tenancy-classification.ts`        | `initAppTenancyClassification`       | `lib/tenancy/classification.ts`                             | roll back, log, degrade        |
 | `user-created.ts`                  | `initAppUserCreatedHooks`            | `lib/auth/user-created-hooks.ts`                            | roll back, log, degrade        |
 
@@ -163,6 +164,13 @@ reported separately, as `coreFailure`, and refuses every call too: the
 install stops at the first throw, so core's own policy resolvers may be among
 what is missing. Core's list is fixed code, so that failure surfaces in CI
 rather than first in production.
+
+**`sealed-stores` refuses.** A reseal that walked only core's stores would
+report every value on the new master key while the fork's were still under
+the old one, and the operator's next step is to remove the old key, which
+makes those values unreadable for good. So a failed `initAppSealedStores`
+makes `resealSealedStores()` throw `SealedStoreRegistrationError` until it is
+fixed. Sealing and opening are unaffected: they do not read the registry.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

@@ -299,6 +299,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The tick sweeps every org in one pass (§108 t-711) and arms the gate only when no org found work and the earliest next run across all orgs is far enough away, so one skip decision covering every org is the correct shape rather than a compromise.',
   },
   {
+    file: 'lib/security/sealed-stores.ts',
+    holders: ['stores', 'registrationFailed', 'appInit'],
+    posture: 'global-config',
+    why: "The places that keep sealed secrets, registered from code by core and by the fork's init, and whether that init failed. It holds no value: the reseal walk asks each store for its rows inside runAsSystem, because re-keying is install-wide (§137 t-1043).",
+  },
+  {
     file: 'lib/security/rate-limit-stores/index.ts',
     holders: ['_store'],
     posture: 'shared-by-decision',
