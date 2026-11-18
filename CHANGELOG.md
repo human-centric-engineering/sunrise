@@ -44,7 +44,10 @@ release process.
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#organisations-own-keys).
   _Fork impact:_ if you registered a credential resolver, it is no longer asked
   for an org that has saved its own key while that key is in use; with the
-  switch off and no keys saved, nothing changes. The migration adds a table and
+  switch off and no keys saved, nothing changes. A unit test that mocks
+  `@/lib/db/client` and fetches a provider for an org at `multi` now needs
+  `aiOrgProviderKey: { findUnique: async () => null }` in its mock: a lookup
+  that cannot be read refuses the credential rather than assume there is no key. The migration adds a table and
   a column, and enables RLS on the table if your install has already run
   `db:tenancy:enable`.
 
