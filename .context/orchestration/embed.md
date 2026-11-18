@@ -91,7 +91,14 @@ Data attributes:
 - `data-position` — `bottom-right` | `bottom-left` | `top-right` | `top-left` (default: `bottom-right`)
 - `data-theme` — `light` | `dark` (default: `light`)
 
-The loader script uses Shadow DOM for style isolation. The `apiBase` URL is baked in at serve time from the request's `origin`.
+The loader script uses Shadow DOM for style isolation.
+
+**Where the widget calls back to.** The script is served with the install's public address baked in: `apiBase` (`…/api/v1/embed`) and `originBase` (the approval-status polls) are the origin of `NEXT_PUBLIC_APP_URL`, the same URL the admin's embed snippet loads the script from. Nothing in the request is read for it (t-1042):
+
+- Behind a reverse proxy (nginx, Caddy, a load balancer, a local `*.test` proxy), `request.url` is the internal address the proxy forwarded to, such as `http://localhost:3010`, and a widget pointed there loads but never connects.
+- `Host` and `X-Forwarded-*` are written by whoever sends the request unless the proxy overwrites them, and the script is cached for five minutes and run on other sites: a request naming another host must not be able to point every visitor's chat at it.
+
+So a proxied or self-hosted install must set `NEXT_PUBLIC_APP_URL` to the address visitors' browsers reach it on (it is required anyway, and should match `BETTER_AUTH_URL`). An install reached on several hostnames serves a widget that calls the configured one. Only the origin is used; a path or trailing slash in the setting is dropped.
 
 ### Per-agent appearance — `/widget-config`
 

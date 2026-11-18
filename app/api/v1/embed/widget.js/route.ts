@@ -16,12 +16,19 @@
  *
  * Public — no authentication required (the token is validated by the
  * widget-config and chat-stream endpoints when called).
+ *
+ * The address the widget calls back to is the install's public URL,
+ * `NEXT_PUBLIC_APP_URL` — the one the admin's embed snippet loads this
+ * script from. Never the request's: behind a reverse proxy `request.url` is
+ * the internal address the proxy forwarded to (t-1042), and the forwarded
+ * headers are the caller's to write, so a request naming another host
+ * would put that host into a script other sites run and caches keep.
  */
 
-import { NextRequest } from 'next/server';
+import { env } from '@/lib/env';
 
-export function GET(request: NextRequest): Response {
-  const origin = new URL(request.url).origin;
+export function GET(): Response {
+  const origin = new URL(env.NEXT_PUBLIC_APP_URL).origin;
 
   const js = `
 (function() {

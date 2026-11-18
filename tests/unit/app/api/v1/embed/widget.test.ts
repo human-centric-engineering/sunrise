@@ -14,65 +14,107 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Script } from 'node:vm';
+
+// The install's public URL, as `lib/env` reads it; each test may change it.
+const mockEnv = vi.hoisted(() => ({ NEXT_PUBLIC_APP_URL: 'https://chat.example.com' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
 import { GET } from '@/app/api/v1/embed/widget.js/route';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function makeGetRequest(url = 'https://example.com/api/v1/embed/widget.js'): NextRequest {
-  return new NextRequest(url);
-}
+/** The handler as Next calls it: with the request, which it must not read. */
+const handle: (request: NextRequest) => Response = GET;
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('GET /api/v1/embed/widget.js', () => {
   it('returns Content-Type application/javascript', () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
 
     expect(response.headers.get('Content-Type')).toContain('application/javascript');
   });
 
   it('returns Cache-Control with max-age=300', () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
 
     expect(response.headers.get('Cache-Control')).toContain('max-age=300');
   });
 
   it('returns Access-Control-Allow-Origin: *', () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
 
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 
   it('response body includes "use strict"', async () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
     const body = await response.text();
 
     expect(body).toContain("'use strict'");
   });
 
-  it('response body includes the request origin as apiBase', async () => {
-    const response = GET(makeGetRequest('https://myapp.example.com/api/v1/embed/widget.js'));
-    const body = await response.text();
+  // ─── The address the widget calls back to (t-1042) ─────────────────────────
 
-    expect(body).toContain('https://myapp.example.com/api/v1/embed');
+  describe('the address the widget calls back to', () => {
+    afterEach(() => {
+      mockEnv.NEXT_PUBLIC_APP_URL = 'https://chat.example.com';
+    });
+
+    it('is the public address when a proxy forwards the request to an internal one', async () => {
+      // As the dev proxy forwarded it: the public name gone, the loopback port in its place.
+      const body = await handle(
+        new NextRequest('https://localhost:3010/api/v1/embed/widget.js', {
+          headers: { host: 'localhost:3010' },
+        })
+      ).text();
+
+      expect(body).toContain("var apiBase = 'https://chat.example.com/api/v1/embed';");
+      expect(body).toContain("var originBase = 'https://chat.example.com';");
+      expect(body).not.toContain('localhost:3010');
+    });
+
+    it('cannot be pointed at another host by what the request says', async () => {
+      const body = await handle(
+        new NextRequest('https://attacker.example/api/v1/embed/widget.js', {
+          headers: {
+            host: 'attacker.example',
+            'x-forwarded-host': 'attacker.example',
+            'x-forwarded-proto': 'http',
+            forwarded: 'host=attacker.example;proto=http',
+          },
+        })
+      ).text();
+
+      expect(body).not.toContain('attacker.example');
+      expect(body).toContain("var apiBase = 'https://chat.example.com/api/v1/embed';");
+    });
+
+    it('is the origin alone when the configured URL carries a path or a port', async () => {
+      mockEnv.NEXT_PUBLIC_APP_URL = 'https://chat.example.com:8443/app/';
+      const body = await GET().text();
+
+      expect(body).toContain("var apiBase = 'https://chat.example.com:8443/api/v1/embed';");
+      expect(body).toContain("var originBase = 'https://chat.example.com:8443';");
+    });
   });
 
   it('response body includes data-token attribute reference', async () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
     const body = await response.text();
 
     expect(body).toContain('data-token');
   });
 
   it('response body includes X-Embed-Token header reference', async () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
     const body = await response.text();
 
     expect(body).toContain('X-Embed-Token');
   });
 
   it('returns 200 status', () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
 
     expect(response.status).toBe(200);
   });
@@ -80,7 +122,7 @@ describe('GET /api/v1/embed/widget.js', () => {
   // ─── SSE Parser & Event Handling ────────────────────────────────────────────
 
   it('uses block-based SSE parsing (split on \\n\\n)', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     // Must split by \n\n (block separator), not just \n (line separator)
     expect(body).toContain("buffer.split('\\n\\n')");
@@ -89,7 +131,7 @@ describe('GET /api/v1/embed/widget.js', () => {
   });
 
   it('extracts event type from event: header line', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     // Must read the event: line to determine type
     expect(body).toContain("line.indexOf('event:') === 0");
@@ -97,39 +139,39 @@ describe('GET /api/v1/embed/widget.js', () => {
   });
 
   it('handles content_reset event for provider fallback', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     expect(body).toContain("evt.type === 'content_reset'");
   });
 
   it('handles done event for explicit stream completion', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     expect(body).toContain("evt.type === 'done'");
   });
 
   it('handles status event for progress indication', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     expect(body).toContain("evt.type === 'status'");
   });
 
   it('reads delta from evt.data.delta (not evt.delta)', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     // Must access data.delta from the parsed block, not raw evt.delta
     expect(body).toContain('evt.data.delta');
   });
 
   it('supports AbortController for stream cancellation', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     expect(body).toContain('new AbortController()');
     expect(body).toContain('signal: controller.signal');
   });
 
   it('new chat button resets sending state', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     // The new-chat handler must reset sending state to avoid stuck UI
     expect(body).toContain('sending = false');
@@ -143,7 +185,7 @@ describe('GET /api/v1/embed/widget.js', () => {
     // it moves focus to the button. After the stream ends, focus must
     // return to the input — otherwise the user has to click back into
     // the input every turn.
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     // Locate the endStream definition and assert it ends with an
     // input.focus() call. Match across whitespace/newlines.
@@ -153,7 +195,7 @@ describe('GET /api/v1/embed/widget.js', () => {
   });
 
   it('shows error on mid-stream reader failure', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     // Reader catch must show user-facing text, not silently fail
     expect(body).toContain('Connection lost.');
@@ -164,7 +206,7 @@ describe('GET /api/v1/embed/widget.js', () => {
     // conversation is no longer the visitor's. The widget clears it as New chat
     // does (so the transcript matches the server's fresh conversation) and
     // restores the text and attachments the visitor just sent.
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     const start = body.indexOf("evt.data.code === 'conversation_not_found'");
     expect(start).toBeGreaterThan(-1);
@@ -180,14 +222,14 @@ describe('GET /api/v1/embed/widget.js', () => {
   });
 
   it('serves a script that parses as JavaScript', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     // Compile only: `vm.Script` parses the body without running it.
     expect(() => new Script(body)).not.toThrow();
   });
 
   it('includes status element in widget HTML', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
 
     expect(body).toContain('class="status"');
   });
@@ -195,14 +237,14 @@ describe('GET /api/v1/embed/widget.js', () => {
 
 describe('Embed widget citation rendering', () => {
   it('binds a handler for the `citations` SSE event', async () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
     const body = await response.text();
     expect(body).toContain("evt.type === 'citations'");
     expect(body).toContain('renderCitations(assistantSpan, fullText, evt.data.citations)');
   });
 
   it('declares the renderCitations helper that builds marker chips and a sources panel', async () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
     const body = await response.text();
     expect(body).toContain('function renderCitations(span, fullText, citations)');
     expect(body).toContain("className = 'citations-panel'");
@@ -210,7 +252,7 @@ describe('Embed widget citation rendering', () => {
   });
 
   it('uses createElement + textContent (no innerHTML) for citation rendering', async () => {
-    const response = GET(makeGetRequest());
+    const response = GET();
     const body = await response.text();
     // Locate the renderCitations function body — assertion is on the
     // sub-function only, since the surrounding widget code already
@@ -225,7 +267,7 @@ describe('Embed widget citation rendering', () => {
   });
 
   it('renders valid citation markers as focusable buttons with aria-label and scroll-on-click', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Valid markers use <button> so keyboard and screen-reader users
     // can reach them; invalid (hallucinated) markers stay as <span>
     // because there's no source to navigate to.
@@ -239,14 +281,14 @@ describe('Embed widget citation rendering', () => {
   });
 
   it('does not transform [N] when the citations envelope is empty (defensive guard)', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Server never emits an empty citations event, but if it did, the
     // helper must not flag every [N] in fullText as hallucinated.
     expect(body).toContain('if (!citations || citations.length === 0) return;');
   });
 
   it('removes any orphaned citations panel when an error event fires after citations', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // If `done` throws after citations were emitted, the error handler
     // re-fires; the bubble's textContent is reset but the panel must
     // also be removed so the user does not see "Something went wrong"
@@ -258,7 +300,7 @@ describe('Embed widget citation rendering', () => {
 
 describe('Embed widget per-agent config (Phase 2)', () => {
   it('fetches /widget-config on boot before mounting', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Loader posts X-Embed-Token to /widget-config and waits for the
     // response before calling mount(). Without this the widget would
     // ignore admin-configured colours and copy.
@@ -268,7 +310,7 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('falls back to DEFAULTS when /widget-config fetch fails', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // .catch on the fetch chain returns null; mount is still called
     // with DEFAULTS so the widget never silently fails to render.
     expect(body).toContain('var DEFAULTS = {');
@@ -277,7 +319,7 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('applies CSS custom properties on the host element', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // The Shadow DOM inherits these from the host. Inline <style> uses
     // var(--sw-*) so a single property assignment cascades through the
     // tree without re-templating CSS strings per agent.
@@ -290,7 +332,7 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('substitutes copy strings via textContent / setAttribute (no innerHTML for user copy)', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain('titleEl.textContent = cfg.headerTitle');
     expect(body).toContain('subtitleEl.textContent = cfg.headerSubtitle');
     expect(body).toContain("input.setAttribute('placeholder', cfg.inputPlaceholder)");
@@ -299,14 +341,14 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('hides subtitle and footer rows when their config strings are empty', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain("subtitleEl.style.display = 'none'");
     // footer is hidden by default markup; only un-hidden when text is set.
     expect(body).toContain('class="footer" style="display:none;"');
   });
 
   it('declares a renderStarters helper that paints chips before the first message', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain('function renderStarters()');
     // Auto-hides once any message exists.
     expect(body).toContain('messagesEl.children.length > 0');
@@ -316,7 +358,7 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('hides starters as soon as the first message is added', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // addMsg() always sets startersEl.style.display = 'none' so the
     // chip row vanishes the moment the conversation begins (whether
     // the user typed or clicked a starter).
@@ -324,7 +366,7 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('cite-marker chip background derives from --sw-primary via color-mix', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // The chip used to be hardcoded blue rgba; once admins customise
     // primary to (say) green, the chip would have looked off. Tint
     // now follows whatever --sw-primary the loader assigned.
@@ -334,13 +376,13 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   // ─── Approval card (Phase 4 of consumer-chat-approvals) ───────────────────
 
   it('handles approval_required SSE event by calling renderApprovalCard', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain("evt.type === 'approval_required'");
     expect(body).toContain('renderApprovalCard');
   });
 
   it('approval card uses Shadow-DOM-safe DOM construction (no innerHTML in renderer)', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // renderApprovalCard slice — must build with createElement/textContent only.
     const start = body.indexOf('function renderApprovalCard');
     expect(start).toBeGreaterThan(-1);
@@ -352,7 +394,7 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('approval card POSTs to /<action>/embed with the channel-specific token', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // URL is concatenated at runtime: ".../<id>/" + action + "/embed?token=...",
     // so assert on the suffix and the channel-specific token field name.
     expect(body).toContain("'/embed?token='");
@@ -361,13 +403,13 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('approval card polls /orchestration/approvals/<id>/status', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain("'/api/v1/orchestration/approvals/'");
     expect(body).toContain("'/status?token='");
   });
 
   it('approval card synthesises a follow-up message via input.value + send()', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // After terminal poll state, the card writes the follow-up into the
     // existing input field and triggers the existing send() path so the
     // LLM gets a fresh turn carrying the workflow output.
@@ -376,14 +418,14 @@ describe('Embed widget per-agent config (Phase 2)', () => {
   });
 
   it('approval-card CSS uses theme custom properties (--sw-primary, etc)', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain('.approval-card');
     expect(body).toContain('var(--sw-surface-muted)');
     expect(body).toContain('var(--sw-primary)');
   });
 
   it('approval card registers a teardown so newChat aborts in-flight polling', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Each card pushes a teardown into cardTeardowns; "New chat" iterates
     // and runs them all, aborting the AbortController for that card's
     // submit + poll fetches. Without this, polling would continue
@@ -397,7 +439,7 @@ describe('Embed widget per-agent config (Phase 2)', () => {
 
 describe('Embed widget voice input (Phase 4)', () => {
   it('reads cfg.voiceInputEnabled from the widget-config payload', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Server-side flag must be propagated through the config merge so the
     // mic button only renders when the agent + global toggles + audio
     // provider all line up.
@@ -406,7 +448,7 @@ describe('Embed widget voice input (Phase 4)', () => {
   });
 
   it('only mounts the mic button when secure context + MediaRecorder are present', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Three preconditions must all hold; we explicitly check protocol +
     // hostname for HTTPS/localhost and feature-detect MediaRecorder +
     // navigator.mediaDevices.getUserMedia.
@@ -419,7 +461,7 @@ describe('Embed widget voice input (Phase 4)', () => {
   });
 
   it('POSTs the recorded audio to the embed speech-to-text endpoint with the embed token', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain("apiBase + '/speech-to-text'");
     expect(body).toContain("'X-Embed-Token': token");
     // Recorded blob is wrapped in a File for transparent MIME forwarding.
@@ -427,21 +469,21 @@ describe('Embed widget voice input (Phase 4)', () => {
   });
 
   it('honours the 3-minute client-side cap so users do not upload audio that exceeds the server limit', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain('MAX_VOICE_MS');
     expect(body).toContain('180000');
     expect(body).toContain('voiceAutoStop = setTimeout');
   });
 
   it('runtime-detects an audio MIME the browser actually supports', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain('isTypeSupported');
     expect(body).toContain('audio/webm;codecs=opus');
     expect(body).toContain('audio/mp4');
   });
 
   it('shows an inline message on permission denial rather than a generic error', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // We surface the parent-site Permissions-Policy story explicitly because
     // there is nothing the embed can do about it server-side.
     expect(body).toContain('Microphone disabled by your browser or this site');
@@ -449,7 +491,7 @@ describe('Embed widget voice input (Phase 4)', () => {
   });
 
   it('maps standard error codes to user-facing copy', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain("code === 'VOICE_DISABLED'");
     expect(body).toContain("code === 'NO_AUDIO_PROVIDER'");
     expect(body).toContain("code === 'AUDIO_TOO_LARGE'");
@@ -457,14 +499,14 @@ describe('Embed widget voice input (Phase 4)', () => {
   });
 
   it('appends the transcript to the existing input value rather than overwriting', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Lets the user dictate, edit, and then dictate again without losing
     // their typed prefix.
     expect(body).toContain('input.value = existing');
   });
 
   it('renders a live recording indicator with level meter + elapsed timer above the input row', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // Markup — sits between .starters and .input-area, hidden by default.
     expect(body).toContain('class="voice-indicator"');
     expect(body).toContain('class="voice-meter"');
@@ -490,7 +532,7 @@ describe('Embed widget voice input (Phase 4)', () => {
   });
 
   it('shows a one-time "Speak now — tap to stop" hint and dismisses it via localStorage', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // First-use coaching only — the flag flips the first time the user
     // reaches the `recording` state, so subsequent sessions skip the hint.
     expect(body).toContain('Speak now');
@@ -516,7 +558,7 @@ describe('Embed widget voice input (Phase 4)', () => {
 
 describe('Embed widget multi-line message input (Phase 5)', () => {
   it('renders the input as a <textarea>, not a single-line <input>', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain('<textarea rows="1"></textarea>');
     // The legacy `<input type="text" />` markup must be gone — a stray
     // copy would silently swallow newlines because single-line inputs
@@ -525,12 +567,12 @@ describe('Embed widget multi-line message input (Phase 5)', () => {
   });
 
   it('selects the textarea from the input-area (matching markup change)', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain("shadow.querySelector('.input-area textarea')");
   });
 
   it('Enter sends, Shift+Enter inserts a newline, IME composition is skipped', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // The keydown handler distinguishes Shift+Enter and skips during
     // IME composition. Both signals must be present in the served JS.
     expect(body).toMatch(/e\.key === 'Enter' && !e\.shiftKey/);
@@ -538,7 +580,7 @@ describe('Embed widget multi-line message input (Phase 5)', () => {
   });
 
   it('exposes a resize helper and calls it after every programmatic value write', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // The helper itself: reset to 'auto', then size to scrollHeight.
     expect(body).toContain("input.style.height = 'auto'");
     expect(body).toContain("input.style.height = input.scrollHeight + 'px'");
@@ -553,7 +595,7 @@ describe('Embed widget multi-line message input (Phase 5)', () => {
   });
 
   it('caps the auto-grow at a sensible max-height via CSS', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     // The textarea CSS pins min and max heights so the box looks like
     // a single-line input until the user types past the line cap.
     expect(body).toMatch(/\.input-area textarea\s*\{[^}]*min-height:\s*36px/);
@@ -564,13 +606,13 @@ describe('Embed widget multi-line message input (Phase 5)', () => {
 
 describe('Embed widget confidential-content note (§130 t-1037)', () => {
   it('shows a confidential_* warning as a plain-text note, and no other warning', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     expect(body).toContain("evt.type === 'warning' && isVisitorNotice(evt.data)");
     expect(body).toContain("data.code.indexOf('confidential_') === 0");
   });
 
   it('renders the note with textContent, never markup', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     const start = body.indexOf('function addNotice(text)');
     expect(start).toBeGreaterThan(-1);
     const fn = body.slice(start, body.indexOf('\n    }', start));
@@ -579,7 +621,7 @@ describe('Embed widget confidential-content note (§130 t-1037)', () => {
   });
 
   it('decides which warnings a visitor sees as the server sends them', async () => {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     const start = body.indexOf('function isVisitorNotice(data)');
     const end = body.indexOf('\n    }', start);
     // The served source, run on its own: the function, then its name as the result.
@@ -603,7 +645,7 @@ describe('Embed widget: a note followed by an error (§130 t-1039)', () => {
    * The shadow root is opened so the test can read what the visitor sees.
    */
   async function runWidget(sse: string): Promise<ShadowRoot> {
-    const body = await GET(makeGetRequest()).text();
+    const body = await GET().text();
     const tag = document.createElement('script');
     tag.setAttribute('data-token', 'tok');
     document.body.appendChild(tag);
