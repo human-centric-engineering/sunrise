@@ -35,7 +35,7 @@ async function main(): Promise<void> {
       ...(await import('@/lib/security/sealed-stores')),
     };
   } catch {
-    process.exit(2);
+    return process.exit(2);
   }
   const { logger, resealSealedStores } = modules;
 
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     logger.error(
       `secrets:reseal could not start: ${err instanceof Error ? err.message : String(err)}`
     );
-    process.exit(2);
+    return process.exit(2);
   }
 
   for (const store of report.stores) {
@@ -71,7 +71,7 @@ async function main(): Promise<void> {
       : `done: every value is on key ${key}.`;
   }
   logger.info(`secrets:reseal ${summary}`, { stores: report.stores.length, dryRun });
-  process.exit(report.ok ? 0 : 1);
+  return process.exit(report.ok ? 0 : 1);
 }
 
 void main();
