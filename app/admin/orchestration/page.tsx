@@ -230,9 +230,7 @@ export default async function OrchestrationDashboardPage() {
 
   // The platform's spend, as the costs page's Today card shows it: calls on an
   // org's own key are billed to that org (§137).
-  const todayCostUsd = costSummary
-    ? Math.max(0, costSummary.totals.today - costSummary.ownKey.today)
-    : null;
+  const todayCostUsd = costSummary ? costSummary.totals.today - costSummary.ownKey.today : null;
   const weekTrend = costSummary?.trend.slice(-7) ?? null;
 
   return (

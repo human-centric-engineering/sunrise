@@ -42,8 +42,7 @@ function formatCount(value: number): string {
 
 /** The platform's part of a bucket's spend: what the org's and the global caps count. */
 function platformSpend(totals: UsageTotals): number {
-  // Never below 0: the two sums are rounded apart.
-  return Math.max(0, totals.totalCostUsd - totals.ownKeyCostUsd);
+  return totals.totalCostUsd - totals.ownKeyCostUsd;
 }
 
 export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {

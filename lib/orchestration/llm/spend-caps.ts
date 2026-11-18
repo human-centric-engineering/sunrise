@@ -26,7 +26,8 @@
  * not the platform's spend to cap: the gate lets it through with either cap
  * reached, and both totals leave its cost rows (`AiCostLog.ownKey`) out. The
  * agent's own cap still counts it, and a chat turn's hold for that cap still
- * refuses it.
+ * refuses it; outside a chat turn, where the agent's cap is not enforced,
+ * nothing caps it.
  *
  * **The month-to-date totals are cached for {@link SPEND_TOTAL_TTL_MS}.**
  * Without it every vendor call would sum a month of cost rows, and the global

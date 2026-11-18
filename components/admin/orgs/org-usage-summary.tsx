@@ -30,8 +30,7 @@ export function OrgUsageSummary({ period, row }: OrgUsageSummaryProps) {
         <div>
           <dt className="text-muted-foreground">Spend ({period})</dt>
           <dd className="text-lg font-semibold">
-            {/* Never below 0: the two sums are rounded apart. */}
-            <Usd value={Math.max(0, row.totalCostUsd - row.ownKeyCostUsd)} />
+            <Usd value={row.totalCostUsd - row.ownKeyCostUsd} />
           </dd>
           {row.ownKeyCostUsd > 0 && (
             <dd className="text-muted-foreground text-xs" data-testid="org-usage-own-key">
@@ -51,8 +50,8 @@ export function OrgUsageSummary({ period, row }: OrgUsageSummaryProps) {
               </p>
               <p className="mt-2">
                 Calls on the organisation&apos;s own AI keys are not counted and not refused: the
-                provider bills the organisation for them. An agent&apos;s own monthly budget still
-                counts them.
+                provider bills the organisation for them. An agent&apos;s own monthly budget counts
+                them, and stops its chat turns once reached.
               </p>
               <p className="mt-2">
                 Set it from the install organisation with <code>PATCH /api/v1/admin/orgs/[id]</code>{' '}

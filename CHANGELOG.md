@@ -82,7 +82,9 @@ release process.
   towards its agent's monthly budget only: the org's cap and the global cap
   neither count it nor refuse it, at the provider manager's gate, in provider
   selection and in chat's check at the start of a turn, while any call the same
-  turn makes on the platform's keys still meets both. `GET /costs/summary`
+  turn makes on the platform's keys still meets both. The agent's budget, which
+  only chat enforces, still stops its turns; outside chat nothing caps an
+  own-key call. `GET /costs/summary`
   gains `ownKey: { today, week, month }`, the part of `totals` on own keys, and
   every bucket of `GET /costs/orgs` gains `ownKeyCostUsd`; the costs page, the
   per-org table and the org page show the platform's spend with own-key spend
