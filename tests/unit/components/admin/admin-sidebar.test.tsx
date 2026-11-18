@@ -780,3 +780,50 @@ describe('AdminSidebar — Waitlist (§125)', () => {
     expect(screen.queryByRole('link', { name: /Waitlist/ })).not.toBeInTheDocument();
   });
 });
+
+describe('sectionsForViewer with switch requirements (t-1034)', () => {
+  const Icon: ComponentType<{ className?: string }> = () => null;
+  const item = (href: string, requires?: string) => ({
+    href,
+    label: href,
+    icon: Icon,
+    description: '',
+    tier: 'org',
+    ...(requires ? { requires } : {}),
+  });
+  const PAGES = ['/admin/leads', '/admin/briefs', '/admin/reports'];
+  const sections = [
+    {
+      title: 'Leads',
+      items: [
+        // Required on the item itself, on its page alone, and not at all.
+        item('/admin/leads', 'lead_gen'),
+        item('/admin/briefs'),
+        item('/admin/reports'),
+      ],
+    },
+  ];
+  const REQUIRED = [{ pattern: '/admin/briefs', requires: 'lead_gen' }];
+  const has: AdminReach = {
+    tiers: ['org'],
+    landing: null,
+    switchesMet: [{ tier: 'org', requires: 'lead_gen' }],
+  };
+  const lacks: AdminReach = { tiers: ['org'], landing: null, switchesMet: [] };
+  const shown = (reach: AdminReach) =>
+    sectionsForViewer(sections, reach, PAGES, [], REQUIRED).flatMap((s) =>
+      (s.items ?? []).map((i) => i.href)
+    );
+
+  it('shows an org admin whose org has the switch every item', () => {
+    expect(shown(has)).toEqual(['/admin/leads', '/admin/briefs', '/admin/reports']);
+  });
+
+  it('hides an item that requires it, or whose page does, from one whose org lacks it', () => {
+    expect(shown(lacks)).toEqual(['/admin/reports']);
+  });
+
+  it('hides nothing from a platform viewer', () => {
+    expect(sectionsForViewer(sections, 'platform', PAGES, [], REQUIRED)).toBe(sections);
+  });
+});

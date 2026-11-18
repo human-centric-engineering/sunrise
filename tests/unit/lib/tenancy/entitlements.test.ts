@@ -37,6 +37,8 @@ import {
   entitlementSwitchesFailed,
   loadOrgSwitches,
   orgHasSwitch,
+  orgSwitchState,
+  switchUnverifiedMessage,
   registerEntitlementSwitch,
   registeredEntitlementSwitches,
   resolveOrgSwitches,
@@ -344,6 +346,53 @@ describe('loading an org', () => {
   });
 });
 
+describe('orgSwitchState: off kept apart from could-not-tell (t-1034)', () => {
+  beforeEach(registerBoth);
+
+  it('is on or off for a slice that was read', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['reports'], off: ['leads'] } },
+    });
+
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('on');
+    await expect(orgSwitchState(ORG, 'leads')).resolves.toBe('off');
+  });
+
+  it('is off for an org that does not exist, as orgHasSwitch answers false', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue(null);
+
+    await expect(orgSwitchState(ORG, 'leads')).resolves.toBe('off');
+  });
+
+  it('is unknown, not off, when the read throws, and logs it', async () => {
+    mockPrisma.org.findUnique.mockRejectedValue(new Error('connection reset'));
+
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('unknown');
+    expect(logger.error).toHaveBeenCalledWith(
+      "entitlements: could not read an org's switches",
+      expect.objectContaining({ orgId: ORG, key: 'reports', error: 'connection reset' })
+    );
+  });
+
+  it('is unknown for a stored slice that could not be read, though access reads it as off', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: 'reports', off: [] } },
+    });
+
+    await expect(orgHasSwitch(ORG, 'reports')).resolves.toBe(false);
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('unknown');
+  });
+
+  it("is unknown when the app's initAppEntitlements() failed", async () => {
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('bad init');
+    });
+    mockPrisma.org.findUnique.mockResolvedValue({ settings: null });
+
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('unknown');
+  });
+});
+
 describe('setOrgSwitches', () => {
   beforeEach(registerBoth);
 
@@ -456,5 +505,20 @@ describe('setOrgSwitches', () => {
 
     await expect(setOrgSwitches(ORG, { on: ['reports'], off: [] })).resolves.toBeNull();
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('switchUnverifiedMessage (t-1034)', () => {
+  it('names the switch by its label', () => {
+    registerBoth();
+    expect(switchUnverifiedMessage('leads')).toBe(
+      'We could not check whether your organisation has Lead generation, so this was refused. Try again in a moment.'
+    );
+  });
+
+  it('shows no internal key when there is no label, as when the app init failed', () => {
+    expect(switchUnverifiedMessage('leads')).toBe(
+      'We could not check whether your organisation has the feature this needs, so this was refused. Try again in a moment.'
+    );
   });
 });

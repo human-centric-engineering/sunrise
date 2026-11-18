@@ -50,6 +50,16 @@ export interface NavItem {
    * holders as well as to org admins.
    */
   tier?: DeclaredAdminTier;
+  /**
+   * The entitlement switch the page this links to needs (§135 t-1034), by its
+   * key: the sidebar hides the item from an org admin or tier holder whose
+   * org lacks it. A platform admin sees it either way. Only beside a `tier`,
+   * since a platform item is shown to platform admins alone, whom switches do
+   * not limit; the roster test fails on one without a tier, and on one naming
+   * a switch the app does not register. Give the page and its routes the same
+   * `requires`: hiding the item opens or closes nothing.
+   */
+  requires?: string;
 }
 
 /** A collapsible group of items nested inside a section. */

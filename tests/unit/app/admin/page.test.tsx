@@ -31,10 +31,13 @@ vi.mock('next/navigation', () => ({
 }));
 
 import AdminIndexPage from '@/app/admin/page';
+import { registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
+import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 
 beforeEach(() => {
   vi.clearAllMocks();
   app.route = null;
+  __resetAppOrgTierAdminPagesForTests();
 });
 
 describe('AdminIndexPage', () => {
@@ -57,6 +60,17 @@ describe('AdminIndexPage', () => {
   it('keeps an org admin off a fork landing they may not open (t-928)', async () => {
     viewer.reach = ORG;
     app.route = '/admin/users';
+    await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/orchestration');
+  });
+
+  it('sends an org admin to a fork landing that requires a switch only when their org has it (t-1034)', async () => {
+    registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+    app.route = '/admin/leads';
+
+    viewer.reach = { ...ORG, switchesMet: [{ tier: 'org', requires: 'lead_gen' }] };
+    await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/leads');
+
+    viewer.reach = { ...ORG, switchesMet: [] };
     await expect(AdminIndexPage()).rejects.toThrow('NEXT_REDIRECT /admin/orchestration');
   });
 

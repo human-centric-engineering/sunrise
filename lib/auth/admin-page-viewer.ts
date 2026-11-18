@@ -28,8 +28,14 @@ import { headers } from 'next/headers';
 import { canAdminister } from '@/lib/auth/authorization';
 import { sessionPrincipal } from '@/lib/auth/session-principal';
 import { getServerSession } from '@/lib/auth/utils';
-import type { AdminReach, AdminViewerTier, DeclaredAdminTier } from '@/lib/auth/admin-tier';
-import { namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
+import type {
+  AdminReach,
+  AdminSwitchGrant,
+  AdminViewerTier,
+  DeclaredAdminTier,
+} from '@/lib/auth/admin-tier';
+import { reachesTier } from '@/lib/auth/admin-tier';
+import { adminPageRequirements, namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
 import { heldTierLanding } from '@/lib/auth/admin-landing';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { prisma } from '@/lib/db/client';
@@ -84,8 +90,17 @@ export async function adminPageViewerTier(): Promise<AdminViewerTier> {
  *
  * The policy is asked once per tier, with the same principal and scope the
  * guards build, so the layout's answer for a page is the policy's answer for
- * that page's own tier. Asked once per request, however many readers ask.
- * No session reaches nothing.
+ * that page's own tier. Then, for each tier it admitted, once per switch a
+ * page requires, with that switch as `scope.requires` (§135 t-1034), so the
+ * gate and the sidebar can refuse a page or hide an item whose switch the org
+ * lacks, by the policy's answer rather than one worked out in the browser.
+ * Only the switches pages require, not every registered one: an app may
+ * register a hundred, and each question is a policy call and a read. A nav
+ * item's `requires` is its page's (the roster test holds them equal), so
+ * that covers the sidebar too. With no page requiring a switch there is no
+ * further question, so vanilla Sunrise asks exactly what it asked before.
+ * Asked once per request, however many readers ask. No session reaches
+ * nothing.
  */
 export const requestAdminReach = cache(async (): Promise<AdminReach> => {
   if (await requestAdministersPlatform()) return 'platform';
@@ -96,7 +111,23 @@ export const requestAdminReach = cache(async (): Promise<AdminReach> => {
     candidates.map((tier) => canAdminister(entry.principal, null, { ...entry.scope, tier }))
   );
   const tiers = candidates.filter((_, i) => admitted[i]);
-  return { tiers, landing: tiers.includes('org') ? null : heldTierLanding(tiers) };
+  const required = [...new Set(adminPageRequirements().map((r) => r.requires))];
+  const asked: AdminSwitchGrant[] = required.flatMap((requires) =>
+    tiers.map((tier) => ({ tier, requires }))
+  );
+  const met = await Promise.all(
+    asked.map((grant) => canAdminister(entry.principal, null, { ...entry.scope, ...grant }))
+  );
+  const switchesMet = asked.filter((_, i) => met[i]);
+  // A landing that requires a switch is this viewer's only if their org has it.
+  const landing = tiers.includes('org')
+    ? null
+    : heldTierLanding(tiers, (tier, requires) =>
+        reachesTier({ tiers, landing: null, switchesMet }, tier, requires)
+      );
+  // With no switch to ask about, the reach is exactly what it was before them.
+  if (asked.length === 0) return { tiers, landing };
+  return { tiers, landing, switchesMet };
 });
 
 /**

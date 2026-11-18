@@ -202,3 +202,82 @@ describe('heldTierLanding (t-999)', () => {
     );
   });
 });
+
+describe('a landing that requires a switch (t-1034)', () => {
+  const holds = (): boolean => true;
+  const has =
+    (...keys: string[]) =>
+    (_tier: string, requires: string): boolean =>
+      keys.includes(requires);
+
+  it('is no configuration problem: whether it is usable depends on the viewer', () => {
+    const pages = [...ORG_TIER_ADMIN_PAGES, '/admin/leads'];
+    expect(orgAdminLandingProblem('/admin/leads', pages)).toBeNull();
+  });
+
+  it("sends an org admin to the fork's landing when their org has its switch, else to the default, unlogged", () => {
+    registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+    app.route = '/admin/leads';
+
+    expect(orgAdminLanding(has('lead_gen'))).toBe('/admin/leads');
+    expect(orgAdminLanding(has())).toBe(DEFAULT_ORG_ADMIN_LANDING);
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('with no viewer to ask, meets no switch, and passes such a landing over', () => {
+    registerOrgTierAdminPage('/admin/leads', { requires: 'lead_gen' });
+    app.route = '/admin/leads';
+    expect(orgAdminLanding()).toBe(DEFAULT_ORG_ADMIN_LANDING);
+
+    registerAdminTier('sales', { holds, landing: '/admin/sales' });
+    registerOrgTierAdminPage('/admin/sales', { tier: 'sales', requires: 'lead_gen' });
+    expect(heldTierLanding(['sales'])).toBeNull();
+  });
+
+  it("asks about an org admin's landing in the page's own tier, as the layout does", () => {
+    registerAdminTier('sales', { holds });
+    registerOrgTierAdminPage('/admin/sales', { tier: 'sales', requires: 'lead_gen' });
+    app.route = '/admin/sales';
+    const asked: string[] = [];
+    orgAdminLanding((tier, requires) => {
+      asked.push(`${tier}:${requires}`);
+      return true;
+    });
+    expect(asked).toEqual(['sales:lead_gen']);
+  });
+
+  it("uses a tier's landing that requires a switch for a holder whose org has it", () => {
+    registerAdminTier('sales', { holds, landing: '/admin/leads' });
+    registerOrgTierAdminPage('/admin/leads', { tier: 'sales', requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/contacts', { tier: 'sales' });
+
+    expect(heldTierLanding(['sales'], has('lead_gen'))).toBe('/admin/leads');
+  });
+
+  it("passes over it, and the tier's other such pages, for one they can open — without a log line", () => {
+    registerAdminTier('sales', { holds, landing: '/admin/leads' });
+    registerOrgTierAdminPage('/admin/leads', { tier: 'sales', requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/pipeline', { tier: 'sales', requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/contacts', { tier: 'sales' });
+
+    expect(heldTierLanding(['sales'], has())).toBe('/admin/contacts');
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('lands a holder on a tier whose every page requires a switch when their org has it', () => {
+    registerAdminTier('sales', { holds });
+    registerOrgTierAdminPage('/admin/leads', { tier: 'sales', requires: 'lead_gen' });
+
+    expect(heldTierLanding(['sales'], has('lead_gen'))).toBe('/admin/leads');
+    expect(heldTierLanding(['sales'], has())).toBeNull();
+  });
+
+  it('moves on to the next held tier when one has nothing they can open', () => {
+    registerAdminTier('sales', { holds });
+    registerAdminTier('media', { holds });
+    registerOrgTierAdminPage('/admin/leads', { tier: 'sales', requires: 'lead_gen' });
+    registerOrgTierAdminPage('/admin/media', { tier: 'media' });
+
+    expect(heldTierLanding(['sales', 'media'], has())).toBe('/admin/media');
+  });
+});
