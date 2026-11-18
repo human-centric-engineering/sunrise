@@ -459,8 +459,8 @@ export async function updateOrgReportingPrevious(
  * platform staff (a platform `ADMIN`) takes no seat. A user with an open invitation into the org
  * already holds one, so the org need only be within its limit. Accepting an
  * invitation passes `seatHeld`: it was counted when issued, and is honoured
- * even if the limit was lowered since. Both hold for the platform's own seats
- * count only; with an app's `seats`, every joining member is a new seat.
+ * even if the limit was lowered since. An app's own `seats` count keeps the
+ * rules these rest on (`lib/tenancy/meters.ts`).
  */
 export async function addMember(
   orgId: string,

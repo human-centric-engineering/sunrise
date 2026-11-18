@@ -26,7 +26,9 @@
  * set each org's limit for it beside its switches. Your code asks
  * `checkMeterQuota()` (`lib/tenancy/meters.ts`) wherever it adds one, and
  * decides what a refusal does. Seats are the platform's own meter; register
- * `seats` only to count them differently.
+ * `seats` only to count them differently, and keep its two rules: an open
+ * invitation counts as the member it becomes, and platform staff take none
+ * (`.context/tenancy/entitlements.md#seats`).
  *
  * Auto-wired: `lib/tenancy/entitlements.ts` calls this once, lazily, before
  * its first read. Register inside this function, not at the module's top

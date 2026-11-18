@@ -97,7 +97,10 @@ release process.
   org's own admin is refused a new invitation
   (`POST /api/v1/orgs/[id]/invitations`) and adding a member at the limit with
   a 403 carrying `details.reason: 'meter_limit_reached'`; a platform admin is
-  not (`refuseOverSeatsLimit()`). **`addMember()` now makes the member check
+  not (`refuseOverSeatsLimit()`). Accepting an invitation, or adding someone
+  who holds one, takes up the seat it held and is not refused. An app's own
+  `seats` count must keep the two rules these rest on: an open invitation
+  counts as the member it becomes, and platform staff take no seat. **`addMember()` now makes the member check
   itself**, after its own, so a fork's route calling it gets the limit too;
   it takes a new optional `options.seatHeld`, which invitation acceptance
   passes. Limits are stored per org at

@@ -346,14 +346,13 @@ export const meterKeySchema = z
 /** The most meters an app may register. A sanity limit, not a product limit. */
 export const MAX_METERS = 50;
 
-/**
- * One meter's limit: how many the org may have within the meter's window.
- * Zero is allowed and refuses the first one. The upper bound is a sanity
- * limit on a typo.
- */
-/** The largest limit a meter may have: a sanity bound, not a plan. */
+/** The largest limit a meter may have: a sanity bound on a typo, not a plan. */
 export const MAX_METER_LIMIT = 1_000_000_000;
 
+/**
+ * One meter's limit: how many the org may have within the meter's window.
+ * Zero is allowed and refuses the first one.
+ */
 export const meterLimitSchema = z
   .number()
   .int('A limit must be a whole number')

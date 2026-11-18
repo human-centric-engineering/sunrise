@@ -338,23 +338,30 @@ With a seats limit set, an org's own admin is refused at the limit: a 403 with
   that instead. Every caller gets it, `POST /api/v1/orgs/[id]/members` and a
   fork's own route alike. A user who is platform staff takes no seat and is
   not checked. A user with an open invitation into the org already holds a
-  seat, so the org need only be within its limit; that invitation is looked
-  up only when the add would otherwise be refused (`refuseOverSeatsLimit()`'s
-  `alreadyHeld`). Accepting an invitation passes `seatHeld`.
+  seat, so adding them does not raise the count and is not refused, even
+  past a lowered limit; that invitation is looked up only when the add would
+  otherwise be refused (`refuseOverSeatsLimit()`'s `alreadyHeld`). Accepting an invitation passes `seatHeld`.
 
 **A platform admin is never refused**, and the platform's own invite route
 does not check: the vendor setting an org up must not be stopped by the limit
 it sold. Lowering a limit below what an org already has removes nobody; it
 cannot add more until it is back under.
 
-An app that reads a seat differently (not counting invitations, or one role)
-registers `seats` with its own `count`, which replaces the platform's
-everywhere, its refusals included. The held-seat rules above (an accepted
-invitation, an open one for the person added) follow from the platform's
-count including invitations, so with the app's count they do not apply:
-every joining member, an accepted invitation included, is checked as a new
-seat. An app whose count includes invitations will see an acceptance refused
-when the org is exactly full.
+An app that reads a seat differently (one role only, say) registers `seats`
+with its own `count`, which replaces the platform's everywhere, its refusals
+included. The platform refuses a seat where one is made, when an invitation
+is issued and when a member is added directly, and lets in whoever takes up a
+seat already counted. So an app's count keeps two rules:
+
+- **An open invitation counts as the member it becomes.** Accepting it,
+  whether by signing up or with an existing account, is never checked, so it
+  must not change the count. A count that left invitations out would let any
+  number of accepted invitations past the limit; one that counted a role
+  counts the invitations for that role (`invitationTakesSeat()` is the
+  platform's test of which invitations take a seat).
+- **Platform staff take no seat.** Staff are never refused, and an
+  invitation to a staff account is not checked, so a count that included
+  them could pass the limit with no refusal.
 
 ### What is stored, and how it fails
 

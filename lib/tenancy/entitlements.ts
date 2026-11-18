@@ -167,7 +167,10 @@ export interface MeterDefinition {
   /**
    * What an org's limit is stored under: the same spelling as a switch key.
    * Do not rename one orgs hold a limit for; register a new key instead.
-   * Registering `seats` replaces the platform's own seats count with yours.
+   * Registering `seats` replaces the platform's own seats count with yours,
+   * which must count an open invitation as the member it becomes and leave
+   * platform staff out, as the platform's refusals assume
+   * (`lib/tenancy/meters.ts`).
    */
   key: string;
   /** What platform staff, and a refusal, call it, in plain words. */

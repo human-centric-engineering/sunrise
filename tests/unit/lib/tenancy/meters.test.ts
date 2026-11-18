@@ -714,7 +714,7 @@ describe('refuseOverSeatsLimit', () => {
     ).rejects.toBeInstanceOf(APIError);
   });
 
-  it('refuses even a held seat when the org is already past its limit, without asking', async () => {
+  it('lets a held seat in even past a lowered limit, since it does not raise the count', async () => {
     mockLoadLimits.mockResolvedValue({ seats: 2 });
     mockPrisma.orgMembership.count.mockResolvedValue(2);
     pendingInvitations(1);
@@ -722,8 +722,8 @@ describe('refuseOverSeatsLimit', () => {
 
     await expect(
       refuseOverSeatsLimit(ORG, { platformAdmin: false }, { alreadyHeld })
-    ).rejects.toBeInstanceOf(APIError);
-    expect(alreadyHeld).not.toHaveBeenCalled(); // test-review:accept no_arg_called — over the limit, a held seat does not help
+    ).resolves.toBeUndefined();
+    expect(alreadyHeld).toHaveBeenCalledTimes(1);
   });
 
   it('does not ask alreadyHeld while there is room', async () => {
@@ -750,19 +750,20 @@ describe('refuseOverSeatsLimit', () => {
     expect(mockLoadLimits).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a held seat is not checked
   });
 
-  it('checks every joining member as a new seat when the app counts seats its own way', async () => {
-    // Members only, so an invitation never held a seat in this count.
+  it("lets held seats in on an app's seats count too, which counts invitations as members", async () => {
     appRegisters(meter('seats', () => 5));
     mockLoadLimits.mockResolvedValue({ seats: 5 });
     const alreadyHeld = vi.fn().mockResolvedValue(true);
 
     await expect(
       refuseOverSeatsLimit(ORG, { platformAdmin: false }, { seatHeld: true })
-    ).rejects.toMatchObject({ status: 403 });
+    ).resolves.toBeUndefined();
     await expect(
       refuseOverSeatsLimit(ORG, { platformAdmin: false }, { alreadyHeld })
-    ).rejects.toMatchObject({ status: 403 });
-    expect(alreadyHeld).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the app's count is not the platform's to read
+    ).resolves.toBeUndefined();
+    await expect(refuseOverSeatsLimit(ORG, { platformAdmin: false })).rejects.toMatchObject({
+      status: 403,
+    });
   });
 
   it('refuses on an app seats count, which replaces the core one', async () => {

@@ -19,9 +19,15 @@
  *
  * **Seats are the platform's own meter**, because the platform owns the ways
  * a person joins an org: members who are not platform staff, plus open
- * invitations into it. An app that reads a seat differently (not counting
- * invitations, or one role) registers `seats` with its own count, which
- * replaces this one everywhere, the platform's own refusals included.
+ * invitations into it. The platform refuses a seat where one is made, issuing
+ * an invitation and adding a member directly; joining by an invitation takes
+ * up the seat it already held. An app that reads a seat differently (one role
+ * only, say) registers `seats` with its own count, which replaces this one
+ * everywhere, the platform's own refusals included, and keeps the two rules
+ * those refusals rest on: **an open invitation counts as the member it
+ * becomes**, so accepting it does not change the count, and **platform staff
+ * take no seat** (`invitationTakesSeat()` and `countSeats()` are the
+ * platform's reading of both).
  *
  * **Fails open, and says so in the log.** A count that throws, a window that
  * cannot be worked out, or a limit that cannot be read answers allowed: a
@@ -334,34 +340,26 @@ export function meterLimitMessage(check: Pick<MeterQuotaCheck, 'label' | 'limit'
  * The platform's own invite route does not call this for the same reason.
  * With no seats limit set nothing is counted.
  *
- * **A seat already counted** is the platform's count's to know: it counts
- * open invitations, so an accepted one (`seatHeld`) was counted when it was
- * issued, and `alreadyHeld` asks whether the person holds one now. Asked
+ * **A seat already counted** is let in: an accepted invitation (`seatHeld`)
+ * was counted when it was issued, and `alreadyHeld` asks whether the person
+ * holds an open one now. Either lets them in, even past a limit lowered
+ * since, because taking up a seat already counted does not raise the count.
+ * That holds for an app's `seats` too, which counts an open invitation as the
+ * member it becomes (the module's seats rules). `alreadyHeld` is asked
  * lazily, only when the new seat would be refused, so an org with room, or
- * no limit, pays nothing for it. Both are ignored when the app registers
- * `seats`: the platform cannot know whether that count includes invitations,
- * so each joining member is checked as a new seat.
+ * no limit, pays nothing for it.
  */
 export async function refuseOverSeatsLimit(
   orgId: string,
   actor: { platformAdmin: boolean },
   options: { seatHeld?: boolean; alreadyHeld?: () => Promise<boolean> } = {}
 ): Promise<void> {
-  if (actor.platformAdmin) return;
-  const platformCount = meterOf(SEATS_METER_KEY)?.core === true;
-  if (options.seatHeld && platformCount) return;
+  if (actor.platformAdmin || options.seatHeld) return;
   const check = await checkMeterQuota(orgId, SEATS_METER_KEY);
   if (check.allowed) return;
-  if (
-    platformCount &&
-    options.alreadyHeld &&
-    check.used !== null &&
-    check.limit !== null &&
-    check.used <= check.limit &&
-    (await options.alreadyHeld())
-  ) {
-    return;
-  }
+  // A held seat is already in the count, so taking it up never raises it:
+  // allowed even past a lowered limit, as accepting that invitation is.
+  if (options.alreadyHeld && (await options.alreadyHeld())) return;
   logger.info('meters: refused a seat over the org seats limit', {
     orgId,
     used: check.used,
