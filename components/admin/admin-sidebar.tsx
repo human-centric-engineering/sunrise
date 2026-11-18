@@ -38,6 +38,7 @@ import {
   MessagesSquare,
   UserCog,
   UsersRound,
+  KeySquare,
   LifeBuoy,
   Hourglass,
 } from 'lucide-react';
@@ -99,6 +100,13 @@ export const coreNavSections: NavSection[] = [
         label: 'Members',
         icon: UsersRound,
         description: 'People in this organisation',
+      },
+      {
+        href: '/admin/provider-keys',
+        tier: 'org',
+        label: 'AI keys',
+        icon: KeySquare,
+        description: 'Run this organisation on its own AI provider accounts',
       },
       {
         href: '/admin/support-access',
@@ -489,8 +497,14 @@ interface AdminSidebarProps {
  * and at `single` the only org is the install org, whose roles follow the
  * platform role and are managed on Users. Support access (§121 t-823) is
  * one org consenting to the vendor, and at `single` there is no other org.
+ * AI keys (§137 t-1045) are an org's own vendor accounts, and at `single` the
+ * one org's keys are the install's.
  */
-const MULTI_TENANT_ONLY: ReadonlySet<string> = new Set(['/admin/members', '/admin/support-access']);
+const MULTI_TENANT_ONLY: ReadonlySet<string> = new Set([
+  '/admin/members',
+  '/admin/provider-keys',
+  '/admin/support-access',
+]);
 
 /** The sections without the `multi`-only items, when the install is not `multi`. */
 export function sectionsForMode(sections: NavSection[], multiTenant: boolean): NavSection[] {
