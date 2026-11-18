@@ -1410,7 +1410,7 @@ Public (non-admin) routes for the embeddable chat widget. Base path: `/api/v1/em
 
 Serves a self-contained JavaScript snippet that renders a Shadow DOM chat bubble. Configured via data attributes (`data-token`, `data-position`, `data-theme`). No authentication required — the token is validated when the user sends a message.
 
-**Response:** `application/javascript`, `Cache-Control: public, max-age=300`, `Access-Control-Allow-Origin: *`.
+**Response:** `application/javascript`, `Cache-Control: public, max-age=300`, `Access-Control-Allow-Origin: *`. The script calls back to the install's public URL (`getPublicUrl()`, `BETTER_AUTH_URL`), never the request's address; see [Embed widget → Where the widget calls back to](../orchestration/embed.md#widget-loader).
 
 **Key file:** `app/api/v1/embed/widget.js/route.ts`
 
