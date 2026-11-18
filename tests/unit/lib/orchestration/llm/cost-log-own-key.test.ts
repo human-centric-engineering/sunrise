@@ -125,9 +125,8 @@ const ALLOWED_CALL_SITES: readonly string[] = [
   'lib/orchestration/chat/streaming-handler.ts | ownKey=usesOrgOwnKey(currentProvider)',
   'lib/orchestration/chat/streaming-handler.ts | ownKey=usesOrgOwnKey(currentProvider)',
   'lib/orchestration/chat/streaming-handler.ts | ownKey=usesOrgOwnKey(currentProvider)',
-  // The attachment row, billed with the turn's call: asked of the primary
-  // before the turn picks its provider.
-  'lib/orchestration/chat/streaming-handler.ts | ownKey=attachmentsOnOwnKey',
+  // The attachment row, billed with the turn's call: the provider it picked.
+  'lib/orchestration/chat/streaming-handler.ts | ownKey=usesOrgOwnKey(provider)',
   'lib/orchestration/chat/summarizer.ts | ownKey=usesOrgOwnKey(provider)',
   'lib/orchestration/engine/executors/agent-call.ts | ownKey=usesOrgOwnKey(provider)',
   'lib/orchestration/engine/executors/chat-turn.ts | ownKey=usesOrgOwnKey(provider)',

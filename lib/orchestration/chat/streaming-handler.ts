@@ -712,9 +712,17 @@ export class StreamingChatHandler {
       const budget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
       budgetNotice = { agent, budget };
 
-      // Budget warning at 80%
+      // Neither the org's nor the global cap holds a turn on the org's own key
+      // (§137): the vendor bills the org. Such a turn goes ahead unless its
+      // agent's cap is reached (below).
+      const onOwnKey =
+        !budget.withinBudget && (await providerUsesOrgOwnKey(resolvedBinding.providerSlug));
+      const refused = !budget.withinBudget && (!onOwnKey || budget.agentCapExceeded === true);
+
+      // Budget warning at 80%, for any turn that goes on with its agent's cap
+      // not yet reached.
       if (
-        budget.withinBudget &&
+        (budget.withinBudget || !refused) &&
         budget.limit !== null &&
         budget.limit > 0 &&
         budget.spent / budget.limit >= 0.8
@@ -740,13 +748,9 @@ export class StreamingChatHandler {
       // mid-stream, a tool, the summarizer. (The org and global caps are
       // enforced at the gate in any case; the agent's cap is known only here.)
       //
-      // Neither the org's nor the global cap holds a turn on the org's own key
-      // (§137): the vendor bills the org. It goes ahead unless its agent's cap
-      // is reached, with nothing held, and any call it makes on the platform's
-      // keys meets those two caps at the gate.
-      const onOwnKey =
-        !budget.withinBudget && (await providerUsesOrgOwnKey(resolvedBinding.providerSlug));
-      const refused = !budget.withinBudget && (!onOwnKey || budget.agentCapExceeded === true);
+      // A turn on the org's own key goes ahead with nothing held, and any call
+      // it makes on the platform's keys meets the org's and the global caps at
+      // the gate.
       if (refused && (await isLocalProvider(resolvedBinding.providerSlug))) {
         hold.cap = budgetRefusal(budget).cap;
         hold.agentCapReached = budget.agentCapExceeded === true;
@@ -1037,6 +1041,21 @@ export class StreamingChatHandler {
         route.found,
         conversation.metadata
       );
+      // A turn let past a reached org or global cap because its primary is on
+      // the org's own key is refused cleanly here, rather than by the gate
+      // part way through, if routing moved it to a provider that is not.
+      if (
+        onOwnKey &&
+        !refused &&
+        route.binding.providerSlug !== resolvedBinding.providerSlug &&
+        !(await providerUsesOrgOwnKey(route.binding.providerSlug)) &&
+        !(await isLocalProvider(route.binding.providerSlug))
+      ) {
+        const refusal = budgetRefusal(budget);
+        yield errorEvent(refusal.code, refusal.message);
+        notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
+        return;
+      }
       resolvedBinding = route.binding;
       resolvedModel = route.binding.model;
       resolvedFallbackProviders = route.binding.fallbacks;
@@ -1068,33 +1087,6 @@ export class StreamingChatHandler {
             // never collide with a platform metadata field.
             ...(request.messageMetadata ? { metadata: { app: request.messageMetadata } } : {}),
           });
-
-      // Log a single `vision` cost row when the turn carries
-      // attachments. Fires once per turn, regardless of how the chat
-      // call ends (success / error / tool-call iteration), because the
-      // platform overhead is per-attachment, not per-completion. Per-
-      // token chat cost still rolls up under the `chat` rows downstream.
-      if (hasImageAttachments || hasPdfAttachments) {
-        const imageCount = attachments.filter((a) => a.mediaType.startsWith('image/')).length;
-        const pdfCount = attachments.filter((a) => a.mediaType === 'application/pdf').length;
-        // Billed with the turn's call, so on whichever key that goes out on;
-        // asked of the primary, as the turn has not picked its provider yet.
-        const attachmentsOnOwnKey = await providerUsesOrgOwnKey(resolvedBinding.providerSlug);
-        void logCost({
-          agentId: agent.id,
-          conversationId: conversation.id,
-          userId: userIdForUserRef(request.userId),
-          model: resolvedModel,
-          provider: resolvedBinding.providerSlug,
-          ownKey: attachmentsOnOwnKey,
-          inputTokens: 0,
-          outputTokens: 0,
-          operation: CostOperation.VISION,
-          imageCount,
-          pdfCount,
-          ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
-        });
-      }
 
       // Mirror to the evaluation log when this chat turn is running
       // inside an evaluation session. No-op otherwise. Skipped for an opening
@@ -1694,6 +1686,31 @@ export class StreamingChatHandler {
       );
       resolvedProviderSlug = usedSlug;
       resolvedBreakerKey = usedBreakerKeyOrUndefined ?? usedSlug;
+
+      // Log a single `vision` cost row when the turn carries attachments,
+      // once its provider is chosen: billed with the turn's call, so on that
+      // provider's key. Fires once per turn, regardless of how the chat call
+      // ends (success / error / tool-call iteration), because the platform
+      // overhead is per-attachment, not per-completion. Per-token chat cost
+      // still rolls up under the `chat` rows downstream.
+      if (hasImageAttachments || hasPdfAttachments) {
+        const imageCount = attachments.filter((a) => a.mediaType.startsWith('image/')).length;
+        const pdfCount = attachments.filter((a) => a.mediaType === 'application/pdf').length;
+        void logCost({
+          agentId: agent.id,
+          conversationId: conversation.id,
+          userId: userIdForUserRef(request.userId),
+          model: resolvedModel,
+          provider: resolvedBinding.providerSlug,
+          ownKey: usesOrgOwnKey(provider),
+          inputTokens: 0,
+          outputTokens: 0,
+          operation: CostOperation.VISION,
+          imageCount,
+          pdfCount,
+          ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
+        });
+      }
 
       // Extract responseFormat from agent metadata if configured
       const agentMetadata =

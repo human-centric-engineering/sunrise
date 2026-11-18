@@ -669,6 +669,34 @@ describe('StreamingChatHandler', () => {
     expect(getProviderWithFallbacks).not.toHaveBeenCalled();
   });
 
+  it("warns at 80% of its agent's budget on a turn that goes ahead on the org's own key", async () => {
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: false,
+      spent: 9,
+      limit: 10,
+      remaining: 1,
+      orgCapExceeded: true,
+      org: { limit: 40, spent: 41 },
+    });
+    vi.mocked(providerUsesOrgOwnKey).mockResolvedValueOnce(true);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: mockProvider([
+        [
+          { type: 'text', content: 'Hello' },
+          { type: 'done', usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ]),
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'warning', code: 'budget_warning' })
+    );
+    expect(events).toContainEqual({ type: 'content', delta: 'Hello' });
+  });
+
   it("names its agent's cap when that stops a turn on the org's own key, whatever else is reached", async () => {
     (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
       withinBudget: false,
@@ -7416,6 +7444,47 @@ describe('attachment gate', () => {
     });
   });
 
+  it.each([
+    ['the org’s own key', true],
+    ['the platform’s key', false],
+  ])(
+    'marks the attachment row with the key of the provider the turn picked: %s (§137)',
+    async (_label, onOwnKey) => {
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ enableImageInput: true, enableDocumentInput: true })
+      );
+      (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        imageInputGloballyEnabled: true,
+        documentInputGloballyEnabled: true,
+      });
+      (assertModelSupportsAttachments as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      const picked = mockProvider([
+        [
+          { type: 'text', content: 'I can see it.' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: picked,
+        usedSlug: 'anthropic',
+      });
+      // Whatever the primary is, the row follows the provider the call went to.
+      vi.mocked(providerUsesOrgOwnKey).mockResolvedValue(!onOwnKey);
+      vi.mocked(usesOrgOwnKey).mockImplementation((p) => onOwnKey && p === picked);
+
+      try {
+        await collect(streamChat({ ...baseRequest, attachments: [imageAttachment()] }));
+
+        expect(logCost).toHaveBeenCalledWith(
+          expect.objectContaining({ operation: CostOperation.VISION, ownKey: onOwnKey })
+        );
+      } finally {
+        vi.mocked(usesOrgOwnKey).mockImplementation(() => false);
+        vi.mocked(providerUsesOrgOwnKey).mockImplementation(async () => false);
+      }
+    }
+  );
+
   it('never persists attachment bytes on a successful attachment turn', async () => {
     // The invariant `tests/helpers/no-attachment-persistence.ts` was written
     // for — and, until now, was not wired to anything, so nothing enforced it.
@@ -10809,6 +10878,59 @@ describe('a block caused by something earlier, the setup or a memory (t-1017, t-
       expect(cloud.chatStream).not.toHaveBeenCalled();
       expect(notes(next)).toEqual([]);
     });
+
+    it.each([
+      ['refused cleanly when the model it moves to is on the platform’s key', false],
+      ['answered when the model it moves to is on the org’s own key too', true],
+    ])(
+      'a turn let past a reached org cap on the org’s own key is %s (§137)',
+      async (_label, targetOnOwnKey) => {
+        // The model for confidential messages: a trusted cloud provider.
+        const TRUSTED = { providerSlug: 'anthropic-eu', model: 'claude-trusted' };
+        confidentialSettings('approved_only', TRUSTED);
+        vi.mocked(isLocalProvider).mockImplementation(async () => false);
+        vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue({
+          isActive: true,
+          isLocal: false,
+          providerType: 'anthropic',
+          trustedForConfidential: true,
+        } as never);
+        const { isTrustedProvider } = await import('@/lib/orchestration/llm/provider-manager');
+        vi.mocked(isTrustedProvider).mockImplementation(async (slug) => slug === 'anthropic-eu');
+        vi.mocked(providerUsesOrgOwnKey).mockImplementation(
+          async (slug) => slug === 'anthropic' || (targetOnOwnKey && slug === 'anthropic-eu')
+        );
+        (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+          withinBudget: false,
+          spent: 1,
+          limit: null,
+          remaining: null,
+          orgCapExceeded: true,
+          org: { limit: 10, spent: 11 },
+        });
+        conversationStore();
+        const { cloud } = providers();
+
+        try {
+          const events = await turn(`I've been ${DISCLOSURE}, what do I tell HR?`);
+
+          if (targetOnOwnKey) {
+            expect(errorOf(events)).toBeUndefined();
+            expect(getProviderWithFallbacks).toHaveBeenCalledWith(
+              'anthropic-eu',
+              [],
+              expect.anything()
+            );
+          } else {
+            expect(errorOf(events)).toMatchObject({ code: 'org_budget_exceeded' });
+            expect(cloud.chatStream).not.toHaveBeenCalled();
+          }
+        } finally {
+          vi.mocked(providerUsesOrgOwnKey).mockImplementation(async () => false);
+          vi.mocked(isTrustedProvider).mockImplementation(async () => false);
+        }
+      }
+    );
 
     it('stays on the local model once the message that moved it is no longer in the history', async () => {
       confidentialSettings('local_only');

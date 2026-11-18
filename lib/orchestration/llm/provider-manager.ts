@@ -232,7 +232,13 @@ export function usesOrgOwnKey(provider: LlmProvider): boolean {
 export async function providerUsesOrgOwnKey(slugOrName: string): Promise<boolean> {
   try {
     return usesOrgOwnKey(await getProvider(slugOrName));
-  } catch {
+  } catch (err) {
+    // Said, since it can decide a turn: answered "no", a turn with the org's
+    // or the global cap reached is refused, as its call would fail anyway.
+    logger.warn('Could not tell whether a provider goes out on the org’s own key', {
+      provider: slugOrName,
+      error: err instanceof ProviderError ? err.code : err instanceof Error ? err.name : 'unknown',
+    });
     return false;
   }
 }
@@ -592,8 +598,9 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
  * `assertWithinSpendCaps` (§110 t-788), so a workflow, an evaluation or a job
  * cannot spend past a cap chat would have refused; a local provider is
  * exempt, since it costs nothing, and a call on the org's own key (`ownKey`,
- * §137) is held to the agent's cap only, since the vendor bills the org; its
- * caller marks the call's cost row with `usesOrgOwnKey()`. Throws on an empty `slug`,
+ * §137) is held by neither, since the vendor bills the org: only a chat
+ * turn's hold for its agent's cap refuses it, the one place the agent's cap is
+ * enforced. Its caller marks the call's cost row with `usesOrgOwnKey()`. Throws on an empty `slug`,
  * because the alternative — returning the instance unwrapped — is the one way
  * the cache's invariant could quietly fail.
  *
