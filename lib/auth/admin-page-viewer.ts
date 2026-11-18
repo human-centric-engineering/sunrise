@@ -113,11 +113,10 @@ export const requestAdminReach = cache(async (): Promise<AdminReach> => {
   const met = await Promise.all(
     asked.map((grant) => canAdminister(entry.principal, null, { ...entry.scope, ...grant }))
   );
-  return {
-    tiers,
-    landing: tiers.includes('org') ? null : heldTierLanding(tiers),
-    switchesMet: asked.filter((_, i) => met[i]),
-  };
+  const landing = tiers.includes('org') ? null : heldTierLanding(tiers);
+  // With no switch to ask about, the reach is exactly what it was before them.
+  if (asked.length === 0) return { tiers, landing };
+  return { tiers, landing, switchesMet: asked.filter((_, i) => met[i]) };
 });
 
 /**

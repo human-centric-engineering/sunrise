@@ -87,6 +87,8 @@ const support = vi.hoisted(() => ({
   open: null as { id: string; level: string; expiresAt: Date } | null,
   pastGrants: [] as { id: string }[],
 }));
+// The entered org's stored entitlement switches (§135 t-1034).
+const switches = vi.hoisted(() => ({ on: [] as string[] }));
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     orgMembership: { findUnique: vi.fn(() => Promise.resolve(membership.row)) },
@@ -97,6 +99,7 @@ vi.mock('@/lib/db/client', () => ({
           id: where.id,
           name: `Org ${where.id}`,
           supportGrants: support.pastGrants,
+          settings: { entitlements: { on: switches.on, off: [] } },
         })
       ),
     },
@@ -159,6 +162,10 @@ import {
   registerOrgTierAdminPage,
 } from '@/lib/auth/admin-tier';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
+import {
+  __resetEntitlementRegistryForTests,
+  registerEntitlementSwitch,
+} from '@/lib/tenancy/entitlements';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   registerAuthorizationPolicy,
@@ -586,6 +593,68 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
       );
       expect(holds).toHaveBeenCalled();
       holds.mockImplementation((viewer) => viewer.orgRole === 'MEMBER');
+    });
+  });
+
+  describe('a page the fork registers with requires (§135 t-1034)', () => {
+    const LEADS = '/admin/leads';
+
+    beforeEach(() => {
+      roster.pages = null; // the real roster: core's, then the fork's
+      __resetAppOrgTierAdminPagesForTests();
+      __resetEntitlementRegistryForTests();
+      registerEntitlementSwitch({ key: 'lead_gen', label: 'Lead generation', description: '' });
+      fork.init = () => registerOrgTierAdminPage(LEADS, { requires: 'lead_gen' });
+      switches.on = [];
+    });
+
+    afterEach(() => {
+      fork.init = () => {};
+      __resetAppOrgTierAdminPagesForTests();
+      __resetEntitlementRegistryForTests();
+      switches.on = [];
+    });
+
+    it('opens it to an org admin whose org has the switch', async () => {
+      actingAs('ADMIN');
+      switches.on = ['lead_gen'];
+      onPage(LEADS);
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">leads</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+    });
+
+    it('refuses it to an org admin whose org lacks it', async () => {
+      actingAs('ADMIN');
+      onPage(LEADS);
+
+      await expect(AdminLayout({ children: <div>leads</div> })).rejects.toThrow(
+        `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
+    });
+
+    it('opens it to a platform admin acting in an org that lacks it', async () => {
+      membership.row = { orgId: CUSTOMER, role: 'ADMIN', org: { status: 'ACTIVE' } };
+      const user = createMockSession({ user: { role: 'ADMIN' } });
+      vi.mocked(getServerSession).mockResolvedValue({
+        ...user,
+        session: { ...user.session, activeOrgId: CUSTOMER },
+      });
+      onPage(LEADS);
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">leads</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+    });
+
+    it('still opens an org-tier page that requires nothing to the same admin', async () => {
+      actingAs('ADMIN');
+      onPage(ORG_PAGE);
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">agents</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
     });
   });
 

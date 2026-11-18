@@ -39,6 +39,7 @@ import {
   ORG_TIER_ADMIN_ROUTES,
 } from '@/lib/auth/admin-tier';
 import {
+  adminPageRequirements,
   appOrgTierAdminPagesInitState,
   closedCoreOrgTierSections,
   getAppOrgTierAdminPages,
@@ -52,6 +53,10 @@ import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
 import { defaultOrgAdminLanding, orgAdminLandingProblem } from '@/lib/auth/admin-landing';
 import { coreNavSections } from '@/components/admin/admin-sidebar';
 import { getRegisteredNavSections } from '@/lib/admin-nav/registry';
+import {
+  entitlementSwitchesFailed,
+  registeredEntitlementSwitches,
+} from '@/lib/tenancy/entitlements';
 
 // tests/setup.ts pins the org-tier admin seam to empty for every file (#1125);
 // this one judges the fork's real pages, as the FORK NOTE above promises.
@@ -102,6 +107,10 @@ const TREE: RosterInput = {
   // these, and each landing must be one of its own tier's pages.
   namedTiers: namedAdminTiers().map((name) => ({ name, landing: namedAdminTier(name)?.landing })),
   appNamedTierPages: namedTierAdminPages(),
+  // The app's switches, from lib/app/entitlements.ts, and the fork's pages
+  // that require one (t-1034): a `requires` anywhere must name one of these.
+  switches: registeredEntitlementSwitches().map((s) => s.key),
+  appPageRequirements: adminPageRequirements(),
 };
 
 describe('the pins', () => {
@@ -356,6 +365,13 @@ describe('the tree', () => {
     expect(appOrgTierAdminPagesInitState()).toBe('ok');
   });
 
+  it('judged each `requires` against the app’s switches as registered, not a rolled-back empty list (t-1034)', () => {
+    // A throwing initAppEntitlements() leaves no switch registered, and every
+    // `requires` would then be reported as naming none — true, but the cause
+    // is the throw, which this names first.
+    expect(entitlementSwitchesFailed()).toBe(false);
+  });
+
   it('lands an org admin on a page they may open (t-928)', () => {
     // A landing outside the org tier turns an org admin away the moment they
     // arrive; /admin falls back to the default at runtime, and this says so in CI.
@@ -513,6 +529,81 @@ describe('what it catches', () => {
       expect(findAdminTierRosterProblems(named({ pageFiles: [DESIGNS_PAGE] }))).toEqual([
         expect.stringContaining('/admin/designs/settings: listed in lib/app/admin-tier.ts but'),
       ]);
+    });
+  });
+
+  describe('switch requirements (t-1034)', () => {
+    const LEADS = 'app/api/v1/app/leads/route.ts';
+    const leadsRoute = (options: string): SourceFile => ({
+      path: LEADS,
+      source: `export const GET = withAdminAuth(async () => ok(), ${options});`,
+    });
+    const required = (over: Partial<RosterInput> = {}): RosterInput =>
+      input({
+        routes: [leadsRoute(`{ tier: 'org', requires: 'lead_gen', ${OWNED} }`)],
+        appListedRoutes: [`${LEADS}#GET`],
+        appListedPages: ['/admin/leads'],
+        appPageRequirements: [{ pattern: '/admin/leads', requires: 'lead_gen' }],
+        pageFiles: ['app/admin/leads/page.tsx'],
+        navItems: [{ href: '/admin/leads', tier: 'org', requires: 'lead_gen' }],
+        switches: ['lead_gen'],
+        ...over,
+      });
+
+    it('accepts a requirement on a registered switch beside a tier — the control', () => {
+      expect(findAdminTierRosterProblems(required())).toEqual([]);
+    });
+
+    it('reads a route’s requires as the literal it is, beside its tier', () => {
+      expect(
+        tierDeclarations(leadsRoute(`{ tier: 'org', requires: 'lead_gen', ${OWNED} }`))
+      ).toEqual([
+        { at: `${LEADS}#GET`, tier: 'org', declaresOwnership: true, requires: 'lead_gen' },
+      ]);
+    });
+
+    it('a route, page or nav item requiring a switch no app registers, which no org has', () => {
+      expect(findAdminTierRosterProblems(required({ switches: [] }))).toEqual([
+        `${LEADS}#GET: requires 'lead_gen', which no app registers with registerEntitlementSwitch() in lib/app/entitlements.ts, so no org has it and the surface is shut to every org admin. Register the switch, or fix the key.`,
+        expect.stringMatching(/^\/admin\/leads: requires 'lead_gen', which no app registers/),
+        expect.stringMatching(/^nav item \/admin\/leads: requires 'lead_gen', which no app/),
+      ]);
+    });
+
+    it('a requires on a platform-tier route or nav item, where it means nothing', () => {
+      expect(
+        findAdminTierRosterProblems(
+          required({
+            routes: [leadsRoute(`{ requires: 'lead_gen' }`)],
+            appListedRoutes: [],
+            navItems: [{ href: '/admin/leads', requires: 'lead_gen' }],
+          })
+        )
+      ).toEqual([
+        `${LEADS}#GET: requires 'lead_gen' but is the platform’s (no \`tier\`), and switches do not limit a platform admin, so it means nothing there. Give it a tier, or drop the \`requires\`.`,
+        `nav item /admin/leads: requires 'lead_gen' but is the platform’s (no \`tier\`), and switches do not limit a platform admin, so it means nothing there. Give it a tier, or drop the \`requires\`.`,
+      ]);
+    });
+
+    it('a requires review cannot read', () => {
+      expect(
+        findAdminTierRosterProblems(
+          required({ routes: [leadsRoute(`{ tier: 'org', requires: LEAD_GEN, ${OWNED} }`)] })
+        )
+      ).toEqual([expect.stringContaining('its `requires` is not a string literal')]);
+    });
+
+    it('says nothing of a surface that requires no switch', () => {
+      expect(
+        findAdminTierRosterProblems(
+          required({
+            routes: [leadsRoute(`{ tier: 'org', ${OWNED} }`)],
+            appPageRequirements: [],
+            navItems: [{ href: '/admin/leads', tier: 'org' }],
+            switches: [],
+          })
+        )
+      ).toEqual([]);
     });
   });
 

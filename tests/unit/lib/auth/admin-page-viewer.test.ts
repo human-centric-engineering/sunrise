@@ -22,6 +22,10 @@ import { headers } from 'next/headers';
 import { sessionPrincipal } from '@/lib/auth/session-principal';
 import { canAdminister } from '@/lib/auth/authorization';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
+import {
+  __resetEntitlementRegistryForTests,
+  registerEntitlementSwitch,
+} from '@/lib/tenancy/entitlements';
 
 const ORG_B = 'cmorg0000000000000000orgb';
 const session = {
@@ -131,5 +135,60 @@ describe('requestAdminReach (t-999)', () => {
     vi.mocked(sessionPrincipal).mockResolvedValue(null as never);
     vi.mocked(canAdminister).mockResolvedValue(false);
     await expect(requestAdminReach()).resolves.toEqual({ tiers: [], landing: null });
+  });
+});
+
+describe('requestAdminReach with entitlement switches (t-1034)', () => {
+  beforeEach(() => {
+    __resetAppOrgTierAdminPagesForTests();
+    __resetEntitlementRegistryForTests();
+    registerEntitlementSwitch({ key: 'lead_gen', label: 'Lead generation', description: '' });
+    registerEntitlementSwitch({ key: 'authoring', label: 'Authoring', description: '' });
+  });
+
+  it('asks the policy once per admitted tier and switch, and records what it admitted', async () => {
+    registerAdminTier('page_designs', { holds: () => true });
+    vi.mocked(canAdminister).mockImplementation((_p, _r, scope?: AuthorizationScope) =>
+      Promise.resolve(
+        (scope?.tier === 'org' || scope?.tier === 'page_designs') &&
+          (scope.requires === undefined || scope.requires === 'lead_gen')
+      )
+    );
+
+    await expect(requestAdminReach()).resolves.toEqual({
+      tiers: ['org', 'page_designs'],
+      landing: null,
+      switchesMet: [
+        { tier: 'org', requires: 'lead_gen' },
+        { tier: 'page_designs', requires: 'lead_gen' },
+      ],
+    });
+    expect(canAdminister).toHaveBeenCalledWith(principal, null, {
+      org: ORG_B,
+      tier: 'org',
+      requires: 'authoring',
+    });
+    // Platform, two tiers, and two switches for each admitted tier.
+    expect(canAdminister).toHaveBeenCalledTimes(1 + 2 + 4);
+  });
+
+  it('asks no switch question of a tier the policy did not admit, nor of the platform', async () => {
+    vi.mocked(canAdminister).mockImplementation((_p, _r, scope?: AuthorizationScope) =>
+      Promise.resolve(scope?.tier === 'org')
+    );
+    await expect(requestAdminReach()).resolves.toEqual({
+      tiers: ['org'],
+      landing: null,
+      switchesMet: [
+        { tier: 'org', requires: 'lead_gen' },
+        { tier: 'org', requires: 'authoring' },
+      ],
+    });
+    expect(canAdminister).toHaveBeenCalledTimes(1 + 1 + 2);
+
+    vi.clearAllMocks();
+    vi.mocked(canAdminister).mockResolvedValue(true);
+    await expect(requestAdminReach()).resolves.toBe('platform');
+    expect(canAdminister).toHaveBeenCalledTimes(1);
   });
 });

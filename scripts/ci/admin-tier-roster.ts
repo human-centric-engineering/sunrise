@@ -39,6 +39,13 @@
  * item marked `'org'` over a named-tier page is reported too: its holders
  * would never see it.
  *
+ * Switch requirements (§135 t-1034) are checked too: a `requires` on a route,
+ * page or nav item must name a switch the app registers
+ * (`registerEntitlementSwitch()`), since one it does not is a switch no org
+ * has, and it must sit beside a `tier`, since on a platform-tier route or
+ * item it would mean nothing. A route's `requires` must be a string literal,
+ * like its tier.
+ *
  * With core sections closed (`closeCoreOrgTierSection()`, t-929), a fork's nav
  * item is judged against the narrowed list: one marked `tier: 'org'` over a
  * closed core page is a link an org admin would follow to a redirect. Core's
@@ -53,6 +60,7 @@ import {
   adminSectionOf,
   matchesAdminPagePattern,
   withoutClosedSections,
+  type AdminPageRequirement,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
 import { namedTierLandingProblem } from '@/lib/auth/admin-landing';
@@ -77,6 +85,20 @@ export interface TierDeclaration {
   tier: string | null;
   /** The same options object declares `ownership`. */
   declaresOwnership: boolean;
+  /**
+   * The `requires` option (t-1034): the switch key when it is a string
+   * literal, `null` when it is anything else, absent when there is none.
+   */
+  requires?: string | null;
+}
+
+/**
+ * One `withAdminAuth(…)` call that passes a `tier` or a `requires`, or might.
+ * A {@link TierDeclaration} whose `tier` may also be absent: a `requires`
+ * with no tier beside it, which the roster reports.
+ */
+export interface AdminAuthDeclaration extends Omit<TierDeclaration, 'tier'> {
+  tier?: string | null;
 }
 
 /** A property's key as written — `tier`, `'tier'`, `"tier"` — or `null` for a computed one. */
@@ -170,10 +192,18 @@ function guardNames(sf: ts.SourceFile): Set<string> {
  * uses of a listed wrapper.
  */
 export function tierDeclarations(file: SourceFile): TierDeclaration[] {
+  return adminAuthDeclarations(file).filter((d): d is TierDeclaration => d.tier !== undefined);
+}
+
+/**
+ * {@link tierDeclarations}, and the calls that pass a `requires` with no
+ * `tier` (t-1034), for which `tier` is absent.
+ */
+export function adminAuthDeclarations(file: SourceFile): AdminAuthDeclaration[] {
   const sf = ts.createSourceFile(file.path, file.source, ts.ScriptTarget.Latest, true);
   const aliases = exportedAs(sf);
   const guards = guardNames(sf);
-  const found: TierDeclaration[] = [];
+  const found: AdminAuthDeclaration[] = [];
 
   const visit = (node: ts.Node): void => {
     if (
@@ -196,8 +226,19 @@ export function tierDeclarations(file: SourceFile): TierDeclaration[] {
         : (aliases.get(name) ?? []).filter((m) => HTTP_METHODS.has(m))
       : [];
     const ats = (methods.length ? methods : [name ?? '(unbound)']).map((m) => `${file.path}#${m}`);
-    const record = (tier: string | null, declaresOwnership: boolean): void => {
-      for (const at of ats) found.push({ at, tier, declaresOwnership });
+    const record = (
+      tier: string | null | undefined,
+      declaresOwnership: boolean,
+      requires?: string | null
+    ): void => {
+      for (const at of ats) {
+        found.push({
+          at,
+          ...(tier === undefined ? {} : { tier }),
+          declaresOwnership,
+          ...(requires === undefined ? {} : { requires }),
+        });
+      }
     };
     const unreadable = (): void => record(null, false);
 
@@ -214,15 +255,25 @@ export function tierDeclarations(file: SourceFile): TierDeclaration[] {
       (p) =>
         (ts.isSpreadAssignment(p) || (p.name && keyText(p) === null)) && /tier/i.test(p.getText())
     );
+    const requiresProp = options.properties.find((p) => keyText(p) === 'requires');
+    const requires =
+      requiresProp === undefined
+        ? undefined
+        : ts.isPropertyAssignment(requiresProp) && ts.isStringLiteralLike(requiresProp.initializer)
+          ? requiresProp.initializer.text
+          : null;
+    const declaresOwnership = options.properties.some((p) => keyText(p) === 'ownership');
     if (!tier) {
       if (hidden) unreadable();
+      else if (requires !== undefined) record(undefined, declaresOwnership, requires);
       return;
     }
     record(
       !hidden && ts.isPropertyAssignment(tier) && ts.isStringLiteralLike(tier.initializer)
         ? tier.initializer.text
         : null,
-      options.properties.some((p) => keyText(p) === 'ownership')
+      declaresOwnership,
+      requires
     );
   };
 
@@ -234,6 +285,8 @@ export function tierDeclarations(file: SourceFile): TierDeclaration[] {
 export interface NavItemFacts {
   href: string;
   tier?: string;
+  /** The switch the item requires (t-1034). */
+  requires?: string;
 }
 
 export interface RosterInput {
@@ -274,6 +327,14 @@ export interface RosterInput {
    * Each is also in {@link appListedPages}, as the registry keeps them.
    */
   appNamedTierPages?: readonly NamedTierAdminPage[];
+  /**
+   * The keys of the entitlement switches the app registers
+   * (`registeredEntitlementSwitches()`, t-1034). Empty when left out, so a
+   * `requires` anywhere is reported as naming no registered switch.
+   */
+  switches?: readonly string[];
+  /** The fork's pages registered with `requires` (`adminPageRequirements()`). */
+  appPageRequirements?: readonly AdminPageRequirement[];
 }
 
 /** The URL pattern a page file serves: `app/admin/(g)/x/[id]/page.tsx` → `/admin/x/[id]`. */
@@ -291,7 +352,8 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   const problems: string[] = [];
   const namedTiers = input.namedTiers ?? [];
   const tierNames = new Set(['org', ...namedTiers.map((t) => t.name)]);
-  const declarations = input.routes.flatMap(tierDeclarations);
+  const allDeclarations = input.routes.flatMap(adminAuthDeclarations);
+  const declarations = allDeclarations.filter((d): d is TierDeclaration => d.tier !== undefined);
   // A route counts as declared when its tier is one that opens something:
   // `'org'`, or a named tier the fork registered. One naming no registered
   // tier is reported below and opens nothing, as the policy answers it.
@@ -469,6 +531,7 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
       );
     }
   }
+  problems.push(...requirementProblems(input, allDeclarations));
   for (const { name, landing } of namedTiers) {
     if (landing === undefined) continue;
     const problem = namedTierLandingProblem(name, landing, namedPages);
@@ -476,6 +539,49 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
       problems.push(
         `named tier '${name}': its landing ${landing} ${problem} /admin would ignore it and log why.`
       );
+    }
+  }
+  return problems;
+}
+
+/**
+ * The switch requirements that would not do what they say (t-1034): one
+ * naming no registered switch, which no org has, so the surface is shut to
+ * every org admin; one on a platform-tier route or nav item, where it means
+ * nothing, since switches do not limit a platform admin; and a route's
+ * `requires` that is not a string literal, which review cannot read.
+ */
+function requirementProblems(
+  input: RosterInput,
+  declarations: readonly AdminAuthDeclaration[]
+): string[] {
+  const problems: string[] = [];
+  const switches = new Set(input.switches ?? []);
+  const unregistered = (key: string): string =>
+    `requires '${key}', which no app registers with registerEntitlementSwitch() in lib/app/entitlements.ts, so no org has it and the surface is shut to every org admin. Register the switch, or fix the key.`;
+  const platform =
+    'is the platform’s (no `tier`), and switches do not limit a platform admin, so it means nothing there. Give it a tier, or drop the `requires`.';
+  for (const d of declarations) {
+    if (d.requires === undefined) continue;
+    if (d.requires === null) {
+      problems.push(
+        `${d.at}: its \`requires\` is not a string literal, so review cannot see which switch it needs. Write the switch key in the options object.`
+      );
+    } else if (d.tier === undefined) {
+      problems.push(`${d.at}: requires '${d.requires}' but ${platform}`);
+    } else if (!switches.has(d.requires)) {
+      problems.push(`${d.at}: ${unregistered(d.requires)}`);
+    }
+  }
+  for (const { pattern, requires } of input.appPageRequirements ?? []) {
+    if (!switches.has(requires)) problems.push(`${pattern}: ${unregistered(requires)}`);
+  }
+  for (const item of input.navItems) {
+    if (item.requires === undefined) continue;
+    if (item.tier === undefined) {
+      problems.push(`nav item ${item.href}: requires '${item.requires}' but ${platform}`);
+    } else if (!switches.has(item.requires)) {
+      problems.push(`nav item ${item.href}: ${unregistered(item.requires)}`);
     }
   }
   return problems;
