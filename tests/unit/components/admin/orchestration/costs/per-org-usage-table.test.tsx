@@ -25,6 +25,7 @@ function makeRow(overrides: Partial<OrgUsageRow> = {}): OrgUsageRow {
     slug: 'acme',
     status: 'ACTIVE',
     totalCostUsd: 25,
+    ownKeyCostUsd: 0,
     inputTokens: 1200,
     outputTokens: 300,
     count: 42,
@@ -41,7 +42,7 @@ function makeReport(overrides: Partial<OrgUsageReport> = {}): OrgUsageReport {
     periodEnd: '2026-11-01T00:00:00.000Z',
     orgs: [makeRow()],
     detached: null,
-    totals: { totalCostUsd: 25, inputTokens: 1200, outputTokens: 300, count: 42 },
+    totals: { totalCostUsd: 25, ownKeyCostUsd: 0, inputTokens: 1200, outputTokens: 300, count: 42 },
     ...overrides,
   };
 }
@@ -84,6 +85,33 @@ describe('PerOrgUsageTable', () => {
     expect(within(rowFor('Zeroed')).queryByText('No budget set')).not.toBeInTheDocument();
   });
 
+  it("shows an org's own-key spend in its own column, and only the platform's under Spend (§137)", () => {
+    const { rerender } = render(<PerOrgUsageTable report={makeReport()} />);
+    // No org has any: no column.
+    expect(screen.queryByText('Own keys')).not.toBeInTheDocument();
+
+    rerender(
+      <PerOrgUsageTable
+        report={makeReport({
+          orgs: [makeRow({ totalCostUsd: 25, ownKeyCostUsd: 18.5 })],
+          totals: {
+            totalCostUsd: 25,
+            ownKeyCostUsd: 18.5,
+            inputTokens: 1200,
+            outputTokens: 300,
+            count: 42,
+          },
+        })}
+      />
+    );
+
+    expect(screen.getByText('Own keys')).toBeInTheDocument();
+    const row = within(rowFor('Acme'));
+    expect(row.getByText('$6.50')).toBeInTheDocument(); // 25 − 18.50: the platform's
+    expect(row.getByText('$18.50')).toBeInTheDocument();
+    expect(row.queryByText('$25.00')).not.toBeInTheDocument();
+  });
+
   it('badges a suspended org', () => {
     render(<PerOrgUsageTable report={makeReport({ orgs: [makeRow({ status: 'SUSPENDED' })] })} />);
     expect(within(rowFor('Acme')).getByText('suspended')).toBeInTheDocument();
@@ -93,7 +121,13 @@ describe('PerOrgUsageTable', () => {
     render(
       <PerOrgUsageTable
         report={makeReport({
-          detached: { totalCostUsd: 7, inputTokens: 50, outputTokens: 5, count: 3 },
+          detached: {
+            totalCostUsd: 7,
+            ownKeyCostUsd: 0,
+            inputTokens: 50,
+            outputTokens: 5,
+            count: 3,
+          },
         })}
       />
     );
@@ -111,7 +145,13 @@ describe('PerOrgUsageTable', () => {
     rerender(
       <PerOrgUsageTable
         report={makeReport({
-          detached: { totalCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 },
+          detached: {
+            totalCostUsd: 0,
+            ownKeyCostUsd: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            count: 0,
+          },
         })}
       />
     );

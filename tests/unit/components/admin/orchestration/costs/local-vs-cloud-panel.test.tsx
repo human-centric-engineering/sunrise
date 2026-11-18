@@ -54,6 +54,7 @@ function makeSummary(localSavings: LocalSavingsResult | null, cloudSpend = 0): C
       : [];
   return {
     totals: { today: 0, week: 0, month: cloudSpend },
+    ownKey: { today: 0, week: 0, month: 0 },
     byAgent: [],
     byModel,
     trend: [],
@@ -154,6 +155,7 @@ describe('LocalVsCloudPanel spend split', () => {
   function summaryWithRows(byModel: CostSummary['byModel']): CostSummary {
     return {
       totals: { today: 0, week: 0, month: 0 },
+      ownKey: { today: 0, week: 0, month: 0 },
       byAgent: [],
       byModel,
       trend: [],

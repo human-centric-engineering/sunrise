@@ -21,6 +21,7 @@ import type { CostSummary } from '@/lib/orchestration/llm/cost-reports';
 function makeSummary(monthSpend: number): CostSummary {
   return {
     totals: { today: 1.5, week: 7.25, month: monthSpend },
+    ownKey: { today: 0, week: 0, month: 0 },
     byAgent: [],
     byModel: [],
     trend: [],
@@ -84,6 +85,26 @@ describe('CostSummaryCards', () => {
       expect(screen.getByText('$1.50')).toBeInTheDocument();
       expect(screen.getByText('$7.25')).toBeInTheDocument();
       expect(screen.getByText('$20.00')).toBeInTheDocument();
+    });
+
+    it("shows the platform's spend, with spend on organisations' own keys on a line of its own (§137)", () => {
+      const summary: CostSummary = {
+        ...makeSummary(100),
+        totals: { today: 4, week: 30, month: 100 },
+        ownKey: { today: 0, week: 10, month: 40 },
+      };
+      // The 10th of a 30-day month: the projection is of the platform's $60.
+      render(<CostSummaryCards summary={summary} now={new Date('2026-04-10T00:00:00Z')} />);
+
+      expect(screen.getByText('$4.00')).toBeInTheDocument();
+      expect(screen.getByText('$20.00')).toBeInTheDocument(); // 30 − 10
+      expect(screen.getByText('$60.00')).toBeInTheDocument(); // 100 − 40
+      expect(screen.getByText('$180.00')).toBeInTheDocument(); // 60 / 10 × 30
+      // Today had none: only the week and the month name any.
+      expect(screen.getAllByTestId('own-key-spend').map((p) => p.textContent)).toEqual([
+        "Plus $10.00 on organisations' own keys",
+        "Plus $40.00 on organisations' own keys",
+      ]);
     });
 
     it('renders card titles for all four cards', () => {

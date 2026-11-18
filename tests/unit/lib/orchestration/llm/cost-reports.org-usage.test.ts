@@ -58,14 +58,17 @@ interface Row {
   totalCostUsd: number;
   inputTokens: number;
   outputTokens: number;
+  /** A call on the org's own key (§137 t-1046). */
+  ownKey: boolean;
 }
 
-const row = (orgId: string | null, iso: string, cost: number): Row => ({
+const row = (orgId: string | null, iso: string, cost: number, ownKey = false): Row => ({
   orgId,
   createdAt: new Date(iso),
   totalCostUsd: cost,
   inputTokens: 100,
   outputTokens: 10,
+  ownKey,
 });
 
 /** October 2026, with a row on each side of each boundary. */
@@ -78,6 +81,9 @@ const ROWS: Row[] = [
   row(BETA, '2026-11-01T00:00:00.000Z', 1000), // the month after: out
   row(null, '2026-09-15T00:00:00.000Z', 1000), // detached, but the month before: out
 ];
+
+/** Rows a test adds to {@link ROWS} for itself. */
+let extraRows: Row[] = [];
 
 const ORGS = [
   { id: INSTALL_ORG_ID, name: 'Install', slug: 'install', status: 'ACTIVE', settings: null },
@@ -98,6 +104,7 @@ const ORGS = [
 ];
 
 interface GroupByArgs {
+  by: Array<'orgId' | 'ownKey'>;
   where: { createdAt?: { gte?: Date; lt?: Date }; orgId?: string };
 }
 interface FindManyArgs {
@@ -111,20 +118,25 @@ beforeEach(() => {
   vi.resetAllMocks();
   mockMode.value = 'multi';
   scopes = [];
+  extraRows = [];
 
   vi.mocked(prisma.aiCostLog.groupBy).mockImplementation((async (args: GroupByArgs) => {
     scopes.push(getTenantContext());
     const { createdAt, orgId } = args.where;
-    const kept = ROWS.filter(
+    const kept = [...ROWS, ...extraRows].filter(
       (r) =>
         (createdAt?.gte === undefined || r.createdAt >= createdAt.gte) &&
         (createdAt?.lt === undefined || r.createdAt < createdAt.lt) &&
         (orgId === undefined || r.orgId === orgId)
     );
-    const groups = new Map<string | null, Row[]>();
-    for (const r of kept) groups.set(r.orgId, [...(groups.get(r.orgId) ?? []), r]);
-    return [...groups].map(([key, rows]) => ({
-      orgId: key,
+    // Grouped on exactly the columns asked for, as Postgres would.
+    const groups = new Map<string, Row[]>();
+    for (const r of kept) {
+      const key = JSON.stringify(args.by.map((column) => r[column]));
+      groups.set(key, [...(groups.get(key) ?? []), r]);
+    }
+    return [...groups.values()].map((rows) => ({
+      ...Object.fromEntries(args.by.map((column) => [column, rows[0][column]])),
       _sum: {
         totalCostUsd: rows.reduce((s, r) => s + r.totalCostUsd, 0),
         inputTokens: rows.reduce((s, r) => s + r.inputTokens, 0),
@@ -166,6 +178,7 @@ describe('getOrgUsage at multi', () => {
       slug: 'acme',
       status: 'ACTIVE',
       totalCostUsd: 5,
+      ownKeyCostUsd: 0,
       inputTokens: 200,
       outputTokens: 20,
       count: 2,
@@ -184,6 +197,7 @@ describe('getOrgUsage at multi', () => {
 
     expect(report.detached).toEqual({
       totalCostUsd: 5,
+      ownKeyCostUsd: 0,
       inputTokens: 100,
       outputTokens: 10,
       count: 1,
@@ -191,6 +205,7 @@ describe('getOrgUsage at multi', () => {
     // 2 + 3 + 4 + 5: none of the 1000s from September or November.
     expect(report.totals).toEqual({
       totalCostUsd: 14,
+      ownKeyCostUsd: 0,
       inputTokens: 400,
       outputTokens: 40,
       count: 4,
@@ -224,6 +239,31 @@ describe('getOrgUsage at multi', () => {
     expect(report.orgs.map((o) => o.orgId)).toEqual([ACME, INSTALL_ORG_ID]);
     expect(report.detached?.totalCostUsd).toBe(9); // Beta's 4 + the NULL-org 5
     expect(report.totals.totalCostUsd).toBe(14);
+  });
+
+  it("reports an org's own-key spend apart, and holds only the platform's spend to its cap (§137)", async () => {
+    // Acme spent 5 on the platform's keys (half its cap of 10) and 6 on its
+    // own key in a row that falls in the month, and 1000 on its own key in one
+    // that does not.
+    extraRows = [
+      row(ACME, '2026-10-20T00:00:00.000Z', 6, true),
+      row(ACME, '2026-11-02T00:00:00.000Z', 1000, true),
+    ];
+
+    const report = await getOrgUsage({ period: '2026-10' });
+
+    const acme = report.orgs.find((o) => o.orgId === ACME);
+    expect(acme).toMatchObject({
+      totalCostUsd: 11,
+      ownKeyCostUsd: 6,
+      count: 3,
+      inputTokens: 300,
+      outputTokens: 30,
+      // 5 / 10, not 11 / 10: the cap counts the platform's spend only.
+      utilisation: 0.5,
+    });
+    expect(report.orgs.find((o) => o.orgId === BETA)?.ownKeyCostUsd).toBe(0);
+    expect(report.totals).toMatchObject({ totalCostUsd: 20, ownKeyCostUsd: 6, count: 5 });
   });
 
   it('returns zeros for a month with no spend', async () => {

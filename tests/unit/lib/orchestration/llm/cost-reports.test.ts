@@ -31,7 +31,6 @@ const { getCostBreakdown, getCostSummary, getBudgetAlerts } =
   await import('@/lib/orchestration/llm/cost-reports');
 
 // Typed shortcuts.
-const mockedAggregate = prisma.aiCostLog.aggregate as unknown as ReturnType<typeof vi.fn>;
 const mockedGroupBy = prisma.aiCostLog.groupBy as unknown as ReturnType<typeof vi.fn>;
 const mockedAgentFind = prisma.aiAgent.findMany as unknown as ReturnType<typeof vi.fn>;
 const mockedRaw = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
@@ -255,10 +254,15 @@ describe('getCostBreakdown', () => {
 
 describe('getCostSummary', () => {
   it('returns today/week/month totals and populates byAgent with utilisation', async () => {
-    mockedAggregate
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 1.1 } }) // today
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 5.5 } }) // week
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 20 } }); // month
+    // Today, week and month, each grouped by ownKey (§137).
+    mockedGroupBy
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 1.1 } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 5.5 } }])
+      // The month's 20 includes 5 on an org's own key.
+      .mockResolvedValueOnce([
+        { ownKey: false, _sum: { totalCostUsd: 15 } },
+        { ownKey: true, _sum: { totalCostUsd: 5 } },
+      ]);
 
     mockedGroupBy
       .mockResolvedValueOnce([
@@ -283,6 +287,10 @@ describe('getCostSummary', () => {
     const summary = await getCostSummary();
 
     expect(summary.totals).toEqual({ today: 1.1, week: 5.5, month: 20 });
+    // The own-key part, apart (§137): the platform's month is 15.
+    expect(summary.ownKey).toEqual({ today: 0, week: 0, month: 5 });
+    const windows = mockedGroupBy.mock.calls.slice(0, 3).map(([args]) => args as { by: string[] });
+    expect(windows.map((w) => w.by)).toEqual([['ownKey'], ['ownKey'], ['ownKey']]);
 
     expect(summary.byAgent).toHaveLength(2);
     // Sorted by monthSpend desc.
@@ -312,10 +320,11 @@ describe('getCostSummary', () => {
   });
 
   it('coerces null _sum.totalCostUsd to zero in byAgent and byModel rows', async () => {
-    mockedAggregate
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 0 } })
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 0 } })
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 0 } });
+    // Today, week and month, each grouped by ownKey (§137).
+    mockedGroupBy
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 0 } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 0 } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 0 } }]);
 
     mockedGroupBy
       .mockResolvedValueOnce([{ agentId: 'agent-a', _sum: { totalCostUsd: null } }])
@@ -332,10 +341,11 @@ describe('getCostSummary', () => {
   });
 
   it('treats missing _sum.totalCostUsd as zero and surfaces orphaned agents', async () => {
-    mockedAggregate
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: null } })
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: null } })
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: null } });
+    // Today, week and month, each grouped by ownKey (§137).
+    mockedGroupBy
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: null } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: null } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: null } }]);
 
     // One row with a null agentId (shouldn't happen due to where clause but we defend),
     // and one with an agent that no longer exists ('ghost').

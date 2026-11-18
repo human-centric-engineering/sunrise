@@ -44,6 +44,7 @@ import { getCostSummary } from '@/lib/orchestration/llm/cost-reports';
 function makeCostSummary() {
   return {
     totals: { today: 0.5, week: 3.2, month: 12.8 },
+    ownKey: { today: 0, week: 0, month: 0 },
     byAgent: [
       {
         agentId: 'cmjbv4i3x00003wsloputgwu1',

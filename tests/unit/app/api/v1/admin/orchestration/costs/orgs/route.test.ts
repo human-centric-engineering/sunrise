@@ -6,7 +6,8 @@
  * switched into a customer's org is refused, an org's own OWNER never reaches
  * the handler, and an unbound admin API key acts as the install org. At
  * `single` the rule has nothing to separate. The rollup itself is mocked at
- * its module; `cost-reports.org-usage.test.ts` covers it.
+ * its module; `cost-reports.org-usage.test.ts` covers it, and one test here
+ * runs it for real, for the figures the endpoint answers with.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
@@ -28,12 +29,28 @@ vi.mock('@/lib/auth/api-keys', async (importOriginal) => ({
 }));
 
 const mockMembership = vi.hoisted(() => vi.fn());
+const mockCostGroupBy = vi.hoisted(() => vi.fn());
+const mockOrgFindMany = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/db/client', () => ({
-  prisma: { orgMembership: { findUnique: mockMembership } },
+  prisma: {
+    orgMembership: { findUnique: mockMembership },
+    aiCostLog: { groupBy: mockCostGroupBy },
+    org: { findMany: mockOrgFindMany },
+  },
 }));
 
 const mockGetOrgUsage = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/orchestration/llm/cost-reports', () => ({ getOrgUsage: mockGetOrgUsage }));
+/** The real rollup, kept for the one test that runs it. */
+interface RealCostReports {
+  getOrgUsage?: typeof import('@/lib/orchestration/llm/cost-reports').getOrgUsage;
+}
+const realCostReports = vi.hoisted((): RealCostReports => ({}));
+vi.mock('@/lib/orchestration/llm/cost-reports', async (importOriginal) => {
+  realCostReports.getOrgUsage = (
+    await importOriginal<typeof import('@/lib/orchestration/llm/cost-reports')>()
+  ).getOrgUsage;
+  return { getOrgUsage: mockGetOrgUsage };
+});
 
 const mockLog = vi.hoisted(() => ({
   info: vi.fn(),
@@ -91,7 +108,7 @@ const REPORT = {
   periodEnd: '2026-11-01T00:00:00.000Z',
   orgs: [],
   detached: null,
-  totals: { totalCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 },
+  totals: { totalCostUsd: 0, ownKeyCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 },
 };
 
 beforeEach(() => {
@@ -102,6 +119,51 @@ beforeEach(() => {
 });
 
 describe('GET /api/v1/admin/orchestration/costs/orgs at multi', () => {
+  it("answers each org's spend on its own AI keys apart from the platform's (§137 t-1046)", async () => {
+    signedIn('ADMIN', INSTALL_ORG_ID);
+    mockGetOrgUsage.mockImplementation(realCostReports.getOrgUsage!);
+    // Customer: $4 on the platform's keys against a cap of $8, $30 on its own.
+    mockOrgFindMany.mockResolvedValue([
+      {
+        id: CUSTOMER,
+        name: 'Customer',
+        slug: 'customer',
+        status: 'ACTIVE',
+        settings: { quotas: { monthlyBudgetUsd: 8 } },
+      },
+    ]);
+    const sums = (cost: number, calls: number) => ({
+      _sum: { totalCostUsd: cost, inputTokens: calls * 100, outputTokens: calls * 10 },
+      _count: { _all: calls },
+    });
+    mockCostGroupBy.mockResolvedValue([
+      { orgId: CUSTOMER, ownKey: false, ...sums(4, 2) },
+      { orgId: CUSTOMER, ownKey: true, ...sums(30, 3) },
+    ]);
+
+    const res = await get('?period=2026-10');
+    const body = (await res.json()) as {
+      data: { orgs: Array<Record<string, unknown>>; totals: Record<string, unknown> };
+    };
+
+    expect(res.status).toBe(200);
+    expect(mockCostGroupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ by: ['orgId', 'ownKey'] })
+    );
+    expect(body.data.orgs).toEqual([
+      expect.objectContaining({
+        orgId: CUSTOMER,
+        totalCostUsd: 34,
+        ownKeyCostUsd: 30,
+        count: 5,
+        monthlyBudgetUsd: 8,
+        // Half the cap: the $30 on its own key is not the platform's spend.
+        utilisation: 0.5,
+      }),
+    ]);
+    expect(body.data.totals).toMatchObject({ totalCostUsd: 34, ownKeyCostUsd: 30, count: 5 });
+  });
+
   it('refuses a platform admin switched into a customer org, reading nothing', async () => {
     signedIn('ADMIN', CUSTOMER);
 

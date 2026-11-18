@@ -228,7 +228,9 @@ export default async function OrchestrationDashboardPage() {
     getActivityFeed(statsRead.then((stats) => stats?.recentErrors ?? null)),
   ]);
 
-  const todayCostUsd = costSummary?.totals.today ?? null;
+  // The platform's spend, as the costs page's Today card shows it: calls on an
+  // org's own key are billed to that org (§137).
+  const todayCostUsd = costSummary ? costSummary.totals.today - costSummary.ownKey.today : null;
   const weekTrend = costSummary?.trend.slice(-7) ?? null;
 
   return (

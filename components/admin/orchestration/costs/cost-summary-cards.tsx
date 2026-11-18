@@ -7,6 +7,10 @@
  * derived client-side from `month / daysElapsed * daysInMonth` so a
  * new `/costs/summary` field isn't required for this purely-UI metric.
  *
+ * Each figure is the platform's spend. Spend on an organisation's own AI key
+ * (§137) is billed to that organisation by the vendor, so it is shown under
+ * the figure as its own line, when there is any, rather than in it.
+ *
  * All values null-safe: a missing summary renders `—` in every card
  * rather than throwing, matching the dashboard stats-cards posture.
  */
@@ -31,10 +35,20 @@ function projectedMonth(monthSpend: number, now: Date): number {
   return (monthSpend / dayOfMonth) * daysInMonth;
 }
 
+/** The line under a figure naming its window's spend on organisations' own keys, if any. */
+function OwnKeyLine({ value }: { value: number | undefined }) {
+  if (!value || value <= 0) return null;
+  return (
+    <p className="text-muted-foreground mt-1 text-xs" data-testid="own-key-spend">
+      Plus <Usd value={value} /> on organisations&apos; own keys
+    </p>
+  );
+}
+
 export function CostSummaryCards({ summary, now }: CostSummaryCardsProps) {
-  const today = summary?.totals.today ?? null;
-  const week = summary?.totals.week ?? null;
-  const month = summary?.totals.month ?? null;
+  const today = summary ? summary.totals.today - summary.ownKey.today : null;
+  const week = summary ? summary.totals.week - summary.ownKey.week : null;
+  const month = summary ? summary.totals.month - summary.ownKey.month : null;
   const effectiveNow = now ?? new Date();
   const projected =
     summary && Number.isFinite(month ?? NaN) && (month ?? 0) >= 0
@@ -49,6 +63,7 @@ export function CostSummaryCards({ summary, now }: CostSummaryCardsProps) {
         </CardHeader>
         <CardContent>
           <Usd value={today} className="text-2xl font-semibold" />
+          <OwnKeyLine value={summary?.ownKey.today} />
         </CardContent>
       </Card>
       <Card>
@@ -58,6 +73,7 @@ export function CostSummaryCards({ summary, now }: CostSummaryCardsProps) {
         <CardContent>
           <Usd value={week} className="text-2xl font-semibold" />
           <p className="text-muted-foreground mt-1 text-xs">Rolling 7 days (UTC)</p>
+          <OwnKeyLine value={summary?.ownKey.week} />
         </CardContent>
       </Card>
       <Card>
@@ -67,6 +83,7 @@ export function CostSummaryCards({ summary, now }: CostSummaryCardsProps) {
         <CardContent>
           <Usd value={month} className="text-2xl font-semibold" />
           <p className="text-muted-foreground mt-1 text-xs">Since the 1st (UTC)</p>
+          <OwnKeyLine value={summary?.ownKey.month} />
         </CardContent>
       </Card>
       <Card>
@@ -81,6 +98,10 @@ export function CostSummaryCards({ summary, now }: CostSummaryCardsProps) {
               <p>
                 Treat this as a rough forecast. It assumes traffic stays constant and does not
                 account for weekend or time-of-day patterns.
+              </p>
+              <p>
+                Like the other figures, it is the platform&apos;s spend: calls on an
+                organisation&apos;s own AI key are billed to that organisation and left out.
               </p>
             </FieldHelp>
           </CardTitle>

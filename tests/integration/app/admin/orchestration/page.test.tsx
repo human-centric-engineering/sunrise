@@ -71,7 +71,9 @@ vi.mock('@/components/admin/orchestration/dashboard-activity-feed', () => ({
 }));
 
 vi.mock('@/components/admin/orchestration/dashboard-stats-cards', () => ({
-  DashboardStatsCards: () => <div data-testid="dashboard-stats-cards" />,
+  DashboardStatsCards: ({ todayCostUsd }: { todayCostUsd: number | null }) => (
+    <div data-testid="dashboard-stats-cards" data-today-cost={String(todayCostUsd)} />
+  ),
 }));
 
 vi.mock('@/components/admin/orchestration/top-capabilities-panel', () => ({
@@ -114,6 +116,7 @@ const HAPPY_BODIES: Array<{ match: string; data: unknown; meta?: unknown }> = [
     match: '/costs/summary',
     data: {
       totals: { today: 1.5, week: 7, month: 22 },
+      ownKey: { today: 0.5, week: 0.5, month: 0.5 },
       byAgent: [],
       byModel: [],
       trend: [
@@ -301,6 +304,15 @@ describe('OrchestrationDashboardPage (server component)', () => {
       expect(screen.getByTestId('cost-trend-chart')).toBeInTheDocument();
       expect(screen.getByTestId('top-capabilities-panel')).toBeInTheDocument();
       expect(screen.getByTestId('dashboard-activity-feed')).toBeInTheDocument();
+    });
+
+    it("shows today's spend on the platform's keys, as the costs page does (§137)", async () => {
+      await setupHappyPathMocks(ALL_CONFIGURED);
+
+      await renderPage();
+
+      // 1.50 in all, 0.50 of it on an organisation's own key.
+      expect(screen.getByTestId('dashboard-stats-cards')).toHaveAttribute('data-today-cost', '1');
     });
 
     it("counts only the org's own agents, not its platform agents (§116 t-725)", async () => {
