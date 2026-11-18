@@ -226,3 +226,18 @@ describe('removing a key', () => {
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 });
+
+describe('a card with nothing to offer', () => {
+  it('draws no empty body when there is no key and saving is blocked', () => {
+    const { container } = render(
+      <ProviderKeysList orgId={ORG} providers={[row(null)]} canSave={false} />
+    );
+
+    expect(screen.getByText(/use the platform’s key/)).toBeInTheDocument();
+    // The card holds its header and nothing else.
+    const cardRoot = container.firstElementChild?.firstElementChild;
+    expect(cardRoot?.children).toHaveLength(1);
+    expect(cardRoot?.textContent).toContain('Anthropic');
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+});

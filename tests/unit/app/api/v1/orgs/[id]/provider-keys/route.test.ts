@@ -530,7 +530,7 @@ describe('PUT — save and replace', () => {
     expect(mockAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'org_provider_key.test',
-        metadata: expect.objectContaining({ result: 'failed', stored: false, hint: 'wxyz' }),
+        metadata: expect.objectContaining({ result: 'test_failed', stored: false, hint: 'wxyz' }),
       })
     );
     // The log keeps the vendor's reason for an operator, with the key cut out.

@@ -86,7 +86,7 @@ export const PUT = withAuth<Params>(async (request, session, { params }) => {
       entityType: 'org_provider_key',
       entityId: null,
       entityName: config.name,
-      metadata: { orgId: id, provider: config.slug, hint, result: 'failed', stored: false },
+      metadata: { orgId: id, provider: config.slug, hint, result: 'test_failed', stored: false },
       clientIp,
     });
     throw new APIError(

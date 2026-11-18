@@ -185,73 +185,76 @@ function ProviderKeyCard({ orgId, row, canSave, disabled, onRemove }: ProviderKe
         </div>
         <CardDescription>{stateSentence(row)}</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {row.key && (
-          <p className="text-sm">
-            {row.key.hint ? (
-              <>
-                Key ending <span className="font-mono">…{row.key.hint}</span>, saved{' '}
-              </>
-            ) : (
-              'Saved '
-            )}
-            <ClientDate date={row.key.savedAt} showTime />
-            {row.key.savedBy ? ` by ${row.key.savedBy.name}` : ''}.
-          </p>
-        )}
+      {/* Nothing to show or do: no key, and saving is not offered here. */}
+      {(row.key || canSave) && (
+        <CardContent className="space-y-3">
+          {row.key && (
+            <p className="text-sm">
+              {row.key.hint ? (
+                <>
+                  Key ending <span className="font-mono">…{row.key.hint}</span>, saved{' '}
+                </>
+              ) : (
+                'Saved '
+              )}
+              <ClientDate date={row.key.savedAt} showTime />
+              {row.key.savedBy ? ` by ${row.key.savedBy.name}` : ''}.
+            </p>
+          )}
 
-        {editing ? (
-          <ProviderKeyForm
-            orgId={orgId}
-            providerConfigId={row.providerConfigId}
-            providerName={row.name}
-            replaces={!!row.key}
-            onDone={() => {
-              setEditing(false);
-              setOutcome(null);
-            }}
-          />
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {canSave && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={disabled}
-                onClick={() => setEditing(true)}
-              >
-                {row.key ? 'Replace key' : 'Add your own key'}
-              </Button>
-            )}
-            {row.key && row.approved && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={disabled || testing}
-                onClick={() => void test()}
-              >
-                <FlaskConical className="mr-2 h-4 w-4" />
-                {testing ? 'Testing…' : 'Test key'}
-              </Button>
-            )}
-            {row.key && (
-              <Button size="sm" variant="outline" disabled={disabled} onClick={onRemove}>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Remove key
-              </Button>
-            )}
-          </div>
-        )}
+          {editing ? (
+            <ProviderKeyForm
+              orgId={orgId}
+              providerConfigId={row.providerConfigId}
+              providerName={row.name}
+              replaces={!!row.key}
+              onDone={() => {
+                setEditing(false);
+                setOutcome(null);
+              }}
+            />
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {canSave && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={disabled}
+                  onClick={() => setEditing(true)}
+                >
+                  {row.key ? 'Replace key' : 'Add your own key'}
+                </Button>
+              )}
+              {row.key && row.approved && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={disabled || testing}
+                  onClick={() => void test()}
+                >
+                  <FlaskConical className="mr-2 h-4 w-4" />
+                  {testing ? 'Testing…' : 'Test key'}
+                </Button>
+              )}
+              {row.key && (
+                <Button size="sm" variant="outline" disabled={disabled} onClick={onRemove}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Remove key
+                </Button>
+              )}
+            </div>
+          )}
 
-        {outcome && (
-          <p role="status" className={outcome.ok ? 'text-sm' : 'text-destructive text-sm'}>
-            {outcome.ok
-              ? `${row.name} accepted the key.`
-              : testFailureSentence(row.name, outcome.reason)}
-          </p>
-        )}
-        <SaveError failure={testRequest.failure} />
-      </CardContent>
+          {outcome && (
+            <p role="status" className={outcome.ok ? 'text-sm' : 'text-destructive text-sm'}>
+              {outcome.ok
+                ? `${row.name} accepted the key.`
+                : testFailureSentence(row.name, outcome.reason)}
+            </p>
+          )}
+          <SaveError failure={testRequest.failure} />
+        </CardContent>
+      )}
     </Card>
   );
 }
