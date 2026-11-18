@@ -71,6 +71,9 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => {
   return {
     getProviderWithFallbacks: vi.fn(),
     getProvider,
+    // The platform's key, never an org's own (§137).
+    providerUsesOrgOwnKey: vi.fn(async () => false),
+    usesOrgOwnKey: vi.fn(() => false),
     // Failover fetches through this; delegate, with a closed breaker.
     getProviderIfBreakerClosed: vi.fn(async (slug: string, context?: unknown) => ({
       provider: (await getProvider(slug, context)) as unknown,

@@ -554,7 +554,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
           apiKeyEnvVar: 'SHIPS_EMPTY_TEST_KEY',
           isLocal: false,
         })
-      ).resolves.toEqual({ apiKey: 'from-env', identity: '' });
+      ).resolves.toEqual({ apiKey: 'from-env', identity: '', ownKey: false });
       delete process.env.SHIPS_EMPTY_TEST_KEY;
     },
   },
