@@ -17,18 +17,24 @@
  * Public — no authentication required (the token is validated by the
  * widget-config and chat-stream endpoints when called).
  *
- * The address the widget calls back to is the install's public URL,
- * `NEXT_PUBLIC_APP_URL` — the one the admin's embed snippet loads this
- * script from. Never the request's: behind a reverse proxy `request.url` is
- * the internal address the proxy forwarded to (t-1042), and the forwarded
- * headers are the caller's to write, so a request naming another host
- * would put that host into a script other sites run and caches keep.
+ * The address the widget calls back to is the install's public URL
+ * (`getPublicUrl()`). Never the request's: behind a reverse proxy
+ * `request.url` is the internal address the proxy forwarded to (t-1042), and
+ * the forwarded headers are the caller's to write, so a request naming
+ * another host would put that host into a script other sites run and caches
+ * keep.
  */
 
-import { env } from '@/lib/env';
+import { connection } from 'next/server';
+import { getPublicUrl } from '@/lib/api/server-fetch';
 
-export function GET(): Response {
-  const origin = new URL(env.NEXT_PUBLIC_APP_URL).origin;
+export async function GET(): Promise<Response> {
+  // Read at request time, never prerendered: nothing below reads the request,
+  // so under Cache Components a build would otherwise freeze the build
+  // machine's URL into the script.
+  await connection();
+  // Quoted as a JS string, so nothing in the configured URL can end the literal.
+  const origin = JSON.stringify(new URL(getPublicUrl()).origin);
 
   const js = `
 (function() {
@@ -37,8 +43,8 @@ export function GET(): Response {
   var token = script.getAttribute('data-token');
   var position = script.getAttribute('data-position') || 'bottom-right';
   var theme = script.getAttribute('data-theme') || 'light';
-  var apiBase = '${origin}/api/v1/embed';
-  var originBase = '${origin}';
+  var originBase = ${origin};
+  var apiBase = originBase + '/api/v1/embed';
 
   if (!token) {
     console.error('[SunriseWidget] data-token attribute is required');

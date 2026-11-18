@@ -119,6 +119,16 @@ release process.
 
 ### Fixed
 
+- **The embed widget connects behind a reverse proxy (t-1042).**
+  `GET /api/v1/embed/widget.js` baked the request's own address into the
+  script, which behind nginx, Caddy, a load balancer or a local `*.test`
+  proxy is the internal one the proxy forwarded to, so the widget loaded and
+  never connected. It now uses the install's public URL, `getPublicUrl()`
+  (`BETTER_AUTH_URL`), and reads nothing from the request, so a forged `Host`
+  or `X-Forwarded-Host` cannot point a cached script at another host. A
+  deployment reached on a hostname other than `BETTER_AUTH_URL` (an alias, or
+  a preview that names production) now serves a widget that calls the
+  configured host. See `.context/orchestration/embed.md`.
 - **The agent and capability forms' blocked-save summary now follows the
   fields (t-1029).** The two tabbed forms built their own summary in
   `onInvalid` and passed it to `show()`, so after t-1013 they still kept

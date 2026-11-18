@@ -93,12 +93,14 @@ Data attributes:
 
 The loader script uses Shadow DOM for style isolation.
 
-**Where the widget calls back to.** The script is served with the install's public address baked in: `apiBase` (`…/api/v1/embed`) and `originBase` (the approval-status polls) are the origin of `NEXT_PUBLIC_APP_URL`, the same URL the admin's embed snippet loads the script from. Nothing in the request is read for it (t-1042):
+**Where the widget calls back to.** The script is served with the install's public URL baked in: `originBase` (the approval-status polls) is the origin of `getPublicUrl()` (`lib/api/server-fetch.ts`, which returns `BETTER_AUTH_URL`), and `apiBase` is that plus `/api/v1/embed`. It is read when the request arrives (`connection()`), so a build never freezes it, and written as a quoted JS string. Nothing in the request is read for it (t-1042):
 
-- Behind a reverse proxy (nginx, Caddy, a load balancer, a local `*.test` proxy), `request.url` is the internal address the proxy forwarded to, such as `http://localhost:3010`, and a widget pointed there loads but never connects.
+- Behind a reverse proxy (nginx, Caddy, a load balancer, a local `*.test` proxy), `request.url` is the internal address the proxy forwarded to, such as `https://localhost:3010`, and a widget pointed there loads but never connects.
 - `Host` and `X-Forwarded-*` are written by whoever sends the request unless the proxy overwrites them, and the script is cached for five minutes and run on other sites: a request naming another host must not be able to point every visitor's chat at it.
 
-So a proxied or self-hosted install must set `NEXT_PUBLIC_APP_URL` to the address visitors' browsers reach it on (it is required anyway, and should match `BETTER_AUTH_URL`). An install reached on several hostnames serves a widget that calls the configured one. Only the origin is used; a path or trailing slash in the setting is dropped.
+So a proxied or self-hosted install must set `BETTER_AUTH_URL` to the address visitors' browsers reach it on (sign-in needs that anyway). Only its origin is used; a path or trailing slash is dropped. The admin's embed snippet builds its `src` from `NEXT_PUBLIC_APP_URL`, inlined at build time, which `lib/env.ts` requires to match `BETTER_AUTH_URL`: when the two differ, the snippet loads the script from one host and the script calls the other.
+
+An install reached on several hostnames serves a widget that calls the configured one. That includes a preview deployment whose `BETTER_AUTH_URL` names production: its widget sends the preview's embed token and its visitors' messages to production, which refuses the token unless the two share a database. Give a preview its own URL to test the widget there.
 
 ### Per-agent appearance — `/widget-config`
 
