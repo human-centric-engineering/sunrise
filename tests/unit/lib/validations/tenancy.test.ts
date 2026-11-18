@@ -11,6 +11,14 @@ import { describe, it, expect } from 'vitest';
 import {
   addOrgMemberSchema,
   createOrgSchema,
+  listOrgAuditLogQuerySchema,
+  MAX_METERS,
+  meterKeySchema,
+  meterLimitSchema,
+  orgMeterLimitsInputSchema,
+  orgMeterLimitsSchema,
+  orgPrivacySettingsSchema,
+  orgSettingsPatchSchema,
   orgIdSchema,
   orgMemberParamsSchema,
   orgProviderPolicyInputSchema,
@@ -192,5 +200,80 @@ describe('orgProviderPolicyInputSchema — the PUT body (§120 t-742)', () => {
       orgProviderPolicyInputSchema.safeParse({ approved: [], jurisdictions: [] }).success
     ).toBe(false);
     expect(orgProviderPolicyInputSchema.safeParse({ approved: [], extra: 1 }).success).toBe(false);
+  });
+});
+
+describe('meter limits (§135 t-1035)', () => {
+  it('takes a meter key in the switch-key spelling and nothing else', () => {
+    expect(meterKeySchema.safeParse('completed_conversations').success).toBe(true);
+    expect(meterKeySchema.safeParse('seats').success).toBe(true);
+    for (const bad of ['', 'Seats', 'lead-gen', '1seats', '_seats', 'a'.repeat(49)]) {
+      expect(meterKeySchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it('takes a limit that is a whole number from 0 to a billion', () => {
+    for (const ok of [0, 1, 1_000_000_000]) expect(meterLimitSchema.parse(ok)).toBe(ok);
+    for (const bad of [-1, 1.5, 1_000_000_001, Number.NaN, '3', null]) {
+      expect(meterLimitSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it('stores limits by meter key, refusing a bad key, a bad limit, or more than 1000 keys', () => {
+    expect(orgMeterLimitsSchema.parse({ seats: 5, reports: 0 })).toEqual({ seats: 5, reports: 0 });
+    expect(orgMeterLimitsSchema.safeParse({ Seats: 5 }).success).toBe(false);
+    expect(orgMeterLimitsSchema.safeParse({ seats: -1 }).success).toBe(false);
+    const many = Object.fromEntries(Array.from({ length: 1001 }, (_, i) => [`m${i}`, 1]));
+    expect(orgMeterLimitsSchema.safeParse(many).success).toBe(false);
+    delete many.m1000;
+    expect(orgMeterLimitsSchema.safeParse(many).success).toBe(true);
+  });
+
+  it('takes a PATCH naming at least one meter, null to clear, and nothing else', () => {
+    expect(orgMeterLimitsInputSchema.parse({ limits: { seats: 3, reports: null } })).toEqual({
+      limits: { seats: 3, reports: null },
+    });
+    expect(orgMeterLimitsInputSchema.safeParse({ limits: {} }).success).toBe(false);
+    expect(orgMeterLimitsInputSchema.safeParse({}).success).toBe(false);
+    expect(orgMeterLimitsInputSchema.safeParse({ limits: { seats: 1 }, extra: 1 }).success).toBe(
+      false
+    );
+    const tooMany = Object.fromEntries(
+      Array.from({ length: MAX_METERS + 2 }, (_, i) => [`m${i}`, null])
+    );
+    expect(orgMeterLimitsInputSchema.safeParse({ limits: tooMany }).success).toBe(false);
+    const most = Object.fromEntries(
+      Array.from({ length: MAX_METERS + 1 }, (_, i) => [`m${i}`, null])
+    );
+    expect(orgMeterLimitsInputSchema.safeParse({ limits: most }).success).toBe(true);
+  });
+});
+
+describe('org settings boundaries', () => {
+  it('keeps one of each protected term, whatever its case', () => {
+    const parsed = orgPrivacySettingsSchema.parse({
+      minimumMode: null,
+      protectedTerms: [
+        { type: 'PERSON', value: 'Ada Lovelace' },
+        { type: 'PERSON', value: 'ada lovelace' },
+        { type: 'ORG', value: 'Ada Lovelace' },
+      ],
+    });
+    expect(parsed.protectedTerms).toEqual([
+      { type: 'PERSON', value: 'Ada Lovelace' },
+      { type: 'ORG', value: 'Ada Lovelace' },
+    ]);
+  });
+
+  it('refuses a settings PATCH that names no slice', () => {
+    expect(orgSettingsPatchSchema.safeParse({}).success).toBe(false);
+    expect(orgSettingsPatchSchema.safeParse({ quotas: null }).success).toBe(true);
+  });
+
+  it('reads an entity-type filter as a list, and an empty one as no filter', () => {
+    expect(
+      listOrgAuditLogQuerySchema.parse({ entityType: ' agent, ,workflow ' }).entityType
+    ).toEqual(['agent', 'workflow']);
+    expect(listOrgAuditLogQuerySchema.parse({ entityType: '' }).entityType).toBeUndefined();
   });
 });

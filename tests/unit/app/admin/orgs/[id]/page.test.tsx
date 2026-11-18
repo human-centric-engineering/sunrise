@@ -59,6 +59,7 @@ const PROVIDERS_PATH = '/api/v1/admin/orchestration/providers?page=1&limit=100';
 const USAGE_PATH = `/api/v1/admin/orchestration/costs/orgs?orgId=${ID}`;
 const PRIVACY_PATH = `/api/v1/admin/orgs/${ID}/privacy`;
 const ENTITLEMENTS_PATH = `/api/v1/admin/orgs/${ID}/entitlements`;
+const METERS_PATH = `/api/v1/admin/orgs/${ID}/meters`;
 
 /** An org that has never saved its privacy settings (§127 t-1010). */
 const PRIVACY = {
@@ -80,17 +81,41 @@ const NO_SWITCHES = {
   unregistered: [],
 };
 
+/** The platform's seats alone, with no limit set, as on vanilla Sunrise (§135 t-1035). */
+const SEATS_ONLY = {
+  orgId: ID,
+  mayChange: true,
+  registrationFailed: false,
+  meters: [
+    {
+      key: 'seats',
+      label: 'Seats',
+      description:
+        'Members who are not platform staff, plus open invitations into the organisation.',
+      period: 'standing',
+      core: true,
+      limit: null,
+      used: 2,
+      window: { from: null, to: null },
+      countFailed: false,
+    },
+  ],
+  unregistered: {},
+};
+
 /** What each path answers when a test does not name it. */
 const DEFAULTS: Record<string, unknown> = {
   [PRIVACY_PATH]: PRIVACY,
   [ENTITLEMENTS_PATH]: NO_SWITCHES,
+  [METERS_PATH]: SEATS_ONLY,
 };
 
 /**
  * Answer each path with its body. A path mapped to `null` (or not mapped) is a
  * 404; one mapped to a number is that HTTP status. `metas` gives a path's
- * pagination meta. The privacy settings answer as never saved, and the
- * switches as none registered, unless a test names them.
+ * pagination meta. The privacy settings answer as never saved, the switches
+ * as none registered, and the meters as seats alone with no limit, unless a
+ * test names them.
  */
 function serve(bodies: Record<string, unknown>, metas: Record<string, unknown> = {}) {
   vi.mocked(serverFetch).mockImplementation(async (path: string) => {
@@ -481,6 +506,42 @@ describe('OrgPage', () => {
       ).toBeInTheDocument();
       expect(screen.queryByRole('checkbox', { name: /Reports/ })).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Save switches' })).not.toBeInTheDocument();
+    });
+  });
+  describe('Limits (§135 t-1035)', () => {
+    it("always shows the org's seats against its limit, asked of the API", async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [METERS_PATH]: {
+          ...SEATS_ONLY,
+          meters: [{ ...SEATS_ONLY.meters[0], limit: 2 }],
+        },
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).toContain(METERS_PATH);
+      expect(screen.getByRole('heading', { name: 'Limits' })).toBeInTheDocument();
+      expect(screen.getByTestId('meter-usage-seats')).toHaveTextContent('2 of 2 now');
+      expect(screen.getByLabelText(/Seats/)).toHaveValue('2');
+    });
+
+    it('says the limits could not be loaded rather than offer a form to save over them', async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [METERS_PATH]: 500,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(
+        screen.getByText('The limits could not be loaded. Reload the page to try again.')
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Save limits' })).not.toBeInTheDocument();
     });
   });
 });
