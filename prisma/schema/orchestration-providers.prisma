@@ -17,6 +17,12 @@ model AiCostLog {
   outputCostUsd       Float
   totalCostUsd        Float
   isLocal             Boolean  @default(false)
+  // The call went out on the org's own vendor key (§137), so the vendor bills
+  // the org, not the platform. Counted towards the agent's cap only: the org's
+  // and the global monthly caps leave these rows out. Set by `logCost` from
+  // what the provider manager recorded about the call; false on every row
+  // written before it existed, and whenever which key a call used is unclear.
+  ownKey              Boolean  @default(false)
   operation           String // "chat", "tool_call", "embedding", "evaluation"
   metadata            Json?
   // OTEL trace correlation — set when an active tracer span exists at the

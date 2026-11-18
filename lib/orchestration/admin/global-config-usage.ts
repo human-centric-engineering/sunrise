@@ -484,7 +484,8 @@ export function agentProfileUsage(
 
 /**
  * Total `AiCostLog` spend since `since`, in every org — the figure the global
- * monthly budget cap is checked against (§110 t-788).
+ * monthly budget cap is checked against (§110 t-788). Rows for calls on an
+ * org's own key are left out: the vendor bills the org for them (§137).
  *
  * Read in the acting org's scope, the `org_isolation` policy would hide every
  * other org's rows and turn the install-wide ceiling into a per-org one.
@@ -492,7 +493,7 @@ export function agentProfileUsage(
 export function globalSpendSince(since: Date): Promise<number> {
   return acrossOrgs(async () => {
     const aggregate = await prisma.aiCostLog.aggregate({
-      where: { createdAt: { gte: since } },
+      where: { createdAt: { gte: since }, ownKey: false },
       _sum: { totalCostUsd: true },
     });
     return aggregate._sum.totalCostUsd ?? 0;

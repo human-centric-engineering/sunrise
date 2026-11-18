@@ -55,6 +55,8 @@ import {
   getProviderWithFallbacks,
   getProviderIfBreakerClosed,
   isLocalProvider,
+  providerUsesOrgOwnKey,
+  usesOrgOwnKey,
   type AttachmentCapability,
 } from '@/lib/orchestration/llm/provider-manager';
 import { fallbackCallContext } from '@/lib/orchestration/llm/provider-eligibility';
@@ -737,9 +739,19 @@ export class StreamingChatHandler {
       // provider gate refuses each one it would make — a fallback, a failover
       // mid-stream, a tool, the summarizer. (The org and global caps are
       // enforced at the gate in any case; the agent's cap is known only here.)
-      if (!budget.withinBudget && (await isLocalProvider(resolvedBinding.providerSlug))) {
+      //
+      // Neither the org's nor the global cap holds a turn on the org's own key
+      // (§137): the vendor bills the org. It goes ahead unless its agent's cap
+      // is reached, with nothing held, and any call it makes on the platform's
+      // keys meets those two caps at the gate.
+      const refused =
+        !budget.withinBudget &&
+        (budget.agentCapExceeded === true ||
+          !(await providerUsesOrgOwnKey(resolvedBinding.providerSlug)));
+      if (refused && (await isLocalProvider(resolvedBinding.providerSlug))) {
         hold.cap = budgetRefusal(budget).cap;
-      } else if (!budget.withinBudget) {
+        hold.agentCapReached = budget.agentCapExceeded === true;
+      } else if (refused) {
         const refusal = budgetRefusal(budget);
         yield errorEvent(refusal.code, refusal.message);
         notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
@@ -2072,7 +2084,9 @@ export class StreamingChatHandler {
                     try {
                       const acquired = await getProviderIfBreakerClosed(candidate, fallbackOrigin);
                       const refusal = acquired
-                        ? await spendCapRefusal(candidate, acquired.provider.isLocal === true)
+                        ? await spendCapRefusal(candidate, acquired.provider.isLocal === true, {
+                            ownKey: usesOrgOwnKey(acquired.provider),
+                          })
                         : null;
                       if (refusal) {
                         capRefusal = refusal;
@@ -2701,11 +2715,17 @@ export class StreamingChatHandler {
         // prevent TOCTOU overruns when concurrent requests hit the same agent).
         const midBudget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
         budgetNotice = { agent, budget: midBudget };
-        if (!midBudget.withinBudget) {
+        // As before the turn, a turn on the org's own key goes on unless its
+        // agent's cap is reached.
+        if (
+          !midBudget.withinBudget &&
+          (midBudget.agentCapExceeded || !usesOrgOwnKey(currentProvider))
+        ) {
           const refusal = budgetRefusal(midBudget);
           // Held, as before the turn, while the turn is on a local provider.
           if (currentProvider.isLocal) {
             hold.cap = refusal.cap;
+            hold.agentCapReached = midBudget.agentCapExceeded === true;
           } else {
             notifyBudgetExceeded({
               agent,

@@ -99,6 +99,9 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => {
     isLocalProvider: vi.fn(async () => false),
     // Nothing is ticked trusted unless a test says so (§130).
     isTrustedProvider: vi.fn(async () => false),
+    // The platform's key unless a test says otherwise (§137).
+    providerUsesOrgOwnKey: vi.fn(async () => false),
+    usesOrgOwnKey: vi.fn(() => false),
     // Mid-stream failover fetches through this (§120 t-744). By default it
     // delegates to `getProvider` with a closed breaker keyed on the slug, so
     // the failover tests keep asserting on `getProvider`.
@@ -262,6 +265,8 @@ const {
   assertModelSupportsAttachments,
   getProviderIfBreakerClosed,
   isLocalProvider,
+  providerUsesOrgOwnKey,
+  usesOrgOwnKey,
 } = await import('@/lib/orchestration/llm/provider-manager');
 const { calculateCost, checkBudget, logCost } =
   await import('@/lib/orchestration/llm/cost-tracker');
@@ -616,6 +621,93 @@ describe('StreamingChatHandler', () => {
     expect(isLocalProvider).toHaveBeenCalledWith('anthropic');
     expect(dispatchWebhookEvent).not.toHaveBeenCalledWith('budget_exceeded', expect.anything());
   });
+
+  // 2e — a turn on the org's own key (§137 t-1046) ----------------------------
+  it("goes ahead on the org's own key with the org's and the global cap reached", async () => {
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: false,
+      spent: 3,
+      limit: 10,
+      remaining: 7,
+      orgCapExceeded: true,
+      globalCapExceeded: true,
+      org: { limit: 40, spent: 41 },
+    });
+    vi.mocked(providerUsesOrgOwnKey).mockResolvedValueOnce(true);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: mockProvider([
+        [
+          { type: 'text', content: 'Hello' },
+          { type: 'done', usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ]),
+      usedSlug: 'anthropic',
+    });
+
+    const events = await collect(streamChat(baseRequest));
+
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toBeUndefined();
+    expect(events).toContainEqual({ type: 'content', delta: 'Hello' });
+    expect(providerUsesOrgOwnKey).toHaveBeenCalledWith('anthropic');
+    expect(dispatchWebhookEvent).not.toHaveBeenCalledWith('budget_exceeded', expect.anything());
+  });
+
+  it("is refused on the org's own key once its agent's cap is reached", async () => {
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: false,
+      spent: 11,
+      limit: 10,
+      remaining: -1,
+      agentCapExceeded: true,
+    });
+    vi.mocked(providerUsesOrgOwnKey).mockResolvedValueOnce(true);
+
+    const events = await collect(streamChat(baseRequest));
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'error', code: 'budget_exceeded' });
+    expect(getProviderWithFallbacks).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['with its agent’s cap also reached, refuses', { agentCapExceeded: true, limit: 10 }, true],
+    ['for the global cap alone, lets through', { limit: null }, false],
+  ])(
+    "a local turn held %s a paid call on the org's own key",
+    async (_label, agentBudget, refused) => {
+      (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+        withinBudget: false,
+        spent: 11,
+        remaining: null,
+        globalCapExceeded: true,
+        ...agentBudget,
+      });
+      (isLocalProvider as ReturnType<typeof vi.fn>).mockResolvedValueOnce(true);
+      // The paid fallback the turn reaches is on the org's own key: the gate
+      // asks only whether the turn's hold names its agent's cap.
+      const provider = mockProvider([
+        [
+          { type: 'text', content: 'Hello' },
+          { type: 'done', usage: { inputTokens: 1, outputTokens: 1 } },
+        ],
+      ]);
+      const script = provider.chatStream.getMockImplementation()!;
+      provider.chatStream.mockImplementation(async function* () {
+        await assertWithinSpendCaps('anthropic', false, { ownKey: true });
+        yield* script();
+      });
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+
+      const events = await collect(streamChat(baseRequest));
+      const error = events.find((e) => (e as { type: string }).type === 'error');
+
+      if (refused) expect(error).toMatchObject({ code: 'budget_exceeded' });
+      else expect(events).toContainEqual({ type: 'content', delta: 'Hello' });
+    }
+  );
 
   /** A paid provider whose stream runs the real spend gate first, as the provider manager's does. */
   function gatedPaidProvider(slug: string) {
@@ -3741,6 +3833,59 @@ describe('mid-loop budget re-check', () => {
     expect(errorEvt).toMatchObject({ type: 'error', code });
     expect(budgetCallCount).toBe(2);
   });
+
+  it.each([
+    ['goes on', { orgCapExceeded: true, globalCapExceeded: true }, false],
+    ['stops', { orgCapExceeded: true, agentCapExceeded: true, limit: 1 }, true],
+  ])(
+    "%s on the org's own key when caps are reached mid-loop, as its agent's cap says (§137)",
+    async (_label, flags, stops) => {
+      let budgetCallCount = 0;
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      (checkBudget as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        budgetCallCount++;
+        return Promise.resolve(
+          budgetCallCount === 1
+            ? { withinBudget: true, spent: 0, limit: null, remaining: null }
+            : { withinBudget: false, spent: 1, limit: null, remaining: null, ...flags }
+        );
+      });
+      const provider = mockProvider([
+        [
+          { type: 'tool_call', toolCall: { id: 'tc1', name: 'search', arguments: {} } },
+          { type: 'done', usage: { inputTokens: 100, outputTokens: 50 } },
+        ],
+        [
+          { type: 'text', content: 'Answer' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+      vi.mocked(usesOrgOwnKey).mockImplementation((p) => p === provider);
+      (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        data: 'result',
+      });
+
+      try {
+        const events = await collect(streamChat(baseRequest));
+        const error = events.find((e) => (e as { type: string }).type === 'error');
+
+        if (stops) {
+          expect(error).toMatchObject({ code: 'org_budget_exceeded' });
+          expect(provider.chatStream).toHaveBeenCalledTimes(1);
+        } else {
+          expect(error).toBeUndefined();
+          expect(events).toContainEqual({ type: 'content', delta: 'Answer' });
+        }
+      } finally {
+        vi.mocked(usesOrgOwnKey).mockImplementation(() => false);
+      }
+    }
+  );
 
   it('keeps going on a local provider when a cap is reached mid-loop', async () => {
     // A reached cap stops paid calls; the local provider serving this turn

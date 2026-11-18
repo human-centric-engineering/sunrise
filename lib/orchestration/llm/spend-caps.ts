@@ -21,6 +21,13 @@
  * reached cap is no reason to stop it, and a cap of `0` means "no paid calls"
  * rather than "no calls".
  *
+ * **Neither cap holds a call on the org's own key** (§137, owner ruling
+ * 2026-11-18). The vendor bills the org for it, not the platform, so it is
+ * not the platform's spend to cap: the gate lets it through with either cap
+ * reached, and both totals leave its cost rows (`AiCostLog.ownKey`) out. The
+ * agent's own cap still counts it, and a chat turn's hold for that cap still
+ * refuses it.
+ *
  * **The month-to-date totals are cached for {@link SPEND_TOTAL_TTL_MS}.**
  * Without it every vendor call would sum a month of cost rows, and the global
  * total sums every org's, so the cost of a cap check would grow with the
@@ -157,8 +164,9 @@ async function totalOf(entry: SpendEntry): Promise<number> {
 }
 
 /**
- * Every org's spend since the start of the current UTC month, detached
- * `NULL`-org rows included. Cached; see the module docblock.
+ * Every org's spend since the start of the current UTC month on the
+ * platform's keys, detached `NULL`-org rows included and own-key rows left
+ * out. Cached; see the module docblock.
  *
  * Read across orgs at `multi` (`globalSpendSince`), because the caller is
  * usually inside one org's scope, where the `org_isolation` policy would hide
@@ -180,8 +188,9 @@ export function getMonthToDateGlobalSpend(): Promise<number> {
 }
 
 /**
- * One org's spend since the start of the current UTC month. Cached; see the
- * module docblock.
+ * One org's spend since the start of the current UTC month on the platform's
+ * keys: its calls on its own key are left out. Cached; see the module
+ * docblock.
  *
  * Filtered on `orgId` explicitly rather than left to the `org_isolation`
  * policy, so it is the org's total whatever scope the caller is in, and at
@@ -197,7 +206,8 @@ export function getMonthToDateOrgSpend(orgId: string): Promise<number> {
         monthStart,
         async () => {
           const aggregate = await prisma.aiCostLog.aggregate({
-            where: { orgId, createdAt: { gte: monthStart } },
+            // Own-key rows are the org's vendor bill, not the platform's spend.
+            where: { orgId, createdAt: { gte: monthStart }, ownKey: false },
             _sum: { totalCostUsd: true },
           });
           return aggregate._sum.totalCostUsd ?? 0;
@@ -213,8 +223,9 @@ export function getMonthToDateOrgSpend(orgId: string): Promise<number> {
 
 /**
  * Add a cost row this process just wrote to the cached totals, so the caps
- * see it before the entries expire. Called by `logCost`. A `NULL`-org row
- * counts towards the global total only.
+ * see it before the entries expire. Called by `logCost` for every row but an
+ * own-key one, which neither total counts. A `NULL`-org row counts towards the
+ * global total only.
  */
 export function noteSpend(orgId: string | null, costUsd: number, at: Date = new Date()): void {
   if (!(costUsd > 0)) return;
@@ -238,7 +249,7 @@ export function forgetSpendCaps(): void {
 export interface GlobalCapState {
   /** `AiOrchestrationSettings.globalMonthlyBudgetUsd`; `null` when no cap is set. */
   cap: number | null;
-  /** Month-to-date spend in every org; `0` when no cap is set, since nothing reads it. */
+  /** Month-to-date spend in every org on the platform's keys; `0` when no cap is set, since nothing reads it. */
   spent: number;
   exceeded: boolean;
 }
@@ -259,7 +270,7 @@ export async function getGlobalCapState(): Promise<GlobalCapState> {
 export interface OrgCapState {
   /** `Org.settings.quotas.monthlyBudgetUsd`. */
   limit: number;
-  /** The org's month-to-date spend. */
+  /** The org's month-to-date spend on the platform's keys: its own-key calls are left out. */
   spent: number;
   exceeded: boolean;
 }
@@ -320,6 +331,13 @@ export type SpendCap = keyof typeof SPEND_CAP_CODES;
  */
 export interface PaidCallHold {
   cap: SpendCap | null;
+  /**
+   * The agent's own cap is reached, whichever cap `cap` names. Calls on the
+   * org's own key are held by this alone: the org's and the global caps do not
+   * hold them, so a turn held for the global cap with the agent's also reached
+   * must still refuse them.
+   */
+  agentCapReached?: boolean;
 }
 
 /**
@@ -398,13 +416,26 @@ const OPERATOR_MESSAGES: Record<SpendCap, string> = {
  * one nobody in the org can lift. Then the org's, then a hold the chat turn has
  * set for its agent's cap. A cap that cannot be read is skipped
  * ({@link globalCapStateOrSkip}).
+ *
+ * `ownKey`: the call goes out on the org's own key (`usesOrgOwnKey`). Only the
+ * turn's hold for its agent's cap refuses it, and no cap is read.
  */
 export async function spendCapRefusal(
   providerSlug: string,
-  isLocal: boolean
+  isLocal: boolean,
+  options: { ownKey?: boolean } = {}
 ): Promise<SpendCapExceededError | null> {
   if (isLocal) return null;
   const orgId = orgIdForCall();
+  if (options.ownKey) {
+    const hold = paidCallHold.getStore();
+    if (!hold?.agentCapReached && hold?.cap !== 'agent') return null;
+    logger.warn("Refusing a call on the org's own key: the agent's monthly budget is reached", {
+      providerSlug,
+      orgId,
+    });
+    return new SpendCapExceededError('agent', providerSlug);
+  }
   const [global, org] = await Promise.all([
     globalCapStateOrSkip({ providerSlug }),
     orgCapStateOrSkip(orgId, { providerSlug }),
@@ -433,7 +464,11 @@ export async function spendCapRefusal(
  * The call-time spend gate: throws the {@link spendCapRefusal} for a paid
  * call, if there is one. Run by the provider manager before every vendor call.
  */
-export async function assertWithinSpendCaps(providerSlug: string, isLocal: boolean): Promise<void> {
-  const refusal = await spendCapRefusal(providerSlug, isLocal);
+export async function assertWithinSpendCaps(
+  providerSlug: string,
+  isLocal: boolean,
+  options: { ownKey?: boolean } = {}
+): Promise<void> {
+  const refusal = await spendCapRefusal(providerSlug, isLocal, options);
   if (refusal) throw refusal;
 }

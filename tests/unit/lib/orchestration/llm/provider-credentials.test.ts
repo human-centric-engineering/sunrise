@@ -72,16 +72,18 @@ describe('with nothing registered', () => {
     await expect(resolveProviderCredential(row())).resolves.toEqual({
       apiKey: 'from-env',
       identity: '',
+      ownKey: false,
     });
   });
 
   it('answers no key for an unset or absent env var', async () => {
     await expect(
       resolveProviderCredential(row({ apiKeyEnvVar: 'CRED_TEST_UNSET' }))
-    ).resolves.toEqual({ apiKey: undefined, identity: '' });
+    ).resolves.toEqual({ apiKey: undefined, identity: '', ownKey: false });
     await expect(resolveProviderCredential(row({ apiKeyEnvVar: null }))).resolves.toEqual({
       apiKey: undefined,
       identity: '',
+      ownKey: false,
     });
   });
 
@@ -128,8 +130,24 @@ describe('a registered resolver', () => {
 
     const credential = await runAsOrg(ORG_A, () => resolveProviderCredential(row()));
 
-    expect(credential).toEqual({ apiKey: `key-${ORG_A}-anthropic`, identity: `org:${ORG_A}` });
+    expect(credential).toEqual({
+      apiKey: `key-${ORG_A}-anthropic`,
+      identity: `org:${ORG_A}`,
+      ownKey: false,
+    });
     expect(seen).toEqual([{ orgId: ORG_A }]);
+  });
+
+  it("never calls a resolver's key the org's own, whatever it returns (§137 t-1046)", async () => {
+    // Only core's store says whose vendor account a key bills; an own-key
+    // credential skips the org's and the global caps, so a resolver claiming
+    // one would let platform spend past them.
+    registerProviderCredentialResolver(() => ({ apiKey: 'k', identity: 'x', ownKey: true }));
+    await expect(resolveProviderCredential(row())).resolves.toEqual({
+      apiKey: 'k',
+      identity: 'x',
+      ownKey: false,
+    });
   });
 
   it('is told the install org at single when no scope was entered, and no org at multi', async () => {
@@ -175,6 +193,7 @@ describe('a registered resolver', () => {
     await expect(resolveProviderCredential(row())).resolves.toEqual({
       apiKey: undefined,
       identity: 'x',
+      ownKey: false,
     });
     await expect(hasProviderCredential(row())).resolves.toBe(false);
   });
