@@ -12,7 +12,12 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockEnv = vi.hoisted(() => ({}));
+interface KeyringEnv {
+  SEALED_SECRET_KEYS?: string;
+  SEALED_SECRET_ACTIVE_KEY?: string;
+  SEALED_SECRET_LEGACY_KEY?: string;
+}
+const mockEnv = vi.hoisted((): KeyringEnv => ({}));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 import {

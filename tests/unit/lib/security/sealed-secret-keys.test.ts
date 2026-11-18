@@ -121,6 +121,20 @@ describe('readSealedSecretKeyring', () => {
     expectNoSecretIn(read, SECRET_A, 'x'.repeat(31));
   });
 
+  it('reports a short active key once, not also as missing from the keyring', () => {
+    const read = readSealedSecretKeyring({
+      SEALED_SECRET_KEYS: `one:${'x'.repeat(31)}`,
+      SEALED_SECRET_ACTIVE_KEY: 'one',
+      SEALED_SECRET_LEGACY_KEY: 'one',
+    });
+    expect(problemsOf(read)).toEqual([
+      expect.objectContaining({
+        variable: 'SEALED_SECRET_KEYS',
+        message: expect.stringMatching(/shorter than 32/),
+      }),
+    ]);
+  });
+
   it('refuses a key id named twice', () => {
     const read = readSealedSecretKeyring({
       SEALED_SECRET_KEYS: `one:${SECRET_A},one:${SECRET_B}`,

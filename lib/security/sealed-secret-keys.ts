@@ -88,6 +88,10 @@ export function readSealedSecretKeyring(
 
   const problems: SealedSecretKeyringProblem[] = [];
   const keys = new Map<string, string>();
+  // Ids whose entry was refused for its secret. The active and legacy checks
+  // skip these: "not a key in SEALED_SECRET_KEYS" would contradict the problem
+  // already reported for that entry.
+  const refusedIds = new Set<string>();
 
   if (rawKeys === undefined) {
     problems.push({
@@ -118,6 +122,7 @@ export function readSealedSecretKeyring(
         return;
       }
       if (secret.length < SEALED_SECRET_MIN_LENGTH) {
+        refusedIds.add(id);
         problems.push({
           variable: 'SEALED_SECRET_KEYS',
           message: `SEALED_SECRET_KEYS key "${id}" is shorter than ${SEALED_SECRET_MIN_LENGTH} characters. Generate one with: openssl rand -base64 32`,
@@ -143,14 +148,14 @@ export function readSealedSecretKeyring(
           'SEALED_SECRET_ACTIVE_KEY is not set. Set it to the id of the key new values are sealed under.',
       });
     }
-  } else if (!keys.has(active)) {
+  } else if (!keys.has(active) && !refusedIds.has(active)) {
     problems.push({
       variable: 'SEALED_SECRET_ACTIVE_KEY',
       message: describeMissingId('SEALED_SECRET_ACTIVE_KEY', active),
     });
   }
 
-  if (legacy !== undefined && !keys.has(legacy)) {
+  if (legacy !== undefined && !keys.has(legacy) && !refusedIds.has(legacy)) {
     problems.push({
       variable: 'SEALED_SECRET_LEGACY_KEY',
       message: describeMissingId('SEALED_SECRET_LEGACY_KEY', legacy),

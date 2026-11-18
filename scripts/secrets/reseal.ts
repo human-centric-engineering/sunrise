@@ -19,12 +19,27 @@
  * @see .context/security/sealed-secrets.md
  */
 
-import { logger } from '@/lib/logging';
-import { resealSealedStores } from '@/lib/security/sealed-stores';
+import type { SealedStoresResealReport } from '@/lib/security/sealed-stores';
 
 async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry-run');
-  let report;
+
+  // Loaded here rather than imported at the top, so that an environment
+  // lib/env.ts refuses (a malformed keyring) exits 2 like every other failure
+  // to start. lib/env.ts has already printed what is wrong by then, naming the
+  // variables and never a secret.
+  let modules;
+  try {
+    modules = {
+      ...(await import('@/lib/logging')),
+      ...(await import('@/lib/security/sealed-stores')),
+    };
+  } catch {
+    process.exit(2);
+  }
+  const { logger, resealSealedStores } = modules;
+
+  let report: SealedStoresResealReport;
   try {
     report = await resealSealedStores({ dryRun });
   } catch (err) {
@@ -44,12 +59,18 @@ async function main(): Promise<void> {
       ...(store.error ? { error: store.error } : {}),
     });
   }
-  logger.info(
-    report.ok
-      ? `secrets:reseal ${dryRun ? 'dry run: every value can move' : 'done: every value is'} on key "${report.activeKeyId}"`
-      : `secrets:reseal: some values are NOT on key "${report.activeKeyId}". Do not remove an old key until a run is clean.`,
-    { stores: report.stores.length, dryRun }
-  );
+  const key = `"${report.activeKeyId}"`;
+  let summary: string;
+  if (!report.ok) {
+    summary = `some values are NOT on key ${key}. Do not remove an old key until a run is clean.`;
+  } else if (report.stores.length === 0) {
+    summary = `no sealed stores are registered, so there was nothing to move.`;
+  } else {
+    summary = dryRun
+      ? `dry run: every value can move onto key ${key}.`
+      : `done: every value is on key ${key}.`;
+  }
+  logger.info(`secrets:reseal ${summary}`, { stores: report.stores.length, dryRun });
   process.exit(report.ok ? 0 : 1);
 }
 
