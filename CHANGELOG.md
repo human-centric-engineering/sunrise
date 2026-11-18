@@ -22,9 +22,9 @@ release process.
   t-1044).** A new tenant-owned model, `AiOrgProviderKey`, holds one sealed key
   per org per provider row (sealed with `sealSecret()` for the purpose
   `org-provider-key:<orgId>:<providerConfigId>`), with a version that rises
-  each time the key is replaced, a four-character hint, and who saved it and
-  when. It is isolated by `org_isolation`, erased with its org and with its
-  provider row, listed in the org export without the key and in the subject
+  each time the key is replaced, a hint (its last four characters, for a key
+  of 16 or more), and who saved it and when. It is isolated by
+  `org_isolation`, erased with its org, listed in the org export without the key and in the subject
   export as an attribution, and registered with `npm run secrets:reseal` as
   core's first sealed store. A new orchestration setting,
   `orgProviderKeysEnabled` (off by default; the settings API refuses turning it
@@ -51,8 +51,7 @@ release process.
   org's credential rather than assume it holds none, local rows included. So a
   unit test that mocks `@/lib/db/client` and fetches a provider for an org at
   `multi` needs `aiOrgProviderKey: { findUnique: async () => null }` in its
-  mock. The migration adds a table and
-  a column, and enables RLS on the table if your install has already run
+  mock. The migration adds a table and a column, and enables RLS on the table if your install has already run
   `db:tenancy:enable`.
 
 - **A page, route or menu item can require an entitlement switch (§135,
