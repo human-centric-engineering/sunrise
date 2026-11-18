@@ -41,7 +41,7 @@ release process.
   removal clears it in the writing process. A permanent delete of a provider
   row is refused (409, `details.orgKeyCount`) while orgs hold keys for it.
   Config Health gains a critical check for the switch on with no master key.
-  Saving keys through the product arrives with t-1045. See
+  An org's admins save them on the page below (t-1045). See
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#organisations-own-keys).
   _Fork impact:_ if you registered a credential resolver, it is no longer asked
   for an org that has saved its own key while that key is in use. At `single`
@@ -53,6 +53,28 @@ release process.
   `multi` needs `aiOrgProviderKey: { findUnique: async () => null }` in its
   mock. The migration adds a table and a column, and enables RLS on the table if your install has already run
   `db:tenancy:enable`.
+
+- **An org's admins save, test, replace and remove its AI keys themselves
+  (§137, t-1045).** A new org-tier page, **AI keys** (`/admin/provider-keys`,
+  shown at `multi`), over `GET /api/v1/orgs/[id]/provider-keys`,
+  `PUT` / `DELETE …/provider-keys/[providerId]` and `POST …/[providerId]/test`.
+  A key is tested with one cheap vendor call before it is stored, and one that
+  fails is not stored (422 `KEY_TEST_FAILED`); save is refused while the switch
+  is off and for a provider the org is not approved for. Who may is the
+  authorization policy's decision about the new resource kind
+  `org.providerKeys` (by default the org's OWNER and ADMIN acting in it), and
+  on top of any policy the caller must be acting in the org, a support session
+  cannot save or replace a key, and the install org is refused. Every action is
+  audited with the hint, never the key. Save and test share a new per-flow
+  limiter, `providerKeyTestLimiter` (10 a minute per org,
+  `RATE_LIMIT_PROVIDER_KEY_TEST`). The provider manager gains
+  `testProviderKey(config, apiKey)`, which tests a key on a client it never
+  caches. See
+  [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#the-orgs-page-and-api-137-t-1045).
+  _Fork impact:_ `provider-keys` joins `CORE_ADMIN_SECTIONS`, so a fork page
+  registered under `/admin/provider-keys` is now refused at init. A fork policy
+  that should let another org role manage keys answers `org.providerKeys` in
+  `canRead`'s `unattributed` arm.
 
 - **A page, route or menu item can require an entitlement switch (§135,
   t-1034).** A `requires` option beside `tier` in the three places a surface

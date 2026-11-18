@@ -786,7 +786,7 @@ other org is unaffected.
 | **The switch**   | `AiOrchestrationSettings.orgProviderKeysEnabled`, off by default, set on Settings → "Organisations' own AI keys" (shown at `multi` only) or `PATCH /settings`. Turning it on is refused while no sealed-secret master key is configured. Platform admins only. |
 | **The keys**     | `AiOrgProviderKey`: one per org per provider row, tenant-owned (isolated by `org_isolation`), sealed with `sealSecret()` for `org-provider-key:<orgId>:<providerConfigId>`.                                                                                    |
 | **The lookup**   | `resolveOrgProviderKey()` in `lib/orchestration/llm/org-provider-keys.ts`, asked by `resolveProviderCredential()` ahead of the app's resolver, for an org in scope at `multi`. Nothing is read at `single`.                                                    |
-| **Saving a key** | `saveOrgProviderKey()` / `removeOrgProviderKey()`, for the org in scope. They check neither the switch nor the approval: both are checked when the key is used. The admin page and API that call them are t-1045.                                              |
+| **Saving a key** | `saveOrgProviderKey()` / `removeOrgProviderKey()`, for the org in scope. They check neither the switch nor the approval: both are checked when the key is used. The org's page and API (below) check both before a save.                                       |
 | **Master key**   | `.context/security/sealed-secrets.md`. Orgs' keys are core's sealed store `org-provider-keys`, so `npm run secrets:reseal` moves them onto a new master key.                                                                                                   |
 
 **An org with a key is never moved to another key.** Once an org has saved a
@@ -826,6 +826,51 @@ does not go through the module must call `forgetOrgProviderKey()`.
 **Never select `sealedKey`** outside the module. Readers that are not the call
 path use `ORG_PROVIDER_KEY_SUMMARY_SELECT` (or `omit: { sealedKey: true }`), as
 the org export does. The key is in no backup, no log line and no response.
+
+### The org's page and API (§137 t-1045)
+
+An org's OWNER or ADMIN manages its keys on **AI keys** (`/admin/provider-keys`,
+org-tier, shown at `multi` only) over `/api/v1/orgs/[id]/provider-keys`:
+
+| Verb                                           | What it does                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /provider-keys`                           | Every active provider the org is approved for that takes a key (not a local one), and every provider it holds a key for. Each key: `hint` (last four characters, `''` under 16), `version`, `savedAt`, `savedBy`, and `state`: `in_use`, `switched_off`, `not_approved` or `will_not_open`. Plus `switchedOn` and `saveBlocked`.      |
+| `PUT /provider-keys/[providerId]` `{ apiKey }` | Save, or replace the saved key. Tests the key first with the row's own connection check (`testProviderKey()`: a one-token message for Anthropic, the model list for the others), on a client built for that call and never cached. A key that fails is not stored: 422 `KEY_TEST_FAILED`. 201 for a first key, 200 for a replacement. |
+| `POST /provider-keys/[providerId]/test`        | Re-test the saved key: `{ ok, reason? }`, with `reason` `test_failed` or `will_not_open`. Runs while the switch is off.                                                                                                                                                                                                               |
+| `DELETE /provider-keys/[providerId]`           | Remove the saved key. The org's calls go back to the install's key, if it is approved for the provider. 404 with no key.                                                                                                                                                                                                              |
+
+**Who.** The authorization policy decides, about the resource
+`{ kind: 'org.providerKeys', id, orgId }`: the default policy admits the org's
+OWNER and ADMIN while they act in it. A fork that wants another role to manage
+keys answers that kind in its own policy (`canRead`'s `unattributed` arm), and
+the routes follow. Three rules sit on top of any policy: the caller must be
+**acting in the org** (the default policy admits a platform admin to every org;
+here that is their own org only, and they reach a customer's keys through a
+support session); a **browser session**; and **not the install org**, which
+runs on the install's keys (409 `install_org`). A **support session** can read,
+test and remove, but cannot save or replace a key (403): the vendor's staff do
+not handle a customer's secret. A READ_ONLY grant refuses test and remove, as
+it does every write.
+
+**Save is refused** while the switch is off (409 `switched_off`: the key would
+refuse every one of the org's calls), for a provider the org is not approved
+for (409 `not_approved`, before any vendor call), for an inactive or local
+provider (404), and with no master key (409 `master_key_missing`). Surrounding
+whitespace from a paste is trimmed; a line break inside the key is refused.
+
+**Rate limit.** Save and test share `providerKeyTestLimiter`, 10 a minute per
+org (`RATE_LIMIT_PROVIDER_KEY_TEST`): each one is a vendor call on the key.
+
+**Audit.** Every save (`org_provider_key.save`), replacement
+(`org_provider_key.rotate`), test (`org_provider_key.test`, also for a key
+that failed during a save, with `stored: false`) and removal
+(`org_provider_key.remove`) is a `logAdminAction` row with the provider, the
+hint and the result, never the key.
+
+**The key never leaves the server.** The vendor's error from a failed test can
+repeat part of the key, so the browser is told only that the test failed, and
+the log line has the key cut out. A database error is logged by its name and
+code only, since its message can carry the sealed key.
 
 ## Per-org approved providers (core, at `multi`)
 
