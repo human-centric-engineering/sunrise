@@ -755,9 +755,12 @@ export function initAppProviderCredentials(): void {
 }
 ```
 
-**Sunrise stores no tenant's vendor key** (multi-tenancy design Q5). The
-resolver is asked when a provider is fetched; the key builds a client held in
-memory for the instance cache's TTL and is written nowhere.
+The resolver is asked when a provider is fetched; the key builds a client held
+in memory for the instance cache's TTL. Sunrise writes what a resolver returns
+nowhere. It stores a tenant's own key only when the install switches on
+[organisations' own keys](#organisations-own-keys), and that lookup comes
+**before** your resolver: at `multi`, an org that has saved a key for the row
+never reaches it while the key is in use.
 
 | Property                  | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -769,6 +772,60 @@ memory for the instance cache's TTL and is written nowhere.
 | **On a resolver throw**   | The provider is unavailable for that call (`ProviderError`, `credential_unavailable`). **No fallback to the env var**: a fork that moved keys out of the environment did not mean the environment's key, possibly the platform's own, to be used for its orgs. `filterProvidersWithCredential` leaves such a row out. `classifyProvidersByCredential` returns it separately, with its error (t-819), so a caller that records its answer — a platform agent's binding pick — can tell "no key" from "could not ask". The clean-up pick waits only when such a row would have won.                       |
 | **On an init throw**      | Rolled back and logged by the shared gate (`fork-init-seams.md`), then every credential is refused until it is fixed, for the same reason.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **Registrar entries**     | `registerProvider` / `registerProviderInstance` carry their own key and bypass the resolver, on the shared identity.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+
+## Organisations' own keys
+
+At `TENANCY_MODE=multi` an org can send its calls on its own vendor account
+(§137 t-1044): it saves its own key for a provider row, and while the
+install's switch is on, its calls on that row go out with that key. The vendor
+bills the org, and the org's own agreement with the vendor applies. Every
+other org is unaffected.
+
+| Part             | Where                                                                                                                                                                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **The switch**   | `AiOrchestrationSettings.orgProviderKeysEnabled`, off by default, set on Settings → "Organisations' own AI keys" (shown at `multi` only) or `PATCH /settings`. Turning it on is refused while no sealed-secret master key is configured. Platform admins only. |
+| **The keys**     | `AiOrgProviderKey`: one per org per provider row, tenant-owned (isolated by `org_isolation`), sealed with `sealSecret()` for `org-provider-key:<orgId>:<providerConfigId>`.                                                                                    |
+| **The lookup**   | `resolveOrgProviderKey()` in `lib/orchestration/llm/org-provider-keys.ts`, asked by `resolveProviderCredential()` ahead of the app's resolver, for an org in scope at `multi`. Nothing is read at `single`.                                                    |
+| **Saving a key** | `saveOrgProviderKey()` / `removeOrgProviderKey()`, for the org in scope. The admin page and API that call them are t-1045.                                                                                                                                     |
+| **Master key**   | `.context/security/sealed-secrets.md`. Orgs' keys are core's sealed store `org-provider-keys`, so `npm run secrets:reseal` moves them onto a new master key.                                                                                                   |
+
+**An org with a key is never moved to another key.** Once an org has saved a
+key for a row, that row's calls for it go out on that key or are refused with
+`credential_unavailable`. They are never sent on the install's key or handed
+to your resolver:
+
+| The org's key…                                                     | Answer                                                           |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| is usable                                                          | the key, identity `org-key:<orgId>:<keyRowId>:<version>`         |
+| exists, and the switch is off                                      | refused: `switched_off`                                          |
+| is for a provider the org isn't approved for                       | refused: `not_approved`. Saving a key never approves a provider. |
+| will not open (master key gone, or the envelope is not this org's) | refused: `will_not_open`                                         |
+| could not be looked up                                             | refused: `lookup_failed`                                         |
+| does not exist                                                     | resolves as before: your resolver, or the env var                |
+
+Each refusal is logged once per call with its reason and a fix, never the key.
+Removing its key is how an org returns to the install's key. Turning the
+switch off with keys saved refuses those orgs until it is back on; the
+settings page says how many orgs that is before it is saved. Config Health
+flags the switch on with no master key configured.
+
+**The identity changes whenever the key does.** `version` rises on every save
+over an existing key, and a key removed and saved again gets a new row id, so
+the client cache, the breaker and the in-flight counter never serve a
+replaced key, even inside the client cache's five minutes.
+
+**Freshness.** The lookup is cached for 60 seconds per org and row
+(`ORG_PROVIDER_KEY_TTL_MS`), because it runs on every fetch and every
+reachability check. A save or removal through the module clears this
+process's entry, so the next fetch in the writing process uses the new key or
+the install's. In **another** process a removed or replaced key may still be
+used for up to 60 seconds, and a new one not yet used; the switch itself
+reaches another process within the settings cache's 30 seconds. A write that
+does not go through the module must call `forgetOrgProviderKey()`.
+
+**Never select `sealedKey`** outside the module. Readers that are not the call
+path use `ORG_PROVIDER_KEY_SUMMARY_SELECT` (or `omit: { sealedKey: true }`), as
+the org export does. The key is in no backup, no log line and no response.
 
 ## Per-org approved providers (core, at `multi`)
 

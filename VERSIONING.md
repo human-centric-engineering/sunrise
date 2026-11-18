@@ -192,6 +192,7 @@ covered by the version contract.
   - an org's caps in `Org.settings.quotas` (`monthlyBudgetUsd`, `requestsPerMinute`): `readOrgQuotas()` / `loadOrgQuotas()` / `writeOrgQuotas()` and `ORG_QUOTAS_KEY` from `lib/tenancy/org-settings.ts`, with `orgQuotasSchema` / `OrgQuotas` from `lib/validations/tenancy.ts` — what a fork's billing or plan code calls to set an org's monthly budget and request cap
   - the per-org request counter's cache clear, `forgetOrgRequestCap()` from `lib/security/org-request-cap.ts` — called after a direct `writeOrgQuotas()` so the change applies at once in that process
   - sealed secrets (§137): `sealSecret()`, `openSecret()`, `needsReseal()`, `isSealedSecretKeyConfigured()`, `activeSealedSecretKeyId()`, `SealedSecretKeyMissingError`, `SealedSecretOpenError` and `SealedSecretOpenFailure` from `lib/security/sealed-secrets.ts`; the envelope formats they read and write (`v2.<keyId>.…`, and the legacy `v1.…`); the keyring variables `SEALED_SECRET_KEYS`, `SEALED_SECRET_ACTIVE_KEY` and `SEALED_SECRET_LEGACY_KEY`; `resealSealedStores()`, `SealedStoreRegistrationError` and the report types from `lib/security/sealed-stores.ts`; and `npm run secrets:reseal` with its exit codes (see [`.context/security/sealed-secrets.md`](./.context/security/sealed-secrets.md))
+  - organisations' own AI keys (§137): the `orgProviderKeysEnabled` orchestration setting and the settings API's refusal to turn it on without a master key; at `multi`, the order `resolveProviderCredential()` follows (an org's saved key before the `lib/app/provider-credentials.ts` resolver, which it never reaches while the org holds a key for the row), the `credential_unavailable` refusal of a key that cannot be used, and the credential identity `org-key:<orgId>:<keyRowId>:<version>` its breaker and in-flight keys carry (see [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#organisations-own-keys))
   - The orchestration admin API surface documented in
     [`.context/api/orchestration-endpoints.md`](./.context/api/orchestration-endpoints.md)
 - **Published Prisma model interfaces** —
@@ -205,6 +206,10 @@ covered by the version contract.
   - `AiAdminAuditLog.supportGrantId` (FK to `OrgSupportGrant`, `SetNull`) and
     `AiAdminAuditLog.supportOrgId` (no FK) — the grant and the org an audit row
     was made under, null outside a support session (§121 t-825)
+  - `AiOrgProviderKey` (`prisma/schema/orchestration-providers.prisma`) — an org's
+    own sealed key for one provider row, unique per org and row; its `sealedKey`
+    is opened only by `lib/orchestration/llm/org-provider-keys.ts`, and a read
+    elsewhere must leave it out (§137 t-1044)
   - The `Ai*` orchestration models the admin API exposes (see
     [`.context/orchestration/admin-api.md`](./.context/orchestration/admin-api.md))
 
