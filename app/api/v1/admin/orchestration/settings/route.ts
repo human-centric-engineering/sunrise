@@ -62,7 +62,14 @@ export const GET = withAdminAuth(async (request) => {
       select: { escalationConfig: true },
     }),
     // What turning organisations' own keys off would refuse (§137 t-1044).
-    countOrgsWithProviderKeys(),
+    // Only a warning line reads it, so a failed count shows as unknown rather
+    // than failing the whole page.
+    countOrgsWithProviderKeys().catch((err: unknown) => {
+      log.warn('Could not count the orgs holding their own AI keys', {
+        errorName: err instanceof Error ? err.name : typeof err,
+      });
+      return null;
+    }),
   ]);
   const body = {
     ...settings,
@@ -122,21 +129,6 @@ export const PATCH = withAdminAuth(
           }
         );
       }
-    }
-
-    // Organisations' own AI keys (§137 t-1044) are held sealed, so they can be
-    // switched on only while there is a master key to seal them with. Turning
-    // them off is always allowed: it refuses the orgs that hold keys rather
-    // than moving them to the install's key.
-    if (body.orgProviderKeysEnabled === true && !isSealedSecretKeyConfigured()) {
-      return errorResponse(
-        "Organisations' own AI keys can't be turned on: no master key for sealing them is configured. Set SEALED_SECRET_KEYS and SEALED_SECRET_ACTIVE_KEY, then try again.",
-        {
-          code: 'VALIDATION_ERROR',
-          status: 400,
-          details: { field: 'orgProviderKeysEnabled' },
-        }
-      );
     }
 
     // Validate the active-embedding-model FK against the model matrix. The
@@ -243,6 +235,27 @@ export const PATCH = withAdminAuth(
     // defaults (so missing keys always resolve), overlay the current row, then
     // overlay the patch.
     const existing = await prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
+
+    // Organisations' own AI keys (§137 t-1044) are held sealed, so they can be
+    // switched ON only while there is a master key to seal them with. Only a
+    // change from off is refused: a client resending the `true` it read must
+    // still be able to save everything else after the master key has gone.
+    // Turning them off is always allowed: it refuses the orgs that hold keys
+    // rather than moving them to the install's key.
+    if (
+      body.orgProviderKeysEnabled === true &&
+      existing?.orgProviderKeysEnabled !== true &&
+      !isSealedSecretKeyConfigured()
+    ) {
+      return errorResponse(
+        "Organisations' own AI keys can't be turned on: no master key for sealing them is configured. Set SEALED_SECRET_KEYS and SEALED_SECRET_ACTIVE_KEY, then try again.",
+        {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+          details: { field: 'orgProviderKeysEnabled' },
+        }
+      );
+    }
 
     // Retention coupling: cost logs must outlive the executions that reference
     // them, or the cost breakdown empties out under executions still on file

@@ -16,6 +16,7 @@ import { BackupPanel } from '@/components/admin/orchestration/settings/backup-pa
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { FieldHelp } from '@/components/ui/field-help';
 import { env } from '@/lib/env';
+import { isMultiTenant } from '@/lib/tenancy/context';
 import { API } from '@/lib/api/endpoints';
 import { buildsLocalClient } from '@/lib/orchestration/llm/provider-locality';
 import { loadServerData, requireServerData, type LoadResult } from '@/lib/api/server-load';
@@ -36,8 +37,8 @@ export const metadata: Metadata = {
 /** The singleton, with the escalation list's version a save of it sends back (§122 t-899). */
 type LoadedSettings = FullOrchestrationSettings & {
   escalationVersion: string;
-  /** For the switch for organisations' own AI keys (§137 t-1044). */
-  orgsWithProviderKeys: number;
+  /** For the switch for organisations' own AI keys (§137 t-1044); `null` when it could not be counted. */
+  orgsWithProviderKeys: number | null;
   sealedSecretKeyConfigured: boolean;
 };
 
@@ -329,7 +330,7 @@ export default async function OrchestrationSettingsPage() {
         confidentialModelOptions={
           models.ok && providers.ok ? confidentialModelOptions(models.data, providers.data) : null
         }
-        showOrgProviderKeys={env.TENANCY_MODE === 'multi'}
+        showOrgProviderKeys={isMultiTenant()}
       />
 
       <BackupPanel />

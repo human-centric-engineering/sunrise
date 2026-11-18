@@ -803,7 +803,7 @@ to your resolver:
 | could not be looked up                                             | refused: `lookup_failed`                                         |
 | does not exist                                                     | resolves as before: your resolver, or the env var                |
 
-Each refusal is logged once per call with its reason and a fix, never the key.
+Each refusal is logged with its reason and a fix, never the key, at most once a minute per org, row and reason: the lookup also runs on every reachability check. An org with its own key is not skipped when the install key's breaker opens; its breaker is its own.
 Removing its key is how an org returns to the install's key. Turning the
 switch off with keys saved refuses those orgs until it is back on; the
 settings page says how many orgs that is before it is saved. Config Health

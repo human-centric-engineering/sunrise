@@ -163,6 +163,18 @@ export function hasProviderCredentialResolver(): boolean {
   return appResolver !== null;
 }
 
+/**
+ * Whether the credential for a row can be anything but the shared one in the
+ * current context: a resolver is registered, or an org is in scope at `multi`,
+ * where it may have saved its own key (§137 t-1044). When this is `false`
+ * every row resolves to the shared identity, whose breaker key is the bare
+ * slug, so the provider manager may check that breaker before fetching.
+ */
+export function credentialMayBeOrgSpecific(): boolean {
+  if (hasProviderCredentialResolver()) return true;
+  return isMultiTenant() && currentCredentialContext().orgId !== null;
+}
+
 /** The env-var default: exactly what the provider manager did before the seam. */
 function credentialFromEnv(config: ProviderCredentialConfig): ProviderCredential {
   return { apiKey: readEnvKey(config.apiKeyEnvVar), identity: '' };

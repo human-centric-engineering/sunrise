@@ -132,6 +132,40 @@ describe("the switch for organisations' own AI keys", () => {
     expect(await save()).toMatchObject({ orgProviderKeysEnabled: false });
   });
 
+  it('lets an accidental untick be undone when the master key has gone', async () => {
+    const user = userEvent.setup();
+    render(
+      <SettingsForm
+        initialSettings={settings({
+          orgProviderKeysEnabled: true,
+          sealedSecretKeyConfigured: false,
+        })}
+        showOrgProviderKeys
+      />
+    );
+
+    await user.click(toggle());
+    expect(toggle()).toBeEnabled();
+    await user.click(toggle());
+
+    expect(toggle()).toBeChecked();
+    expect(await save()).not.toHaveProperty('orgProviderKeysEnabled');
+  });
+
+  it('says the count is unknown, rather than nothing, when it could not be read', async () => {
+    const user = userEvent.setup();
+    render(
+      <SettingsForm
+        initialSettings={settings({ orgProviderKeysEnabled: true, orgsWithProviderKeys: null })}
+        showOrgProviderKeys
+      />
+    );
+    await user.click(toggle());
+    expect(screen.getByTestId('org-provider-keys-turning-off')).toHaveTextContent(
+      /could not be read/
+    );
+  });
+
   it('says how many orgs turning it off will refuse, before it is saved', async () => {
     const user = userEvent.setup();
     render(

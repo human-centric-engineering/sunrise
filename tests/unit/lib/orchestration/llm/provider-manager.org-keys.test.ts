@@ -252,6 +252,21 @@ describe('two orgs with their own keys for one provider', () => {
   });
 });
 
+describe("the install key's open breaker", () => {
+  it('does not skip an org with its own key, and still skips an org without one', async () => {
+    const savedA = await save(ORG_A, KEY_A);
+    const shared = getBreaker('anthropic');
+    for (let i = 0; i < 10; i++) shared.recordFailure();
+
+    await expect(
+      runAsOrg(ORG_A, () => getProviderWithFallbacks('anthropic', []))
+    ).resolves.toMatchObject({ breakerKey: `anthropic#org-key:${ORG_A}:${savedA.id}:1` });
+    await expect(
+      runAsOrg(ORG_C, () => getProviderWithFallbacks('anthropic', []))
+    ).rejects.toMatchObject({ code: 'all_providers_exhausted' });
+  });
+});
+
 describe('an org without a key', () => {
   it('gets the install’s shared client, beside orgs with their own', async () => {
     await save(ORG_A, KEY_A);

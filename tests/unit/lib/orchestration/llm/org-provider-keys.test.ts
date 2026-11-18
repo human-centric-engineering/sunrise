@@ -303,6 +303,24 @@ describe('refusals: an org with a key is never moved to another key', () => {
     await expectRefused('lookup_failed');
   });
 
+  it('logs a refusal once a minute per org, row and reason, not on every check', async () => {
+    const now = vi.spyOn(Date, 'now');
+    let t = 5_000_000;
+    now.mockImplementation(() => t);
+    await save(ORG_A, KEY_A);
+    switchState.on = false;
+    vi.mocked(logger.warn).mockClear();
+
+    for (let i = 0; i < 3; i += 1) await resolve(ORG_A).catch(() => undefined);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1);
+
+    // Still refused every time; only the log is spaced out.
+    await expect(resolve(ORG_A)).rejects.toMatchObject({ code: 'credential_unavailable' });
+    t += ORG_PROVIDER_KEY_TTL_MS;
+    await resolve(ORG_A).catch(() => undefined);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(2);
+  });
+
   it('logs neither the key nor its envelope on any refusal', async () => {
     await save(ORG_A, KEY_A);
     const envelope = orgKeyTable.get(ORG_A, ROW.id)!.sealedKey;
@@ -338,6 +356,12 @@ describe('saveOrgProviderKey', () => {
     });
     // What it answers carries no part of the key but the hint.
     expect(JSON.stringify(saved)).not.toContain(KEY_A.slice(0, 20));
+  });
+
+  it('stores no hint for a key so short that four characters would be much of it', async () => {
+    const saved = await save(ORG_A, 'short-key-15chr');
+    expect(saved.hint).toBe('');
+    expect(orgKeyTable.get(ORG_A, ROW.id)!.hint).toBe('');
   });
 
   it.each([

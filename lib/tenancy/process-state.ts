@@ -213,10 +213,10 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/llm/org-provider-keys.ts',
-    holders: ['lookupCache'],
+    holders: ['lookupCache', 'lastWarned'],
     posture: 'row-keyed',
     keyedBy: 'org id and provider row id',
-    why: "Each org's saved-key row for a provider row — its id, version and sealed key, never the opened key — filled by a `findUnique` on (orgId, providerConfigId), so an entry is that org's whatever scope filled it (§137 t-1044). A save or removal through the module clears that entry, and a reseal clears every one; the 60-second TTL is how long another process may still use a removed or replaced key, or not yet use a new one. Read only at multi, for an org in scope.",
+    why: "Each org's saved-key row for a provider row — its id, version and sealed key, never the opened key — filled by a `findUnique` on (orgId, providerConfigId), so an entry is that org's whatever scope filled it (§137 t-1044). A save or removal through the module clears that entry, and a reseal clears every one; the 60-second TTL is how long another process may still use a removed or replaced key, or not yet use a new one. Beside it, when each org's refusal for a row was last logged, keyed the same way, so a refused org logs once a minute rather than on every reachability check. Read only at multi, for an org in scope.",
   },
   {
     file: 'lib/orchestration/llm/spend-caps.ts',

@@ -127,7 +127,8 @@ model AiOrgProviderKey {
   /// credential identity, so a replaced key is never served by a client built
   /// with the one before it.
   version          Int              @default(1)
-  /// The key's last four characters, for display. Not enough to use it.
+  /// The key's last four characters, for display; empty for a key shorter
+  /// than 16 characters. Not enough to use it.
   hint             String
   /// Who last saved it, and when. Retained, detached, when they are erased.
   /// `savedAt` and not `updatedAt`, which a reseal onto a new master key

@@ -33,6 +33,7 @@ import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
 import { getBreaker, peekBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { credentialKey } from '@/lib/orchestration/llm/credential-key';
 import {
+  credentialMayBeOrgSpecific,
   hasProviderCredentialResolver,
   hasProviderKey,
   readEnvKey,
@@ -881,9 +882,11 @@ export async function getProviderWithFallbacks(
  *
  * The breaker is the credential's, so in general it can only be checked once
  * the provider is fetched: that is what says which credential this org gets.
- * With no resolver registered every credential is the shared one and its key
- * is the slug, so the breaker is checked first and an open one skips the
- * fetch entirely, as it always did.
+ * When no credential can be org-specific (no resolver registered, and no org
+ * in scope at `multi`, where it may hold its own key) every credential is the
+ * shared one and its key is the slug, so the breaker is checked first and an
+ * open one skips the fetch entirely, as it always did. An org with its own key
+ * is not skipped for the install key's open breaker.
  *
  * `origin` is the call's provenance, as `getProvider`'s `context`, or
  * `{ unrecordedFallbackOf: primarySlug }` for a fallback with none recorded —
@@ -905,7 +908,7 @@ async function acquireIfBreakerClosed(
 ): Promise<{ provider: LlmProvider; breakerKey: string } | null> {
   // Peek, never create: `slug` may be a row NAME, and getBreaker would leave a
   // breaker under a key that is no credential's.
-  if (!hasProviderCredentialResolver() && peekBreaker(slug)?.canAttempt() === false) return null;
+  if (!credentialMayBeOrgSpecific() && peekBreaker(slug)?.canAttempt() === false) return null;
   const provider = await acquireProvider(slug, origin);
   const breakerKey = breakerKeyOf(provider) ?? slug;
   if (!getBreaker(breakerKey).canAttempt()) return null;

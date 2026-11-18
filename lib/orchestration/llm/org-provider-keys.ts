@@ -122,9 +122,16 @@ export function orgProviderKeyIdentity(orgId: string, keyId: string, version: nu
   return `org-key:${orgId}:${keyId}:${version}`;
 }
 
-/** The key's last four characters, for a person to recognise it by. */
+/** The shortest key that is given a hint: below it, four characters are too much of it. */
+const HINT_MIN_KEY_LENGTH = 16;
+
+/**
+ * The key's last four characters, for a person to recognise it by; empty for
+ * a key shorter than {@link HINT_MIN_KEY_LENGTH}, whose last four would be a
+ * large part of it. The hint is stored in the clear and exported.
+ */
 export function orgProviderKeyHint(apiKey: string): string {
-  return apiKey.slice(-4);
+  return apiKey.length < HINT_MIN_KEY_LENGTH ? '' : apiKey.slice(-4);
 }
 
 /** What the call path needs of a key row. */
@@ -185,19 +192,32 @@ const REFUSAL_FIX: Record<Refusal, string> = {
     'The org’s saved key will not open: the master key it was sealed under is not configured, or the stored value is not this org’s. The org must save its key again.',
 };
 
+/**
+ * When each (org, row, reason) refusal was last logged. The lookup runs on
+ * every reachability check as well as every call, so an org refused while the
+ * switch is off would otherwise log on every turn and every admin list load.
+ * Once per {@link ORG_PROVIDER_KEY_TTL_MS} is enough to be seen.
+ */
+const lastWarned = new Map<string, number>();
+
 function refuse(
   config: OrgProviderKeyConfig,
   orgId: string,
   reason: Refusal,
   detail?: string
 ): never {
-  logger.warn('Refusing a provider call: the org’s own key cannot be used', {
-    provider: config.slug,
-    orgId,
-    reason,
-    ...(detail ? { detail } : {}),
-    fix: REFUSAL_FIX[reason],
-  });
+  const warnKey = `${cacheKey(orgId, config.id)}:${reason}`;
+  const last = lastWarned.get(warnKey);
+  if (last === undefined || Date.now() - last >= ORG_PROVIDER_KEY_TTL_MS) {
+    lastWarned.set(warnKey, Date.now());
+    logger.warn('Refusing a provider call: the org’s own key cannot be used', {
+      provider: config.slug,
+      orgId,
+      reason,
+      ...(detail ? { detail } : {}),
+      fix: REFUSAL_FIX[reason],
+    });
+  }
   throw new ProviderError(`No credential is available for provider "${config.slug}"`, {
     code: 'credential_unavailable',
     retriable: false,
@@ -350,6 +370,7 @@ export async function countOrgsWithProviderKeys(): Promise<number> {
 export function forgetOrgProviderKey(orgId?: string, providerConfigId?: string): void {
   if (orgId === undefined) {
     lookupCache.clear();
+    lastWarned.clear();
     return;
   }
   if (providerConfigId !== undefined) {

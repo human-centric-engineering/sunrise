@@ -118,8 +118,11 @@ export interface OrchestrationSettings {
   confidentialModel?: { providerSlug: string; model: string } | null;
   /** Organisations' own AI keys (§137 t-1044). */
   orgProviderKeysEnabled?: boolean;
-  /** How many orgs hold a saved key: what turning the switch off would refuse. */
-  orgsWithProviderKeys?: number;
+  /**
+   * How many orgs hold a saved key: what turning the switch off would refuse.
+   * `null` when it could not be counted.
+   */
+  orgsWithProviderKeys?: number | null;
   /** Whether a sealed-secret master key is configured, so the switch can be turned on. */
   sealedSecretKeyConfigured?: boolean;
 }
@@ -686,7 +689,9 @@ export function SettingsForm({
   // may be what the administrator wants.
   const watchedConfidentialModel = watch('confidentialModel');
   const watchedOrgKeysEnabled = watch('orgProviderKeysEnabled');
-  const orgsWithProviderKeys = initialSettings.orgsWithProviderKeys ?? 0;
+  // `undefined` (a page from before the field) reads as none; `null` as not known.
+  const orgsWithProviderKeys =
+    initialSettings.orgsWithProviderKeys === undefined ? 0 : initialSettings.orgsWithProviderKeys;
   const orgKeysMasterKeyMissing = initialSettings.sealedSecretKeyConfigured === false;
   const movingPolicy = (policy: string) => policy === 'approved_only' || policy === 'local_only';
   const confidentialRefusedForNoModel =
@@ -1232,8 +1237,10 @@ export function SettingsForm({
                     <input
                       type="checkbox"
                       checked={field.value}
-                      // Turning it on needs a master key; turning it off never does.
-                      disabled={orgKeysMasterKeyMissing && !field.value}
+                      // Turning it on needs a master key; turning it off never
+                      // does. Judged on the saved value, so an accidental
+                      // untick on a page loaded with it on can be undone.
+                      disabled={orgKeysMasterKeyMissing && !savedOrgKeysEnabled}
                       onChange={(e) => field.onChange(e.target.checked)}
                       className="h-4 w-4 rounded border-gray-300"
                     />
@@ -1261,7 +1268,7 @@ export function SettingsForm({
                 )}
               />
             </div>
-            {orgKeysMasterKeyMissing && !watchedOrgKeysEnabled && (
+            {orgKeysMasterKeyMissing && !savedOrgKeysEnabled && (
               <p
                 className="text-muted-foreground text-xs"
                 data-testid="org-provider-keys-no-master"
@@ -1270,19 +1277,32 @@ export function SettingsForm({
                 Set <code>SEALED_SECRET_KEYS</code> and <code>SEALED_SECRET_ACTIVE_KEY</code>.
               </p>
             )}
-            {savedOrgKeysEnabled && !watchedOrgKeysEnabled && orgsWithProviderKeys > 0 && (
+            {savedOrgKeysEnabled && !watchedOrgKeysEnabled && orgsWithProviderKeys === null && (
               <p
                 className="text-sm text-amber-700 dark:text-amber-400"
                 data-testid="org-provider-keys-turning-off"
               >
-                {orgsWithProviderKeys === 1
-                  ? '1 organisation has'
-                  : `${orgsWithProviderKeys} organisations have`}{' '}
-                saved their own keys. Once this is saved, their AI calls on those providers are
-                refused until it is turned back on. They are not moved onto this install&apos;s
-                keys.
+                How many organisations have saved their own keys could not be read. Any that have
+                will have their AI calls on those providers refused once this is saved, until it is
+                turned back on.
               </p>
             )}
+            {savedOrgKeysEnabled &&
+              !watchedOrgKeysEnabled &&
+              orgsWithProviderKeys !== null &&
+              orgsWithProviderKeys > 0 && (
+                <p
+                  className="text-sm text-amber-700 dark:text-amber-400"
+                  data-testid="org-provider-keys-turning-off"
+                >
+                  {orgsWithProviderKeys === 1
+                    ? '1 organisation has'
+                    : `${orgsWithProviderKeys} organisations have`}{' '}
+                  saved their own keys. Once this is saved, their AI calls on those providers are
+                  refused until it is turned back on. They are not moved onto this install&apos;s
+                  keys.
+                </p>
+              )}
           </CardContent>
         </Card>
       )}

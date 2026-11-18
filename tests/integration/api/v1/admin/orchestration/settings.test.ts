@@ -1618,6 +1618,32 @@ describe('Admin Orchestration — /settings', () => {
       expect(args?.create).toMatchObject({ orgProviderKeysEnabled: true });
     });
 
+    it('accepts a resent `true` with no master key, so other settings still save', async () => {
+      vi.mocked(isSealedSecretKeyConfigured).mockReturnValue(false);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+        ...makeSettingsRow(),
+        orgProviderKeysEnabled: true,
+      } as never);
+
+      const res = await PATCH(
+        makePatch({ orgProviderKeysEnabled: true, globalMonthlyBudgetUsd: 500 })
+      );
+
+      expect(res.status).toBe(200);
+      const args = vi.mocked(prisma.aiOrchestrationSettings.upsert).mock.calls[0]?.[0];
+      expect(args?.update).toMatchObject({ globalMonthlyBudgetUsd: 500 });
+    });
+
+    it('still answers the settings when the orgs holding keys cannot be counted', async () => {
+      vi.mocked(prisma.aiOrgProviderKey.findMany).mockRejectedValue(new Error('relation missing'));
+
+      const res = await GET(makeGet());
+
+      expect(res.status).toBe(200);
+      const { data } = await parseJson<{ data: Record<string, unknown> }>(res);
+      expect(data.orgsWithProviderKeys).toBeNull();
+    });
+
     it('turns them off with no master key: switching off never needs one', async () => {
       vi.mocked(isSealedSecretKeyConfigured).mockReturnValue(false);
 
