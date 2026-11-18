@@ -38,6 +38,11 @@
  *     throws; a nested create lands in the org; `runAsSystem` sees both;
  *   - the three credential resolvers and the inbound route, called as
  *     nobody, learn B's org from B's row and hand it back / run inside it;
+ *   - organisations' own AI keys (§137 t-1044): each org resolves its own
+ *     sealed key and no other, cannot read, change or remove the other's
+ *     row, and an org's export carries neither its key nor the envelope.
+ *     Needs a sealed-secret master key (SEALED_SECRET_KEYS and
+ *     SEALED_SECRET_ACTIVE_KEY) in the run's environment;
  *   - the t-708 namespaces: `support` in both orgs, refused twice in one;
  *     the same file in both orgs; a default knowledge base per org;
  *   - a per-org platform job driven through the registry (§108 t-711): the
@@ -178,6 +183,14 @@ import { eraseUser } from '@/lib/privacy/erase-user';
 import { registerErasureCleanupHook } from '@/lib/privacy/erasure-hooks';
 import { writeOrgProviderPolicy, writeOrgQuotas } from '@/lib/tenancy/org-settings';
 import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
+import {
+  forgetOrgProviderKey,
+  removeOrgProviderKey,
+  saveOrgProviderKey,
+} from '@/lib/orchestration/llm/org-provider-keys';
+import { resolveProviderCredential } from '@/lib/orchestration/llm/provider-credentials';
+import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
+import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
 import { hashApiKey } from '@/lib/auth/api-keys';
 import { listUserApiKeys, mintUserApiKey, revokeUserApiKey } from '@/lib/auth/user-api-keys';
 import { resolveApiKey } from '@/lib/auth/api-keys';
@@ -1728,6 +1741,127 @@ async function main(): Promise<void> {
     const mcpResult = await authenticateMcpRequest(mcpKey.plaintext, '10.0.0.1', 'smoke');
     check(mcpResult?.orgId === b.orgId, 'authenticateMcpRequest, as nobody, answers B');
     check(getTenantContext() === null, 'the resolvers hand the org back without entering it');
+
+    // ── [8b] Organisations' own AI keys (§137 t-1044) ──────────────────────
+    // Each org saves its own key for the provider both are approved for. As
+    // the restricted role with the policy forced: each resolves its own key
+    // and only its own, neither can read or change the other's row, and B's
+    // export carries neither the key nor its envelope.
+    console.log("\n[8b] organisations' own AI keys: each org's, and only its own");
+    if (!isSealedSecretKeyConfigured()) {
+      check(
+        false,
+        'a sealed-secret master key is configured (set SEALED_SECRET_KEYS and SEALED_SECRET_ACTIVE_KEY for this run)'
+      );
+    } else {
+      const keyA = `sk-${PREFIX}-a-${stamp}-${'a'.repeat(24)}`;
+      const keyB = `sk-${PREFIX}-b-${stamp}-${'b'.repeat(24)}`;
+      const switchBefore = await runAsSystem('smoke: read the org-keys switch', async () =>
+        prisma.aiOrchestrationSettings.findUnique({
+          where: { slug: 'global' },
+          select: { orgProviderKeysEnabled: true },
+        })
+      );
+      const setSwitch = (on: boolean) =>
+        runAsSystem('smoke: set the org-keys switch', async () => {
+          await prisma.aiOrchestrationSettings.updateMany({
+            where: { slug: 'global' },
+            data: { orgProviderKeysEnabled: on },
+          });
+          invalidateOrchestrationSettingsCache();
+        });
+      try {
+        await setSwitch(true);
+        const savedA = await runAsOrg(a.orgId, () =>
+          saveOrgProviderKey({
+            providerConfigId: localProvider.id,
+            apiKey: keyA,
+            savedById: a.ownerId,
+          })
+        );
+        const savedB = await runAsOrg(b.orgId, () =>
+          saveOrgProviderKey({
+            providerConfigId: localProvider.id,
+            apiKey: keyB,
+            savedById: b.ownerId,
+          })
+        );
+        const credA = await runAsOrg(a.orgId, () => resolveProviderCredential(localProvider));
+        const credB = await runAsOrg(b.orgId, () => resolveProviderCredential(localProvider));
+        check(
+          credA.apiKey === keyA && credA.identity === `org-key:${a.orgId}:${savedA.id}:1`,
+          'A resolves its own key, under its own identity'
+        );
+        check(
+          credB.apiKey === keyB && credB.identity === `org-key:${b.orgId}:${savedB.id}:1`,
+          'B resolves its own key, under its own identity'
+        );
+
+        const seenByA = await runAsOrg(a.orgId, () =>
+          prisma.aiOrgProviderKey.findMany({ select: { id: true, orgId: true } })
+        );
+        check(
+          seenByA.length === 1 && seenByA[0].id === savedA.id,
+          `as A, the key table holds A's row and none of B's (${seenByA.length} row(s))`
+        );
+        const bByKeyAsA = await runAsOrg(a.orgId, () =>
+          prisma.aiOrgProviderKey.findUnique({
+            where: {
+              orgId_providerConfigId: { orgId: b.orgId, providerConfigId: localProvider.id },
+            },
+            select: { id: true },
+          })
+        );
+        check(bByKeyAsA === null, "as A, B's row is not found even by its unique key");
+        const changedAsA = await runAsOrg(a.orgId, () =>
+          prisma.aiOrgProviderKey.updateMany({
+            where: { orgId: b.orgId },
+            data: { hint: 'gone' },
+          })
+        );
+        const removedAsA = await runAsOrg(a.orgId, () =>
+          prisma.aiOrgProviderKey.deleteMany({ where: { id: savedB.id } })
+        );
+        check(
+          changedAsA.count === 0 && removedAsA.count === 0,
+          "as A, B's row can be neither changed nor removed"
+        );
+        forgetOrgProviderKey();
+        const credBAfter = await runAsOrg(b.orgId, () => resolveProviderCredential(localProvider));
+        check(credBAfter.apiKey === keyB, "B's key still answers after A tried to change it");
+
+        const envelopeB = await runAsSystem('smoke: read B’s envelope', async () =>
+          prisma.aiOrgProviderKey.findUniqueOrThrow({
+            where: { id: savedB.id },
+            select: { sealedKey: true },
+          })
+        );
+        const exportB = JSON.stringify(
+          await runAsOrg(b.orgId, () => exportOrgData({ orgId: b.orgId, actorUserId: b.ownerId }))
+        );
+        check(
+          exportB.includes(savedB.id) &&
+            !exportB.includes(keyB) &&
+            !exportB.includes(envelopeB.sealedKey),
+          "B's export lists its key row, with neither the key nor its envelope"
+        );
+      } finally {
+        // Removed before the switch goes back: an org holding a key while the
+        // switch is off is refused, by design, and every later section calls
+        // this provider as A and B.
+        for (const org of [a, b]) {
+          await runAsOrg(org.orgId, () => removeOrgProviderKey(localProvider.id));
+        }
+        await setSwitch(switchBefore?.orgProviderKeysEnabled === true);
+      }
+      const credAAfterRemoval = await runAsOrg(a.orgId, () =>
+        resolveProviderCredential(localProvider)
+      );
+      check(
+        credAAfterRemoval.identity === '',
+        'with its key removed, A is back on the install’s credential'
+      );
+    }
 
     // ── The inbound route, as nobody, for B's workflow ─────────────────────
     console.log("\n[9] the inbound route fires B's trigger and runs inside B");

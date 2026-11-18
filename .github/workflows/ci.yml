@@ -724,6 +724,10 @@ jobs:
         env:
           DATABASE_URL: ${{ env.APP_URL }}
           TENANCY_MODE: multi
+          # Section [8b] seals each org's own AI key (§137 t-1044). A
+          # throwaway key for a throwaway database, not a secret.
+          SEALED_SECRET_KEYS: 'ci:ci-sealed-secret-key-not-a-secret-0123456789'
+          SEALED_SECRET_ACTIVE_KEY: 'ci'
         run: npx tsx scripts/smoke/tenancy-isolation.ts
       # Idempotence: the switch reports "no change" and exits 0 either way.
       - name: Enable is idempotent; disable and re-enable round-trip
