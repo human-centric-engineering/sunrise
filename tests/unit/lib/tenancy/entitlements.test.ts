@@ -37,6 +37,7 @@ import {
   entitlementSwitchesFailed,
   loadOrgSwitches,
   orgHasSwitch,
+  orgSwitchState,
   registerEntitlementSwitch,
   registeredEntitlementSwitches,
   resolveOrgSwitches,
@@ -341,6 +342,53 @@ describe('loading an org', () => {
     });
 
     await expect(orgHasSwitch(ORG, 'repots')).resolves.toBe(false);
+  });
+});
+
+describe('orgSwitchState: off kept apart from could-not-tell (t-1034)', () => {
+  beforeEach(registerBoth);
+
+  it('is on or off for a slice that was read', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: ['reports'], off: ['leads'] } },
+    });
+
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('on');
+    await expect(orgSwitchState(ORG, 'leads')).resolves.toBe('off');
+  });
+
+  it('is off for an org that does not exist, as orgHasSwitch answers false', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue(null);
+
+    await expect(orgSwitchState(ORG, 'leads')).resolves.toBe('off');
+  });
+
+  it('is unknown, not off, when the read throws, and logs it', async () => {
+    mockPrisma.org.findUnique.mockRejectedValue(new Error('connection reset'));
+
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('unknown');
+    expect(logger.error).toHaveBeenCalledWith(
+      "entitlements: could not read an org's switches",
+      expect.objectContaining({ orgId: ORG, key: 'reports', error: 'connection reset' })
+    );
+  });
+
+  it('is unknown for a stored slice that could not be read, though access reads it as off', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { entitlements: { on: 'reports', off: [] } },
+    });
+
+    await expect(orgHasSwitch(ORG, 'reports')).resolves.toBe(false);
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('unknown');
+  });
+
+  it("is unknown when the app's initAppEntitlements() failed", async () => {
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('bad init');
+    });
+    mockPrisma.org.findUnique.mockResolvedValue({ settings: null });
+
+    await expect(orgSwitchState(ORG, 'reports')).resolves.toBe('unknown');
   });
 });
 

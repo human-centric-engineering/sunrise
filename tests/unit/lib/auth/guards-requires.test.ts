@@ -55,6 +55,7 @@ import {
   __resetEntitlementRegistryForTests,
   registerEntitlementSwitch,
   SWITCH_REQUIRED_REASON,
+  SWITCH_UNVERIFIED_REASON,
 } from '@/lib/tenancy/entitlements';
 
 const ORG = 'cmorg000000000000000other';
@@ -181,6 +182,34 @@ describe('withAdminAuth({ tier, requires }) (t-1034)', () => {
     expect(body.error?.details).toBeUndefined();
     expect(ran).toEqual([]);
   });
+
+  it.each([
+    ['the read throws', () => mockPrisma.org.findUnique.mockRejectedValue(new Error('db down'))],
+    [
+      'the stored slice cannot be read',
+      () =>
+        mockPrisma.org.findUnique.mockResolvedValue({
+          settings: { entitlements: { on: 'lead_gen', off: [] } },
+        }),
+    ],
+  ])(
+    'still refuses when %s, but says it could not check rather than that the org lacks the switch',
+    async (_, failRead) => {
+      signedIn('USER', ORG_ADMIN_ROLE);
+      failRead();
+      const { call, ran } = route(LEADS);
+      const { status, body } = await call();
+      expect(status).toBe(403);
+      expect(body.error?.message).toBe(
+        'We could not check whether your organisation has Lead generation, so this was refused. Try again in a moment.'
+      );
+      expect(body.error?.details).toEqual({
+        reason: SWITCH_UNVERIFIED_REASON,
+        requires: 'lead_gen',
+      });
+      expect(ran).toEqual([]);
+    }
+  );
 
   it('names an unregistered switch by its key: no org has it, so the refusal is true', async () => {
     signedIn('USER', ORG_ADMIN_ROLE);

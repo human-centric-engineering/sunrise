@@ -23,7 +23,8 @@
  * t-1034): `requires` beside `tier`, handed to the authorization policy as
  * `scope.requires`, so menus, pages and routes agree. A platform admin is not
  * limited by switches. What a refusal says is here
- * ({@link switchRequiredMessage}), so every surface says it the same way.
+ * ({@link switchRequiredMessage}, {@link switchUnverifiedMessage}), so every
+ * surface says it the same way.
  *
  * **Registration is synchronous and runs lazily** before the first read, in
  * whichever realm reads first (`platform.seam-realm`), through the shared
@@ -39,6 +40,7 @@ import type { PrismaClient } from '@prisma/client';
 import { initAppEntitlements } from '@/lib/app/entitlements';
 import { prisma } from '@/lib/db/client';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
+import { logger } from '@/lib/logging';
 import {
   loadOrgEntitlements,
   writeOrgEntitlements,
@@ -287,8 +289,53 @@ export const SWITCH_REQUIRED_REASON = 'entitlement_required';
  * has no label; no org has it, so the refusal is still true.
  */
 export function switchRequiredMessage(key: string): string {
-  const label = registeredEntitlementSwitches().find((s) => s.key === key)?.label ?? key;
-  return `Your organisation does not have ${label}. Ask whoever manages your organisation's account to switch it on.`;
+  return `Your organisation does not have ${switchLabel(key)}. Ask whoever manages your organisation's account to switch it on.`;
+}
+
+/**
+ * `details.reason` on the 403 a route answers when it could not tell whether
+ * the caller's org has the switch it requires (t-1034): the org's switches
+ * could not be read, so access was refused without saying the switch is off.
+ */
+export const SWITCH_UNVERIFIED_REASON = 'entitlement_unverified';
+
+/** What a refusal says when the org's switches could not be read (t-1034). */
+export function switchUnverifiedMessage(key: string): string {
+  return `We could not check whether your organisation has ${switchLabel(key)}, so this was refused. Try again in a moment.`;
+}
+
+function switchLabel(key: string): string {
+  return registeredEntitlementSwitches().find((s) => s.key === key)?.label ?? key;
+}
+
+/**
+ * Whether an org has one switch, with "could not tell" kept apart from "off"
+ * (t-1034), for a refusal that has to say which. `'unknown'` when the read
+ * throws, when the stored slice could not be read, or when the app's
+ * `initAppEntitlements()` failed: each reads as off for access, but saying
+ * the org lacks the switch would not be true. An org that does not exist, or
+ * a key no app registers, is `'off'`, as {@link orgHasSwitch} answers false.
+ * Never throws; a failed read is logged.
+ */
+export async function orgSwitchState(
+  orgId: string,
+  key: string,
+  db: Pick<PrismaClient, 'org'> = prisma
+): Promise<'on' | 'off' | 'unknown'> {
+  try {
+    if (entitlementSwitchesFailed()) return 'unknown';
+    const org = await loadOrgSwitches(orgId, db);
+    if (org === null) return 'off';
+    if (org.unreadable) return 'unknown';
+    return org.on.includes(key) ? 'on' : 'off';
+  } catch (error) {
+    logger.error("entitlements: could not read an org's switches", {
+      orgId,
+      key,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return 'unknown';
+  }
 }
 
 /** Test-only: clear the registry and re-arm the one-shot app init. */

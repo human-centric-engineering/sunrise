@@ -27,7 +27,10 @@ release process.
   holder whose org lacks the switch; a platform admin is not limited by
   switches. The sidebar hides the item, the layout and `AdminTierGate` refuse
   the page, and a route refused for the switch answers 403 naming it by its
-  label, with `details.reason: 'entitlement_required'`. `AdminReach` gains an
+  label, with `details.reason: 'entitlement_required'`; one refused because
+  the org's switches could not be read says so instead, with
+  `details.reason: 'entitlement_unverified'`. `orgSwitchState()` reads one
+  switch as `'on'`, `'off'` or `'unknown'`. `AdminReach` gains an
   optional `switchesMet`, filled only when a switch is registered, and the
   sidebar and gate take an optional `pageRequirements`. The roster test fails
   on a `requires` that names no registered switch, or that sits beside no

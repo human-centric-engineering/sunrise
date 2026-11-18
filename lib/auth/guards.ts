@@ -76,7 +76,13 @@ import {
   SHARED_SETTINGS_REFUSAL,
   SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
-import { SWITCH_REQUIRED_REASON, switchRequiredMessage } from '@/lib/tenancy/entitlements';
+import {
+  orgSwitchState,
+  SWITCH_REQUIRED_REASON,
+  SWITCH_UNVERIFIED_REASON,
+  switchRequiredMessage,
+  switchUnverifiedMessage,
+} from '@/lib/tenancy/entitlements';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -1462,13 +1468,31 @@ export function withAdminAuth(
           // reads `requires` its own way is described by its own answer. A
           // caller refused for any other reason gets the ordinary refusal,
           // and learns nothing about the org's switches.
+          //
+          // "Your organisation does not have X" is said only when the org's
+          // switches were read and X is off. A read that failed also refuses
+          // (the policy fails closed), but says it could not check, so an
+          // admin whose org has the switch is not told to go and buy it. A
+          // switch that reads on gets the ordinary refusal: a fork's policy
+          // refused for its own reason, which this cannot name.
           if (resource !== UNRESOLVED && scope.requires !== undefined) {
             const { requires: required, ...withoutSwitch } = scope;
             if (await canAdminister(principal, resource, withoutSwitch)) {
-              throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
-                reason: SWITCH_REQUIRED_REASON,
-                requires: required,
-              });
+              const state = principal.orgId
+                ? await orgSwitchState(principal.orgId, required)
+                : 'off';
+              if (state === 'off') {
+                throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
+                  reason: SWITCH_REQUIRED_REASON,
+                  requires: required,
+                });
+              }
+              if (state === 'unknown') {
+                throw new APIError(switchUnverifiedMessage(required), ErrorCodes.FORBIDDEN, 403, {
+                  reason: SWITCH_UNVERIFIED_REASON,
+                  requires: required,
+                });
+              }
             }
           }
           throw new ForbiddenError('Admin access required');

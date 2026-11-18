@@ -160,7 +160,11 @@ The guard and the admin layout hand the key to the authorization policy as
 whose org lacks it. A platform admin is not limited by switches. The sidebar
 hides the item, the layout and the in-app gate refuse the page, and the route
 answers 403 naming the switch by its label, with `details.reason:
-'entitlement_required'` (`SWITCH_REQUIRED_REASON`). One switch per surface.
+'entitlement_required'` (`SWITCH_REQUIRED_REASON`). If the org's switches
+could not be read it still refuses, with `details.reason:
+'entitlement_unverified'` (`SWITCH_UNVERIFIED_REASON`) and a message saying it
+could not check, since saying the org lacks the switch might not be true.
+`orgSwitchState()` is the read that tells the two apart. One switch per surface.
 How the three places stay in step, and what the roster test checks, is in
 [`../auth/authorization.md`](../auth/authorization.md#admin-tiers).
 

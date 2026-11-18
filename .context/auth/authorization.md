@@ -474,8 +474,16 @@ by its label and who can change it: `Your organisation does not have Lead
 generation. Ask whoever manages your organisation's account to switch it on.`,
 with `details: { reason: 'entitlement_required', requires: 'lead_gen' }`. The
 guard knows the switch is the reason by asking the policy again without it, on
-the refusal path only. A caller the tier refuses anyway gets the ordinary
-`Admin access required`, which says nothing about the org's switches.
+the refusal path only, and then reads the switch itself (`orgSwitchState()`)
+so it names it only when the org's switches were read and it is off. When they
+could not be read (the query failed, the stored slice is malformed, or the
+app's `initAppEntitlements()` threw) the route still refuses, but says `We
+could not check whether your organisation has Lead generation, so this was
+refused. Try again in a moment.`, with `details.reason:
+'entitlement_unverified'`, rather than telling an admin whose org may have the
+switch to go and get it. A caller the tier refuses anyway gets the ordinary
+`Admin access required`, which says nothing about the org's switches; so does
+one whose switch reads on, which only a fork's own policy refuses.
 
 One switch per surface. A surface that needs two is two surfaces, or a policy
 of your own. Mark the page, its routes and its nav item alike: the item and
