@@ -68,10 +68,13 @@ import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { openSecret, SealedSecretOpenError, sealSecret } from '@/lib/security/sealed-secrets';
 import type { SealedStore, SealedValue } from '@/lib/security/sealed-stores';
-import { requireTenantContext, runAsSystem } from '@/lib/tenancy/context';
+import { isMultiTenant, requireTenantContext, runAsSystem } from '@/lib/tenancy/context';
 
 /** How long a looked-up key row answers before it is read again. */
 export const ORG_PROVIDER_KEY_TTL_MS = 60_000;
+
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 /** The longest key accepted. Vendor keys are well under this; a longer value is a paste error. */
 export const ORG_PROVIDER_KEY_MAX_LENGTH = 1024;
@@ -308,10 +311,13 @@ export async function saveOrgProviderKey(input: {
   if (
     apiKey.length === 0 ||
     apiKey.trim() !== apiKey ||
-    apiKey.length > ORG_PROVIDER_KEY_MAX_LENGTH
+    apiKey.length > ORG_PROVIDER_KEY_MAX_LENGTH ||
+    // A line break or other control character (a wrapped paste) can never be
+    // sent as a header value, so every call would fail at the vendor client.
+    CONTROL_CHARACTER.test(apiKey)
   ) {
     throw new Error(
-      `An org's provider key must be 1–${ORG_PROVIDER_KEY_MAX_LENGTH} characters with no surrounding spaces.`
+      `An org's provider key must be 1–${ORG_PROVIDER_KEY_MAX_LENGTH} characters with no surrounding spaces or control characters.`
     );
   }
   const orgId = writingOrg();
@@ -353,12 +359,24 @@ export async function removeOrgProviderKey(providerConfigId: string): Promise<bo
  * switch shows before it is turned off, and what Config Health reports.
  */
 export async function countOrgsWithProviderKeys(): Promise<number> {
+  // At `single` no org key is read, and the switch is not shown: nothing to count.
+  if (!isMultiTenant()) return 0;
   // Install-wide by definition: under row isolation a count from inside one
   // org would see that org's keys alone.
   const orgs = await runAsSystem('count the orgs holding their own provider keys', () =>
     prisma.aiOrgProviderKey.findMany({ distinct: ['orgId'], select: { orgId: true } })
   );
   return orgs.length;
+}
+
+/**
+ * How many orgs have saved their own key for one provider row, across the
+ * install: what a permanent delete of the row would silently take with it.
+ */
+export async function countOrgKeysForProvider(providerConfigId: string): Promise<number> {
+  return runAsSystem('count the orgs holding their own key for a provider row', () =>
+    prisma.aiOrgProviderKey.count({ where: { providerConfigId } })
+  );
 }
 
 /**

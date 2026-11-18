@@ -104,6 +104,10 @@ function createTable() {
       }
       return { count };
     }),
+    count: vi.fn(
+      async (args: { where?: Where } = {}) =>
+        [...rows.values()].filter((row) => matches(row, args.where)).length
+    ),
     findMany: vi.fn(
       async (
         args: {

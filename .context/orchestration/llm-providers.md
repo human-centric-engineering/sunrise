@@ -786,7 +786,7 @@ other org is unaffected.
 | **The switch**   | `AiOrchestrationSettings.orgProviderKeysEnabled`, off by default, set on Settings → "Organisations' own AI keys" (shown at `multi` only) or `PATCH /settings`. Turning it on is refused while no sealed-secret master key is configured. Platform admins only. |
 | **The keys**     | `AiOrgProviderKey`: one per org per provider row, tenant-owned (isolated by `org_isolation`), sealed with `sealSecret()` for `org-provider-key:<orgId>:<providerConfigId>`.                                                                                    |
 | **The lookup**   | `resolveOrgProviderKey()` in `lib/orchestration/llm/org-provider-keys.ts`, asked by `resolveProviderCredential()` ahead of the app's resolver, for an org in scope at `multi`. Nothing is read at `single`.                                                    |
-| **Saving a key** | `saveOrgProviderKey()` / `removeOrgProviderKey()`, for the org in scope. The admin page and API that call them are t-1045.                                                                                                                                     |
+| **Saving a key** | `saveOrgProviderKey()` / `removeOrgProviderKey()`, for the org in scope. They check neither the switch nor the approval: both are checked when the key is used. The admin page and API that call them are t-1045.                                              |
 | **Master key**   | `.context/security/sealed-secrets.md`. Orgs' keys are core's sealed store `org-provider-keys`, so `npm run secrets:reseal` moves them onto a new master key.                                                                                                   |
 
 **An org with a key is never moved to another key.** Once an org has saved a
@@ -804,7 +804,7 @@ to your resolver:
 | does not exist                                                     | resolves as before: your resolver, or the env var                |
 
 Each refusal is logged with its reason and a fix, never the key, at most once a minute per org, row and reason: the lookup also runs on every reachability check. An org with its own key is not skipped when the install key's breaker opens; its breaker is its own.
-Removing its key is how an org returns to the install's key. Turning the
+Removing its key is how an org returns to the install's key. A permanent delete of a provider row is refused while any org holds a key for it, since the cascade would silently take the keys with it. Turning the
 switch off with keys saved refuses those orgs until it is back on; the
 settings page says how many orgs that is before it is saved. Config Health
 flags the switch on with no master key configured.

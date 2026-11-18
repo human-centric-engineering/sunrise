@@ -22,6 +22,7 @@ import { GET, PATCH } from '@/app/api/v1/admin/orchestration/settings/route';
 import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
+import { countOrgsWithProviderKeys } from '@/lib/orchestration/llm/org-provider-keys';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -81,6 +82,14 @@ vi.mock('@/lib/db/client', () => {
 vi.mock('@/lib/security/sealed-secrets', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/security/sealed-secrets')>()),
   isSealedSecretKeyConfigured: vi.fn(() => false),
+}));
+
+// How many orgs hold their own AI keys (§137 t-1044): its query, and that it
+// counts nothing at single, are the module's own tests. Here only what the
+// route does with the answer.
+vi.mock('@/lib/orchestration/llm/org-provider-keys', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-keys')>()),
+  countOrgsWithProviderKeys: vi.fn(async () => 0),
 }));
 
 // Whether a model can be the model for confidential messages (§130 t-1038)
@@ -1635,7 +1644,7 @@ describe('Admin Orchestration — /settings', () => {
     });
 
     it('still answers the settings when the orgs holding keys cannot be counted', async () => {
-      vi.mocked(prisma.aiOrgProviderKey.findMany).mockRejectedValue(new Error('relation missing'));
+      vi.mocked(countOrgsWithProviderKeys).mockRejectedValueOnce(new Error('relation missing'));
 
       const res = await GET(makeGet());
 
@@ -1668,10 +1677,7 @@ describe('Admin Orchestration — /settings', () => {
         ...makeSettingsRow(),
         orgProviderKeysEnabled: true,
       } as never);
-      vi.mocked(prisma.aiOrgProviderKey.findMany).mockResolvedValue([
-        { orgId: 'org-a' },
-        { orgId: 'org-b' },
-      ] as never);
+      vi.mocked(countOrgsWithProviderKeys).mockResolvedValueOnce(2);
 
       const res = await GET(makeGet());
 
@@ -1681,11 +1687,6 @@ describe('Admin Orchestration — /settings', () => {
         orgProviderKeysEnabled: true,
         orgsWithProviderKeys: 2,
         sealedSecretKeyConfigured: true,
-      });
-      // Counted install-wide, by org, never reading a key.
-      expect(prisma.aiOrgProviderKey.findMany).toHaveBeenCalledWith({
-        distinct: ['orgId'],
-        select: { orgId: true },
       });
     });
   });

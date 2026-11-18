@@ -36,18 +36,22 @@ release process.
   reuses the old client), or `credential_unavailable` when the switch is off,
   the provider is not approved for the org, the key will not open, or the
   lookup failed. It is never moved to the install's key or handed to your
-  resolver. An org with no key resolves exactly as before, and nothing is read
-  at `single`. The lookup is cached for 60 seconds per org and row; a save or
-  removal clears it in the writing process. Config Health gains a critical
-  check for the switch on with no master key. Saving keys through the product
-  arrives with t-1045. See
+  resolver. An org with no key resolves as before, and nothing is read at
+  `single`. The lookup is cached for 60 seconds per org and row; a save or
+  removal clears it in the writing process. A permanent delete of a provider
+  row is refused (409, `details.orgKeyCount`) while orgs hold keys for it.
+  Config Health gains a critical check for the switch on with no master key.
+  Saving keys through the product arrives with t-1045. See
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#organisations-own-keys).
   _Fork impact:_ if you registered a credential resolver, it is no longer asked
-  for an org that has saved its own key while that key is in use; with the
-  switch off and no keys saved, nothing changes. A unit test that mocks
-  `@/lib/db/client` and fetches a provider for an org at `multi` now needs
-  `aiOrgProviderKey: { findUnique: async () => null }` in its mock: a lookup
-  that cannot be read refuses the credential rather than assume there is no key. The migration adds a table and
+  for an org that has saved its own key while that key is in use. At `single`
+  nothing changes. At `multi`, even with the switch off and no keys saved,
+  each provider fetch or reachability check for an org now also reads (cached
+  for 60 seconds) whether it holds a key, and a read that fails refuses that
+  org's credential rather than assume it holds none, local rows included. So a
+  unit test that mocks `@/lib/db/client` and fetches a provider for an org at
+  `multi` needs `aiOrgProviderKey: { findUnique: async () => null }` in its
+  mock. The migration adds a table and
   a column, and enables RLS on the table if your install has already run
   `db:tenancy:enable`.
 

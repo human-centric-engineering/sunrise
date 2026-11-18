@@ -28,6 +28,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { clearCache as clearProviderCache } from '@/lib/orchestration/llm/provider-manager';
 import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 import { providerUsage } from '@/lib/orchestration/admin/global-config-usage';
+import { countOrgKeysForProvider } from '@/lib/orchestration/llm/org-provider-keys';
 import { updateProviderConfigSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -149,26 +150,38 @@ export const DELETE = withAdminAuth<{ id: string }>(
         fallbackAgents: fallbackAgentCount,
         costLogRows: costLogCount,
       } = await providerUsage(current.slug);
+      // Orgs' own keys for the row (§137 t-1044) would go with it, silently:
+      // an org that saved one is then no longer refused for want of it, and
+      // a re-created row it is approved for would put it on the install's key.
+      const orgKeyCount = await countOrgKeysForProvider(id);
 
       const totalAgentRefs = primaryAgentCount + fallbackAgentCount;
 
-      if (totalAgentRefs > 0 || costLogCount > 0) {
+      if (totalAgentRefs > 0 || costLogCount > 0 || orgKeyCount > 0) {
         log.info('Permanent delete blocked by references', {
           providerId: id,
           slug: current.slug,
           primaryAgentCount,
           fallbackAgentCount,
           costLogCount,
+          orgKeyCount,
         });
+        const orgKeys =
+          orgKeyCount === 0
+            ? ''
+            : `, and ${orgKeyCount} organisation${orgKeyCount === 1 ? ' has' : 's have'} saved ${
+                orgKeyCount === 1 ? 'its' : 'their'
+              } own key for it`;
         throw new ConflictError(
           `Cannot permanently delete '${current.slug}' — it is referenced by ${totalAgentRefs} agent${
             totalAgentRefs === 1 ? '' : 's'
-          } and ${costLogCount} cost log row${costLogCount === 1 ? '' : 's'}. Re-point or clear those first, or deactivate instead.`,
+          } and ${costLogCount} cost log row${costLogCount === 1 ? '' : 's'}${orgKeys}. Re-point or clear those first, or deactivate instead.`,
           {
             slug: current.slug,
             primaryAgentCount,
             fallbackAgentCount,
             costLogCount,
+            orgKeyCount,
           }
         );
       }

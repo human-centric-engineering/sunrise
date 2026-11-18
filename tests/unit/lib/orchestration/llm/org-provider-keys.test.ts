@@ -56,6 +56,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { logger } from '@/lib/logging';
 import {
+  countOrgKeysForProvider,
   countOrgsWithProviderKeys,
   forgetOrgProviderKey,
   ORG_PROVIDER_KEY_TTL_MS,
@@ -368,6 +369,8 @@ describe('saveOrgProviderKey', () => {
     ['an empty key', ''],
     ['a key with surrounding spaces', ` ${KEY_A}`],
     ['a key longer than any vendor issues', 'k'.repeat(1025)],
+    ['a key with a line break inside it', 'sk-ant-wrapped-0000\n00000000000000000000'],
+    ['a key with a tab inside it', 'sk-ant-tabbed-0000\t000000000000000000000'],
   ])('refuses %s, writing nothing', async (_label, apiKey) => {
     await expect(save(ORG_A, apiKey)).rejects.toThrow(/1–1024 characters/);
     expect(orgKeyTable.rows.size).toBe(0);
@@ -401,6 +404,37 @@ describe('countOrgsWithProviderKeys', () => {
     await save(ORG_B, KEY_B);
 
     await expect(countOrgsWithProviderKeys()).resolves.toBe(2);
+    // Install-wide, by org, never selecting a key.
+    expect(orgKeyTable.delegate.findMany).toHaveBeenLastCalledWith({
+      distinct: ['orgId'],
+      select: { orgId: true },
+    });
+  });
+
+  it('counts nothing at single, where no org key is read', async () => {
+    await save(ORG_A, KEY_A);
+    envOverrides.TENANCY_MODE = 'single';
+    orgKeyTable.delegate.findMany.mockClear();
+
+    await expect(countOrgsWithProviderKeys()).resolves.toBe(0);
+    expect(orgKeyTable.delegate.findMany).not.toHaveBeenCalled();
+  });
+
+  it('counts the orgs holding a key for one provider row, for its delete check', async () => {
+    await save(ORG_A, KEY_A);
+    await save(ORG_B, KEY_B);
+    await runAsOrg(ORG_A, () =>
+      saveOrgProviderKey({
+        providerConfigId: 'cmprov0000000000000000row2',
+        apiKey: KEY_B,
+        savedById: null,
+      })
+    );
+
+    await expect(countOrgKeysForProvider(ROW.id)).resolves.toBe(2);
+    expect(orgKeyTable.delegate.count).toHaveBeenCalledWith({
+      where: { providerConfigId: ROW.id },
+    });
   });
 });
 
