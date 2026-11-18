@@ -886,6 +886,43 @@ the last four characters, say) is left in the log: no more than the hint
 shows. A database error is logged by its name and code only, since its message
 can carry the sealed key.
 
+### What an own-key call costs, and which caps hold it (§137 t-1046)
+
+The vendor bills a call on an org's own key to the org, not to the platform
+(owner ruling, 2026-11-18). So:
+
+| Cap or report                                       | An own-key call                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **The agent's monthly budget** (`monthlyBudgetUsd`) | Counts, and refuses it once reached: in chat's check at the start of a turn and between tool calls, and through the turn's paid-call hold (`PaidCallHold.agentCapReached`) for every call the turn makes.                                                                               |
+| **The org's cap** (`settings.quotas`)               | Neither counted nor refused. `getMonthToDateOrgSpend` sums `ownKey: false` rows only, and `logCost` adds no own-key row to the running total.                                                                                                                                           |
+| **The global cap**                                  | Neither counted nor refused (`globalSpendSince` sums `ownKey: false` rows only).                                                                                                                                                                                                        |
+| **Cost reports**                                    | The row is marked `AiCostLog.ownKey`. Every total still includes it; the summary's `ownKey` and the org usage's `ownKeyCostUsd` say how much was on own keys, and the costs page, the per-org table and the org page show it apart from the platform's spend. Agent breakdowns keep it. |
+
+The gate (`assertWithinSpendCaps(slug, isLocal, { ownKey })`) and provider
+selection (`spendCapRefusal(..., { ownKey })`) are told by the provider
+manager: `usesOrgOwnKey(provider)` for a provider `getProvider` returned, and
+`providerUsesOrgOwnKey(slug)` before one is fetched, as chat asks at the start
+of a turn. A turn on the org's own key goes ahead with the org's or the global
+cap reached; any call it makes on the platform's keys (a fallback, the
+summarizer, an embedding on another row) meets those caps at the gate. Only
+core's own store makes a key the org's own: whatever a registered resolver
+returns is the platform's, since nothing says whose account it bills.
+
+**How a cost row is marked.** The Proxy knows which key a call used; the row
+is written afterwards by whichever of the ~25 `logCost` callers made the call,
+which know the model but not always the provider row. So the Proxy notes each
+paid call it sends at `multi`, by org and model, with the kind of key
+(`own-key-calls.ts`), and `logCost` claims a note for the row. A row is marked
+only when every live note for its org and model is an own-key one; when they
+disagree (the org called the same model on two provider rows, one on its own
+key, or a key was saved or removed a moment ago) the row is counted as the
+platform's, and nothing is claimed until the notes agree or expire
+(`OWN_KEY_NOTE_TTL_MS`, 15 minutes). Unmarked is the side on which a cap can
+only refuse early. A call that never went through the Proxy is not noted, so
+its row is the platform's too, unless the org had own-key calls for the same
+model in the last 15 minutes; every vendor call core makes goes through the
+Proxy. A call whose options carry no model id is not noted either.
+
 ## Per-org approved providers (core, at `multi`)
 
 At `TENANCY_MODE=multi` core holds each org to the providers it has been

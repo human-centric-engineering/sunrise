@@ -76,6 +76,30 @@ release process.
   that should let another org role manage keys answers `org.providerKeys` in
   `canRead`'s `unattributed` arm.
 
+- **Spend on an organisation's own AI key is kept out of the platform's caps,
+  and reported apart (§137, t-1046).** `AiCostLog` gains `ownKey` (default
+  `false`), set when the call went out on the org's own key. Such a call counts
+  towards its agent's monthly budget only: the org's cap and the global cap
+  neither count it nor refuse it, at the provider manager's gate, in provider
+  selection and in chat's check at the start of a turn, while any call the same
+  turn makes on the platform's keys still meets both. `GET /costs/summary`
+  gains `ownKey: { today, week, month }`, the part of `totals` on own keys, and
+  every bucket of `GET /costs/orgs` gains `ownKeyCostUsd`; the costs page, the
+  per-org table and the org page show the platform's spend with own-key spend
+  apart. Also new: `BudgetStatus.agentCapExceeded`, `PaidCallHold.agentCapReached`,
+  an `{ ownKey }` option on `spendCapRefusal()` and `assertWithinSpendCaps()`,
+  and `usesOrgOwnKey()` / `providerUsesOrgOwnKey()` on the provider manager.
+  The provider manager notes which kind of key each paid call used, and
+  `logCost` marks the row only when that is clear, so no caller passes
+  anything. See
+  [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#what-an-own-key-call-costs-and-which-caps-hold-it-137-t-1046).
+  _Fork impact:_ `/costs/orgs`'s `utilisation` is now the platform's spend over
+  the cap, which differs from `totalCostUsd / cap` once an org has own-key
+  spend; nothing changes before then. `resolveProviderCredential()` now also
+  answers `ownKey`, always `false` for your resolver's credentials. A test
+  fixture typed as `CostSummary` or `UsageTotals` needs the new fields. The
+  migration adds one column with a default.
+
 - **A page, route or menu item can require an entitlement switch (§135,
   t-1034).** A `requires` option beside `tier` in the three places a surface
   declares its tier: `registerOrgTierAdminPage(pattern, { tier, requires })`,
