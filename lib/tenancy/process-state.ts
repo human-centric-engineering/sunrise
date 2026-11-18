@@ -219,13 +219,6 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "Each org's saved-key row for a provider row — its id, version and sealed key, never the opened key — filled by a `findUnique` on (orgId, providerConfigId), so an entry is that org's whatever scope filled it (§137 t-1044). A save or removal through the module clears that entry, and a reseal clears every one; the 60-second TTL is how long another process may still use a removed or replaced key, or not yet use a new one. Beside it, when each org's refusal for a row was last logged, keyed the same way, so a refused org logs once a minute rather than on every reachability check. Read only at multi, for an org in scope.",
   },
   {
-    file: 'lib/orchestration/llm/own-key-calls.ts',
-    holders: ['byOrgAndModel'],
-    posture: 'row-keyed',
-    keyedBy: 'org id and model id',
-    why: "Which kind of key each paid call the provider manager sent went out on, the org's own or the platform's (§137 t-1046), noted for the org in tenant context when the call passes its gates, so an entry is that org's whatever scope noted it. `logCost` claims one for the org in context when it writes the call's cost row, and marks the row only when every live note for that org and model is an own-key one. Notes expire after 15 minutes. Per process: a call and its cost row are made by the same one.",
-  },
-  {
     file: 'lib/orchestration/llm/spend-caps.ts',
     holders: ['orgEntries', 'orgCapEntries'],
     posture: 'row-keyed',

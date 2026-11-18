@@ -24,7 +24,7 @@ import type { LlmRequestParamsSnapshot } from '@/types/orchestration';
 import type { LlmOptions, LlmResponseFormat, ReasoningEffort } from '@/lib/orchestration/llm/types';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
-import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
@@ -284,6 +284,7 @@ export async function runLlmCall(
         userId: ctx.userId,
         model: modelId,
         provider: modelInfo.provider,
+        ownKey: usesOrgOwnKey(provider),
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
         cacheReadTokens: response.usage.cacheReadTokens,

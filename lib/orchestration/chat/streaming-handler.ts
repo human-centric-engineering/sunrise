@@ -744,15 +744,14 @@ export class StreamingChatHandler {
       // (§137): the vendor bills the org. It goes ahead unless its agent's cap
       // is reached, with nothing held, and any call it makes on the platform's
       // keys meets those two caps at the gate.
-      const refused =
-        !budget.withinBudget &&
-        (budget.agentCapExceeded === true ||
-          !(await providerUsesOrgOwnKey(resolvedBinding.providerSlug)));
+      const onOwnKey =
+        !budget.withinBudget && (await providerUsesOrgOwnKey(resolvedBinding.providerSlug));
+      const refused = !budget.withinBudget && (!onOwnKey || budget.agentCapExceeded === true);
       if (refused && (await isLocalProvider(resolvedBinding.providerSlug))) {
         hold.cap = budgetRefusal(budget).cap;
         hold.agentCapReached = budget.agentCapExceeded === true;
       } else if (refused) {
-        const refusal = budgetRefusal(budget);
+        const refusal = budgetRefusal(budget, { ownKey: onOwnKey });
         yield errorEvent(refusal.code, refusal.message);
         notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
         return;
@@ -1078,12 +1077,16 @@ export class StreamingChatHandler {
       if (hasImageAttachments || hasPdfAttachments) {
         const imageCount = attachments.filter((a) => a.mediaType.startsWith('image/')).length;
         const pdfCount = attachments.filter((a) => a.mediaType === 'application/pdf').length;
+        // Billed with the turn's call, so on whichever key that goes out on;
+        // asked of the primary, as the turn has not picked its provider yet.
+        const attachmentsOnOwnKey = await providerUsesOrgOwnKey(resolvedBinding.providerSlug);
         void logCost({
           agentId: agent.id,
           conversationId: conversation.id,
           userId: userIdForUserRef(request.userId),
           model: resolvedModel,
           provider: resolvedBinding.providerSlug,
+          ownKey: attachmentsOnOwnKey,
           inputTokens: 0,
           outputTokens: 0,
           operation: CostOperation.VISION,
@@ -1970,6 +1973,7 @@ export class StreamingChatHandler {
                     userId: userIdForUserRef(request.userId),
                     model: resolvedModel,
                     provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+                    ownKey: usesOrgOwnKey(currentProvider),
                     inputTokens: errUsage.inputTokens,
                     outputTokens: errUsage.outputTokens,
                     cacheReadTokens: errUsage.cacheReadTokens,
@@ -2517,6 +2521,7 @@ export class StreamingChatHandler {
               userId: userIdForUserRef(request.userId),
               model: resolvedModel,
               provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+              ownKey: usesOrgOwnKey(currentProvider),
               inputTokens: u.inputTokens,
               outputTokens: u.outputTokens,
               cacheReadTokens: u.cacheReadTokens,
@@ -2620,6 +2625,7 @@ export class StreamingChatHandler {
             userId: userIdForUserRef(request.userId),
             model: resolvedModel,
             provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+            ownKey: usesOrgOwnKey(currentProvider),
             inputTokens: turnUsage.inputTokens,
             outputTokens: turnUsage.outputTokens,
             cacheReadTokens: turnUsage.cacheReadTokens,
@@ -2717,11 +2723,9 @@ export class StreamingChatHandler {
         budgetNotice = { agent, budget: midBudget };
         // As before the turn, a turn on the org's own key goes on unless its
         // agent's cap is reached.
-        if (
-          !midBudget.withinBudget &&
-          (midBudget.agentCapExceeded || !usesOrgOwnKey(currentProvider))
-        ) {
-          const refusal = budgetRefusal(midBudget);
+        const midOnOwnKey = usesOrgOwnKey(currentProvider);
+        if (!midBudget.withinBudget && (midBudget.agentCapExceeded || !midOnOwnKey)) {
+          const refusal = budgetRefusal(midBudget, { ownKey: midOnOwnKey });
           // Held, as before the turn, while the turn is on a local provider.
           if (currentProvider.isLocal) {
             hold.cap = refusal.cap;
@@ -4272,12 +4276,19 @@ function refusalText(code: string): string {
  * the one worth saying. The org and global messages name no amount — the
  * reader may be an embed visitor, and those caps are not theirs to know.
  */
-function budgetRefusal(budget: BudgetStatus): BudgetRefusalReason {
-  const cap: SpendCap = budget.globalCapExceeded
-    ? 'global'
-    : budget.orgCapExceeded
-      ? 'org'
-      : 'agent';
+function budgetRefusal(
+  budget: BudgetStatus,
+  options: { ownKey?: boolean } = {}
+): BudgetRefusalReason {
+  // A turn on the org's own key is refused only for its agent's cap (§137), so
+  // that is the cap it names, whichever others are also reached.
+  const cap: SpendCap = options.ownKey
+    ? 'agent'
+    : budget.globalCapExceeded
+      ? 'global'
+      : budget.orgCapExceeded
+        ? 'org'
+        : 'agent';
   const code = SPEND_CAP_CODES[cap];
   return { code, cap, message: refusalText(code) };
 }

@@ -21,7 +21,7 @@
 
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
-import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
@@ -201,6 +201,7 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
       void logCost({
         model: modelId,
         provider: modelInfo.provider,
+        ownKey: usesOrgOwnKey(provider),
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
         cacheReadTokens: response.usage.cacheReadTokens,

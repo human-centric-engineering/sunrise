@@ -25,8 +25,6 @@ import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { getAvailableModels, getModel } from '@/lib/orchestration/llm/model-registry';
 import { codeExecutionCostUsd as codeExecutionCostUsdOf } from '@/lib/orchestration/llm/code-execution';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
-import { claimOwnKeyCall } from '@/lib/orchestration/llm/own-key-calls';
-import { orgIdForCall } from '@/lib/tenancy/context';
 import {
   globalCapStateOrSkip,
   noteSpend,
@@ -219,6 +217,15 @@ export interface LogCostParams {
   pdfCount?: number;
   /** Explicit override; otherwise inferred from the model registry tier. */
   isLocal?: boolean;
+  /**
+   * The call went out on the org's own vendor key (§137): pass
+   * `usesOrgOwnKey(provider)` for the provider the call was made on. The
+   * vendor bills the org for it, so the row is left out of the org's and the
+   * global monthly caps and shown apart in the cost reports; the agent's cap
+   * still counts it. Omitted means the platform's key. Every caller that makes
+   * a vendor call passes it (`tests/unit/lib/orchestration/llm/cost-log-own-key.test.ts`).
+   */
+  ownKey?: boolean;
   metadata?: Record<string, unknown>;
   /**
    * OTEL trace correlation. Set when a non-default tracer is registered and
@@ -501,10 +508,8 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
     cost = calculateCost(params.model, params.inputTokens, params.outputTokens, params);
   }
   const isLocal = params.isLocal ?? cost.isLocal;
-  // Whether the call went out on the org's own key, as the provider manager
-  // noted when it sent it (`own-key-calls.ts`). Asked of every paid row, so no
-  // caller has to pass it; unclear is answered `false`, platform spend.
-  const ownKey = !isLocal && claimOwnKeyCall(orgIdForCall(), params.model);
+  // A local call holds no key, so it is never on the org's own.
+  const ownKey = !isLocal && params.ownKey === true;
 
   // Stamp operation-specific counters into metadata so analytics can
   // split "no usage reported" from "0-byte / 0-attachment clip".

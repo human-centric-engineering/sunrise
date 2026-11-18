@@ -669,6 +669,29 @@ describe('StreamingChatHandler', () => {
     expect(getProviderWithFallbacks).not.toHaveBeenCalled();
   });
 
+  it("names its agent's cap when that stops a turn on the org's own key, whatever else is reached", async () => {
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: false,
+      spent: 11,
+      limit: 10,
+      remaining: -1,
+      agentCapExceeded: true,
+      orgCapExceeded: true,
+      globalCapExceeded: true,
+    });
+    vi.mocked(providerUsesOrgOwnKey).mockResolvedValueOnce(true);
+
+    const events = await collect(streamChat(baseRequest));
+
+    expect(events[0]).toMatchObject({ type: 'error', code: 'budget_exceeded' });
+    await vi.waitFor(() =>
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+        'budget_exceeded',
+        expect.objectContaining({ cap: 'agent' })
+      )
+    );
+  });
+
   it.each([
     ['with its agent’s cap also reached, refuses', { agentCapExceeded: true, limit: 10 }, true],
     ['for the global cap alone, lets through', { limit: null }, false],
@@ -3875,7 +3898,8 @@ describe('mid-loop budget re-check', () => {
         const error = events.find((e) => (e as { type: string }).type === 'error');
 
         if (stops) {
-          expect(error).toMatchObject({ code: 'org_budget_exceeded' });
+          // The agent's cap is the one that holds an own-key turn.
+          expect(error).toMatchObject({ code: 'budget_exceeded' });
           expect(provider.chatStream).toHaveBeenCalledTimes(1);
         } else {
           expect(error).toBeUndefined();

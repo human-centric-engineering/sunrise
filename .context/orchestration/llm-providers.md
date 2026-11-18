@@ -908,20 +908,18 @@ summarizer, an embedding on another row) meets those caps at the gate. Only
 core's own store makes a key the org's own: whatever a registered resolver
 returns is the platform's, since nothing says whose account it bills.
 
-**How a cost row is marked.** The Proxy knows which key a call used; the row
-is written afterwards by whichever of the ~25 `logCost` callers made the call,
-which know the model but not always the provider row. So the Proxy notes each
-paid call it sends at `multi`, by org and model, with the kind of key
-(`own-key-calls.ts`), and `logCost` claims a note for the row. A row is marked
-only when every live note for its org and model is an own-key one; when they
-disagree (the org called the same model on two provider rows, one on its own
-key, or a key was saved or removed a moment ago) the row is counted as the
-platform's, and nothing is claimed until the notes agree or expire
-(`OWN_KEY_NOTE_TTL_MS`, 15 minutes). Unmarked is the side on which a cap can
-only refuse early. A call that never went through the Proxy is not noted, so
-its row is the platform's too, unless the org had own-key calls for the same
-model in the last 15 minutes; every vendor call core makes goes through the
-Proxy. A call whose options carry no model id is not noted either.
+**How a cost row is marked.** The caller that writes a call's cost row says
+which key the call used: `logCost({ ..., ownKey: usesOrgOwnKey(provider) })`,
+for the provider the call was made on. Omitted, the row is the platform's.
+`tests/unit/lib/orchestration/llm/cost-log-own-key.test.ts` holds every
+`logCost` call in the tree to a roster, so a new one fails until it passes
+`ownKey` or says why it makes no vendor call (a capability's own cost, a
+channel send, a marker row). A chat turn's rows ask the provider serving the
+turn, which moves on a failover; its attachment row asks the primary, before
+the turn has picked one. A batched embedding run writes one row, marked only
+if every batch went out on the org's own key. **A fork's own `logCost` calls**
+are not on the roster: pass `ownKey` from the provider you called, or the
+org's own spend counts against the platform's caps.
 
 ## Per-org approved providers (core, at `multi`)
 

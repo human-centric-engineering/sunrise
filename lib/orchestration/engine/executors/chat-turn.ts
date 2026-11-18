@@ -40,7 +40,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { CostOperation, type StepResult, type WorkflowStep } from '@/types/orchestration';
 import type { LlmMessage, ReasoningEffort } from '@/lib/orchestration/llm/types';
-import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import { getProviderWithFallbacks, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import {
   resolveAgentProviderAndModel,
   type ResolvedAgentBinding,
@@ -330,6 +330,7 @@ export async function executeChatTurn(
     userId: ctx.userId,
     operation: CostOperation.CHAT,
     provider: providerSlug,
+    ownKey: usesOrgOwnKey(provider),
     model,
     inputTokens: response.usage?.inputTokens ?? 0,
     outputTokens: response.usage?.outputTokens ?? 0,

@@ -89,15 +89,17 @@ release process.
   apart. Also new: `BudgetStatus.agentCapExceeded`, `PaidCallHold.agentCapReached`,
   an `{ ownKey }` option on `spendCapRefusal()` and `assertWithinSpendCaps()`,
   and `usesOrgOwnKey()` / `providerUsesOrgOwnKey()` on the provider manager.
-  The provider manager notes which kind of key each paid call used, and
-  `logCost` marks the row only when that is clear, so no caller passes
-  anything. See
+  `LogCostParams` gains `ownKey`: every core `logCost` caller passes
+  `usesOrgOwnKey(provider)` for the provider it called, and a new guard test
+  holds every call site in the tree to that. See
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#what-an-own-key-call-costs-and-which-caps-hold-it-137-t-1046).
   _Fork impact:_ `/costs/orgs`'s `utilisation` is now the platform's spend over
   the cap, which differs from `totalCostUsd / cap` once an org has own-key
   spend; nothing changes before then. `resolveProviderCredential()` now also
   answers `ownKey`, always `false` for your resolver's credentials. A test
-  fixture typed as `CostSummary` or `UsageTotals` needs the new fields. The
+  fixture typed as `CostSummary` or `UsageTotals` needs the new fields. Your own
+  `logCost` calls should pass `ownKey: usesOrgOwnKey(provider)`; without it an
+  org's own-key spend in them counts against the org's and the global caps. The
   migration adds one column with a default.
 
 - **A page, route or menu item can require an entitlement switch (§135,

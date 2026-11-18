@@ -57,8 +57,6 @@ import {
   type SpendCapExceededError,
 } from '@/lib/orchestration/llm/spend-caps';
 import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
-import { noteProviderCall } from '@/lib/orchestration/llm/own-key-calls';
-import { isMultiTenant, orgIdForCall } from '@/lib/tenancy/context';
 import { forgetProviderRow } from '@/lib/orchestration/llm/org-provider-policy';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import {
@@ -215,9 +213,10 @@ export function breakerKeyOf(provider: LlmProvider): string | undefined {
  * Whether calls on a provider `getProvider` returned go out on the org's own
  * key (§137), so the vendor bills the org rather than the platform. `false`
  * for the shared key, an app resolver's key, and an object that did not come
- * from the manager. Callers that pick a provider ask it so a spend cap that
- * does not hold for own-key calls does not pass one over
- * (`spendCapRefusal(..., { ownKey })`).
+ * from the manager. Every `logCost` caller passes it for the provider its
+ * call was made on (`LogCostParams.ownKey`), and callers that pick a provider
+ * ask it so a spend cap that does not hold for own-key calls does not pass one
+ * over (`spendCapRefusal(..., { ownKey })`).
  */
 export function usesOrgOwnKey(provider: LlmProvider): boolean {
   return ownKeyViews.has(provider);
@@ -593,9 +592,8 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
  * `assertWithinSpendCaps` (§110 t-788), so a workflow, an evaluation or a job
  * cannot spend past a cap chat would have refused; a local provider is
  * exempt, since it costs nothing, and a call on the org's own key (`ownKey`,
- * §137) is held to the agent's cap only, since the vendor bills the org.
- * **Each paid call that passes is noted** with the kind of key it used, for
- * its cost row to claim (`own-key-calls.ts`). Throws on an empty `slug`,
+ * §137) is held to the agent's cap only, since the vendor bills the org; its
+ * caller marks the call's cost row with `usesOrgOwnKey()`. Throws on an empty `slug`,
  * because the alternative — returning the instance unwrapped — is the one way
  * the cache's invariant could quietly fail.
  *
@@ -656,7 +654,6 @@ function withInFlightTracking(
               method,
               args
             );
-            noteCallKey(target, sent, ownKey);
             const response = await track(
               stateKey,
               () => fn.apply(target, sent) as Promise<unknown>
@@ -676,7 +673,6 @@ function withInFlightTracking(
                 method,
                 args
               );
-              noteCallKey(target, sent, ownKey);
               const stream = trackStream(
                 stateKey,
                 () => fn.apply(target, sent) as AsyncIterable<unknown>
@@ -738,23 +734,6 @@ async function* gatedStream(
   await assertProviderCallPermitted(slug, context, task);
   await assertWithinSpendCaps(slug, isLocal, { ownKey });
   yield* await open();
-}
-
-/**
- * Note which kind of key a paid call is going out on, for its cost row to
- * claim (`own-key-calls.ts`). Every gated method takes its options, model
- * included, second. Only at `multi` with an org in scope, the one place an org
- * can hold a key; a local provider costs nothing and holds no key.
- */
-function noteCallKey(target: LlmProvider, args: readonly unknown[], ownKey: boolean): void {
-  if (target.isLocal === true || !isMultiTenant()) return;
-  const orgId = orgIdForCall();
-  const options = args[1];
-  const model =
-    typeof options === 'object' && options !== null && 'model' in options
-      ? options.model
-      : undefined;
-  if (orgId && typeof model === 'string') noteProviderCall(orgId, model, ownKey);
 }
 
 /**

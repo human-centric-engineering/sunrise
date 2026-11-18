@@ -3,17 +3,17 @@
  *
  * The vendor bills a call on an org's own key to the org, so its cost row is
  * marked and the org's and the global caps neither count it nor refuse it;
- * the agent's cap still does. Only the provider manager's Proxy knows which
- * key a call used, and the cost row is written later by whichever caller made
- * the call. So these tests run real callers — a chat turn (the `chat_turn`
+ * the agent's cap still does. The provider manager knows which key a call
+ * used (`usesOrgOwnKey`), and each caller that writes the call's cost row
+ * passes it. So these tests run real callers — a chat turn (the `chat_turn`
  * step), a workflow `llm_call` step and an embedding — through the real
  * manager, credential seam, org-key store, sealing, cost tracker and spend
  * caps, with only the database, the vendors' SDKs, the switch and the provider
- * policy scripted. A caller that reached a vendor without the Proxy, or logged
- * its row under another model than it sent, would show up here as an
- * unmarked row.
+ * policy scripted. A caller that asked another provider than the one it
+ * called would show up here as a wrongly marked row; one that forgot to ask is
+ * caught by `cost-log-own-key.test.ts`.
  *
- * @see lib/orchestration/llm/own-key-calls.ts
+ * @see lib/orchestration/llm/provider-manager.ts — usesOrgOwnKey
  * @see lib/orchestration/llm/spend-caps.ts
  */
 
@@ -208,7 +208,6 @@ import {
   forgetOrgProviderKey,
   saveOrgProviderKey,
 } from '@/lib/orchestration/llm/org-provider-keys';
-import { forgetProviderCallNotes } from '@/lib/orchestration/llm/own-key-calls';
 import { resetProviderCredentialResolver } from '@/lib/orchestration/llm/provider-credentials';
 import { resetProviderEligibility } from '@/lib/orchestration/llm/provider-eligibility';
 import {
@@ -338,7 +337,6 @@ beforeEach(() => {
   orgKeyTable.clear();
   forgetOrgProviderKey();
   forgetSpendCaps();
-  forgetProviderCallNotes();
   envOverrides.TENANCY_MODE = 'multi';
   envOverrides.SEALED_SECRET_KEYS = `one:${'m'.repeat(40)}`;
   envOverrides.SEALED_SECRET_ACTIVE_KEY = 'one';
@@ -446,15 +444,23 @@ describe('the cost row of a call on an org’s own key is marked, and one on the
     expect(rows.map((r) => r.ownKey)).toEqual([false]);
   });
 
-  it('not when the org called the same model on its own key and on the platform’s just before', async () => {
-    // Which of the two the row is for cannot be told, so it is counted as the
-    // platform's: the side on which a cap can only refuse early.
-    await chatOn(OWN, 'anthropic');
-    await chatOn(OWN, 'anthropic-eu');
-    await runAsOrg(OWN, () => executeChatTurn(CHAT_TURN_STEP, makeCtx()));
+  it('by the provider each call was made on, with the same model on both kinds of key', async () => {
+    // Two rows serving one model, the org holding its own key for one of them.
+    for (const slug of ['anthropic', 'anthropic-eu', 'anthropic', 'anthropic-eu']) {
+      binding.providerSlug = slug;
+      await runAsOrg(OWN, () => executeChatTurn(CHAT_TURN_STEP, makeCtx()));
+    }
 
     const rows = await settled();
-    expect(rows.map((r) => r.ownKey)).toEqual([false]);
+    expect(rows.map((r) => r.ownKey)).toEqual([true, false, true, false]);
+  });
+
+  it('for every batch of an embedding run, in its one row', async () => {
+    const { embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
+    await runAsOrg(OWN, () => embedBatch(['a', 'b', 'c'], 1, 'document'));
+
+    const rows = await settled();
+    expect(rows.map((r) => [r.operation, r.ownKey])).toEqual([['embedding', true]]);
   });
 });
 

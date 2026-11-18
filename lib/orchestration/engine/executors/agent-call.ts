@@ -32,7 +32,7 @@ import type {
   ReasoningEffort,
 } from '@/lib/orchestration/llm/types';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
-import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import { getProviderWithFallbacks, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import {
   resolveAgentProviderAndModel,
   type ResolvedAgentBinding,
@@ -281,6 +281,7 @@ async function runSingleTurn(
           userId: ctx.userId,
           model: model,
           provider: usedSlug,
+          ownKey: usesOrgOwnKey(provider),
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
           cacheReadTokens: response.usage.cacheReadTokens,
