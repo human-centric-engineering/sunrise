@@ -40,6 +40,7 @@ the per-admin export sub-cap noted below.
 | `GET/PUT /api/v1/admin/orgs/[id]/providers` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PUT /api/v1/admin/orgs/[id]/privacy`   | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH/DELETE …/orgs/[id]/entitlements` | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PATCH …/orgs/[id]/meters`              | `withAdminAuth` | Platform admins.                                                                                                                                       |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
@@ -230,7 +231,10 @@ only that a cuid — unguessable — does not name a user.
 **Response** (201 Created): the membership row.
 
 **Error Responses**: `400` with code `INSTALL_ORG_MEMBERSHIP` (a role on the
-install org) · `403 OWNER_STANDING` · `404 USER_NOT_FOUND` · `409 ALREADY_MEMBER`.
+install org) · `403 OWNER_STANDING` · `403 FORBIDDEN` with
+`details.reason: 'meter_limit_reached'` (the org is at its seats limit, §135
+t-1035; a platform admin is not refused) · `404 USER_NOT_FOUND` ·
+`409 ALREADY_MEMBER`.
 
 ### Invite someone into the org
 
@@ -276,6 +280,9 @@ pending, the answer is `200` with `emailStatus: "pending"` and no link. Send
 
 **Error Responses**: `400 INSTALL_ORG_MEMBERSHIP` (invite into the install org
 from Users) · `400 ORG_NOT_ACTIVE` (suspended) · `403 OWNER_STANDING` ·
+`403 FORBIDDEN` with `details.reason: 'meter_limit_reached'` (a new invitation
+when the org is at its seats limit, §135 t-1035: a pending invitation holds a
+seat; a resend and a platform admin are not refused) ·
 `409 ALREADY_MEMBER` (already a member of this org) · `409 CONFLICT` (a
 platform invitation for this email is pending, carrying a platform role or
 naming no org, or one this route cannot read; it is left untouched and not
@@ -596,6 +603,38 @@ at `multi`, with `details.reason: shared_settings_install_org_only`) ·
 `404 ORG_NOT_FOUND` · `409 CONFLICT` (no app registers a switch, or its
 registration failed, so there is nothing to set; or another write to the
 org's settings landed at the same time, nothing was written, so retry).
+
+### An org's meters and limits
+
+```
+GET   /api/v1/admin/orgs/[id]/meters
+PATCH /api/v1/admin/orgs/[id]/meters
+```
+
+Every meter (the platform's seats first, then the app's), how many the org
+has within its window, and its limit (§135 t-1035). A `PATCH` takes
+`{ limits: { [key]: number | null } }`: a whole number from 0 sets a limit,
+`null` clears one, and a meter not named is left as it is. Limits stored for
+keys nothing registers are kept, and only `null` may name one. Each write
+that changes something writes an `org.meters.update` audit row with the
+limits before and after. At `multi` the write comes only from the install org
+or an unbound admin API key, as for the switches.
+
+Both return `{ orgId, mayChange, registrationFailed, meters, unregistered }`,
+where each meter is `{ key, label, description, period, core, limit, used,
+window, countFailed }`. `period` is `'month'`, `'standing'` or `'custom'`;
+`window` is `{ from, to }` (ISO, `to` exclusive; both `null` for a standing
+count). `used` is counted whether or not a limit is set, and is `null` with
+`countFailed: true` when the count failed. `unregistered` maps kept keys to
+their limits. See [Entitlements](../tenancy/entitlements.md#meters-and-limits).
+
+**Error Responses**: `400 VALIDATION_ERROR` (no key named, a malformed key, a
+limit that is not a whole number from 0 to 1,000,000,000, or a limit for a key
+nothing registers, named in `details.unknownMeters`) · `403 FORBIDDEN` (a
+write from a customer's org at `multi`, with
+`details.reason: shared_settings_install_org_only`) · `404 ORG_NOT_FOUND` ·
+`409 CONFLICT` (another write to the org's settings landed at the same time;
+nothing was written, so retry).
 
 ### Erase an org
 
