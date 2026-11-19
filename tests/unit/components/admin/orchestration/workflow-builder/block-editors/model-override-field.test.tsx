@@ -16,7 +16,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { ModelOverrideField } from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
+import {
+  ModelOverrideField,
+  toModelOptions,
+} from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
 import { pickModel, pickedModel, withModels } from '@/tests/helpers/model-options';
 
 function renderField(value: string | undefined, onChange = vi.fn()) {
@@ -107,5 +110,17 @@ describe('ModelOverrideField', () => {
     expect(pickedModel('mo')).toBe('The judge model');
     await user.click(document.getElementById('mo') as HTMLElement);
     expect(screen.getAllByRole('option')[0].textContent).toBe('The judge model');
+  });
+});
+
+describe('toModelOptions', () => {
+  it('keeps only rows whose provider is set up and active, as the default-models form offers', () => {
+    expect(
+      toModelOptions([
+        { providerSlug: 'openai', modelId: 'gpt-4o', name: 'GPT-4o', configuredActive: true },
+        { providerSlug: 'google', modelId: 'gemini', name: 'Gemini', configuredActive: false },
+        { providerSlug: 'groq', modelId: 'llama', name: 'Llama' },
+      ])
+    ).toEqual([{ providerSlug: 'openai', modelId: 'gpt-4o', name: 'GPT-4o' }]);
   });
 });

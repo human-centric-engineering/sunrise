@@ -37,6 +37,26 @@ export interface ModelOption {
   name: string;
 }
 
+/** A row of `GET /provider-models`, as far as the picker reads it. */
+export interface CatalogueModelRow {
+  providerSlug: string;
+  modelId: string;
+  name: string;
+  /** Whether the row's provider is set up and active. */
+  configuredActive?: boolean;
+}
+
+/**
+ * The picker's options from catalogue rows: only those whose provider is set
+ * up and active, as the default-models form offers, since a step pinned to a
+ * provider that is not would fail validation.
+ */
+export function toModelOptions(rows: readonly CatalogueModelRow[]): ModelOption[] {
+  return rows
+    .filter((r) => r.configuredActive === true)
+    .map((r) => ({ providerSlug: r.providerSlug, modelId: r.modelId, name: r.name }));
+}
+
 const ModelOptionsContext = React.createContext<readonly ModelOption[]>([]);
 
 /** Supplies the models every {@link ModelOverrideField} below it offers. */
