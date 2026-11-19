@@ -38,6 +38,9 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(() => Promise.resolve([])),
       createMany: vi.fn(() => Promise.resolve({ count: 0 })),
     },
+    aiAdminAuditLog: {
+      create: vi.fn(() => Promise.resolve({})),
+    },
   },
 }));
 
@@ -164,6 +167,37 @@ describe('POST /api/v1/admin/orchestration/provider-models/bulk', () => {
       expect(data.data.created).toBe(3);
       expect(data.data.skipped).toBe(0);
       expect(data.data.conflicts).toEqual([]);
+    });
+
+    it('writes one admin audit row for the batch (§136 t-1064)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiProviderModel.createMany).mockResolvedValue({ count: 2 });
+
+      await POST(
+        makeRequest({
+          providerSlug: 'openai',
+          models: [makeRow({ modelId: 'gpt-4o' }), makeRow({ modelId: 'gpt-5', name: 'GPT-5' })],
+        })
+      );
+
+      expect(prisma.aiAdminAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0].data).toMatchObject({
+        action: 'provider_model.bulk_create',
+        entityType: 'provider_model',
+        entityName: '2 openai models',
+        metadata: { providerSlug: 'openai', created: 2, modelIds: ['gpt-4o', 'gpt-5'] },
+      });
+    });
+
+    it('writes no audit row when nothing was created', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiProviderModel.createMany).mockResolvedValue({ count: 0 });
+
+      await POST(makeRequest({ providerSlug: 'openai', models: [makeRow()] }));
+
+      expect(prisma.aiAdminAuditLog.create).not.toHaveBeenCalled();
     });
 
     it('reports partial success when some rows already exist', async () => {

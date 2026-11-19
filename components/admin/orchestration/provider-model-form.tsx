@@ -7,7 +7,7 @@
  * following the same pattern as provider-form.tsx and agent-form.tsx.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
@@ -117,14 +117,14 @@ function toSlug(value: string): string {
 // Schema (client-side subset)
 // ---------------------------------------------------------------------------
 
+/** Radix Select forbids `''` as an item value, so "no replacement" has a sentinel. */
+const NO_REPLACEMENT = 'none';
+
 /**
  * A price per 1M tokens as typed: empty for "not set", otherwise a number up
  * to the server's limit, so a too-large figure is caught under its own field
  * rather than as a generic save error.
  */
-/** Radix Select forbids `''` as an item value, so "no replacement" has a sentinel. */
-const NO_REPLACEMENT = 'none';
-
 const priceField = z
   .string()
   .max(20)
@@ -443,8 +443,8 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
       local: data.local,
     };
 
-    // Retirement: edit only. An empty day clears the retirement, and the
-    // server clears the replacement with it.
+    // Retirement: edit only. An empty day clears the retirement; emptying the
+    // day field has already reset the replacement on screen.
     if (isEdit) {
       payload.retiresAt = data.retiresAt === '' ? null : data.retiresAt;
       payload.replacementId = data.replacementId === NO_REPLACEMENT ? null : data.replacementId;
@@ -1162,7 +1162,19 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
                     retirement is announced; clearing it also clears the replacement.
                   </FieldHelp>
                 </Label>
-                <Input id="retiresAt" type="date" {...register('retiresAt')} />
+                <Input
+                  id="retiresAt"
+                  type="date"
+                  {...register('retiresAt', {
+                    // A replacement only means something beside a day, so
+                    // clearing the day clears it too, where the admin sees it.
+                    onChange: (event: ChangeEvent<HTMLInputElement>) => {
+                      if (event.target.value === '') {
+                        setValue('replacementId', NO_REPLACEMENT, { shouldDirty: true });
+                      }
+                    },
+                  })}
+                />
                 {errors.retiresAt && (
                   <p className="text-destructive text-xs">{errors.retiresAt.message}</p>
                 )}

@@ -1109,7 +1109,7 @@ describe('ProviderModelForm — retirement (§136 t-1064)', () => {
     expect(sentBody()).toMatchObject({ retiresAt: '2027-03-01', replacementId: 'model-2' });
   });
 
-  it('shows the saved retirement, and refuses a replacement with the day cleared', async () => {
+  it('shows the saved retirement, and clearing the day clears the replacement with it', async () => {
     const user = userEvent.setup();
     const { container } = render(
       <ProviderModelForm
@@ -1120,8 +1120,27 @@ describe('ProviderModelForm — retirement (§136 t-1064)', () => {
     const day = container.querySelector<HTMLInputElement>('#retiresAt');
     if (!day) throw new Error('retirement date input not rendered');
     expect(day).toHaveValue('2027-03-01');
+    expect(screen.getByRole('combobox', { name: 'Replacement' })).toHaveTextContent(
+      'Claude Opus 5 (claude-opus-5)'
+    );
 
     await user.clear(day);
+
+    // The admin sees the replacement go, before saving.
+    expect(screen.getByRole('combobox', { name: 'Replacement' })).toHaveTextContent(
+      'No replacement'
+    );
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(sentBody()).toMatchObject({ retiresAt: null, replacementId: null });
+  });
+
+  it('refuses a replacement picked without a day, beside the day field', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel()} replacementOptions={OPTIONS} />);
+
+    await user.click(screen.getByRole('combobox', { name: 'Replacement' }));
+    await user.click(await screen.findByRole('option', { name: 'Claude Opus 5 (claude-opus-5)' }));
     await user.click(screen.getByRole('button', { name: /save changes/i }));
 
     expect(

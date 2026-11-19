@@ -266,15 +266,24 @@ const modelProposalSchema = z
     }
   });
 
+/** An optional string where `""` means none, the same as `null`. */
+const emptyAsNull = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+  z.string().nullish()
+);
+
 const deactivationSchema = z
   .object({
     modelId: z.string().min(1),
     reason: z.string().min(1),
     sources: z.array(sourceAttributionSchema).min(1),
     // Vendor retirement (§136 t-1064): the announced day, and the vendor's
-    // model id of the same-provider successor. `null` = none found.
-    retiresAt: z.string().nullish(),
-    replacedBy: z.string().min(1).nullish(),
+    // model id of the same-provider successor. `null` or `""` = none found:
+    // models write either for "none", and one stray field must not fail the
+    // whole analysis branch. A successor without a day is accepted and left
+    // out by the capability, which says so in its result.
+    retiresAt: emptyAsNull,
+    replacedBy: emptyAsNull,
   })
   .superRefine((d, ctx) => {
     if (d.retiresAt != null && parseRetirementDate(d.retiresAt) === null) {
@@ -282,13 +291,6 @@ const deactivationSchema = z
         code: 'custom',
         message: `retiresAt "${d.retiresAt}" must be a day as YYYY-MM-DD`,
         path: ['retiresAt'],
-      });
-    }
-    if (d.replacedBy != null && d.retiresAt == null) {
-      ctx.addIssue({
-        code: 'custom',
-        message: 'replacedBy needs a retiresAt: a successor is recorded with a retirement',
-        path: ['replacedBy'],
       });
     }
   });

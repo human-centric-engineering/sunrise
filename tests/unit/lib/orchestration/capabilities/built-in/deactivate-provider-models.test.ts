@@ -565,6 +565,28 @@ describe('DeactivateProviderModelsCapability — vendor retirement (§136 t-1064
     );
   });
 
+  it('reads empty strings as none: a plain deactivation, as before', async () => {
+    catalogue(RETIRING);
+
+    const result = await run({ retiresAt: '', replacedBy: '' });
+
+    expect(result.data?.deactivated).toBe(1);
+    expect(result.data?.models[0].replacementNote).toBeUndefined();
+    expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('retiresAt');
+  });
+
+  it('leaves out a successor named without a day, and says so', async () => {
+    catalogue(RETIRING, { 'openai/gpt-5': SUCCESSOR });
+
+    const result = await run({ replacedBy: 'gpt-5' });
+
+    expect(result.data?.deactivated).toBe(1);
+    expect(result.data?.models[0].replacementNote).toBe(
+      'Successor "gpt-5" not recorded: it needs a retirement date'
+    );
+    expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('replacementId');
+  });
+
   it('writes no audit row when the update fails', async () => {
     catalogue(RETIRING);
     mockUpdate.mockRejectedValueOnce(new Error('db down'));

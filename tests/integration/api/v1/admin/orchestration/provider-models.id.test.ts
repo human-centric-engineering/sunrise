@@ -669,6 +669,38 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
   });
 
+  it('writes an admin audit row naming the deleted model (§136 t-1064)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+
+    await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0].data).toMatchObject({
+      action: 'provider_model.delete',
+      entityType: 'provider_model',
+      entityId: MODEL_ID,
+      entityName: 'Claude Opus 4',
+      metadata: { providerSlug: 'anthropic', modelId: 'claude-opus-4' },
+    });
+  });
+
+  it('writes no audit row when the delete is refused as in use', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
+    vi.mocked(providerModelUsage).mockResolvedValueOnce({
+      agents: [],
+      workflows: [],
+      otherOrgAgents: 1,
+      otherOrgWorkflows: 0,
+    });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    expect(prisma.aiAdminAuditLog.create).not.toHaveBeenCalled();
+  });
+
   it('returns 409 with bound agents when an active agent uses the model', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
@@ -1050,6 +1082,63 @@ describe('PATCH vendor retirement (§136 t-1064)', () => {
 
     expect(response.status).toBe(200);
     expect(updateData()).toMatchObject({ retiresAt: null, replacement: { disconnect: true } });
+  });
+
+  it('lets an unrelated edit through when the stored replacement has stopped qualifying', async () => {
+    // What the edit form sends on every save: the stored replacement and the
+    // unchanged provider and capabilities, beside the field actually edited.
+    const response = await patchWith(
+      {
+        description: 'Edited',
+        replacementId: SUCCESSOR_ID,
+        providerSlug: 'anthropic',
+        capabilities: ['chat'],
+      },
+      {
+        current: {
+          retiresAt: new Date('2027-03-01T00:00:00Z'),
+          replacementId: SUCCESSOR_ID,
+        },
+        candidate: successor({ isActive: false }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(updateData().description).toBe('Edited');
+  });
+
+  it('treats the same capabilities in another order as unchanged', async () => {
+    const response = await patchWith(
+      { capabilities: ['vision', 'chat'] },
+      {
+        current: {
+          capabilities: ['chat', 'vision'],
+          retiresAt: new Date('2027-03-01T00:00:00Z'),
+          replacementId: SUCCESSOR_ID,
+        },
+        candidate: successor({ isActive: false }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it('re-checks a stored replacement when the model gains a capability it lacks', async () => {
+    const response = await patchWith(
+      { capabilities: ['chat', 'vision', 'embedding'] },
+      {
+        current: {
+          capabilities: ['chat', 'vision'],
+          retiresAt: new Date('2027-03-01T00:00:00Z'),
+          replacementId: SUCCESSOR_ID,
+        },
+        candidate: successor(),
+      }
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { message: string } }>(response);
+    expect(body.error.message).toMatch(/lacks embedding/);
   });
 
   it("re-checks a stored replacement when the model's provider changes", async () => {

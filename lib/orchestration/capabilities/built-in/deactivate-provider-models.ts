@@ -46,13 +46,17 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 
+function emptyAsNull(value: unknown): unknown {
+  return typeof value === 'string' && value.trim() === '' ? null : value;
+}
+
 const deactivateEntrySchema = z.object({
   modelId: z.string().min(1).max(100),
   reason: z.string().min(1).max(1000),
-  // `null` is the analysing model saying it found no date or successor — the
-  // same as leaving the field out.
-  retiresAt: z.string().max(20).nullish(),
-  replacedBy: z.string().min(1).max(100).nullish(),
+  // `null` or `""` is the analysing model saying it found no date or
+  // successor — the same as leaving the field out.
+  retiresAt: z.preprocess(emptyAsNull, z.string().max(20).nullish()),
+  replacedBy: z.preprocess(emptyAsNull, z.string().max(100).nullish()),
 });
 
 // Unwrap an `approvalPayload: { deactivateModels }` envelope written by
@@ -73,7 +77,8 @@ interface DeactivatedModel {
   name: string;
   /**
    * `deactivated` — taken out of the registry (no retirement date given);
-   * `retiring` — retirement recorded for a day still to come, left active;
+   * `retiring` — retirement recorded for a day still to come; `isActive` is
+   *   left as it was (on, unless an admin had already turned the model off);
    * `retired` — retirement recorded for a day already here, and inactive;
    * `skipped` — nothing to change; `invalid` — not applied.
    */
@@ -226,6 +231,12 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
     entry: Entry,
     context: CapabilityContext
   ): Promise<DeactivatedModel> {
+    // A successor is recorded with a retirement; without a day it is left out.
+    const replacementNote =
+      entry.replacedBy != null
+        ? `Successor "${entry.replacedBy}" not recorded: it needs a retirement date`
+        : undefined;
+
     if (!model.isActive) {
       logger.info('Audit: model already inactive, skipping deactivation', {
         modelId: model.id,
@@ -236,17 +247,25 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
         name: model.name,
         status: 'skipped',
         reason: 'Model is already inactive',
+        ...(replacementNote ? { replacementNote } : {}),
       };
     }
-
     const written = await this.write(
       model,
       entry,
       context,
       { isActive: false },
-      'provider_model.deactivate'
+      'provider_model.deactivate',
+      { replacementNote }
     );
-    return written ?? { modelId: model.id, name: model.name, status: 'deactivated' };
+    return (
+      written ?? {
+        modelId: model.id,
+        name: model.name,
+        status: 'deactivated',
+        ...(replacementNote ? { replacementNote } : {}),
+      }
+    );
   }
 
   /** A retirement date: record it and its successor; deactivate once the day is here. */
@@ -328,8 +347,9 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      logger.error('Audit: failed to deactivate provider model', {
+      logger.error('Audit: failed to write provider model lifecycle', {
         modelId: model.id,
+        action,
         error: message,
       });
       return { modelId: model.id, name: model.name, status: 'invalid', reason: message };

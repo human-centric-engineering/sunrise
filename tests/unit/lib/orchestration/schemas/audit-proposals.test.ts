@@ -928,10 +928,13 @@ describe('audit-proposals schema — retirement on deactivations', () => {
     expect(messages(result)).toEqual(['retiresAt "2027-02-30" must be a day as YYYY-MM-DD']);
   });
 
-  it('refuses a successor without a retirement day', () => {
-    const result = withDeactivation({ replacedBy: 'gpt-5.1' });
-    expect(messages(result)).toEqual([
-      'replacedBy needs a retiresAt: a successor is recorded with a retirement',
-    ]);
+  it('accepts a successor without a retirement day: the capability leaves it out and says so', () => {
+    // One stray field must not fail the whole analysis branch.
+    expect(withDeactivation({ replacedBy: 'gpt-5.1' }).success).toBe(true);
+  });
+
+  it('reads an empty string in either field as none', () => {
+    expect(withDeactivation({ retiresAt: '', replacedBy: '' }).success).toBe(true);
+    expect(withDeactivation({ retiresAt: '  ' }).success).toBe(true);
   });
 });

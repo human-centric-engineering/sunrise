@@ -31,9 +31,10 @@ release process.
   capability takes optional `retiresAt` and `replacedBy` (the successor's
   vendor model id) per entry: a day still to come leaves the model active, and
   a day already here deactivates it; its result gains `retiring` / `retired`
-  counts and a per-model `replacementNote`. Every catalogue change the audit
-  applies, and every admin PATCH, now writes an `AiAdminAuditLog` row (entity
-  type `provider_model`) with old and new values. See
+  counts and a per-model `replacementNote`. Every catalogue change now writes
+  an `AiAdminAuditLog` row (entity type `provider_model`): each write the audit
+  applies, and an admin's create, bulk add, edit (with old and new values)
+  and delete. See
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#model-lifecycle).
   _Fork impact:_ none unless you build `AiProviderModel` rows in full in your
   own tests (add the two fields) or call `deactivate_provider_models` yourself

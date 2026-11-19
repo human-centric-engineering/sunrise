@@ -106,22 +106,25 @@ export const PATCH = withAdminAuth<{ id: string }>(
         replacementId: ['Set a retirement date before naming a replacement'],
       });
     }
-    // Checked whenever anything the rule reads changes: the replacement
-    // itself, or this model's provider or capabilities.
-    if (
-      nextReplacementId !== null &&
-      (body.replacementId !== undefined ||
-        body.providerSlug !== undefined ||
-        body.capabilities !== undefined)
-    ) {
+    // Checked when this save changes something the rule reads on THIS row: the
+    // replacement, or the provider or capabilities. Compared with the saved
+    // row, not with what the body carries: the edit form sends all three on
+    // every save, and a stored replacement that has since stopped qualifying
+    // (it was turned off, or is retiring itself) must not block an unrelated
+    // edit. Edits to the replacement's own row are not checked here, so a
+    // stored replacement can go stale; the move (t-1066) checks again before
+    // it writes anything.
+    const nextProviderSlug = body.providerSlug ?? current.providerSlug;
+    const nextCapabilities = body.capabilities ?? current.capabilities;
+    const ruleInputsChanged =
+      nextReplacementId !== current.replacementId ||
+      nextProviderSlug !== current.providerSlug ||
+      !sameMembers(nextCapabilities, current.capabilities);
+    if (nextReplacementId !== null && ruleInputsChanged) {
       const candidate = await findReplacementById(nextReplacementId);
       const refusal = candidate
         ? checkReplacement(
-            {
-              id,
-              providerSlug: body.providerSlug ?? current.providerSlug,
-              capabilities: body.capabilities ?? current.capabilities,
-            },
+            { id, providerSlug: nextProviderSlug, capabilities: nextCapabilities },
             candidate
           )
         : `Provider model ${nextReplacementId} not found`;
@@ -272,6 +275,16 @@ export const DELETE = withAdminAuth<{ id: string }>(
 
     invalidateModelCache();
 
+    logAdminAction({
+      userId: session.user.id,
+      action: 'provider_model.delete',
+      entityType: 'provider_model',
+      entityId: id,
+      entityName: current.name,
+      metadata: { providerSlug: current.providerSlug, modelId: current.modelId },
+      clientIp: getClientIP(request),
+    });
+
     log.info('Provider model deleted', {
       modelId: id,
       slug: current.slug,
@@ -282,6 +295,13 @@ export const DELETE = withAdminAuth<{ id: string }>(
   },
   { writesSharedSettings: true }
 );
+
+/** Whether two capability lists hold the same members, in any order. */
+function sameMembers(a: readonly string[], b: readonly string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  return left.size === right.size && [...left].every((c) => right.has(c));
+}
 
 function buildInUseMessage(modelName: string, usage: ProviderModelUsage): string {
   const agents = usage.agents.length + usage.otherOrgAgents;
