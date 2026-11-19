@@ -161,6 +161,10 @@ The edit page checks `model.isDefault`. When `true`, an amber banner warns:
 
 Any PATCH flips `isDefault` to `false` server-side so re-seeds leave the row alone afterwards.
 
+### Retirement (edit only)
+
+A **Retirement** section records the provider's announced retirement (§136 t-1064): **Retires on** (the day) and **Replacement** (a model on the same provider that is active and not itself retiring; the page loads them from the list endpoint with `?providerSlug=`, and keeps the saved replacement listed even if it has stopped qualifying). A replacement needs a day; the form says so beside the field. The server's `checkReplacement` decides, including the capability rule. See [Model lifecycle](../orchestration/llm-providers.md#model-lifecycle).
+
 ### Fields
 
 | Field           | Rule                                                                                                                                                                                                                                                                                                                                                                                       |
