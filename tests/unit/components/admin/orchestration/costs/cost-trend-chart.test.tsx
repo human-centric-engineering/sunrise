@@ -69,7 +69,7 @@ import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import { formatUsd } from '@/lib/utils/format-currency';
 
 function makeTrendPoint(date: string, totalCostUsd: number): CostSummaryTrendPoint {
-  return { date, totalCostUsd };
+  return { date, totalCostUsd, ownKeyCostUsd: 0 };
 }
 
 const MOCK_MODELS: ModelInfo[] = [
@@ -125,7 +125,7 @@ describe('CostTrendChart', () => {
         makeTrendPoint('2026-04-11', 3.2),
         makeTrendPoint('2026-04-12', 7.1),
       ];
-      const perModel = [{ key: 'claude-haiku-4-5', totalCostUsd: 15.8 }];
+      const perModel = [{ key: 'claude-haiku-4-5', totalCostUsd: 15.8, ownKeyCostUsd: 0 }];
 
       // Act: should not throw
       let thrown = false;
@@ -208,8 +208,8 @@ describe('CostTrendChart tier split', () => {
       <CostTrendChart
         trend={[makeTrendPoint(today, 100)]}
         perModel={[
-          { key: 'cheap', totalCostUsd: 30 },
-          { key: 'pricey', totalCostUsd: 10 },
+          { key: 'cheap', totalCostUsd: 30, ownKeyCostUsd: 0 },
+          { key: 'pricey', totalCostUsd: 10, ownKeyCostUsd: 0 },
         ]}
         models={[model('cheap', 'budget'), model('pricey', 'frontier')]}
       />
@@ -231,8 +231,8 @@ describe('CostTrendChart tier split', () => {
       <CostTrendChart
         trend={[makeTrendPoint(today, 50)]}
         perModel={[
-          { key: 'cheap', totalCostUsd: 40 },
-          { key: 'ghost-model', totalCostUsd: 999 },
+          { key: 'cheap', totalCostUsd: 40, ownKeyCostUsd: 0 },
+          { key: 'ghost-model', totalCostUsd: 999, ownKeyCostUsd: 0 },
         ]}
         models={[model('cheap', 'budget')]}
       />
@@ -250,7 +250,7 @@ describe('CostTrendChart tier split', () => {
     render(
       <CostTrendChart
         trend={[makeTrendPoint(today, 80)]}
-        perModel={[{ key: 'gpt-4o', totalCostUsd: 20 }]}
+        perModel={[{ key: 'gpt-4o', totalCostUsd: 20, ownKeyCostUsd: 0 }]}
         models={[model('gpt-4o', 'mid', 'openai'), model('gpt-4o', 'frontier', 'microsoft')]}
       />
     );
@@ -275,7 +275,7 @@ describe('CostTrendChart tier split', () => {
     render(
       <CostTrendChart
         trend={[makeTrendPoint(today, 10)]}
-        perModel={[{ key: 'cheap', totalCostUsd: 5 }]}
+        perModel={[{ key: 'cheap', totalCostUsd: 5, ownKeyCostUsd: 0 }]}
         models={[model('cheap', 'budget')]}
       />
     );
@@ -287,6 +287,66 @@ describe('CostTrendChart tier split', () => {
   });
 });
 
+describe('CostTrendChart — spend on orgs’ own keys (§137 t-1058)', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const withOwnKey = (date: string, total: number, ownKey: number): CostSummaryTrendPoint => ({
+    date,
+    totalCostUsd: total,
+    ownKeyCostUsd: ownKey,
+  });
+
+  it('plots the platform’s spend: $10 on the platform beside $50 on an own key is a $10 day', () => {
+    render(<CostTrendChart trend={[withOwnKey(today, 60, 50)]} perModel={[]} models={[]} />);
+
+    const day = plotRows().find((r) => r.date === today)!;
+    expect(day.total).toBeCloseTo(10, 6);
+    expect(day.mid).toBeCloseTo(10, 6);
+  });
+
+  it('weights the tier split by the platform’s spend on each model', () => {
+    // 'pricey' is all own-key spend, so none of the platform's day is frontier.
+    render(
+      <CostTrendChart
+        trend={[withOwnKey(today, 100, 40)]}
+        perModel={[
+          { key: 'cheap', totalCostUsd: 30, ownKeyCostUsd: 0 },
+          { key: 'pricey', totalCostUsd: 90, ownKeyCostUsd: 90 },
+        ]}
+        models={[model('cheap', 'budget'), model('pricey', 'frontier')]}
+      />
+    );
+
+    const day = plotRows().find((r) => r.date === today)!;
+    expect(day.budget).toBeCloseTo(60, 6);
+    expect(day.frontier).toBe(0);
+  });
+
+  it('says how much it leaves out, and only when there is any', () => {
+    const { unmount } = render(
+      <CostTrendChart
+        trend={[withOwnKey(today, 60, 50), withOwnKey('2026-01-01', 5, 2.5)]}
+        perModel={[]}
+        models={[]}
+      />
+    );
+    expect(screen.getByTestId('trend-own-key-spend')).toHaveTextContent(
+      "Leaves out $52.50 on organisations' own keys in this period"
+    );
+    unmount();
+
+    render(<CostTrendChart trend={[withOwnKey(today, 60, 0)]} perModel={[]} models={[]} />);
+    expect(screen.queryByTestId('trend-own-key-spend')).not.toBeInTheDocument();
+  });
+
+  it('does not say "no spend" when all of it was on own keys', () => {
+    render(<CostTrendChart trend={[withOwnKey(today, 50, 50)]} perModel={[]} models={[]} />);
+
+    expect(screen.queryByText('No spend recorded in the last 30 days.')).not.toBeInTheDocument();
+    expect(screen.getByText("No spend on the platform's keys in this period.")).toBeInTheDocument();
+    expect(screen.getByTestId('trend-own-key-spend')).toBeInTheDocument();
+  });
+});
+
 describe('CostTrendChart formatters', () => {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -294,7 +354,7 @@ describe('CostTrendChart formatters', () => {
     render(
       <CostTrendChart
         trend={[makeTrendPoint(today, 1234.5)]}
-        perModel={[{ key: 'cheap', totalCostUsd: 5 }]}
+        perModel={[{ key: 'cheap', totalCostUsd: 5, ownKeyCostUsd: 0 }]}
         models={[model('cheap', 'budget')]}
       />
     );

@@ -252,6 +252,110 @@ describe('getCostBreakdown', () => {
 // getCostSummary
 // ---------------------------------------------------------------------------
 
+describe('getCostBreakdown — spend on orgs’ own keys (§137 t-1058)', () => {
+  const dateFrom = new Date('2026-03-01T00:00:00.000Z');
+  const dateTo = new Date('2026-03-07T00:00:00.000Z');
+
+  it('by day, says how much of each day was on own keys, summed by the query', async () => {
+    mockedRaw.mockResolvedValueOnce([
+      {
+        day: new Date('2026-03-01T00:00:00.000Z'),
+        total_cost_usd: '60',
+        own_key_cost_usd: '50',
+        input_tokens: 10,
+        output_tokens: 5,
+        row_count: 2,
+      },
+      {
+        day: new Date('2026-03-02T00:00:00.000Z'),
+        total_cost_usd: 4,
+        own_key_cost_usd: 0,
+        input_tokens: 1,
+        output_tokens: 1,
+        row_count: 1,
+      },
+    ]);
+
+    const result = await getCostBreakdown({ dateFrom, dateTo, groupBy: 'day' });
+
+    expect(result.rows.map((r) => [r.key, r.totalCostUsd, r.ownKeyCostUsd])).toEqual([
+      ['2026-03-01', 60, 50],
+      ['2026-03-02', 4, 0],
+    ]);
+    expect(result.totals).toMatchObject({ totalCostUsd: 64, ownKeyCostUsd: 50 });
+    const sql = (mockedRaw.mock.calls[0][0] as string).replace(/\s+/g, ' ');
+    expect(sql).toContain(
+      'SUM(CASE WHEN "ownKey" THEN "totalCostUsd" ELSE 0 END) AS own_key_cost_usd'
+    );
+  });
+
+  it.each([
+    ['agent', 'agentId'],
+    ['model', 'model'],
+  ] as const)(
+    'by %s, folds the own-key and platform halves into one row',
+    async (groupBy, field) => {
+      mockedGroupBy.mockResolvedValueOnce([
+        {
+          [field]: 'a',
+          ownKey: false,
+          _sum: { totalCostUsd: 2, inputTokens: 20, outputTokens: 2 },
+          _count: { _all: 1 },
+        },
+        {
+          [field]: 'b',
+          ownKey: true,
+          _sum: { totalCostUsd: 4, inputTokens: 40, outputTokens: 4 },
+          _count: { _all: 2 },
+        },
+        {
+          [field]: 'a',
+          ownKey: true,
+          _sum: { totalCostUsd: 3, inputTokens: 30, outputTokens: 3 },
+          _count: { _all: 3 },
+        },
+      ]);
+      // Only the agent breakdown looks names up; a queued answer left over
+      // would be another test's.
+      if (groupBy === 'agent') {
+        mockedAgentFind.mockResolvedValueOnce([
+          { id: 'a', name: 'A' },
+          { id: 'b', name: 'B' },
+        ]);
+      }
+
+      const result = await getCostBreakdown({ dateFrom, dateTo, groupBy });
+
+      expect(mockedGroupBy.mock.calls[0][0]).toMatchObject({ by: [field, 'ownKey'] });
+      expect(result.rows).toEqual([
+        expect.objectContaining({
+          key: 'a',
+          totalCostUsd: 5,
+          ownKeyCostUsd: 3,
+          inputTokens: 50,
+          outputTokens: 5,
+          count: 4,
+        }),
+        expect.objectContaining({
+          key: 'b',
+          totalCostUsd: 4,
+          ownKeyCostUsd: 4,
+          inputTokens: 40,
+          outputTokens: 4,
+          count: 2,
+        }),
+      ]);
+      expect(result.totals).toEqual({
+        totalCostUsd: 9,
+        ownKeyCostUsd: 7,
+        inputTokens: 90,
+        outputTokens: 9,
+        count: 6,
+      });
+    }
+  );
+});
+
 describe('getCostSummary', () => {
   it('returns today/week/month totals and populates byAgent with utilisation', async () => {
     // Today, week and month, each grouped by ownKey (§137).
@@ -309,13 +413,13 @@ describe('getCostSummary', () => {
     });
 
     expect(summary.byModel).toEqual([
-      { model: 'claude-sonnet-4-6', monthSpend: 15 },
-      { model: 'claude-haiku-4-5', monthSpend: 5 },
+      { model: 'claude-sonnet-4-6', monthSpend: 15, ownKeyMonthSpend: 0 },
+      { model: 'claude-haiku-4-5', monthSpend: 5, ownKeyMonthSpend: 0 },
     ]);
 
     expect(summary.trend).toEqual([
-      { date: '2026-03-20', totalCostUsd: 3 },
-      { date: '2026-03-21', totalCostUsd: 7 },
+      { date: '2026-03-20', totalCostUsd: 3, ownKeyCostUsd: 0 },
+      { date: '2026-03-21', totalCostUsd: 7, ownKeyCostUsd: 0 },
     ]);
   });
 

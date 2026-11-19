@@ -49,7 +49,7 @@ describe('PerModelBreakdownTable', () => {
     it('renders $0.00 for a local-tier model', () => {
       // Arrange: a local model in the registry with some spend (cost-tracker logs $0 anyway)
       const rows: CostSummaryModelRow[] = [
-        { model: 'local:generic', provider: 'local', monthSpend: 5.5 }, // displaySpend overridden to 0
+        { model: 'local:generic', provider: 'local', monthSpend: 5.5, ownKeyMonthSpend: 0 }, // displaySpend overridden to 0
       ];
       const models: ModelInfo[] = [
         makeModel({
@@ -72,7 +72,7 @@ describe('PerModelBreakdownTable', () => {
 
     it('renders the Local badge text for local-tier models', () => {
       const rows: CostSummaryModelRow[] = [
-        { model: 'local:generic', provider: 'local', monthSpend: 0 },
+        { model: 'local:generic', provider: 'local', monthSpend: 0, ownKeyMonthSpend: 0 },
       ];
       const models: ModelInfo[] = [
         makeModel({
@@ -92,7 +92,12 @@ describe('PerModelBreakdownTable', () => {
     it('renders the row with fallback — display for provider and tier when model is unknown', () => {
       // Arrange: row exists but model not in registry
       const rows: CostSummaryModelRow[] = [
-        { model: 'unknown-provider/custom-model', provider: 'mystery', monthSpend: 3.5 },
+        {
+          model: 'unknown-provider/custom-model',
+          provider: 'mystery',
+          monthSpend: 3.5,
+          ownKeyMonthSpend: 0,
+        },
       ];
 
       // Act: pass empty models array so nothing is in the registry
@@ -109,7 +114,12 @@ describe('PerModelBreakdownTable', () => {
   describe('non-local model with spend', () => {
     it('renders the model name, provider, and tier for a normal model', () => {
       const rows: CostSummaryModelRow[] = [
-        { model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: 12.5 },
+        {
+          model: 'claude-sonnet-4-6',
+          provider: 'anthropic',
+          monthSpend: 12.5,
+          ownKeyMonthSpend: 0,
+        },
       ];
       const models: ModelInfo[] = [
         makeModel({ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', provider: 'anthropic' }),
@@ -132,7 +142,7 @@ describe('PerModelBreakdownTable', () => {
       // both `openai` and `microsoft`, and the merge appends DB-only rows last,
       // so a bare-id lookup resolved genuine OpenAI spend to the Azure entry.
       const rows: CostSummaryModelRow[] = [
-        { model: 'gpt-4o', provider: 'openai', monthSpend: 1.9 },
+        { model: 'gpt-4o', provider: 'openai', monthSpend: 1.9, ownKeyMonthSpend: 0 },
       ];
       const models: ModelInfo[] = [
         makeModel({ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', tier: 'mid' }),
@@ -156,8 +166,8 @@ describe('PerModelBreakdownTable', () => {
 
     it('renders one row per provider when both served the same model', () => {
       const rows: CostSummaryModelRow[] = [
-        { model: 'gpt-4o', provider: 'openai', monthSpend: 1.9 },
-        { model: 'gpt-4o', provider: 'microsoft', monthSpend: 0.4 },
+        { model: 'gpt-4o', provider: 'openai', monthSpend: 1.9, ownKeyMonthSpend: 0 },
+        { model: 'gpt-4o', provider: 'microsoft', monthSpend: 0.4, ownKeyMonthSpend: 0 },
       ];
       const models: ModelInfo[] = [
         makeModel({ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' }),
@@ -176,7 +186,7 @@ describe('PerModelBreakdownTable', () => {
     it('falls back to the bare id when the cost log provider is not in the catalogue', () => {
       // A renamed or custom provider: a plausible label beats no label.
       const rows: CostSummaryModelRow[] = [
-        { model: 'gpt-4o', provider: 'my-proxy', monthSpend: 2 },
+        { model: 'gpt-4o', provider: 'my-proxy', monthSpend: 2, ownKeyMonthSpend: 0 },
       ];
       const models: ModelInfo[] = [makeModel({ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' })];
 
@@ -185,6 +195,46 @@ describe('PerModelBreakdownTable', () => {
       expect(screen.getByText('GPT-4o')).toBeInTheDocument();
       // The provider column still reports the truth from the cost log.
       expect(screen.getByText('my-proxy')).toBeInTheDocument();
+    });
+  });
+
+  describe('spend on orgs’ own keys (§137 t-1058)', () => {
+    const models: ModelInfo[] = [
+      makeModel({ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' }),
+      makeModel({ id: 'claude', name: 'Claude', provider: 'anthropic' }),
+    ];
+
+    it('shows the platform’s spend, with own-key spend in a column of its own, ordered by the platform’s', () => {
+      const rows: CostSummaryModelRow[] = [
+        // $50 of the $60 on an own key: the platform's spend is $10.
+        { model: 'gpt-4o', provider: 'openai', monthSpend: 60, ownKeyMonthSpend: 50 },
+        { model: 'claude', provider: 'anthropic', monthSpend: 20, ownKeyMonthSpend: 0 },
+      ];
+
+      render(<PerModelBreakdownTable rows={rows} models={models} />);
+
+      expect(screen.getByText('Own keys')).toBeInTheDocument();
+      const cells = screen
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) =>
+          Array.from(row.querySelectorAll('td')).map((td) => td.textContent?.trim() ?? '')
+        );
+      expect(cells.map((c) => [c[0], c.at(-2), c.at(-1)])).toEqual([
+        ['Claudeclaude', '$20.00', '$0.00'],
+        ['GPT-4ogpt-4o', '$10.00', '$50.00'],
+      ]);
+    });
+
+    it('has no own-keys column when no model has own-key spend', () => {
+      const rows: CostSummaryModelRow[] = [
+        { model: 'gpt-4o', provider: 'openai', monthSpend: 60, ownKeyMonthSpend: 0 },
+      ];
+
+      render(<PerModelBreakdownTable rows={rows} models={models} />);
+
+      expect(screen.queryByText('Own keys')).not.toBeInTheDocument();
+      expect(screen.getByText('$60.00')).toBeInTheDocument();
     });
   });
 

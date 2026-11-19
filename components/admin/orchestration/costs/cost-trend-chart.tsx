@@ -12,6 +12,10 @@
  * When the per-model data is missing (upstream error) we fall back to
  * rendering the raw total trend as a single area so the chart still
  * shows *something* useful.
+ *
+ * It plots the platform's spend, as the cards beside it show it: each day's
+ * total and each model's weight in the tier split leave out spend on orgs'
+ * own keys, which the vendor bills to the org (§137 t-1058).
  */
 
 import * as React from 'react';
@@ -27,6 +31,7 @@ import {
 } from 'recharts';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Usd } from '@/components/admin/orchestration/costs/usd';
 import { formatUsd } from '@/lib/utils/format-currency';
 import type { CostSummaryTrendPoint } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -34,6 +39,8 @@ import type { ModelInfo } from '@/lib/orchestration/llm/types';
 interface PerModelRow {
   key: string;
   totalCostUsd: number;
+  /** The part of `totalCostUsd` on orgs' own keys. */
+  ownKeyCostUsd: number;
 }
 
 export interface CostTrendChartProps {
@@ -69,7 +76,7 @@ const TIER_COLOURS: Record<'budget' | 'mid' | 'frontier' | 'local', string> = {
 function fillZeroDays(trend: CostSummaryTrendPoint[]): CostSummaryTrendPoint[] {
   if (trend.length === 0) return [];
 
-  const byDate = new Map(trend.map((pt) => [pt.date, pt.totalCostUsd]));
+  const byDate = new Map(trend.map((pt) => [pt.date, pt]));
 
   // Build full 30-day range ending today (UTC)
   const now = new Date();
@@ -77,7 +84,7 @@ function fillZeroDays(trend: CostSummaryTrendPoint[]): CostSummaryTrendPoint[] {
   for (let i = 29; i >= 0; i--) {
     const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
     const date = d.toISOString().slice(0, 10);
-    result.push({ date, totalCostUsd: byDate.get(date) ?? 0 });
+    result.push(byDate.get(date) ?? { date, totalCostUsd: 0, ownKeyCostUsd: 0 });
   }
   return result;
 }
@@ -108,12 +115,12 @@ function buildPlotRows(
   for (const row of perModel ?? []) {
     const tier = tierByModel.get(row.key);
     if (!tier) continue;
-    tierTotals[tier] += row.totalCostUsd;
+    tierTotals[tier] += row.totalCostUsd - row.ownKeyCostUsd;
   }
   const tierSum = tierTotals.budget + tierTotals.mid + tierTotals.frontier + tierTotals.local;
 
   return trendList.map((pt) => {
-    const total = pt.totalCostUsd;
+    const total = pt.totalCostUsd - pt.ownKeyCostUsd;
     if (tierSum > 0 && total > 0) {
       return {
         date: pt.date,
@@ -150,6 +157,11 @@ export function CostTrendChart({
     () => buildPlotRows(trend, perModel, models),
     [trend, perModel, models]
   );
+  // Left out of every point above, and said so below the chart.
+  const ownKeyTotal = React.useMemo(
+    () => (trend ?? []).reduce((sum, pt) => sum + pt.ownKeyCostUsd, 0),
+    [trend]
+  );
 
   return (
     <Card data-testid="cost-trend-chart">
@@ -159,7 +171,9 @@ export function CostTrendChart({
       <CardContent>
         {data.length === 0 || data.every((d) => d.total === 0) ? (
           <p className="text-muted-foreground py-12 text-center text-sm">
-            No spend recorded in the last 30 days.
+            {ownKeyTotal > 0
+              ? "No spend on the platform's keys in this period."
+              : 'No spend recorded in the last 30 days.'}
           </p>
         ) : (
           <div className="h-72 w-full" role="img" aria-label={`${title} by tier`}>
@@ -214,6 +228,11 @@ export function CostTrendChart({
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+        )}
+        {ownKeyTotal > 0 && (
+          <p className="text-muted-foreground mt-2 text-xs" data-testid="trend-own-key-spend">
+            Leaves out <Usd value={ownKeyTotal} /> on organisations&apos; own keys in this period
+          </p>
         )}
       </CardContent>
     </Card>

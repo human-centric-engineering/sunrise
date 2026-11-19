@@ -58,6 +58,8 @@ import type { ModelInfo } from '@/lib/orchestration/llm/types';
 interface PerModelDaily {
   key: string;
   totalCostUsd: number;
+  /** The part of `totalCostUsd` on orgs' own keys (§137). */
+  ownKeyCostUsd: number;
 }
 
 export interface CostsViewProps {

@@ -125,8 +125,10 @@ const MOCK_SUMMARY: CostSummary = {
       utilisation: null,
     },
   ],
-  byModel: [{ model: 'claude-haiku-4-5', provider: 'anthropic', monthSpend: 8.0 }],
-  trend: [{ date: '2026-04-14', totalCostUsd: 1.2 }],
+  byModel: [
+    { model: 'claude-haiku-4-5', provider: 'anthropic', monthSpend: 8.0, ownKeyMonthSpend: 0 },
+  ],
+  trend: [{ date: '2026-04-14', totalCostUsd: 1.2, ownKeyCostUsd: 0 }],
   localSavings: null,
 };
 
@@ -144,7 +146,7 @@ const MOCK_MODELS: ModelInfo[] = [
   },
 ];
 
-const PER_MODEL = [{ key: 'claude-haiku-4-5', totalCostUsd: 8.0 }];
+const PER_MODEL = [{ key: 'claude-haiku-4-5', totalCostUsd: 8.0, ownKeyCostUsd: 0 }];
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 

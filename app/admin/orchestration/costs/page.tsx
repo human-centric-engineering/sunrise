@@ -62,6 +62,8 @@ interface AlertsResponse {
 interface PerModelDaily {
   key: string;
   totalCostUsd: number;
+  /** The part of `totalCostUsd` on orgs' own keys (§137). */
+  ownKeyCostUsd: number;
 }
 
 async function getPerModel30Day(): Promise<LoadResult<{ rows: PerModelDaily[]; groupBy: string }>> {
