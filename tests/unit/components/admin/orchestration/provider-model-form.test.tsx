@@ -1062,3 +1062,71 @@ describe('ProviderModelForm — read-only outside the install org (§107 t-753)'
     expect(mockPost).not.toHaveBeenCalled();
   });
 });
+
+// ── Retirement (§136 t-1064) ────────────────────────────────────────────────
+
+describe('ProviderModelForm — retirement (§136 t-1064)', () => {
+  const OPTIONS = [{ id: 'model-2', name: 'Claude Opus 5', modelId: 'claude-opus-5' }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPatch.mockResolvedValue({});
+  });
+
+  function sentBody(): Record<string, unknown> {
+    return (mockPatch.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+  }
+
+  it('is not offered when creating a model', () => {
+    render(<ProviderModelForm />);
+    expect(screen.queryByRole('combobox', { name: 'Replacement' })).not.toBeInTheDocument();
+  });
+
+  it('sends nulls on an edit with no retirement set', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel()} replacementOptions={OPTIONS} />);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(sentBody()).toMatchObject({ retiresAt: null, replacementId: null });
+  });
+
+  it('sends the day and the chosen replacement', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <ProviderModelForm model={makeModel()} replacementOptions={OPTIONS} />
+    );
+
+    const day = container.querySelector<HTMLInputElement>('#retiresAt');
+    if (!day) throw new Error('retirement date input not rendered');
+    await user.type(day, '2027-03-01');
+    await user.click(screen.getByRole('combobox', { name: 'Replacement' }));
+    await user.click(await screen.findByRole('option', { name: 'Claude Opus 5 (claude-opus-5)' }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(sentBody()).toMatchObject({ retiresAt: '2027-03-01', replacementId: 'model-2' });
+  });
+
+  it('shows the saved retirement, and refuses a replacement with the day cleared', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <ProviderModelForm
+        model={makeModel({ retiresAt: '2027-03-01T00:00:00.000Z', replacementId: 'model-2' })}
+        replacementOptions={OPTIONS}
+      />
+    );
+    const day = container.querySelector<HTMLInputElement>('#retiresAt');
+    if (!day) throw new Error('retirement date input not rendered');
+    expect(day).toHaveValue('2027-03-01');
+
+    await user.clear(day);
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(
+      await screen.findByText('Set a retirement date before naming a replacement')
+    ).toBeInTheDocument();
+    expect(mockPatch).not.toHaveBeenCalled();
+  });
+});

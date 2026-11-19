@@ -4,9 +4,10 @@ import Link from 'next/link';
 import {
   ProviderModelForm,
   type ProviderModelData,
+  type ReplacementOption,
 } from '@/components/admin/orchestration/provider-model-form';
 import { API } from '@/lib/api/endpoints';
-import { requireServerData } from '@/lib/api/server-load';
+import { requireAllServerData, requireServerData } from '@/lib/api/server-load';
 import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 
 export const metadata: Metadata = {
@@ -28,6 +29,7 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
     API.ADMIN.ORCHESTRATION.providerModelById(id),
     { notFound: true }
   );
+  const replacementOptions = await loadReplacementOptions(model);
 
   return (
     <div className="space-y-6">
@@ -63,7 +65,32 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
 
       <SharedSettingsReadOnlyNotice />
 
-      <ProviderModelForm model={model} />
+      <ProviderModelForm model={model} replacementOptions={replacementOptions} />
     </div>
   );
+}
+
+interface CatalogueRow extends ReplacementOption {
+  isActive: boolean;
+  retiresAt: string | null;
+}
+
+/**
+ * The models on this one's provider it may name as its replacement (§136
+ * t-1064): active, not themselves retiring, not itself. Capabilities are left
+ * to the server's check, which says which one is missing. The stored
+ * replacement stays listed even if it has stopped qualifying, so the form
+ * shows what is saved rather than silently showing "none".
+ */
+async function loadReplacementOptions(model: ProviderModelData): Promise<ReplacementOption[]> {
+  const rows = await requireAllServerData<CatalogueRow>(
+    `${API.ADMIN.ORCHESTRATION.PROVIDER_MODELS}?providerSlug=${encodeURIComponent(model.providerSlug)}`
+  );
+  return rows
+    .filter(
+      (row) =>
+        row.id === model.replacementId ||
+        (row.id !== model.id && row.isActive && row.retiresAt === null)
+    )
+    .map(({ id, name, modelId }) => ({ id, name, modelId }));
 }

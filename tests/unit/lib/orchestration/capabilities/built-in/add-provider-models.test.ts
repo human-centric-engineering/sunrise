@@ -54,6 +54,7 @@ const { AddProviderModelsCapability } =
   await import('@/lib/orchestration/capabilities/built-in/add-provider-models');
 const { CapabilityValidationError } =
   await import('@/lib/orchestration/capabilities/base-capability');
+const { logAdminAction } = await import('@/lib/orchestration/audit/admin-audit-logger');
 
 // Import real Prisma error class for instanceof checks in capability code
 const { Prisma } = await import('@prisma/client');
@@ -623,5 +624,61 @@ describe('AddProviderModelsCapability', () => {
       expect(halfData.inputCostPerMillionTokens).toBeNull();
       expect(halfData.outputCostPerMillionTokens).toBeNull();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Admin audit log (§136 t-1064)
+// ---------------------------------------------------------------------------
+
+describe('AddProviderModelsCapability — admin audit log (§136 t-1064)', () => {
+  const mockLogAdminAction = vi.mocked(logAdminAction);
+
+  it('writes a row for each model created, naming its id, vendor model id and prices', async () => {
+    // The created row, as the database returns it.
+    mockCreate.mockImplementation(((args: { data: Record<string, unknown> }) =>
+      Promise.resolve({ id: 'new-model-1', ...args.data })) as never);
+    const cap = new AddProviderModelsCapability();
+
+    await cap.execute(
+      cap.validate({
+        newModels: [
+          { ...makeNewModel(), inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+        ],
+      }),
+      { ...context, workflowExecutionId: 'exec-1' }
+    );
+
+    expect(mockLogAdminAction).toHaveBeenCalledTimes(1);
+    expect(mockLogAdminAction).toHaveBeenCalledWith({
+      userId: 'u1',
+      action: 'provider_model.create',
+      entityType: 'provider_model',
+      entityId: 'new-model-1',
+      entityName: 'GPT-5',
+      metadata: {
+        source: 'model_audit',
+        providerSlug: 'openai',
+        modelId: 'gpt-5',
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
+        workflowExecutionId: 'exec-1',
+      },
+    });
+  });
+
+  it('writes no row for a model skipped as a duplicate', async () => {
+    mockCreate.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+    const cap = new AddProviderModelsCapability();
+
+    const result = await cap.execute(cap.validate({ newModels: [makeNewModel()] }), context);
+
+    expect(result.data?.skipped).toBe(1);
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
   });
 });

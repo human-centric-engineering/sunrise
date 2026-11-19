@@ -14,6 +14,10 @@
  * - Stores deactivatedByAudit metadata
  * - Handles DB errors gracefully
  * - Mixed results (deactivated + skipped + invalid)
+ * - Vendor retirement (§136 t-1064): a day to come marks retiring and keeps
+ *   the model active; a day here retires and deactivates; the successor is
+ *   resolved by vendor model id and refused when `checkReplacement` refuses;
+ *   every write is in the admin audit log
  *
  * @see lib/orchestration/capabilities/built-in/deactivate-provider-models.ts
  */
@@ -55,6 +59,7 @@ const { DeactivateProviderModelsCapability } =
   await import('@/lib/orchestration/capabilities/built-in/deactivate-provider-models');
 const { CapabilityValidationError } =
   await import('@/lib/orchestration/capabilities/base-capability');
+const { logAdminAction } = await import('@/lib/orchestration/audit/admin-audit-logger');
 
 // ---------------------------------------------------------------------------
 // Typed mock aliases
@@ -364,5 +369,209 @@ describe('DeactivateProviderModelsCapability', () => {
       expect(mockUpdate).toHaveBeenCalledTimes(1);
       expect(mockInvalidateModelCache).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Vendor retirement (§136 t-1064)
+// ---------------------------------------------------------------------------
+
+describe('DeactivateProviderModelsCapability — vendor retirement (§136 t-1064)', () => {
+  // Far from today either way, so the derived state never depends on when the suite runs.
+  const FUTURE_DAY = '2099-03-01';
+  const PAST_DAY = '2020-03-01';
+  const mockLogAdminAction = vi.mocked(logAdminAction);
+
+  const RETIRING = {
+    id: 'model-1',
+    name: 'GPT-4',
+    providerSlug: 'openai',
+    capabilities: ['chat', 'vision'],
+    isActive: true,
+    retiresAt: null,
+    replacementId: null,
+    metadata: null,
+  };
+  const SUCCESSOR = {
+    id: 'model-2',
+    name: 'GPT-5',
+    providerSlug: 'openai',
+    capabilities: ['chat', 'vision'],
+    isActive: true,
+    retiresAt: null,
+  };
+
+  /**
+   * `findUnique` answers by `where`: the model by its row id, and successors
+   * by `(providerSlug, modelId)` from `catalogue`.
+   */
+  function catalogue(
+    model: Record<string, unknown>,
+    byVendorId: Record<string, Record<string, unknown>> = {}
+  ) {
+    mockFindUnique.mockImplementation(((args: {
+      where: { id?: string; providerSlug_modelId?: { providerSlug: string; modelId: string } };
+    }) => {
+      if (args.where.id !== undefined) {
+        return Promise.resolve(args.where.id === model.id ? model : null);
+      }
+      const key = args.where.providerSlug_modelId;
+      const hit = key ? byVendorId[`${key.providerSlug}/${key.modelId}`] : undefined;
+      return Promise.resolve(hit ?? null);
+    }) as never);
+  }
+
+  async function run(entry: Record<string, unknown>) {
+    const cap = new DeactivateProviderModelsCapability();
+    return cap.execute(
+      cap.validate({ deactivateModels: [{ modelId: 'model-1', reason: 'EOL', ...entry }] }),
+      { ...context, workflowExecutionId: 'exec-1' }
+    );
+  }
+
+  it('marks a model retiring on a day to come and leaves it active', async () => {
+    catalogue(RETIRING);
+
+    const result = await run({ retiresAt: FUTURE_DAY });
+
+    expect(result.data?.retiring).toBe(1);
+    expect(result.data?.deactivated).toBe(0);
+    expect(result.data?.models[0].status).toBe('retiring');
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data.retiresAt).toEqual(new Date(`${FUTURE_DAY}T00:00:00.000Z`));
+    expect(data).not.toHaveProperty('isActive');
+    expect(mockInvalidateModelCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires and deactivates a model whose day is already here, stamping the deactivation', async () => {
+    catalogue(RETIRING);
+
+    const result = await run({ retiresAt: PAST_DAY });
+
+    expect(result.data?.retired).toBe(1);
+    expect(result.data?.models[0].status).toBe('retired');
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data.isActive).toBe(false);
+    expect(data.retiresAt).toEqual(new Date(`${PAST_DAY}T00:00:00.000Z`));
+    expect(data.metadata.deactivatedByAudit).toMatchObject({ agentId: 'a1', reason: 'EOL' });
+  });
+
+  it('records the day on a model already turned off, without touching isActive', async () => {
+    catalogue({ ...RETIRING, isActive: false });
+
+    const result = await run({ retiresAt: PAST_DAY });
+
+    expect(result.data?.models[0].status).toBe('retired');
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data).toEqual({ retiresAt: new Date(`${PAST_DAY}T00:00:00.000Z`) });
+  });
+
+  it('resolves the successor by vendor model id on the same provider and stores its row id', async () => {
+    catalogue(RETIRING, { 'openai/gpt-5': SUCCESSOR });
+
+    const result = await run({ retiresAt: FUTURE_DAY, replacedBy: 'gpt-5' });
+
+    expect(result.data?.models[0].replacementNote).toBeUndefined();
+    expect(mockUpdate.mock.calls[0][0].data.replacementId).toBe('model-2');
+    // Looked up on the retiring model's own provider, never another.
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { providerSlug_modelId: { providerSlug: 'openai', modelId: 'gpt-5' } },
+      })
+    );
+  });
+
+  it('refuses a successor that fails checkReplacement but still records the retirement', async () => {
+    catalogue(RETIRING, { 'openai/gpt-5': { ...SUCCESSOR, capabilities: ['chat'] } });
+
+    const result = await run({ retiresAt: FUTURE_DAY, replacedBy: 'gpt-5' });
+
+    expect(result.data?.models[0].status).toBe('retiring');
+    expect(result.data?.models[0].replacementNote).toMatch(/lacks vision/);
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty('replacementId');
+    expect(data.retiresAt).toEqual(new Date(`${FUTURE_DAY}T00:00:00.000Z`));
+  });
+
+  it("cannot reach a successor on another provider: the lookup is pinned to the model's own", async () => {
+    // The vendor id exists, but only under another provider.
+    catalogue(RETIRING, { 'anthropic/claude-opus-5': { ...SUCCESSOR, providerSlug: 'anthropic' } });
+
+    const result = await run({ retiresAt: FUTURE_DAY, replacedBy: 'claude-opus-5' });
+
+    expect(result.data?.models[0].replacementNote).toMatch(
+      /"claude-opus-5" is not in the openai catalogue/
+    );
+    expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('replacementId');
+  });
+
+  it('reports a day that is not a day as invalid and writes nothing', async () => {
+    catalogue(RETIRING);
+
+    const result = await run({ retiresAt: '2099-02-30' });
+
+    expect(result.data?.invalid).toBe(1);
+    expect(result.data?.models[0].reason).toMatch(/not a day/);
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
+  });
+
+  it('skips, writing nothing, when the same retirement is already recorded', async () => {
+    catalogue({
+      ...RETIRING,
+      retiresAt: new Date(`${FUTURE_DAY}T00:00:00.000Z`),
+      replacementId: 'model-2',
+    });
+
+    const result = await run({ retiresAt: FUTURE_DAY });
+
+    expect(result.data?.skipped).toBe(1);
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
+    expect(mockInvalidateModelCache).not.toHaveBeenCalled();
+  });
+
+  it('writes an admin audit row naming each changed field, the reason and the run', async () => {
+    catalogue(RETIRING, { 'openai/gpt-5': SUCCESSOR });
+
+    await run({ retiresAt: PAST_DAY, replacedBy: 'gpt-5' });
+
+    expect(mockLogAdminAction).toHaveBeenCalledTimes(1);
+    expect(mockLogAdminAction).toHaveBeenCalledWith({
+      userId: 'u1',
+      action: 'provider_model.retire',
+      entityType: 'provider_model',
+      entityId: 'model-1',
+      entityName: 'GPT-4',
+      changes: {
+        retiresAt: { from: null, to: new Date(`${PAST_DAY}T00:00:00.000Z`) },
+        replacementId: { from: null, to: 'model-2' },
+        isActive: { from: true, to: false },
+      },
+      metadata: { source: 'model_audit', reason: 'EOL', workflowExecutionId: 'exec-1' },
+    });
+  });
+
+  it('writes an audit row for a plain deactivation too', async () => {
+    catalogue(RETIRING);
+
+    await run({});
+
+    expect(mockLogAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'provider_model.deactivate',
+        changes: { isActive: { from: true, to: false } },
+      })
+    );
+  });
+
+  it('writes no audit row when the update fails', async () => {
+    catalogue(RETIRING);
+    mockUpdate.mockRejectedValueOnce(new Error('db down'));
+
+    const result = await run({ retiresAt: FUTURE_DAY });
+
+    expect(result.data?.invalid).toBe(1);
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
   });
 });

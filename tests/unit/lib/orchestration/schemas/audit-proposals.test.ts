@@ -893,3 +893,45 @@ describe('audit-proposals schema', () => {
     });
   });
 });
+
+// §136 t-1064: a deactivation proposal can carry the vendor's retirement day
+// and the successor's vendor model id.
+describe('audit-proposals schema — retirement on deactivations', () => {
+  function withDeactivation(deactivation: Record<string, unknown>) {
+    return auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [],
+          deactivateModels: [
+            { modelId: 'model-1', reason: 'Deprecated', sources: [SOURCE], ...deactivation },
+          ],
+        },
+      })
+    );
+  }
+
+  function messages(result: ReturnType<typeof withDeactivation>): string[] {
+    return result.success ? [] : result.error.issues.map((i) => i.message);
+  }
+
+  it('accepts a deactivation without a retirement, as before', () => {
+    expect(withDeactivation({}).success).toBe(true);
+  });
+
+  it('accepts a retirement day with a successor, and explicit nulls for neither', () => {
+    expect(withDeactivation({ retiresAt: '2027-03-01', replacedBy: 'gpt-5.1' }).success).toBe(true);
+    expect(withDeactivation({ retiresAt: null, replacedBy: null }).success).toBe(true);
+  });
+
+  it('refuses a retirement day that is not a day', () => {
+    const result = withDeactivation({ retiresAt: '2027-02-30' });
+    expect(messages(result)).toEqual(['retiresAt "2027-02-30" must be a day as YYYY-MM-DD']);
+  });
+
+  it('refuses a successor without a retirement day', () => {
+    const result = withDeactivation({ replacedBy: 'gpt-5.1' });
+    expect(messages(result)).toEqual([
+      'replacedBy needs a retiresAt: a successor is recorded with a retirement',
+    ]);
+  });
+});
