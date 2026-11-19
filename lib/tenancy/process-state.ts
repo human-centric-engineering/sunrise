@@ -889,6 +889,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The entitlement switches and meters an app registers from code (§135 t-1033, t-1035), the same for every org. Which switches an org has, its meter limits and its counts are read on every call and never held here.',
   },
   {
+    file: 'lib/tenancy/org-created-hooks.ts',
+    holders: ['hooks', 'appInit'],
+    posture: 'no-tenant-data',
+    why: 'The org-created hooks an app registers from code (§134 t-1061), the same for every org. Which hooks an org is still owed is in its own `settings` row, read on every run and never held here.',
+  },
+  {
     file: 'lib/tenancy/resolver.ts',
     holders: ['resolver'],
     posture: 'no-tenant-data',

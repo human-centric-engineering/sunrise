@@ -231,16 +231,22 @@ describe('POST /api/v1/admin/orgs', () => {
 
     expect(res.status).toBe(201);
     expect(json.data.id).toBe(OTHER);
+    // `source` tells the app's org-created hooks it was made from the admin.
     expect(mockCreateOrg).toHaveBeenCalledWith({
       slug: 'other',
       name: 'Other Org',
       ownerUserId: OWNER,
+      source: 'admin',
     });
   });
 
   it('creates without an owner when none is named', async () => {
     await post({ slug: 'other', name: 'Other Org' });
-    expect(mockCreateOrg).toHaveBeenCalledWith({ slug: 'other', name: 'Other Org' });
+    expect(mockCreateOrg).toHaveBeenCalledWith({
+      slug: 'other',
+      name: 'Other Org',
+      source: 'admin',
+    });
   });
 
   it('answers a taken slug with the lifecycle’s 409', async () => {

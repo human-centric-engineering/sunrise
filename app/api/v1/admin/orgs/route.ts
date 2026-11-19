@@ -96,7 +96,7 @@ export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, createOrgSchema);
 
-  const org = await createOrg(body);
+  const org = await createOrg({ ...body, source: 'admin' });
 
   log.info('Org created by admin', {
     orgId: org.id,

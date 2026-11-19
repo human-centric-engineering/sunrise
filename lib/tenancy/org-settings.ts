@@ -276,6 +276,77 @@ export async function writePlatformAgentsMarker(
   await writeSettingsSlice(orgId, ORG_PLATFORM_AGENTS_KEY, marker, db);
 }
 
+/** The key the org-created seam owns inside `Org.settings` (§134 t-1061). */
+export const ORG_CREATED_HOOKS_KEY = 'orgCreated';
+
+/** How an org came to exist, as the org-created seam tells its hooks. */
+export const ORG_CREATED_SOURCES = ['admin', 'signup', 'app'] as const;
+export type OrgCreatedSource = (typeof ORG_CREATED_SOURCES)[number];
+
+const orgCreatedOwedSchema = z.object({
+  owed: z.array(z.string().min(1)),
+  source: z.enum(ORG_CREATED_SOURCES),
+});
+
+/**
+ * The org-created hooks an org is still owed (§134 t-1061).
+ *
+ * Written in the same INSERT as the org, naming every hook registered then,
+ * and shrunk as each one succeeds; the key is removed once none is owed. So
+ * an org created before the seam existed, or before a hook was registered,
+ * owes nothing, and a hook registered later is never run for an org that
+ * already exists. `source` is kept so a retry tells the hook what the first
+ * run did. The founding owner is not stored: a retry reads it from the
+ * memberships, so the column holds no pointer to a person.
+ */
+export type OrgCreatedOwed = z.infer<typeof orgCreatedOwedSchema>;
+
+/** Read the owed hooks out of an org's `settings`. Anything unreadable is `null`: nothing owed. */
+export function readOrgCreatedOwed(settings: unknown): OrgCreatedOwed | null {
+  if (!isJsonObject(settings)) return null;
+  const parsed = orgCreatedOwedSchema.safeParse(settings[ORG_CREATED_HOOKS_KEY]);
+  return parsed.success && parsed.data.owed.length > 0 ? parsed.data : null;
+}
+
+/**
+ * The `settings` a new org is created with, so its owed hooks land in the
+ * same write as the org itself. `undefined` when no hook is owed, so a create
+ * with nothing registered writes exactly what it did before the seam.
+ */
+export function orgCreatedSettings(
+  owed: readonly string[],
+  source: OrgCreatedSource
+): Prisma.InputJsonObject | undefined {
+  if (owed.length === 0) return undefined;
+  return { [ORG_CREATED_HOOKS_KEY]: { owed: [...owed], source } };
+}
+
+/**
+ * Take `done` off the hooks an org is owed, removing the key when none is
+ * left. Works from the owed list as the transaction reads it, so two runs
+ * finishing at once each remove only their own. A serialization clash fails
+ * this writer; the hooks it ran stay owed and run again, which is why a hook
+ * must be idempotent.
+ */
+export async function clearOrgCreatedOwed(
+  orgId: string,
+  done: readonly string[],
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<void> {
+  if (done.length === 0) return;
+  await updateSettingsSlice(
+    orgId,
+    ORG_CREATED_HOOKS_KEY,
+    (settings) => {
+      const current = readOrgCreatedOwed(settings);
+      if (!current) return LEAVE_AS_IS;
+      const owed = current.owed.filter((key) => !done.includes(key));
+      return owed.length === 0 ? null : { ...current, owed };
+    },
+    db
+  );
+}
+
 /** The key the provider policy owns inside `Org.settings` (§120 t-742). */
 export const ORG_PROVIDERS_KEY = 'providers';
 

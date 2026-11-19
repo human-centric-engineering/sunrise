@@ -1,10 +1,10 @@
 # Fork Init Seams
 
-Twenty-three `initApp*()` functions, in twenty-two of the `lib/app/*` scaffolds Sunrise
+Twenty-four `initApp*()` functions, in twenty-three of the `lib/app/*` scaffolds Sunrise
 ships (`evaluations.ts` holds two), are reached the same way: a core registry runs
 the fork's function **once, lazily, before its first read**. (Most of `lib/app/`
 is not this — the majority of those files are value and config scaffolds with no
-init function at all, and two of the twenty-five `initApp*` exports are different
+init function at all, and two of the twenty-six `initApp*` exports are different
 shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -67,6 +67,7 @@ Three properties come with it:
 | `jobs.ts`                          | `initAppJobs`                        | `lib/orchestration/maintenance/app-jobs.ts`                 | roll back, log, degrade        |
 | `knowledge-access-contributors.ts` | `initAppKnowledgeAccessContributors` | `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts` | roll back, log, degrade        |
 | `mcp-resources.ts`                 | `initAppMcpResources`                | `lib/orchestration/mcp/resource-registry.ts`                | roll back, log, degrade        |
+| `org-created.ts`                   | `initAppOrgCreatedHooks`             | `lib/tenancy/org-created-hooks.ts`                          | roll back, log, degrade        |
 | `org-export.ts`                    | `initAppOrgSources`                  | `lib/privacy/org-source-registry.ts`                        | roll back, log, **remembered** |
 | `owner-classification.ts`          | `initAppOwnerClassification`         | `lib/db/owner-classification.ts`                            | roll back, log, degrade        |
 | `platform-agents.ts`               | `initAppPlatformAgents`              | `lib/orchestration/agents/platform-agents.ts`               | roll back, log, degrade        |

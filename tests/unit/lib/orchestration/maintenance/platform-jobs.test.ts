@@ -192,6 +192,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       'platformAgents',
       'pendingErasures',
       'waitlistRetention',
+      'orgCreatedHooks',
     ]);
   });
 
@@ -217,6 +218,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       ['platformAgents', 'per-org'],
       ['pendingErasures', { system: expect.stringContaining('pendingErasures') }],
       ['waitlistRetention', 'per-org'],
+      ['orgCreatedHooks', 'per-org'],
     ]);
   });
 

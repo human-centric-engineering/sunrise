@@ -204,6 +204,7 @@ On Vercel, set `CRON_SECRET` and add the cron to `vercel.json` — see [Vercel: 
 | `platformAgents`           | 15 min     | per-org | catches up an org behind the running code or missing a declared row     |
 | `pendingErasures`          | every tick | system  | a throttled run reports no work, and the idle gate must not skip it     |
 | `waitlistRetention`        | 1 hour     | per-org | windows are days and months (§125); one read for an org with no entries |
+| `orgCreatedHooks`          | 15 min     | per-org | retries a failed org-created hook (t-1061); no read if none registered  |
 
 **Tick duration grows with the org count, and the overlap guard does not.**
 `forEachOrg` is sequential, so at `multi` a per-org task costs roughly its
@@ -251,6 +252,7 @@ Forks add their own recurring work through `registerAppJob`, which shares the th
       "platformAgents",
       "pendingErasures",
       "waitlistRetention",
+      "orgCreatedHooks",
     ],
     "durationMs": 47,
   },
