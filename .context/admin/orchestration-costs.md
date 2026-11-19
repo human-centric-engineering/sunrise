@@ -35,20 +35,20 @@ The default-models form and global monthly cap used to live on this page; they w
 
 The server shell fires five parallel fetches through `lib/api/server-load.ts`, and a failed load never renders as an empty state (#518). `/costs/summary` is required: it feeds the summary cards, the trend, both breakdown tables and the local-vs-cloud panel, and `<CostsView>` would render it missing as "no spend", so its failure throws to the admin error boundary, whose **Try again** re-fetches. A failed `/costs/alerts` shows a "Couldn't load budget alerts" notice in the alerts panel's place — never "No agents are currently over 80% of their monthly budget" — and the rest of the page renders. The per-model breakdown, `/models` and `/costs/orgs` are optional: a failure shows a "Couldn't load …" notice above the view and the rest of the page renders. A 403 from `/costs/orgs` is the expected refusal outside the install org and hides that table without a notice.
 
-| Section                | Endpoint                                                    | Notes                                                  |
-| ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
-| Summary cards          | `GET /costs/summary`                                        | `totals` minus `ownKey`, and `ownKey` on its own line  |
-| Trend chart (totals)   | `GET /costs/summary` (`trend[]`)                            | Daily total only — tier split synthesised client-side  |
-| Trend chart (per-tier) | `GET /costs?groupBy=model&dateFrom=<30d>&dateTo=<today>`    | Rows bucketed to tiers via `/models` on the client     |
-| Per-agent table        | `GET /costs/summary` (`byAgent[]`)                          | Joined with `monthlyBudgetUsd` server-side             |
-| Per-model table        | `GET /costs/summary` (`byModel[]`) + `GET /models`          | Keyed `provider::modelId` — see below                  |
-| Local vs cloud panel   | `GET /costs/summary.localSavings` + `byModel[]` + `/models` | `localSavings: null` → muted placeholder, never throws |
-| Budget alerts list     | `GET /costs/alerts`                                         | Returns `{ alerts, globalCap }` — sorted by severity   |
-| Per-org usage table    | `GET /costs/orgs`                                           | Install org only at `multi`; see Per-org usage         |
+| Section                | Endpoint                                                    | Notes                                                    |
+| ---------------------- | ----------------------------------------------------------- | -------------------------------------------------------- |
+| Summary cards          | `GET /costs/summary`                                        | `totals` minus `ownKey`, and `ownKey` on its own line    |
+| Trend chart (totals)   | `GET /costs/summary` (`trend[]`)                            | `totalCostUsd` minus `ownKeyCostUsd`; tiers client-side  |
+| Trend chart (per-tier) | `GET /costs?groupBy=model&dateFrom=<30d>&dateTo=<today>`    | Each row's platform part bucketed to tiers via `/models` |
+| Per-agent table        | `GET /costs/summary` (`byAgent[]`)                          | Joined with `monthlyBudgetUsd` server-side               |
+| Per-model table        | `GET /costs/summary` (`byModel[]`) + `GET /models`          | Keyed `provider::modelId` — see below                    |
+| Local vs cloud panel   | `GET /costs/summary.localSavings` + `byModel[]` + `/models` | `localSavings: null` → muted placeholder, never throws   |
+| Budget alerts list     | `GET /costs/alerts`                                         | Returns `{ alerts, globalCap }` — sorted by severity     |
+| Per-org usage table    | `GET /costs/orgs`                                           | Install org only at `multi`; see Per-org usage           |
 
 ### Per-model rows carry their provider
 
-`byModel[]` rows are `{ model, provider, monthSpend }`, grouped by both columns of
+`byModel[]` rows are `{ model, provider, monthSpend, ownKeyMonthSpend }`, grouped by both columns of
 `AiCostLog`. The provider is load-bearing, not decoration: the same bare `modelId`
 can exist under several providers in the matrix — `gpt-4o` ships under `openai`
 and (inactive) under `microsoft` — so a catalogue lookup keyed on the id alone
@@ -71,9 +71,15 @@ Before fetching, the page also calls `refreshFromOpenRouter()` once so the model
 
 ## Trend chart — tier synthesis
 
-`/costs/summary.trend` only returns `{ date, totalCostUsd }` — no tier split. To render the stacked area by tier the page fetches `/costs?groupBy=model&dateFrom=…&dateTo=…` in parallel, buckets each model id to its tier against `/models`, and then distributes each day's total proportionally to the 30-day tier mix.
+`/costs/summary.trend` only returns `{ date, totalCostUsd, ownKeyCostUsd }` — no tier split. To render the stacked area by tier the page fetches `/costs?groupBy=model&dateFrom=…&dateTo=…` in parallel, buckets each model id to its tier against `/models`, and then distributes each day's total proportionally to the 30-day tier mix.
 
 This is an approximation (a day with a spike in frontier usage still shows the 30-day-average tier split), but it requires no backend changes and degrades gracefully: if the per-model fetch fails, the chart falls back to a single area built from the raw `trend[]` totals.
+
+### The platform's spend only (§137 t-1058)
+
+The chart plots what the summary cards beside it show: each day's `totalCostUsd` minus its `ownKeyCostUsd`, and each model's tier weight from its platform part too, so a model used only on orgs' own keys adds nothing to the split. Below the chart a line says how much it leaves out (**Leaves out $X on organisations' own keys in this period**) when there is any. A period with own-key spend and none on the platform's keys says so instead of "No spend recorded". The dashboard's 7-day chart is the same component.
+
+The per-model table does the same: **Spend** is the platform's, sorted by it, and an **Own keys** column appears once any model has own-key spend. The per-agent table keeps all spend, since the agent's budget counts it.
 
 ### Zero-fill for missing days
 
@@ -128,7 +134,7 @@ An org can have a cap of its own: `monthlyBudgetUsd` under the `quotas` key of `
 - **It counts the org's spend on the platform's keys only.** Calls on the org's own AI key (§137) are billed to the org by the vendor, so they are neither counted nor refused by this cap. An agent's own budget still counts them, and stops its chat turns once reached; outside chat nothing caps them.
 - **Unset means no org cap.** With no `quotas` slice, `checkBudget()` returns exactly what it did before org caps existed, and the org's spend is never summed.
 - **It holds every paid AI call in the org, not only chat.** The provider manager's spend gate checks it before every vendor call made in the org's scope (the install org at `single`), so workflows, evaluations, ingestion and jobs stop at the cap too, with `org_budget_exceeded`.
-- **Local models are never stopped.** A local provider costs nothing, so a reached cap does not refuse it, and a cap of `0` means "no paid calls". A paid primary the cap refuses fails over to a local fallback if the agent has one. A chat agent whose primary is local keeps answering on it, and every paid call that turn would make is refused, including a paid fallback, embeddings and tools. The same holds for the agent's own cap.
+- **Local models are never stopped.** A local provider costs nothing, so a reached cap does not refuse it, and a cap of `0` means "no paid calls". A paid primary the cap refuses fails over to a local fallback if the agent has one. A chat turn that can be answered locally (its primary, the model for confidential messages it is moved to, or a fallback) keeps answering, and every paid call that turn would make is refused, including a paid fallback, embeddings and tools. The same holds for the agent's own cap. So does a turn that can be answered on the org's own key, for the org's cap and the global one (§137 t-1057).
 - **Who sets it.** A platform admin sets it with `PATCH /api/v1/admin/orgs/[id]` `{ settings: { quotas: { monthlyBudgetUsd } } }`. `quotas: null` removes it. At `multi` the write is refused (403, `details.reason: shared_settings_install_org_only`) unless it comes from the install org or an unbound admin API key, so a platform admin switched into a customer org cannot raise that org's cap. A fork's billing or plan code calls `writeOrgQuotas(orgId, quotas)` from `lib/tenancy/org-settings.ts` instead; that helper validates but does not check who is calling. The slice also holds the org's request cap, `requestsPerMinute` ([Rate limiting → Per-org request cap](../security/rate-limiting.md#per-org-request-cap)), and a write replaces the whole slice, so send both caps to keep both.
 - **A malformed stored value fails open.** An unreadable cap is dropped with a warning and the org is limited only by its agents' budgets and the global cap. A failed org lookup is logged and skipped the same way.
 - **A change takes effect at once in the process that made it.** The spend gate caches each org's cap for 30 seconds; the PATCH clears that org's entry, and other processes see the change within the 30 seconds. Code calling `writeOrgQuotas()` directly calls `forgetOrgCap(orgId)` from `lib/orchestration/llm/spend-caps.ts` afterwards for the same effect.

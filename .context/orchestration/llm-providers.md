@@ -891,20 +891,26 @@ can carry the sealed key.
 The vendor bills a call on an org's own key to the org, not to the platform
 (owner ruling, 2026-11-18). So:
 
-| Cap or report                                       | An own-key call                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **The agent's monthly budget** (`monthlyBudgetUsd`) | Counts, and refuses it once reached in a chat turn: in chat's check at the start of a turn and between tool calls, and through the turn's paid-call hold (`PaidCallHold.agentCapReached`) for every call the turn makes. Outside chat (a workflow, an evaluation, a job) the agent's budget is not enforced, as before, so **nothing caps an own-key call made there**: the org pays its vendor for it. |
-| **The org's cap** (`settings.quotas`)               | Neither counted nor refused. `getMonthToDateOrgSpend` sums `ownKey: false` rows only, and `logCost` adds no own-key row to the running total.                                                                                                                                                                                                                                                           |
-| **The global cap**                                  | Neither counted nor refused (`globalSpendSince` sums `ownKey: false` rows only).                                                                                                                                                                                                                                                                                                                        |
-| **Cost reports**                                    | The row is marked `AiCostLog.ownKey`. Every total still includes it; the summary's `ownKey` and the org usage's `ownKeyCostUsd` say how much was on own keys, and the costs page, the per-org table and the org page show it apart from the platform's spend. Agent breakdowns keep it.                                                                                                                 |
+| Cap or report                                       | An own-key call                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **The agent's monthly budget** (`monthlyBudgetUsd`) | Counts, and refuses it once reached in a chat turn: in chat's check at the start of a turn and between tool calls, and through the turn's paid-call hold (`PaidCallHold.agentCapReached`) for every call the turn makes. Outside chat (a workflow, an evaluation, a job) the agent's budget is not enforced, as before, so **nothing caps an own-key call made there**: the org pays its vendor for it.                                                                                         |
+| **The org's cap** (`settings.quotas`)               | Neither counted nor refused. `getMonthToDateOrgSpend` sums `ownKey: false` rows only, and `logCost` adds no own-key row to the running total.                                                                                                                                                                                                                                                                                                                                                   |
+| **The global cap**                                  | Neither counted nor refused (`globalSpendSince` sums `ownKey: false` rows only).                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Cost reports**                                    | The row is marked `AiCostLog.ownKey`. Every total still includes it, and says how much of it was on own keys: the summary's `ownKey`, each trend point's and each `GET /costs` row's `ownKeyCostUsd`, each model row's `ownKeyMonthSpend` (t-1058), and the org usage's `ownKeyCostUsd`. The costs page, the dashboard, the per-org table and the org page show the platform's spend, with own-key spend apart. The summary's per-agent rows keep it with no split, as the agent's budget does. |
 
 The gate (`assertWithinSpendCaps(slug, isLocal, { ownKey })`) and provider
 selection (`spendCapRefusal(..., { ownKey })`) are told by the provider
 manager: `usesOrgOwnKey(provider)` for a provider `getProvider` returned, and
 `providerUsesOrgOwnKey(slug)` before one is fetched, as chat asks at the start
-of a turn. A turn on the org's own key goes ahead with the org's or the global
-cap reached; any call it makes on the platform's keys (a fallback, the
-summarizer, an embedding on another row) meets those caps at the gate. Only
+of a turn. With a cap reached, chat holds the turn's paid calls and, once
+confidential routing has said where the turn goes, asks of the provider it is
+bound for and of each fallback (t-1057): the turn is answered if one of them is
+local, or on the org's own key with the agent's cap not reached, since
+provider selection passes over a paid candidate the caps refuse. Otherwise it
+is refused before anything is saved or sent, naming the agent's cap when a
+candidate on the org's own key was there to answer it. Any call the turn makes
+on the platform's keys (a fallback, the summarizer, an embedding on another
+row) meets the org's and the global caps at the gate. Only
 core's own store makes a key the org's own: whatever a registered resolver
 returns is the platform's, since nothing says whose account it bills.
 
@@ -915,8 +921,8 @@ for the provider the call was made on. Omitted, the row is the platform's.
 `logCost` call in the tree to a roster, so a new one fails until it passes
 `ownKey` or says why it makes no vendor call (a capability's own cost, a
 channel send, a marker row). A chat turn's rows ask the provider serving the
-turn, which moves on a failover; its attachment row asks the primary, before
-the turn has picked one. A batched embedding run writes one row, marked only
+turn, which moves on a failover; its attachment row asks the provider the turn
+picked, which it is billed with. A batched embedding run writes one row, marked only
 if every batch went out on the org's own key. **A fork's own `logCost` calls**
 are not on the roster: pass `ownKey` from the provider you called, or the
 org's own spend counts against the platform's caps.

@@ -1117,11 +1117,11 @@ Breakdown over a date range. Query (`costBreakdownQuerySchema`):
 - `dateTo < dateFrom` → `400`
 - Span > **366 days** → `400`
 
-Response: `{ groupBy, rows: [{ key, label?, totalCostUsd, inputTokens, outputTokens, count }], totals: { totalCostUsd, inputTokens, outputTokens, count } }`.
+Response: `{ groupBy, rows: [{ key, label?, totalCostUsd, ownKeyCostUsd, inputTokens, outputTokens, count }], totals: { totalCostUsd, ownKeyCostUsd, inputTokens, outputTokens, count } }`. `ownKeyCostUsd` is the part of `totalCostUsd` on orgs' own AI keys (§137), billed to the org by the vendor.
 
 ### `GET /costs/summary`
 
-Dashboard summary. Returns `{ totals: { today, week, month }, byAgent: [...], byModel: [...], trend: [...30 UTC days], localSavings }`. `byModel` rows are `{ model, provider, monthSpend }` — the provider is required to resolve a model id that exists under more than one provider. Per-agent rows include `utilisation = monthSpend / monthlyBudgetUsd` (null when no budget is set).
+Dashboard summary. Returns `{ totals: { today, week, month }, ownKey: { today, week, month }, byAgent: [...], byModel: [...], trend: [...30 UTC days], localSavings }`. `ownKey` is the part of each total on orgs' own AI keys (§137); the trend's `{ date, totalCostUsd, ownKeyCostUsd }` points split it the same way. `byModel` rows are `{ model, provider, monthSpend, ownKeyMonthSpend }` — the provider is required to resolve a model id that exists under more than one provider. Per-agent rows include `utilisation = monthSpend / monthlyBudgetUsd` (null when no budget is set).
 
 `localSavings` is `{ usd, methodology, sampleSize, dateFrom, dateTo } | null`. `methodology` is currently always `tier_fallback` (the only reachable mode — local rows have local model ids, so there is never a direct hosted equivalent). The field is kept as a union to allow additional modes without a response-shape break. The whole value is `null` when `calculateLocalSavings()` errored — the rest of the summary still renders. See [`../admin/orchestration-costs.md` § Local savings methodology](../admin/orchestration-costs.md#local-savings-methodology) for the algorithm.
 
