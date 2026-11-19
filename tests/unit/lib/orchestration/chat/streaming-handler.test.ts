@@ -763,6 +763,54 @@ describe('StreamingChatHandler', () => {
       );
     });
 
+    it('on an existing conversation, is refused before the conversation or its history is read', async () => {
+      // Routing could not change the answer: there is no model for
+      // confidential messages. So the turn is refused as early as before
+      // t-1057, and the length cap (a full conversation) does not win.
+      (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue(ORG_AND_GLOBAL);
+      (prisma.aiMessage.count as ReturnType<typeof vi.fn>).mockResolvedValue(10_000);
+
+      const events = await collect(streamChat({ ...baseRequest, conversationId: 'conv-1' }));
+
+      expect(events).toEqual([
+        expect.objectContaining({ type: 'error', code: 'global_budget_exceeded' }),
+      ]);
+      expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
+      expect(prisma.aiMessage.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiMessage.count).not.toHaveBeenCalled();
+    });
+
+    it('is refused early when the model for confidential messages is refused too', async () => {
+      (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue(ORG_AND_GLOBAL);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        inputGuardMode: 'log_only',
+        outputGuardMode: 'log_only',
+        citationGuardMode: 'log_only',
+        confidentialModel: { providerSlug: 'anthropic-eu', model: 'claude-trusted' },
+      } as never);
+
+      try {
+        const events = await collect(streamChat({ ...baseRequest, conversationId: 'conv-1' }));
+
+        expect(events).toEqual([
+          expect.objectContaining({ type: 'error', code: 'global_budget_exceeded' }),
+        ]);
+        // Both were asked; nothing was read.
+        expect(providerUsesOrgOwnKey).toHaveBeenCalledWith('anthropic-eu');
+        expect(prisma.aiConversation.findFirst).not.toHaveBeenCalled();
+      } finally {
+        // `clearAllMocks` keeps implementations: put back the file's default.
+        vi.mocked(getOrchestrationSettings).mockImplementation(
+          async () =>
+            ({
+              inputGuardMode: 'log_only',
+              outputGuardMode: 'log_only',
+              citationGuardMode: 'log_only',
+            }) as never
+        );
+      }
+    });
+
     // Chat sends the provider serving the turn the bound model's id, which a
     // local model or another vendor does not serve: let in on a fallback, the
     // turn would fail after its message was saved.

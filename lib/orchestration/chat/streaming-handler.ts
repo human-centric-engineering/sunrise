@@ -547,9 +547,12 @@ export class StreamingChatHandler {
     // contract (the iterator yields error events; never rejects).
     //
     // `withPaidCallHold` gives the turn its own hold on paid calls, which the
-    // turn sets if it goes on, on a local model, past a reached budget cap.
-    // From then the provider gate refuses every paid call the turn makes —
-    // tools, the summarizer and embeddings as well as the main stream.
+    // turn sets as soon as it finds a budget cap reached, whether it then goes
+    // on (on a local model, or on the org's own key) or is refused. From then
+    // the provider gate refuses every paid call the turn makes on the
+    // platform's keys — tools, the summarizer and embeddings as well as the
+    // main stream — and, once the agent's own cap is reached, on the org's
+    // own key too.
     const hold: PaidCallHold = { cap: null };
     // `withPrivacyScope` gives every provider call the turn makes — the main
     // stream, tools, the summarizer, embeddings — the turn's privacy scope
@@ -727,18 +730,44 @@ export class StreamingChatHandler {
         hold.agentCapReached = budget.agentCapExceeded === true;
       }
 
+      // The cap that refuses a paid call to `slug` now, as the provider gate
+      // answers it under the hold above, or null when the call may go: a local
+      // provider is never refused, and one on the org's own key only by the
+      // agent's cap, since the vendor bills the org (§137).
+      const capRefusalFor = async (slug: string): Promise<BudgetRefusalReason | null> => {
+        const isLocal = await isLocalProvider(slug);
+        const ownKey = !isLocal && (await providerUsesOrgOwnKey(slug));
+        const refused = await spendCapRefusal(slug, isLocal, { ownKey });
+        if (!refused) return null;
+        const code = SPEND_CAP_CODES[refused.cap];
+        return { code, cap: refused.cap, message: refusalText(code) };
+      };
+
+      // Refused here, before anything is read or saved, when routing cannot
+      // change the answer: the agent's provider is refused, and so would the
+      // model for confidential messages be, or there is none. Otherwise the
+      // turn is decided once it is routed (`capsEndTurn`).
+      if (!budget.withinBudget) {
+        const refusal = await capRefusalFor(resolvedBinding.providerSlug);
+        if (refusal) {
+          const target = (await getOrchestrationSettings()).confidentialModel ?? null;
+          if (target === null || (await capRefusalFor(target.providerSlug))) {
+            yield errorEvent(refusal.code, refusal.message);
+            notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
+            return;
+          }
+        }
+      }
+
       // Whether a reached cap ends the turn, asked once the turn is routed
       // (§137 t-1057) of the provider it is bound for: the agent's, or the
-      // model for confidential messages it was moved to. The provider gate's
-      // own answer, under the hold set above: a local provider is never
-      // refused, and one on the org's own key only by the agent's cap, since
-      // the vendor bills the org. Otherwise the turn is refused here, before
-      // anything is saved or sent.
+      // model for confidential messages it was moved to. Refused here, before
+      // anything is saved or sent, if the gate would refuse that provider.
       //
       // Fallbacks are not asked. Chat sends whichever provider serves the turn
       // the bound model's id, which a local model or another vendor does not
       // serve: a turn let in on one would fail after its message was saved,
-      // where the refusal says what happened.
+      // where the refusal says what happened (t-1059).
       //
       // Yields the 80% warning for a turn that goes on; returns true when the
       // turn has ended.
@@ -747,13 +776,8 @@ export class StreamingChatHandler {
       }): AsyncGenerator<ChatEvent, boolean> {
         const agentCapReached = budget.agentCapExceeded === true;
         if (!budget.withinBudget) {
-          const slug = binding.providerSlug;
-          const isLocal = await isLocalProvider(slug);
-          const ownKey = !isLocal && (await providerUsesOrgOwnKey(slug));
-          if (await spendCapRefusal(slug, isLocal, { ownKey })) {
-            // On the org's own key only the agent's cap refuses it, so that is
-            // the cap the refusal names.
-            const refusal = budgetRefusal(budget, { ownKey });
+          const refusal = await capRefusalFor(binding.providerSlug);
+          if (refusal) {
             yield errorEvent(refusal.code, refusal.message);
             notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
             return true;

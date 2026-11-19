@@ -325,10 +325,14 @@ export function orgCapStateOrSkip(
 export type SpendCap = keyof typeof SPEND_CAP_CODES;
 
 /**
- * A chat turn's hold on paid calls. `cap` is set when the turn finds a cap
- * reached but goes on, on a local model; from then on the gate refuses every
- * paid call the turn makes. Mutable, so the handler can set it part way
- * through a turn that is already running inside {@link withPaidCallHold}.
+ * A chat turn's hold on paid calls. `cap` is set as soon as the turn finds a
+ * cap reached, whether it then goes on (on a local model, or on the org's own
+ * key) or is refused, and between tool calls when it goes on locally. From
+ * then on the gate refuses every paid call the turn makes on the platform's
+ * keys; one on the org's own key only when `agentCapReached` is set or `cap`
+ * is `'agent'`. So `cap !== null` does not mean the turn runs locally. Mutable,
+ * so the handler can set it part way through a turn that is already running
+ * inside {@link withPaidCallHold}.
  */
 export interface PaidCallHold {
   cap: SpendCap | null;
