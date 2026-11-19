@@ -70,7 +70,7 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt: 'Answer the simple user request directly and concisely.\n\n{{input}}',
-          modelOverride: 'claude-haiku-4-5-20251001',
+          modelOverride: 'anthropic::claude-haiku-4-5-20251001',
           temperature: 0.2,
         },
         nextSteps: [{ targetStepId: 'estimate_cost' }],
@@ -84,7 +84,7 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
         config: {
           prompt:
             'Answer the user request in full, showing your working where helpful.\n\n{{input}}',
-          modelOverride: 'claude-sonnet-4-6',
+          modelOverride: 'anthropic::claude-sonnet-4-6',
           temperature: 0.5,
         },
         nextSteps: [{ targetStepId: 'estimate_cost' }],
@@ -98,7 +98,7 @@ export const SAAS_BACKEND_TEMPLATE: WorkflowTemplate = {
         config: {
           prompt:
             'This request is complex. Decompose it, reason step by step, and return a well-structured answer.\n\n{{input}}',
-          modelOverride: 'claude-opus-4-6',
+          modelOverride: 'anthropic::claude-opus-4-6',
           temperature: 0.6,
         },
         nextSteps: [{ targetStepId: 'estimate_cost' }],

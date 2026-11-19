@@ -21,6 +21,8 @@ vi.mock('@/lib/orchestration/engine/llm-runner', () => ({
 vi.mock('@/lib/orchestration/evaluations/judge-model', () => ({
   JUDGE_MODEL: 'judge-model-id',
   JUDGE_PROVIDER: 'judge-provider',
+  // As `judge-model.ts` builds it from the two above (§136 t-1068).
+  JUDGE_MODEL_PIN: 'judge-provider::judge-model-id',
   EVALUATION_DEFAULT_MODEL: 'default-model',
   EVALUATION_DEFAULT_PROVIDER: 'default-provider',
 }));
@@ -596,7 +598,7 @@ describe('executeSupervisor (end-to-end)', () => {
     expect((result.output as { verdict: string }).verdict).toBe('fail');
   });
 
-  it('uses JUDGE_MODEL as modelOverride when useJudgeModel=true (default) and no override set', async () => {
+  it('uses the judge model, on the judge provider, as modelOverride when useJudgeModel=true (default) and no override set', async () => {
     vi.mocked(runLlmCall).mockResolvedValueOnce({
       content: JSON.stringify(validReport()),
       tokensUsed: 100,
@@ -606,7 +608,7 @@ describe('executeSupervisor (end-to-end)', () => {
     const ctx = makeCtx({ stepOutputs: { s1: 'applied 5 changes', s2: 'created new model' } });
     await executeSupervisor(step({ assessmentCriteria: 'r' }), ctx);
     expect(vi.mocked(runLlmCall).mock.calls[0][1]).toMatchObject({
-      modelOverride: 'judge-model-id',
+      modelOverride: 'judge-provider::judge-model-id',
     });
   });
 

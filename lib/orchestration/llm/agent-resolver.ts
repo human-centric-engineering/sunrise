@@ -22,7 +22,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getTenantContext } from '@/lib/tenancy/context';
 // The fork's eligibility rule wires itself, lazily, inside
@@ -190,8 +190,31 @@ export async function resolveAgentProviderAndModel(
     }
   }
 
-  const providerSlug = providerSet ? agent.provider : eligibleCandidates[0].slug;
-  const model = modelSet ? agent.model : await getDefaultModelForTask(task);
+  // The task default is a model pin (§136 t-1068). When it names its provider
+  // and the agent names neither, the default runs on that provider, so a
+  // default of Azure's `gpt-4o` is not sent to OpenAI because OpenAI sorts
+  // first. Only while that provider is reachable and permitted: Sunrise is
+  // choosing here, so the rule above still applies to its choice, and a pin
+  // naming a barred provider falls back to the first eligible one, as a bare
+  // id always has. An agent that names its provider keeps it.
+  const pin = modelSet ? null : await getDefaultModelPinForTask(task);
+  const pinnedProvider = providerSet ? null : (pin?.providerSlug ?? null);
+  const pinnedCandidate =
+    pinnedProvider === null ? undefined : eligibleCandidates.find((c) => c.slug === pinnedProvider);
+  if (pinnedProvider !== null && pinnedCandidate === undefined) {
+    logger.warn(
+      'The task default names a provider that cannot be used; using the first eligible one',
+      {
+        task,
+        pinnedProvider,
+        fix: 'The provider is inactive, has no credential, or is not permitted for this request. Point the task default at a usable provider’s model, or make the provider usable.',
+      }
+    );
+  }
+  const providerSlug = providerSet
+    ? agent.provider
+    : (pinnedCandidate ?? eligibleCandidates[0]).slug;
+  const model = pin === null ? agent.model : pin.modelId;
 
   // System fallbacks: every other reachable candidate, capped. Skipped
   // if the agent already has an explicit fallback list — judged before the

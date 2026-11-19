@@ -54,12 +54,13 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { parseModelPin, pinProvider } from '@/lib/orchestration/llm/model-pin';
 import {
   isProviderEligible,
   ProviderCallRefusedError,
 } from '@/lib/orchestration/llm/provider-eligibility';
-import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
+import { JUDGE_MODEL_PIN } from '@/lib/orchestration/evaluations/judge-model';
 import { runSupervisorAssessment, type LlmCallShim } from '@/lib/orchestration/supervisor';
 import {
   STORED_VERDICT_SELECT,
@@ -183,8 +184,10 @@ export const POST = withAdminAuth<{ id: string }>(
     //
     // Held separately because the eligibility check below turns on WHICH arm
     // answered, not on what the model is.
-    const operatorChoice = body.modelOverride ?? JUDGE_MODEL ?? null;
-    const modelId = operatorChoice ?? (await getDefaultModelForTask('chat'));
+    // Each is a model pin (§136 t-1068): `provider::model`, or a bare id.
+    const operatorChoice = parseModelPin(body.modelOverride ?? JUDGE_MODEL_PIN);
+    const pin = operatorChoice ?? (await getDefaultModelPinForTask('chat'));
+    const modelId = pin.modelId;
     await hydrateModelRegistryFromDb();
     const modelInfo = getModel(modelId);
     if (!modelInfo) {
@@ -192,6 +195,8 @@ export const POST = withAdminAuth<{ id: string }>(
         modelOverride: [`Model "${modelId}" is not in the model registry`],
       });
     }
+    // The provider the pin names, else the registry's for the id.
+    const providerSlug = pinProvider(pin, modelInfo.provider);
 
     // Provider eligibility, on the task-default arm only. A request's
     // `modelOverride` and the `EVALUATION_JUDGE_MODEL` env var are both an
@@ -199,7 +204,7 @@ export const POST = withAdminAuth<{ id: string }>(
     // `agent.provider`, which the seam also leaves alone. The third arm is
     // Sunrise choosing, and what it sends is the execution's own step outputs.
     if (operatorChoice === null) {
-      const permitted = await isProviderEligible(modelInfo.provider, {
+      const permitted = await isProviderEligible(providerSlug, {
         task: 'chat',
         source: 'primary',
         primarySlug: null,
@@ -208,7 +213,7 @@ export const POST = withAdminAuth<{ id: string }>(
         log.error('Retroactive review blocked: default model resolves to a barred provider', {
           executionId: id,
           modelId,
-          providerSlug: modelInfo.provider,
+          providerSlug,
           fix: 'This provider is not permitted: at TENANCY_MODE=multi, by the org’s approved providers (GET /api/v1/admin/orgs/[id]/providers); or by the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, set EVALUATION_JUDGE_MODEL, pass modelOverride, or widen the rule.',
         });
         // 403 with its own code, matching the enrich-keywords route: the admin is
@@ -216,14 +221,14 @@ export const POST = withAdminAuth<{ id: string }>(
         // provider the task default resolves to, and the remedy is a settings
         // change rather than a permission one.
         return errorResponse(
-          `The default chat model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Set EVALUATION_JUDGE_MODEL, pass an explicit modelOverride, or point the chat default at a permitted model.`,
+          `The default chat model "${modelId}" resolves to provider "${providerSlug}", which is not permitted for retroactive review. Set EVALUATION_JUDGE_MODEL, pass an explicit modelOverride, or point the chat default at a permitted model.`,
           { code: 'provider_not_permitted', status: 403 }
         );
       }
     }
 
     // The call-time gate (§120 t-741) is told which arm answered, as above.
-    const provider = await getProvider(modelInfo.provider, {
+    const provider = await getProvider(providerSlug, {
       task: 'chat',
       source: operatorChoice === null ? 'primary' : 'explicit',
       primarySlug: null,
@@ -246,7 +251,7 @@ export const POST = withAdminAuth<{ id: string }>(
         workflowExecutionId: id,
         userId: session.user.id,
         model: modelId,
-        provider: modelInfo.provider,
+        provider: providerSlug,
         ownKey: usesOrgOwnKey(provider),
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
@@ -298,7 +303,7 @@ export const POST = withAdminAuth<{ id: string }>(
         // model alike — a server fault, so it answers as one.
         if (err.reason === 'policy') {
           return errorResponse(
-            `The judge model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Choose a judge model on a permitted provider.`,
+            `The judge model "${modelId}" resolves to provider "${providerSlug}", which is not permitted for retroactive review. Choose a judge model on a permitted provider.`,
             { code: 'provider_not_permitted', status: 403 }
           );
         }

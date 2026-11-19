@@ -18,6 +18,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
+import { parseModelPin } from '@/lib/orchestration/llm/model-pin';
 import { validateWorkflow } from '@/lib/orchestration/workflows/validator';
 import {
   runExtraChecks,
@@ -41,6 +42,22 @@ const BUILTIN_CAPABILITY_SLUGS = new Set([
 describe('BUILTIN_WORKFLOW_TEMPLATES', () => {
   it('exports twelve built-in templates', () => {
     expect(BUILTIN_WORKFLOW_TEMPLATES).toHaveLength(12);
+  });
+
+  it('pins every step model override to a provider (§136 t-1068)', () => {
+    const overrides = BUILTIN_WORKFLOW_TEMPLATES.flatMap((t) =>
+      t.workflowDefinition.steps.flatMap((step) => {
+        const value = step.config.modelOverride;
+        return typeof value === 'string' && value !== ''
+          ? [{ template: t.slug, step: step.id, value }]
+          : [];
+      })
+    );
+
+    // The population is not empty: saas-backend and provider-model-audit pin models.
+    expect(overrides.length).toBeGreaterThan(0);
+    const bare = overrides.filter((o) => parseModelPin(o.value)?.providerSlug == null);
+    expect(bare).toEqual([]);
   });
 
   it('has unique slugs across all templates', () => {

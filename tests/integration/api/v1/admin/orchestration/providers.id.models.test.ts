@@ -536,6 +536,34 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       expect(data.data.models[0].defaultFor).toEqual(['audio']);
     });
 
+    it('defaultFor lights up a model only for a pin naming this provider, or a bare id (§136 t-1068)', async () => {
+      // This call is OpenAI's catalogue; `gpt-4o` is offered by both OpenAI
+      // and Microsoft. chat pins Microsoft's, reasoning pins OpenAI's,
+      // routing is a legacy bare id.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(
+        makeProviderRow({ slug: 'openai' }) as never
+      );
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModels: {
+          routing: 'gpt-4o',
+          chat: 'microsoft::gpt-4o',
+          reasoning: 'openai::gpt-4o',
+          embeddings: '',
+        },
+      } as never);
+      mockListModels.mockResolvedValue([makeModelInfo({ id: 'gpt-4o', name: 'GPT-4o' })]);
+
+      const response = await GET(makeGetRequest(), makeParams(PROVIDER_ID));
+      const data = await parseJson<{
+        data: { models: Array<{ id: string; defaultFor: string[] }> };
+      }>(response);
+
+      // chat names Microsoft's gpt-4o, so it must not light up here.
+      expect(data.data.models[0].defaultFor).toEqual(['routing', 'reasoning']);
+    });
+
     it('matrix capabilities take precedence over inference', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(

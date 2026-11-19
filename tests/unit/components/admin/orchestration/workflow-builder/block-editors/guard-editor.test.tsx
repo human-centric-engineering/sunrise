@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event';
 
 import { GuardEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/guard-editor';
 import type { GuardConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/guard-editor';
+import { pickModel, withModels } from '@/tests/helpers/model-options';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -272,23 +273,16 @@ describe('GuardEditor', () => {
 
   // ── LLM-specific onChange handlers ────────────────────────────────────────
 
-  it('calls onChange with { modelOverride: string } when user types in the model override field (llm mode)', async () => {
+  it('calls onChange with the provider and model picked for the override (llm mode, §136 t-1068)', async () => {
     // Arrange — mode must be "llm" for the field to be visible
     const user = userEvent.setup();
     const onChange = vi.fn();
     const config: GuardConfig = { rules: '', mode: 'llm', failAction: 'block' };
-    render(<GuardEditor config={config} onChange={onChange} />);
+    render(withModels(<GuardEditor config={config} onChange={onChange} />));
 
-    // Act — type a single character so the controlled input fires exactly one onChange
-    await user.type(document.getElementById('guard-model-override')!, 'x');
+    await pickModel(user, 'guard-model-override', 'GPT-4o (openai)');
 
-    // Assert — onChange was called with the modelOverride key
-    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
-      string,
-      unknown
-    >;
-    expect(lastArg).toHaveProperty('modelOverride');
-    expect(lastArg.modelOverride).toBe('x');
+    expect(onChange).toHaveBeenCalledWith({ modelOverride: 'openai::gpt-4o' });
   });
 
   it('calls onChange with { temperature: number } when the temperature input changes (llm mode)', async () => {

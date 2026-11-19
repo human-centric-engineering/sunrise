@@ -25,6 +25,8 @@
  * Platform-agnostic: no Next.js imports.
  */
 
+import { formatModelPin, parseModelPin } from '@/lib/orchestration/llm/model-pin';
+
 const env = (key: string): string | null => {
   const value = process.env[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
@@ -36,3 +38,17 @@ export const EVALUATION_DEFAULT_MODEL: string | null = env('EVALUATION_DEFAULT_M
 export const JUDGE_PROVIDER: string | null =
   env('EVALUATION_JUDGE_PROVIDER') ?? EVALUATION_DEFAULT_PROVIDER;
 export const JUDGE_MODEL: string | null = env('EVALUATION_JUDGE_MODEL') ?? EVALUATION_DEFAULT_MODEL;
+
+/**
+ * The judge as a model pin (§136 t-1068), for a caller that hands it to
+ * `runLlmCall` or resolves it as a step override would: `provider::model`
+ * when a provider is configured with the model, so the judge runs on that
+ * provider and not on whichever one the model registry gives the id. `null`
+ * when no judge model is configured.
+ */
+export const JUDGE_MODEL_PIN: string | null =
+  JUDGE_MODEL === null
+    ? null
+    : JUDGE_PROVIDER !== null && parseModelPin(JUDGE_MODEL)?.providerSlug === null
+      ? formatModelPin(JUDGE_PROVIDER, JUDGE_MODEL)
+      : JUDGE_MODEL;

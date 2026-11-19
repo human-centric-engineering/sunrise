@@ -731,6 +731,65 @@ describe('importOrchestrationConfig', () => {
     expect(invalidateSettingsCache).toHaveBeenCalledOnce();
   });
 
+  it('restores a model pin in defaultModels verbatim, naming its provider (§136 t-1068)', async () => {
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    const defaultModels = {
+      chat: 'microsoft::gpt-4o',
+      routing: 'gpt-4o-mini', // a bare id saved before pins named a provider
+      embeddings: 'text-embedding-3-small',
+    };
+
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, settings: { ...makeSettings(), defaultModels } },
+    };
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiOrchestrationSettings.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ defaultModels }),
+        update: expect.objectContaining({ defaultModels }),
+      })
+    );
+  });
+
+  it("keeps a step's provider-named modelOverride in the imported version snapshot (§136 t-1068)", async () => {
+    mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
+    mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
+    const workflow = makeWorkflow({
+      workflowDefinition: {
+        steps: [
+          {
+            id: 'step-1',
+            name: 'Step One',
+            type: 'llm_call',
+            config: { prompt: 'hi', modelOverride: 'microsoft::gpt-4o' },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'step-1',
+        errorStrategy: 'fail',
+      },
+    });
+
+    const payload = { ...minPayload, data: { ...minPayload.data, workflows: [workflow] } };
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        snapshot: expect.objectContaining({
+          steps: [
+            expect.objectContaining({
+              config: { prompt: 'hi', modelOverride: 'microsoft::gpt-4o' },
+            }),
+          ],
+        }),
+      }),
+    });
+  });
+
   it('restores the failed-webhook retention window (#838)', async () => {
     mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
 

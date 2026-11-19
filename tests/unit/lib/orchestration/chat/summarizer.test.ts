@@ -19,7 +19,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
-  getDefaultModelForTask: vi.fn(),
+  getDefaultModelPinForTask: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
@@ -39,7 +39,7 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
 }));
 
 import { logger } from '@/lib/logging';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import {
@@ -54,7 +54,7 @@ import {
 } from '@/lib/orchestration/chat/summarizer';
 import type { HistoryRow } from '@/lib/orchestration/chat/message-builder';
 
-const mockGetModel = vi.mocked(getDefaultModelForTask);
+const mockGetModel = vi.mocked(getDefaultModelPinForTask);
 const mockGetProvider = vi.mocked(getProviderWithFallbacks);
 const mockLogCost = vi.mocked(logCost);
 
@@ -82,7 +82,7 @@ function makeMockProvider(content = 'Summary of the conversation.') {
 describe('summarizeMessages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetModel.mockResolvedValue('claude-haiku-4-5');
+    mockGetModel.mockResolvedValue({ providerSlug: null, modelId: 'claude-haiku-4-5' });
   });
 
   it('calls provider.chat with the correct system prompt and formatted messages', async () => {
@@ -407,7 +407,7 @@ describe('summarizeMessages', () => {
 
 describe('a caller abort during summarisation (#655)', () => {
   it('falls back quietly, without a provider-fault warning', async () => {
-    vi.mocked(getDefaultModelForTask).mockResolvedValue('m');
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({ providerSlug: null, modelId: 'm' });
     vi.mocked(getProviderWithFallbacks).mockRejectedValue(new Error('aborted'));
     const controller = new AbortController();
     controller.abort();
@@ -454,5 +454,87 @@ describe('summary clipping and gap note helpers (#655)', () => {
       splitGapNote('body\n\n(up to 5 earlier messages may not be described in this summary.)\n\nx')
         .gap
     ).toBe(0);
+  });
+});
+
+describe('summarizeMessages — routing default pin (§136 t-1068)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls a pin naming another provider there alone, with no fallbacks and system provenance', async () => {
+    mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });
+    const mockProvider = makeMockProvider();
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'microsoft' });
+
+    const result = await summarizeMessages(MESSAGES, 'openai', ['anthropic'], {
+      provenance: { task: 'routing', primary: 'explicit', fallbacks: 'explicit' },
+    });
+
+    // Not the conversation's provider or its fallbacks; the task comes from the
+    // conversation's provenance, the rest says Sunrise chose.
+    expect(mockGetProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetProvider).toHaveBeenCalledWith('microsoft', [], {
+      task: 'routing',
+      primary: 'primary',
+      fallbacks: 'system',
+    });
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({ model: 'gpt-4o', maxTokens: 500 });
+    expect(result.provider).toBe('microsoft');
+    expect(result.model).toBe('gpt-4o');
+    expect(mockLogCost).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gpt-4o', provider: 'microsoft' })
+    );
+  });
+
+  it('defaults the task to chat when a pinned-elsewhere summary has no provenance', async () => {
+    mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });
+    mockGetProvider.mockResolvedValue({
+      provider: makeMockProvider(),
+      usedSlug: 'microsoft',
+    });
+
+    await summarizeMessages(MESSAGES, 'openai', []);
+
+    expect(mockGetProvider).toHaveBeenCalledWith('microsoft', [], {
+      task: 'chat',
+      primary: 'primary',
+      fallbacks: 'system',
+    });
+  });
+
+  it('keeps the conversation’s provider, fallbacks and provenance when the pin names the same provider', async () => {
+    mockGetModel.mockResolvedValue({ providerSlug: 'openai', modelId: 'gpt-4o-mini' });
+    const mockProvider = makeMockProvider();
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'openai' });
+    const provenance = { task: 'chat', primary: 'explicit', fallbacks: 'explicit' } as const;
+
+    await summarizeMessages(MESSAGES, 'openai', ['anthropic'], { provenance });
+
+    expect(mockGetProvider).toHaveBeenCalledWith('openai', ['anthropic'], provenance);
+    // Only the model id is taken from the pin.
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({ model: 'gpt-4o-mini', maxTokens: 500 });
+  });
+
+  it('runs a bare pin on the conversation’s provider and fallbacks, as before', async () => {
+    mockGetModel.mockResolvedValue({ providerSlug: null, modelId: 'gpt-4o-mini' });
+    mockGetProvider.mockResolvedValue({ provider: makeMockProvider(), usedSlug: 'openai' });
+
+    await summarizeMessages(MESSAGES, 'openai', ['anthropic']);
+
+    expect(mockGetProvider).toHaveBeenCalledWith('openai', ['anthropic'], undefined);
+  });
+
+  it('ignores the routing pin entirely when options.model is passed', async () => {
+    // A pin naming another provider would reroute the call if it were read.
+    mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });
+    const mockProvider = makeMockProvider();
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'ollama-local' });
+
+    await summarizeMessages(MESSAGES, 'ollama-local', ['openai'], { model: 'llama3.1:8b' });
+
+    expect(mockGetModel).not.toHaveBeenCalled();
+    expect(mockGetProvider).toHaveBeenCalledWith('ollama-local', ['openai'], undefined);
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({ model: 'llama3.1:8b', maxTokens: 500 });
   });
 });

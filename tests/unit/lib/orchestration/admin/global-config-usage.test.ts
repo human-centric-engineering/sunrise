@@ -124,12 +124,21 @@ describe('providerModelUsage', () => {
   it('reads only workflows whose JSON could pin the model, draft or published (§107 t-752)', async () => {
     await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
 
-    const pins = { path: ['steps'], array_contains: [{ config: { modelOverride: 'gpt-x' } }] };
+    // By the id alone, and by provider and id (§136 t-1068).
+    const pins = (modelOverride: string) => ({
+      path: ['steps'],
+      array_contains: [{ config: { modelOverride } }],
+    });
     expect(db.aiWorkflow.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           isActive: true,
-          OR: [{ draftDefinition: pins }, { publishedVersion: { is: { snapshot: pins } } }],
+          OR: [
+            { draftDefinition: pins('gpt-x') },
+            { publishedVersion: { is: { snapshot: pins('gpt-x') } } },
+            { draftDefinition: pins('openai::gpt-x') },
+            { publishedVersion: { is: { snapshot: pins('openai::gpt-x') } } },
+          ],
         },
       })
     );
@@ -140,10 +149,11 @@ describe('providerModelUsage', () => {
 
     expect(usage).toEqual({
       agents: [{ id: 'a1', name: 'Agent a1', slug: 'agent-a1', followsPlatform: false }],
-      workflows: [{ id: 'wa', name: 'Workflow wa', slug: 'wf-wa' }],
+      workflows: [{ id: 'wa', name: 'Workflow wa', slug: 'wf-wa', byIdOnly: true }],
       otherOrgAgents: 2,
       otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 1,
+      otherOrgWorkflowsByIdOnly: 1,
     });
     expect(scopes.seen).toEqual(['system', 'system']);
     expect(db.aiAgent.findMany).toHaveBeenCalledWith(
@@ -215,6 +225,45 @@ describe('providerModelUsage', () => {
     const usage = await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
 
     expect(usage.otherOrgWorkflows).toBe(1);
+  });
+
+  it('matches a step naming provider and model on that provider only, and says which pin by id alone (§136 t-1068)', async () => {
+    const def = (...overrides: string[]) => ({
+      steps: overrides.map((modelOverride, i) => ({
+        id: `s${i}`,
+        type: 'llm_call',
+        config: { modelOverride },
+      })),
+    });
+    db.aiWorkflow.findMany.mockImplementation(
+      answering([
+        // Exactly this provider's model.
+        { ...workflow('pair', ORG_A, 'none'), draftDefinition: def('openai::gpt-x') },
+        // By id alone.
+        { ...workflow('bare', ORG_A, 'none'), draftDefinition: def('gpt-x') },
+        // Both: a step naming the pair makes it this model's own use.
+        {
+          ...workflow('both', ORG_A, 'none'),
+          draftDefinition: def('gpt-x'),
+          publishedVersion: { snapshot: def('openai::gpt-x') },
+        },
+        // Another provider's model with the same id: not a use.
+        { ...workflow('azure', ORG_A, 'none'), draftDefinition: def('microsoft::gpt-x') },
+        { ...workflow('b-pair', ORG_B, 'none'), draftDefinition: def('openai::gpt-x') },
+        { ...workflow('b-bare', ORG_B, 'none'), draftDefinition: def('gpt-x') },
+        { ...workflow('b-azure', ORG_B, 'none'), draftDefinition: def('microsoft::gpt-x') },
+      ])
+    );
+
+    const usage = await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
+
+    expect(usage.workflows.map((w) => [w.id, w.byIdOnly])).toEqual([
+      ['pair', false],
+      ['bare', true],
+      ['both', false],
+    ]);
+    expect(usage.otherOrgWorkflows).toBe(2);
+    expect(usage.otherOrgWorkflowsByIdOnly).toBe(1);
   });
 
   it('ignores a step type that does not pin a model, and a malformed definition', async () => {

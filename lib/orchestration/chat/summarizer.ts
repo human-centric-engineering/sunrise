@@ -24,7 +24,7 @@
  */
 
 import { logger } from '@/lib/logging';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getProviderWithFallbacks, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import type { BindingProvenance } from '@/lib/orchestration/llm/provider-eligibility';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
@@ -257,12 +257,23 @@ export async function summarizeMessages(
   const extending = typeof options.previousSummary === 'string' && options.previousSummary !== '';
 
   try {
-    const model = options.model ?? (await getDefaultModelForTask('routing'));
-    const { provider, usedSlug } = await getProviderWithFallbacks(
-      providerSlug,
-      fallbackSlugs,
-      options.provenance
-    );
+    // The routing default is a model pin (§136 t-1068). One naming another
+    // provider than the conversation's runs there, on its own: the
+    // conversation's fallbacks are chosen for the conversation's model, and a
+    // pin is called on exactly the provider it names. A bare id runs on the
+    // conversation's provider, as it always has.
+    const pin = options.model === undefined ? await getDefaultModelPinForTask('routing') : null;
+    const model = pin === null ? (options.model ?? '') : pin.modelId;
+    const pinnedElsewhere =
+      pin?.providerSlug != null && pin.providerSlug !== providerSlug ? pin.providerSlug : null;
+    const { provider, usedSlug } =
+      pinnedElsewhere === null
+        ? await getProviderWithFallbacks(providerSlug, fallbackSlugs, options.provenance)
+        : await getProviderWithFallbacks(pinnedElsewhere, [], {
+            task: options.provenance?.task ?? 'chat',
+            primary: 'primary',
+            fallbacks: 'system',
+          });
 
     const formatted = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n\n');
     const userContent = extending

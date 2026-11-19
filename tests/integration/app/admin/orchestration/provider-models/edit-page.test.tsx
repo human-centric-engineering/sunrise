@@ -384,10 +384,11 @@ describe('EditProviderModelPage — retirement and uses (§136 t-1065)', () => {
             { id: 'a1', name: 'Cleanup', followsPlatform: true },
             { id: 'a2', name: 'Support', followsPlatform: false },
           ],
-          workflows: [{ id: 'w1', name: 'Triage' }],
+          workflows: [{ id: 'w1', name: 'Triage', byIdOnly: true }],
           otherOrgAgents: 3,
           otherOrgAgentsFollowingPlatform: 1,
           otherOrgWorkflows: 1,
+          otherOrgWorkflowsByIdOnly: 1,
           settings: [
             { slot: 'chat', source: 'saved' },
             { slot: 'reasoning', source: 'suggested' },

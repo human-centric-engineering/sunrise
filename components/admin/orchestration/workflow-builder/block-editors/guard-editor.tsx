@@ -23,6 +23,7 @@ import {
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
+import { ModelOverrideField } from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
 
 export interface GuardConfig extends Record<string, unknown> {
   rules: string;
@@ -201,22 +202,18 @@ export function GuardEditor({ config, onChange }: EditorProps<GuardConfig>) {
 
       {mode === 'llm' && (
         <>
-          <div className="space-y-1.5">
-            <Label htmlFor="guard-model-override" className="flex items-center text-xs">
-              Model override{' '}
-              <FieldHelp title="Model override">
+          <ModelOverrideField
+            id="guard-model-override"
+            value={config.modelOverride}
+            onChange={(modelOverride) => onChange({ modelOverride })}
+            help={
+              <>
                 Optional. Overrides the workflow&rsquo;s default model for just this guard step —
-                useful for using a cheaper model for simple rule checks.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="guard-model-override"
-              value={config.modelOverride ?? ''}
-              onChange={(e) => onChange({ modelOverride: e.target.value })}
-              placeholder="claude-haiku-4-5"
-              className="font-mono text-xs"
-            />
-          </div>
+                useful for using a cheaper model for simple rule checks. Each option is one
+                provider&rsquo;s model, so the step runs on exactly that provider.
+              </>
+            }
+          />
 
           <div className="space-y-1.5">
             <Label htmlFor="guard-temperature" className="flex items-center text-xs">

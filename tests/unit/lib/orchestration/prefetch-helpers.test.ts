@@ -47,7 +47,7 @@ process.env.ANTHROPIC_KEY = 'present';
 delete process.env.MISSING_KEY;
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
-  getDefaultModelForTaskOrNull: vi.fn(),
+  getDefaultModelPinForTaskOrNull: vi.fn(),
 }));
 
 // Mocks must be declared before imports per Vitest hoisting rules.
@@ -58,7 +58,7 @@ import {
   registerProviderEligibility,
   resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
-import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import {
   getAgentModels,
   getProviders,
@@ -486,7 +486,7 @@ describe('getEffectiveAgentDefaults', () => {
       inheritedModel: false,
     });
     expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
-    expect(getDefaultModelForTaskOrNull).not.toHaveBeenCalled();
+    expect(getDefaultModelPinForTaskOrNull).not.toHaveBeenCalled();
   });
 
   it('skips a provider the eligibility rule forbids when filling an empty provider', async () => {
@@ -499,7 +499,10 @@ describe('getEffectiveAgentDefaults', () => {
       { id: 'p2', slug: 'anthropic', isLocal: false, apiKeyEnvVar: 'ANTHROPIC_KEY' },
     ] as never);
     // BOTH reachable, so the rule is the only thing that can exclude one.
-    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'claude-opus-4-6',
+    });
 
     try {
       registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'openai'));
@@ -521,7 +524,10 @@ describe('getEffectiveAgentDefaults', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_KEY' },
     ] as never);
-    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'claude-opus-4-6',
+    });
 
     try {
       registerProviderEligibility(() => []);
@@ -550,7 +556,10 @@ describe('getEffectiveAgentDefaults', () => {
       },
     ] as never);
     // First provider's key is missing; second one is reachable
-    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'claude-opus-4-6',
+    });
 
     const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
 
@@ -566,7 +575,10 @@ describe('getEffectiveAgentDefaults', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       { id: 'p1', slug: 'ollama', isLocal: true, apiKeyEnvVar: null },
     ] as never);
-    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('llama-3');
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'llama-3',
+    });
 
     const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
 
@@ -578,7 +590,10 @@ describe('getEffectiveAgentDefaults', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'MISSING_KEY' },
     ] as never);
-    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'claude-opus-4-6',
+    });
 
     const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
 
@@ -588,7 +603,7 @@ describe('getEffectiveAgentDefaults', () => {
 
   it('keeps model empty when no system default is configured', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([]);
-    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue(null);
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockResolvedValue(null);
 
     const result = await getEffectiveAgentDefaults({
       provider: 'anthropic',
@@ -603,7 +618,10 @@ describe('getEffectiveAgentDefaults', () => {
 
   it('tolerates a DB failure during provider lookup', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockRejectedValue(new Error('DB down'));
-    vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'claude-opus-4-6',
+    });
 
     const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
 
@@ -617,7 +635,7 @@ describe('getEffectiveAgentDefaults', () => {
 
   it('tolerates a failure when reading the default model setting', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([]);
-    vi.mocked(getDefaultModelForTaskOrNull).mockRejectedValue(new Error('settings down'));
+    vi.mocked(getDefaultModelPinForTaskOrNull).mockRejectedValue(new Error('settings down'));
 
     const result = await getEffectiveAgentDefaults({ provider: 'anthropic', model: '' });
 

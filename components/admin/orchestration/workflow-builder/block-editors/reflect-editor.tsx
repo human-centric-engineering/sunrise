@@ -20,6 +20,7 @@ import {
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
+import { ModelOverrideField } from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
 
 export interface ReflectConfig extends Record<string, unknown> {
   critiquePrompt: string;
@@ -68,21 +69,18 @@ export function ReflectEditor({ config, onChange }: EditorProps<ReflectConfig>) 
         />
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="reflect-model-override" className="flex items-center text-xs">
-          Model override{' '}
-          <FieldHelp title="Model override">
+      <ModelOverrideField
+        id="reflect-model-override"
+        value={config.modelOverride}
+        onChange={(modelOverride) => onChange({ modelOverride })}
+        help={
+          <>
             Optional. Overrides the workflow&rsquo;s default model for the critique and revision LLM
-            calls.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="reflect-model-override"
-          value={config.modelOverride ?? ''}
-          onChange={(e) => onChange({ modelOverride: e.target.value || undefined })}
-          placeholder="claude-haiku-4-5"
-        />
-      </div>
+            calls. Each option is one provider&rsquo;s model, so the step runs on exactly that
+            provider.
+          </>
+        }
+      />
 
       <div className="space-y-1.5">
         <Label htmlFor="reflect-temperature" className="flex items-center text-xs">

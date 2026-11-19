@@ -16,7 +16,7 @@
  *   - PATCH invalidates the settings cache
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH } from '@/app/api/v1/admin/orchestration/settings/route';
 import { computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -1189,6 +1189,93 @@ describe('Admin Orchestration — /settings', () => {
       // No embeddings slot in the patch, so the registry guard is skipped.
       expect(vi.mocked(getEmbeddingModels)).not.toHaveBeenCalled();
       expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).toHaveBeenCalledOnce();
+    });
+
+    // A model pin that names its provider (§136 t-1068). The registry holds
+    // one entry per id: `claude-sonnet-4-6` is Anthropic's there. A pin naming
+    // `microsoft` can only be accepted on the strength of a catalogue row.
+    describe('a defaultModels pin that names its provider (§136 t-1068)', () => {
+      beforeEach(() => {
+        vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+          makeSettingsRow() as never
+        );
+        vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+          makeSettingsRow() as never
+        );
+      });
+
+      afterEach(() => {
+        // Put back the file-level default (every audio-shaped id matches).
+        vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue({
+          id: 'cm_audio_001',
+        } as never);
+      });
+
+      it('saves a pair whose catalogue row is active, though the registry gives the id to another provider', async () => {
+        vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue({ id: 'cm_row' } as never);
+
+        const res = await PATCH(
+          makePatch({ defaultModels: { chat: 'microsoft::claude-sonnet-4-6' } })
+        );
+
+        expect(res.status).toBe(200);
+        expect(vi.mocked(prisma.aiProviderModel.findFirst)).toHaveBeenCalledWith({
+          where: { providerSlug: 'microsoft', modelId: 'claude-sonnet-4-6', isActive: true },
+          select: { id: true },
+        });
+        expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            update: expect.objectContaining({
+              defaultModels: expect.objectContaining({ chat: 'microsoft::claude-sonnet-4-6' }),
+            }),
+          })
+        );
+      });
+
+      it('refuses a pair with no active row when the registry gives the id to another provider (400)', async () => {
+        vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue(null);
+
+        const res = await PATCH(
+          makePatch({ defaultModels: { reasoning: 'microsoft::claude-sonnet-4-6' } })
+        );
+
+        expect(res.status).toBe(400);
+        const body = await parseJson<{
+          error: { code: string; details: { task: string; value: string } };
+        }>(res);
+        expect(body.error.code).toBe('VALIDATION_ERROR');
+        expect(body.error.details).toEqual({
+          task: 'reasoning',
+          value: 'microsoft::claude-sonnet-4-6',
+        });
+        expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).not.toHaveBeenCalled();
+      });
+
+      it("saves a pair with no row when the registry's own entry is that provider's", async () => {
+        vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue(null);
+
+        const res = await PATCH(
+          makePatch({ defaultModels: { routing: 'anthropic::claude-sonnet-4-6' } })
+        );
+
+        expect(res.status).toBe(200);
+        expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            update: expect.objectContaining({
+              defaultModels: expect.objectContaining({ routing: 'anthropic::claude-sonnet-4-6' }),
+            }),
+          })
+        );
+      });
+
+      it('does not ask the catalogue about a bare id', async () => {
+        vi.mocked(prisma.aiProviderModel.findFirst).mockClear();
+
+        const res = await PATCH(makePatch({ defaultModels: { chat: 'claude-sonnet-4-6' } }));
+
+        expect(res.status).toBe(200);
+        expect(vi.mocked(prisma.aiProviderModel.findFirst)).not.toHaveBeenCalled();
+      });
     });
 
     it('accepts an empty defaultModels patch (no-op merge)', async () => {

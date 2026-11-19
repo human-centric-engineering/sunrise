@@ -305,6 +305,35 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.settings?.globalMonthlyBudgetUsd).toBeNull();
   });
 
+  it('exports model pins in defaultModels and in a step modelOverride verbatim (§136 t-1068)', async () => {
+    const defaultModels = { chat: 'microsoft::gpt-4o', routing: 'gpt-4o-mini' };
+    const snapshot = {
+      steps: [
+        {
+          id: 's1',
+          name: 'S1',
+          type: 'llm_call',
+          config: { prompt: 'hi', modelOverride: 'microsoft::gpt-4o' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 's1',
+      errorStrategy: 'fail',
+    };
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([{ ...workflowRow, publishedVersion: { snapshot } }]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue({ ...settingsRow, defaultModels });
+
+    const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+
+    expect(payload.data.settings?.defaultModels).toEqual(defaultModels);
+    expect(payload.data.workflows[0].workflowDefinition).toEqual(snapshot);
+  });
+
   it('reads and exports the failed-webhook retention window (#838)', async () => {
     mockFindMany
       .mockResolvedValueOnce([])

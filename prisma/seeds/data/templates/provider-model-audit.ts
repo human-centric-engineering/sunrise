@@ -633,7 +633,7 @@ RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}.
           // offending change — the retry context then asked the producer
           // to fix a change that didn't exist. gpt-5 is reliable enough
           // not to regurgitate few-shot example data as real input.
-          modelOverride: 'gpt-5',
+          modelOverride: 'openai::gpt-5',
         },
         nextSteps: [
           { targetStepId: 'refine_findings', condition: 'pass' },

@@ -8,17 +8,19 @@
  * `settingsPinsFor`. This composes the two for the model's page and for
  * config health; it reads nothing across orgs itself.
  *
- * **A model named by its id alone.** An agent names provider and model; a
- * workflow step's `modelOverride` and most task defaults name the id only.
- * When another provider offers the same id (`gpt-4o` under OpenAI and
- * Azure), such a pin cannot say which row it runs on. It is not guessed
- * (owner ruling): it counts as a use of every row with the id, and
- * `sharedWith` names the other providers so the page can say so. Only active
- * rows count as somewhere it might run: the registry loads no other. For
- * config health that is narrowed the safe way: a by-id-only use raises an
- * alert only when every row with the id is dated, and at the least severe of
- * their states, since it runs on one of them and that is the best case.
- * t-1068 makes every pin name its provider.
+ * **A model named by its id alone.** An agent names provider and model, and
+ * since §136 t-1068 so does a task default or a step's `modelOverride` saved
+ * from the admin (`provider::model`, `model-pin.ts`). One saved before then,
+ * the system's suggestion for an unsaved default, and the `embeddings`
+ * default name the id only. When another provider offers the same id
+ * (`gpt-4o` under OpenAI and Azure), such a pin cannot say which row it runs
+ * on. It is not guessed (owner ruling): it counts as a use of every row with
+ * the id, and `sharedWith` names the other providers so the page can say so.
+ * Only active rows count as somewhere it might run: the registry loads no
+ * other. For config health that is narrowed the safe way: a by-id-only use
+ * raises an alert only when every row with the id is dated, and at the least
+ * severe of their states, since it runs on one of them and that is the best
+ * case.
  *
  * Platform-agnostic: no Next.js imports.
  */
@@ -105,18 +107,25 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
       siblings(model),
     ]);
     const pins = settingsPinsFor(model, settings);
-    // Agents and provider-naming settings are this model's own uses.
+    // Agents, and the pins that name the provider, are this model's own uses.
+    const ownWorkflowsByIdOnly = usage.workflows.filter((w) => w.byIdOnly).length;
     const exact =
-      usage.agents.length + usage.otherOrgAgents + pins.filter((p) => !p.byIdOnly).length;
+      usage.agents.length +
+      usage.otherOrgAgents +
+      (usage.workflows.length - ownWorkflowsByIdOnly) +
+      (usage.otherOrgWorkflows - usage.otherOrgWorkflowsByIdOnly) +
+      pins.filter((p) => !p.byIdOnly).length;
     if (exact > 0) {
       counts[state]++;
       continue;
     }
-    // Workflow pins and by-id-only settings may run on another row with the
-    // id. They alert only when every such row is dated, and at the least
-    // severe of their states: retired only when all of them are.
+    // Pins naming the id alone may run on another row with the id. They alert
+    // only when every such row is dated, and at the least severe of their
+    // states: retired only when all of them are.
     const byIdOnly =
-      usage.workflows.length + usage.otherOrgWorkflows + pins.filter((p) => p.byIdOnly).length;
+      ownWorkflowsByIdOnly +
+      usage.otherOrgWorkflowsByIdOnly +
+      pins.filter((p) => p.byIdOnly).length;
     if (byIdOnly === 0) continue;
     const states = [state, ...others.map((o) => modelLifecycleState(o, now))];
     if (states.includes('current')) continue;

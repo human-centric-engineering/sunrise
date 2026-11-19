@@ -30,6 +30,7 @@ import userEvent from '@testing-library/user-event';
 
 import { EvaluateEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/evaluate-editor';
 import type { EvaluateConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/evaluate-editor';
+import { pickModel, pickedModel, withModels } from '@/tests/helpers/model-options';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -203,29 +204,25 @@ describe('EvaluateEditor', () => {
     expect(document.getElementById('evaluate-model-override')).toBeInTheDocument();
   });
 
-  it('shows empty model override input by default', () => {
-    render(<EvaluateEditor config={emptyConfig} onChange={vi.fn()} />);
-    const input = document.getElementById('evaluate-model-override') as HTMLInputElement;
-    expect(input.value).toBe('');
+  it('shows the default model when there is no override', () => {
+    render(withModels(<EvaluateEditor config={emptyConfig} onChange={vi.fn()} />));
+    expect(pickedModel('evaluate-model-override')).toBe('The default chat model');
   });
 
-  it('shows the provided modelOverride value', () => {
-    const config: EvaluateConfig = { rubric: '', modelOverride: 'claude-haiku-4-5' };
-    render(<EvaluateEditor config={config} onChange={vi.fn()} />);
-    const input = document.getElementById('evaluate-model-override') as HTMLInputElement;
-    expect(input.value).toBe('claude-haiku-4-5');
+  it('shows the provided modelOverride as its provider and model', () => {
+    const config: EvaluateConfig = { rubric: '', modelOverride: 'microsoft::gpt-4o' };
+    render(withModels(<EvaluateEditor config={config} onChange={vi.fn()} />));
+    expect(pickedModel('evaluate-model-override')).toBe('GPT-4o (microsoft)');
   });
 
-  it('calls onChange with { modelOverride } when typing', async () => {
+  it('calls onChange with the provider and model picked (§136 t-1068)', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<EvaluateEditor config={emptyConfig} onChange={onChange} />);
+    render(withModels(<EvaluateEditor config={emptyConfig} onChange={onChange} />));
 
-    await user.type(document.getElementById('evaluate-model-override')!, 'g');
+    await pickModel(user, 'evaluate-model-override', 'GPT-4o (openai)');
 
-    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    expect(lastArg).toHaveProperty('modelOverride');
-    expect(lastArg.modelOverride).toBe('g');
+    expect(onChange).toHaveBeenLastCalledWith({ modelOverride: 'openai::gpt-4o' });
   });
 
   it('renders the temperature input with default value 0.7', () => {

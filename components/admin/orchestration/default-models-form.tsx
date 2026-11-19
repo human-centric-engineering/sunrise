@@ -49,6 +49,7 @@ import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { TASK_TYPES, type OrchestrationSettings, type TaskType } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 import { formatAudioDefault, parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import { formatModelPin, parseModelPin, pinModelId } from '@/lib/orchestration/llm/model-pin';
 
 export interface ProviderSummary {
   slug: string;
@@ -391,21 +392,48 @@ export function DefaultModelsForm({
   const renderTaskSlot = (task: TaskType): React.ReactElement => {
     const isEmbeddings = task === 'embeddings';
     const isAudio = task === 'audio';
-    const optionsForTask = isEmbeddings
+    // Chat, routing and reasoning options are model pins (§136 t-1068):
+    // `provider::model`, so OpenAI's `gpt-4o` and Azure's are two options
+    // and saving one names its provider. The label names the provider for
+    // the same reason.
+    const pinnedOptions = isEmbeddings
       ? embeddingOptions.map((e) => ({ id: e.id, label: e.label }))
       : isAudio
         ? audioOptions
         : chatLikeOptions.map((m) => ({
-            id: m.id,
-            label: `${m.name} (${m.tier})`,
+            id: formatModelPin(m.provider, m.id),
+            label: `${m.name} (${m.provider}, ${m.tier})`,
           }));
+    // A saved value no option matches is shown as itself, so the dropdown
+    // never reads as empty while something is saved: a bare model id saved
+    // before pins named their provider (not matched to a provider's model by
+    // guess), or a pair whose provider is not set up. It stays saved until an
+    // administrator picks a model.
+    const storedValue = stored[task] ?? '';
+    const storedPin = isEmbeddings || isAudio ? null : parseModelPin(storedValue);
+    const unlisted =
+      storedPin !== null && !pinnedOptions.some((o) => o.id === storedValue)
+        ? {
+            id: storedValue,
+            label:
+              storedPin.providerSlug === null
+                ? `${storedValue} (by model id, no provider)`
+                : `${storedPin.modelId} (${storedPin.providerSlug}, provider not set up)`,
+          }
+        : null;
+    const optionsForTask = unlisted ? [unlisted, ...pinnedOptions] : pinnedOptions;
     // Drop suggestions that aren't actually in the dropdown for this
     // slot — e.g. a chat-tier model proposed for embeddings. Showing
     // "Suggested: gpt-4o-mini" when gpt-4o-mini isn't in the embeddings
     // dropdown is misleading and the "Use suggestion" button is already
-    // a no-op for those ids.
+    // a no-op for those ids. The system suggests a bare model id; it is
+    // offered as the one pinned option with that id, and not at all when
+    // two providers offer it, since which one it meant cannot be told.
     const rawSuggested = hydrated?.[task] ?? '';
-    const suggested = optionsForTask.some((o) => o.id === rawSuggested) ? rawSuggested : '';
+    const suggestionMatches = pinnedOptions.filter(
+      (o) => o.id === rawSuggested || pinModelId(o.id) === rawSuggested
+    );
+    const suggested = suggestionMatches.length === 1 ? suggestionMatches[0].id : '';
     const suggestedLabel = optionsForTask.find((o) => o.id === suggested)?.label ?? suggested;
 
     return (

@@ -2,10 +2,8 @@
 
 /**
  * LLM Call step editor — prompt template, optional model override, and
- * optional temperature. Model override is an open `<Input>` rather than a
- * select because the provider/model picker lives in `AgentForm` and the
- * workflow builder doesn't yet fetch the model catalogue. Session 5.1c
- * may upgrade this to a real dropdown if needed.
+ * optional temperature. The model override is the shared
+ * `ModelOverrideField`, which writes a `provider::model` pin (§136 t-1068).
  */
 
 import { Input } from '@/components/ui/input';
@@ -28,6 +26,7 @@ import {
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 import { ModelParamsFields } from '@/components/admin/orchestration/model-params-fields';
 import type { ReasoningEffort, ServiceTier, Verbosity } from '@/lib/orchestration/llm/types';
+import { ModelOverrideField } from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
 
 export interface LlmCallConfig extends Record<string, unknown> {
   prompt: string;
@@ -63,21 +62,18 @@ export function LlmCallEditor({ config, onChange }: EditorProps<LlmCallConfig>) 
         />
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="llm-model-override" className="flex items-center text-xs">
-          Model override{' '}
-          <FieldHelp title="Model override">
+      <ModelOverrideField
+        id="llm-model-override"
+        value={config.modelOverride}
+        onChange={(modelOverride) => onChange({ modelOverride })}
+        help={
+          <>
             Optional. Overrides the workflow&rsquo;s default model for just this step — useful for
-            mixing cheap and expensive models across a pipeline.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="llm-model-override"
-          value={config.modelOverride ?? ''}
-          onChange={(e) => onChange({ modelOverride: e.target.value })}
-          placeholder="claude-haiku-4-5"
-        />
-      </div>
+            mixing cheap and expensive models across a pipeline. Each option is one provider&rsquo;s
+            model, so the step runs on exactly that provider.
+          </>
+        }
+      />
 
       <div className="space-y-1.5">
         <Label htmlFor="llm-temperature" className="flex items-center text-xs">

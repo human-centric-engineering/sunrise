@@ -50,6 +50,28 @@ describe('settingsPinsFor', () => {
     ]);
   });
 
+  it('matches a chat pair on provider and model both, with no byIdOnly', () => {
+    const withChat = (chat: string) =>
+      settingsPinsFor(
+        MODEL,
+        settings({
+          defaultModels: { ...settings().defaultModels, chat },
+          defaultModelsStored: { chat },
+        })
+      );
+    expect(withChat('openai::gpt-4o')).toEqual([{ slot: 'chat', source: 'saved' }]);
+    // Azure's gpt-4o is not OpenAI's: the pair names another provider.
+    expect(withChat('microsoft::gpt-4o')).toEqual([]);
+  });
+
+  it('matches a bare routing id on the id alone, whichever provider the row is under', () => {
+    const pins = settingsPinsFor(
+      { id: 'm2', providerSlug: 'microsoft', modelId: 'gpt-4o' },
+      settings({ defaultModels: { ...settings().defaultModels, routing: 'gpt-4o' } })
+    );
+    expect(pins).toEqual([{ slot: 'routing', source: 'suggested', byIdOnly: true }]);
+  });
+
   it('matches audio on provider and model, and a legacy bare id on the id alone', () => {
     const on = (audio: string) =>
       settingsPinsFor(

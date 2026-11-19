@@ -19,6 +19,7 @@ import userEvent from '@testing-library/user-event';
 
 import { LlmCallEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/llm-call-editor';
 import type { LlmCallConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/llm-call-editor';
+import { pickModel, withModels } from '@/tests/helpers/model-options';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -66,17 +67,14 @@ describe('LlmCallEditor', () => {
     expect(calls[calls.length - 1][0]).toEqual({ prompt: 'Existing!' });
   });
 
-  it('calls onChange with { modelOverride } when user types in the model override field', async () => {
+  it('calls onChange with the provider and model picked for the override (§136 t-1068)', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<LlmCallEditor config={defaultConfig} onChange={onChange} />);
+    render(withModels(<LlmCallEditor config={defaultConfig} onChange={onChange} />));
 
-    const modelInput = document.getElementById('llm-model-override')!;
-    // Type a single character so e.target.value reflects that character (controlled
-    // component — the test does not re-render with updated props between keystrokes).
-    await user.type(modelInput, 'x');
+    await pickModel(user, 'llm-model-override', 'GPT-4o (microsoft)');
 
-    expect(onChange).toHaveBeenCalledWith({ modelOverride: 'x' });
+    expect(onChange).toHaveBeenCalledWith({ modelOverride: 'microsoft::gpt-4o' });
   });
 
   it('shows the current temperature value', () => {

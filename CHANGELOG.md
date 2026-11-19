@@ -441,6 +441,37 @@ release process.
 
 ### Changed
 
+- **Every model pin can name its provider (§136, t-1068).** A task default
+  (`AiOrchestrationSettings.defaultModels.routing|chat|reasoning`) and a
+  workflow step's `config.modelOverride` now store `provider::model`, the shape
+  the audio default already used, so a pin to Azure's `gpt-4o` runs on Azure
+  and not on whichever provider the model registry gives `gpt-4o`. The helpers
+  are in the new `lib/orchestration/llm/model-pin.ts` (`parseModelPin`,
+  `formatModelPin`, `pinModelId`, `pinNames`, `pinProvider`); `audio-default.ts`
+  re-exports them under its old names. `settings-resolver.ts` adds
+  `getDefaultModelPinForTask()` / `...OrNull()`, and the runner, the agent
+  resolver (for an agent with neither provider nor model), the summariser, the
+  `chat_turn` step, keyword enrichment and the retroactive review call the
+  pinned provider. The settings PATCH route and the semantic validator check a
+  pair against the model matrix. The default-models form, setup wizard,
+  provider-detection banner, the workflow builder (its free-text model field is
+  now a picker) and the built-in templates write pairs. The supervisor step and
+  the retroactive review now honour `EVALUATION_JUDGE_PROVIDER` with
+  `EVALUATION_JUDGE_MODEL` (`JUDGE_MODEL_PIN`). `providerModelUsage()` matches
+  a pair exactly, marks each workflow `byIdOnly`, and counts
+  `otherOrgWorkflowsByIdOnly`. The `embeddings` default stays a bare id: its
+  provider is the fallback chain's, and the active embedding model is the
+  provider-exact pin.
+  _Fork impact:_ the stored shape of the defaults and of step config widens.
+  Nothing stored is rewritten, and a bare id keeps resolving as before, so a
+  fork's saved defaults and workflows keep working. Code that reads
+  `defaultModels.<task>` or a step's `modelOverride` as a model id must take
+  `pinModelId()` first; `getDefaultModelForTask()` already returns the model id
+  alone, now for `audio` too. An executor that passes `modelOverride` to
+  `runLlmCall` needs no change. A test that builds a full `ProviderModelUsage`
+  needs the new count, and a mock of `settings-resolver` or `judge-model`
+  needs the new exports where the code under test calls them.
+
 - **Writing an `Org.settings` slice with the value it already holds no longer
   writes the row (§135 t-1033).** `writeOrgQuotas()`, the provider policy and
   privacy writers, the platform-agents marker and the entitlement switches all

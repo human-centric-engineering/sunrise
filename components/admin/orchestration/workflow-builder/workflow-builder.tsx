@@ -86,6 +86,10 @@ import {
   toTemplateItem,
 } from '@/components/admin/orchestration/workflow-builder/template-types';
 import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
+import {
+  ModelOptionsProvider,
+  type ModelOption,
+} from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
 
 export type WorkflowBuilderMode = 'create' | 'edit';
 
@@ -335,6 +339,34 @@ function WorkflowBuilderInner({
       cancelled = true;
     };
   }, [initialAgents]);
+
+  // The catalogue's active chat models, for the steps' model-override picker
+  // (§136 t-1068): one read for the whole builder. A failed read leaves the
+  // picker with only "the default" and whatever a step already holds.
+  const [modelOptions, setModelOptions] = useState<readonly ModelOption[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void apiClient
+      .get<Array<{ providerSlug: string; modelId: string; name: string }>>(
+        API.ADMIN.ORCHESTRATION.PROVIDER_MODELS,
+        { params: { capability: 'chat', isActive: true, limit: 100 } }
+      )
+      .then((rows) => {
+        if (!cancelled) {
+          setModelOptions(
+            rows.map((r) => ({ providerSlug: r.providerSlug, modelId: r.modelId, name: r.name }))
+          );
+        }
+      })
+      .catch((err) => {
+        logger.error('Failed to load models for workflow builder', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Debounced live validation. Runs both the authoritative backend-aligned
   // validator and the FE-only extra checks, merges their errors, and
@@ -924,15 +956,17 @@ function WorkflowBuilderInner({
           onNodeAdd={handleNodeAdd}
         />
         {selectedNode && (
-          <BlockConfigPanel
-            node={selectedNode}
-            onLabelChange={handleLabelChange}
-            onDescriptionChange={handleDescriptionChange}
-            onConfigChange={handleConfigChange}
-            onDelete={handleNodeDelete}
-            capabilities={capabilities}
-            agents={agents}
-          />
+          <ModelOptionsProvider models={modelOptions}>
+            <BlockConfigPanel
+              node={selectedNode}
+              onLabelChange={handleLabelChange}
+              onDescriptionChange={handleDescriptionChange}
+              onConfigChange={handleConfigChange}
+              onDelete={handleNodeDelete}
+              capabilities={capabilities}
+              agents={agents}
+            />
+          </ModelOptionsProvider>
         )}
         {executionPanelOpen && executionInput && workflow && (
           <ExecutionPanel

@@ -66,7 +66,7 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   // JUDGE_MODEL is null (no EVALUATION_JUDGE_* env vars set in the
   // test environment). Mock returns a fixed model so the route picks
   // up a sensible default during the test.
-  getDefaultModelForTask: vi.fn(async () => 'judge-model-id'),
+  getDefaultModelPinForTask: vi.fn(async () => ({ providerSlug: null, modelId: 'judge-model-id' })),
 }));
 vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   calculateCost: vi.fn(() => ({ totalCostUsd: 0.001, isLocal: false })),
@@ -91,6 +91,8 @@ import { prisma } from '@/lib/db/client';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { runSupervisorAssessment } from '@/lib/orchestration/supervisor';
 import { withRunRowLocked } from '@/lib/orchestration/engine/run-row-lock';
 import { findErasedSinceCopy } from '@/lib/privacy/run-recipients';
@@ -738,5 +740,100 @@ describe('POST …/review — provider eligibility', () => {
 
     expect(res.status).toBe(403);
     expect(vi.mocked(runSupervisorAssessment)).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Model pins naming their provider (§136 t-1068) ──────────────────────────
+
+describe('POST …/review — model pins', () => {
+  // `getModel` is stubbed to say `anthropic` for every id (the registry's one
+  // entry for a shared id), so a pin naming `microsoft` is told apart from it.
+  beforeEach(() => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+    vi.mocked(runSupervisorAssessment).mockImplementation(async (params) => {
+      await params.llmCall('test prompt', { temperature: 0.2 });
+      return happyAssessment() as never;
+    });
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+    vi.mocked(getDefaultModelPinForTask).mockImplementation(async () => ({
+      providerSlug: null,
+      modelId: 'judge-model-id',
+    }));
+  });
+
+  it('runs a modelOverride pair on the provider it names, explicitly, and bills that provider', async () => {
+    const res = await POST(makeRequest({ modelOverride: 'microsoft::gpt-4o' }), makeContext());
+
+    expect(res.status).toBe(200);
+    // The registry is asked about the bare id, not the composite.
+    expect(vi.mocked(getModel)).toHaveBeenCalledWith('gpt-4o');
+    expect(vi.mocked(getProvider)).toHaveBeenCalledWith(
+      'microsoft',
+      expect.objectContaining({ source: 'explicit' })
+    );
+    const provider = (await vi.mocked(getProvider).mock.results[0].value) as {
+      chat: ReturnType<typeof vi.fn>;
+    };
+    expect(provider.chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
+    expect(vi.mocked(logCost)).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gpt-4o', provider: 'microsoft' })
+    );
+  });
+
+  it('asks the rule about the chat default pin’s provider, and answers 403 naming it when barred', async () => {
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: 'microsoft',
+      modelId: 'gpt-4o',
+    });
+    // The registry’s provider (anthropic) is allowed; only the pinned one is barred.
+    registerProviderEligibility((candidates) => candidates.filter((c) => c !== 'microsoft'));
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('provider_not_permitted');
+    expect(body.error.message).toContain('provider "microsoft"');
+    expect(vi.mocked(getProvider)).not.toHaveBeenCalled();
+    expect(vi.mocked(runSupervisorAssessment)).not.toHaveBeenCalled();
+  });
+
+  it('runs a permitted chat default pin on its named provider and bills it', async () => {
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: 'microsoft',
+      modelId: 'gpt-4o',
+    });
+    const asked: Array<readonly string[]> = [];
+    registerProviderEligibility((candidates) => {
+      asked.push(candidates);
+      return candidates;
+    });
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(200);
+    expect(asked).toEqual([['microsoft']]);
+    expect(vi.mocked(getProvider)).toHaveBeenCalledWith(
+      'microsoft',
+      expect.objectContaining({ source: 'primary' })
+    );
+    expect(vi.mocked(logCost)).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gpt-4o', provider: 'microsoft' })
+    );
+  });
+
+  it('keeps the registry’s provider for a bare modelOverride', async () => {
+    const res = await POST(makeRequest({ modelOverride: 'gpt-4o' }), makeContext());
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(getProvider)).toHaveBeenCalledWith('anthropic', expect.anything());
+    expect(vi.mocked(logCost)).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'anthropic' })
+    );
   });
 });

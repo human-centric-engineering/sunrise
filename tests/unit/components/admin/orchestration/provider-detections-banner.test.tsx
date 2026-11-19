@@ -316,9 +316,10 @@ describe('ProviderDetectionsBanner', () => {
       expect(patchCall).toBeDefined();
       const body = JSON.parse((patchCall![1] as RequestInit).body as string);
       expect(body.defaultModels).toMatchObject({
-        chat: 'claude-sonnet-4-6',
-        routing: 'claude-haiku-4-5',
-        reasoning: 'claude-opus-4-6',
+        // Model pins naming the detected provider (§136 t-1068).
+        chat: 'anthropic::claude-sonnet-4-6',
+        routing: 'anthropic::claude-haiku-4-5',
+        reasoning: 'anthropic::claude-opus-4-6',
       });
     });
   });

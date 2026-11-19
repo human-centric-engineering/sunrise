@@ -3,7 +3,8 @@
  *
  * Reads the singleton `AiOrchestrationSettings` row to resolve the
  * task → default-model mapping used by the chat handler and other
- * orchestration callers. Split out of `model-registry.ts` so that
+ * orchestration callers. Each value is a model pin (`model-pin.ts`):
+ * `provider::model`, or a bare model id saved before §136 t-1068. Split out of `model-registry.ts` so that
  * `lib/validations/orchestration.ts` can import `validateTaskDefaults`
  * from the registry without dragging the Prisma client (and `pg`)
  * into any client component that happens to import the validations
@@ -28,6 +29,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { parseStoredDefaults } from '@/lib/orchestration/settings';
+import { parseModelPin, type ModelPin } from '@/lib/orchestration/llm/model-pin';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
@@ -75,21 +77,39 @@ export function invalidateSettingsCache(): void {
 }
 
 /**
- * Resolve the default model id for a task category from the singleton
- * `AiOrchestrationSettings` row. Throws `NoDefaultModelConfiguredError`
- * when the slot is unset — the system never silently picks a fallback.
+ * Resolve the default model pin for a task category from the singleton
+ * `AiOrchestrationSettings` row: the model, and the provider it names
+ * (`providerSlug: null` for a pin saved by id alone, before §136 t-1068 —
+ * resolve it from the model registry, as before). Throws
+ * `NoDefaultModelConfiguredError` when the slot is unset — the system never
+ * silently picks a fallback.
  *
  * Results are cached for 30s so chat handlers don't hit the DB on
  * every turn. Cache invalidates on PATCH /settings via
  * `invalidateSettingsCache()`.
  */
-export async function getDefaultModelForTask(task: TaskType): Promise<string> {
+export async function getDefaultModelPinForTask(task: TaskType): Promise<ModelPin> {
+  const pin = await getDefaultModelPinForTaskOrNull(task);
+  if (pin === null) throw new NoDefaultModelConfiguredError(task);
+  return pin;
+}
+
+/** Like `getDefaultModelPinForTask` but returns `null` instead of throwing. */
+export async function getDefaultModelPinForTaskOrNull(task: TaskType): Promise<ModelPin | null> {
   const stored = await loadStoredDefaults();
-  const value = stored[task];
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new NoDefaultModelConfiguredError(task);
-  }
-  return value;
+  return parseModelPin(stored[task]);
+}
+
+/**
+ * The model id of the task's default, without its provider. Throws
+ * `NoDefaultModelConfiguredError` when the slot is unset.
+ *
+ * For a caller that prices or labels by model id. A caller that CALLS the
+ * model takes `getDefaultModelPinForTask`, so a pin naming Azure's `gpt-4o`
+ * runs on Azure and not on whichever provider the registry gives the id.
+ */
+export async function getDefaultModelForTask(task: TaskType): Promise<string> {
+  return (await getDefaultModelPinForTask(task)).modelId;
 }
 
 /**
@@ -99,9 +119,7 @@ export async function getDefaultModelForTask(task: TaskType): Promise<string> {
  * error to the user (e.g. UI hints, optional features).
  */
 export async function getDefaultModelForTaskOrNull(task: TaskType): Promise<string | null> {
-  const stored = await loadStoredDefaults();
-  const value = stored[task];
-  return typeof value === 'string' && value.length > 0 ? value : null;
+  return (await getDefaultModelPinForTaskOrNull(task))?.modelId ?? null;
 }
 
 async function loadStoredDefaults(): Promise<Partial<Record<TaskType, string>>> {

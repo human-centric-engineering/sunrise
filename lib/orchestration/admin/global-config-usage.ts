@@ -30,6 +30,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { formatModelPin, pinNames } from '@/lib/orchestration/llm/model-pin';
 import type { CapabilityAgentRef } from '@/types/orchestration';
 import { getTenantContext, isMultiTenant, runAsCrossOrgCount } from '@/lib/tenancy/context';
 import { bindingFollowsPlatform } from '@/lib/orchestration/agents/platform-agent-guard';
@@ -143,10 +144,20 @@ const LLM_STEP_TYPES = new Set([
   'supervisor',
 ]);
 
-function definitionPinsModel(definition: unknown, modelId: string): boolean {
-  if (!definition || typeof definition !== 'object') return false;
+/**
+ * How a workflow definition pins `model` in a step's `modelOverride`, a model
+ * pin (§136 t-1068): `'pair'` when some step names its provider and id,
+ * `'id'` when steps name it by id alone (it may run on another provider's
+ * model with the id), `null` when none does.
+ */
+function definitionPinsModel(
+  definition: unknown,
+  model: { providerSlug: string; modelId: string }
+): 'pair' | 'id' | null {
+  if (!definition || typeof definition !== 'object') return null;
   const steps = (definition as { steps?: unknown }).steps;
-  if (!Array.isArray(steps)) return false;
+  if (!Array.isArray(steps)) return null;
+  let found: 'id' | null = null;
   for (const step of steps) {
     if (!step || typeof step !== 'object') continue;
     const type = (step as { type?: unknown }).type;
@@ -154,9 +165,22 @@ function definitionPinsModel(definition: unknown, modelId: string): boolean {
     const config = (step as { config?: unknown }).config;
     if (!config || typeof config !== 'object') continue;
     const override = (config as { modelOverride?: unknown }).modelOverride;
-    if (typeof override === 'string' && override === modelId) return true;
+    if (typeof override !== 'string') continue;
+    const how = pinNames(override, model);
+    if (how === 'pair') return 'pair';
+    if (how === 'id') found = 'id';
   }
-  return false;
+  return found;
+}
+
+/** A workflow pinning a model, as {@link providerModelUsage} names it. */
+export interface ModelWorkflowRef extends NamedRef {
+  /**
+   * Every step pinning the model names its id alone, with no provider (a
+   * pin saved before §136 t-1068): when another provider offers the id, the
+   * step may run on that one instead.
+   */
+  byIdOnly: boolean;
 }
 
 /** An agent bound to a model, as {@link providerModelUsage} names it. */
@@ -175,18 +199,21 @@ export interface ProviderModelUsage {
   /** The caller's active agents bound to the model, by name. */
   agents: ModelAgentRef[];
   /** The caller's active workflows pinning it (draft or published), by name. */
-  workflows: NamedRef[];
+  workflows: ModelWorkflowRef[];
   /** Active agents in other orgs bound to it. */
   otherOrgAgents: number;
   /** How many of {@link otherOrgAgents} follow the platform's pick. */
   otherOrgAgentsFollowingPlatform: number;
   /** Active workflows in other orgs pinning it. */
   otherOrgWorkflows: number;
+  /** How many of {@link otherOrgWorkflows} pin it by id alone (`ModelWorkflowRef.byIdOnly`). */
+  otherOrgWorkflowsByIdOnly: number;
 }
 
 /**
  * Active agents bound to `(providerSlug, modelId)` and active workflows
- * pinning `modelId` in a step's `modelOverride`, in every org by default. The
+ * pinning the model in a step's `modelOverride` — by provider and id, or by
+ * the id alone (§136 t-1068) — in every org by default. The
  * caller's are named, other orgs' are counted. `acrossOrgs: false` counts in
  * the caller's org only, for a customer org's admin (§111 t-811).
  */
@@ -200,7 +227,11 @@ export function providerModelUsage(
   // definitions with SOME step pinning `modelId`, so every org's workflow
   // JSON no longer crosses the wire; `definitionPinsModel` below still
   // decides, by step type (§107 t-752).
-  const pins = { path: ['steps'], array_contains: [{ config: { modelOverride: modelId } }] };
+  const stepPinning = (modelOverride: string) => ({
+    path: ['steps'],
+    array_contains: [{ config: { modelOverride } }],
+  });
+  const pinned = [stepPinning(modelId), stepPinning(formatModelPin(providerSlug, modelId))];
   return scoped(options, async () => {
     const [agentRows, workflowRows] = await Promise.all([
       prisma.aiAgent.findMany({
@@ -218,7 +249,10 @@ export function providerModelUsage(
       prisma.aiWorkflow.findMany({
         where: {
           isActive: true,
-          OR: [{ draftDefinition: pins }, { publishedVersion: { is: { snapshot: pins } } }],
+          OR: pinned.flatMap((pins) => [
+            { draftDefinition: pins },
+            { publishedVersion: { is: { snapshot: pins } } },
+          ]),
         },
         select: {
           id: true,
@@ -231,13 +265,18 @@ export function providerModelUsage(
         orderBy: { name: 'asc' },
       }),
     ]);
-    const pinning = workflowRows.filter(
-      (w) =>
-        definitionPinsModel(w.draftDefinition, modelId) ||
-        definitionPinsModel(w.publishedVersion?.snapshot, modelId)
-    );
+    const model = { providerSlug, modelId };
+    const pinning = workflowRows.flatMap((w) => {
+      const how = [
+        definitionPinsModel(w.draftDefinition, model),
+        definitionPinsModel(w.publishedVersion?.snapshot, model),
+      ];
+      if (how.every((h) => h === null)) return [];
+      return [{ ...w, byIdOnly: !how.includes('pair') }];
+    });
     const agents = named(agentRows, isCallers);
-    const workflows = named(pinning, isCallers);
+    const ownWorkflows = pinning.filter((w) => isCallers(w.orgId));
+    const otherWorkflows = pinning.filter((w) => !isCallers(w.orgId));
     const ownAgents = agentRows.filter((r) => isCallers(r.orgId));
     return {
       agents: ownAgents.map((r) => ({
@@ -246,12 +285,13 @@ export function providerModelUsage(
         slug: r.slug,
         followsPlatform: bindingFollowsPlatform(r),
       })),
-      workflows: workflows.own,
+      workflows: ownWorkflows.map(({ id, name, slug, byIdOnly }) => ({ id, name, slug, byIdOnly })),
       otherOrgAgents: agents.elsewhere,
       otherOrgAgentsFollowingPlatform: agentRows.filter(
         (r) => !isCallers(r.orgId) && bindingFollowsPlatform(r)
       ).length,
-      otherOrgWorkflows: workflows.elsewhere,
+      otherOrgWorkflows: otherWorkflows.length,
+      otherOrgWorkflowsByIdOnly: otherWorkflows.filter((w) => w.byIdOnly).length,
     };
   });
 }

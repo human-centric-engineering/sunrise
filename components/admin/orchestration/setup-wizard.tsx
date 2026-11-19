@@ -74,6 +74,7 @@ import { API } from '@/lib/api/endpoints';
 import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
 import type { OrchestrationSettings } from '@/types/orchestration';
 import { cn } from '@/lib/utils';
+import { formatModelPin, pinModelId } from '@/lib/orchestration/llm/model-pin';
 
 // Bumped v2 → v3 because the layout changed shape: 6 steps → 4 steps,
 // agentDraft and createdAgentSlug removed from persisted state.
@@ -566,14 +567,16 @@ function StepProvider({ draft, setDraft, onComplete }: StepProviderProps): React
       const stored =
         parsed.success && parsed.data.success ? (parsed.data.data?.defaultModelsStored ?? {}) : {};
       const patch: Record<string, string> = {};
+      // Model pins (§136 t-1068): each suggestion is this provider's model, so
+      // the saved default names the provider. Embeddings name the id alone.
       if (row.suggestedDefaultChatModel && !stored.chat) {
-        patch.chat = row.suggestedDefaultChatModel;
+        patch.chat = formatModelPin(row.slug, row.suggestedDefaultChatModel);
       }
       if (row.suggestedRoutingModel && !stored.routing) {
-        patch.routing = row.suggestedRoutingModel;
+        patch.routing = formatModelPin(row.slug, row.suggestedRoutingModel);
       }
       if (row.suggestedReasoningModel && !stored.reasoning) {
-        patch.reasoning = row.suggestedReasoningModel;
+        patch.reasoning = formatModelPin(row.slug, row.suggestedReasoningModel);
       }
       if (row.suggestedEmbeddingModel && !stored.embeddings) {
         patch.embeddings = row.suggestedEmbeddingModel;
@@ -1317,7 +1320,8 @@ function StepSmokeTest({ onNext }: StepSmokeTestProps): React.ReactElement {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: chatModel }),
+        // The default is a model pin; the provider is asked for its id.
+        body: JSON.stringify({ model: pinModelId(chatModel) }),
       });
       if (!modelRes.ok) {
         setResults((prev) => ({

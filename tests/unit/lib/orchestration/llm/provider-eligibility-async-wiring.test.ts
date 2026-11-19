@@ -40,7 +40,7 @@ vi.mock('@/lib/db/client', () => ({
 process.env.K1 = 'present';
 process.env.K2 = 'present';
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
-  getDefaultModelForTask: vi.fn(async () => 'some-model'),
+  getDefaultModelPinForTask: vi.fn(async () => ({ providerSlug: null, modelId: 'some-model' })),
 }));
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() },

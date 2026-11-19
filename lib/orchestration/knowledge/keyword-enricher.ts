@@ -24,7 +24,8 @@ import { prisma } from '@/lib/db/client';
 import { getProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { pinProvider } from '@/lib/orchestration/llm/model-pin';
 import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
@@ -106,12 +107,15 @@ export class ProviderNotPermittedError extends Error {
  * so the Costs admin can split this overhead from regular chat spend.
  */
 export async function enrichDocumentKeywords(documentId: string): Promise<EnrichResult> {
-  const modelId = await getDefaultModelForTask('chat');
+  const pin = await getDefaultModelPinForTask('chat');
+  const modelId = pin.modelId;
   await hydrateModelRegistryFromDb();
   const modelInfo = getModel(modelId);
   if (!modelInfo) {
     throw new Error(`Resolved model "${modelId}" is not in the model registry`);
   }
+  // The provider the default names (§136 t-1068), else the registry's for it.
+  const providerSlug = pinProvider(pin, modelInfo.provider);
 
   // The second provider-eligibility chokepoint (t-658). This path never touches
   // `resolveAgentProviderAndModel` — there is no agent and no binding, just a
@@ -123,7 +127,7 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
   //
   // `source: 'primary'` because Sunrise chose. There is no override to honour
   // on this path — enrichment takes the task default and nothing else.
-  const permitted = await isProviderEligible(modelInfo.provider, {
+  const permitted = await isProviderEligible(providerSlug, {
     task: 'chat',
     source: 'primary',
     primarySlug: null,
@@ -132,13 +136,13 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
     logger.error('Keyword enrichment blocked: the default model resolves to a barred provider', {
       documentId,
       modelId,
-      providerSlug: modelInfo.provider,
+      providerSlug,
       fix: 'This provider is not permitted: at TENANCY_MODE=multi, by the org’s approved providers (GET /api/v1/admin/orgs/[id]/providers); or by the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, or widen the rule.',
     });
-    throw new ProviderNotPermittedError(modelInfo.provider, modelId);
+    throw new ProviderNotPermittedError(providerSlug, modelId);
   }
 
-  const provider = await getProvider(modelInfo.provider, {
+  const provider = await getProvider(providerSlug, {
     task: 'chat',
     source: 'primary',
     primarySlug: null,
@@ -200,7 +204,7 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
 
       void logCost({
         model: modelId,
-        provider: modelInfo.provider,
+        provider: providerSlug,
         ownKey: usesOrgOwnKey(provider),
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
