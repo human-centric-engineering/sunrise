@@ -20,9 +20,8 @@ import { ConflictError } from '@/lib/api/errors';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
-import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { TASK_TYPES, type TaskType } from '@/types/orchestration';
+import { defaultSlots, settingsPinsFor } from '@/lib/orchestration/model-lifecycle/settings-pins';
 import {
   listProviderModelsQuerySchema,
   createProviderModelSchema,
@@ -92,39 +91,12 @@ export const GET = withAdminAuth(
 
     const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
 
-    // Per-task matching rule. The `audio` slot stores a
-    // `${providerSlug}::${modelId}` composite (see
-    // `lib/orchestration/llm/audio-default.ts`) because the schema
-    // allows two providers to share a modelId. Every other slot stores
-    // a bare modelId resolved through the registry where ids are
-    // globally unique. Evaluating per-row is O(rows × TASK_TYPES) ≈
-    // O(rows × 5) — trivially fast and keeps the matching rule
-    // co-located instead of split across population + lookup.
+    // Task slots each row serves as the effective default, by the one
+    // matching rule the model's uses page applies too (`settingsPinsFor`).
     const data = rows.map((model) => {
       const config = configBySlug.get(model.providerSlug);
       const used = usage.get(modelUsageKey(model.providerSlug, model.modelId));
-      const defaultFor: TaskType[] = [];
-      for (const task of TASK_TYPES) {
-        const stored = settings.defaultModels[task];
-        if (!stored) continue;
-        if (task === 'audio') {
-          const parsed = parseAudioDefault(stored);
-          if (!parsed) continue;
-          // Provider-scoped match — if the stored value carries a
-          // provider, both must agree before the badge lights up.
-          // Legacy bare-modelId values fall back to the modelId-only
-          // match (the original ambiguous behaviour) until the operator
-          // re-saves.
-          if (
-            parsed.modelId === model.modelId &&
-            (parsed.providerSlug === null || parsed.providerSlug === model.providerSlug)
-          ) {
-            defaultFor.push(task);
-          }
-        } else if (stored === model.modelId) {
-          defaultFor.push(task);
-        }
-      }
+      const defaultFor = defaultSlots(settingsPinsFor(model, settings));
       return {
         ...model,
         configured: !!config,

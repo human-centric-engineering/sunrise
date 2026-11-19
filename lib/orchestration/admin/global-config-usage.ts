@@ -158,25 +158,46 @@ function definitionPinsModel(definition: unknown, modelId: string): boolean {
   return false;
 }
 
+/** An agent bound to a model, as {@link providerModelUsage} names it. */
+export interface ModelAgentRef extends NamedRef {
+  /**
+   * A platform agent whose provider and model the platform picks
+   * (`bindingOwner: 'platform'`, §116 t-798): the reconcile re-picks it when
+   * its model is turned off, and ranks a retiring model last, so it moves on
+   * its own (§136 t-1065). Any other agent stays where it is until someone
+   * moves it.
+   */
+  followsPlatform: boolean;
+}
+
 export interface ProviderModelUsage {
   /** The caller's active agents bound to the model, by name. */
-  agents: NamedRef[];
+  agents: ModelAgentRef[];
   /** The caller's active workflows pinning it (draft or published), by name. */
   workflows: NamedRef[];
   /** Active agents in other orgs bound to it. */
   otherOrgAgents: number;
+  /** How many of {@link otherOrgAgents} follow the platform's pick. */
+  otherOrgAgentsFollowingPlatform: number;
   /** Active workflows in other orgs pinning it. */
   otherOrgWorkflows: number;
 }
 
+/** A platform agent whose binding the platform picks: see {@link ModelAgentRef.followsPlatform}. */
+function followsPlatform(row: { isSystem: boolean; bindingOwner: string | null }): boolean {
+  return row.isSystem === true && row.bindingOwner === 'platform';
+}
+
 /**
  * Active agents bound to `(providerSlug, modelId)` and active workflows
- * pinning `modelId` in a step's `modelOverride`, in every org. The caller's
- * are named, other orgs' are counted.
+ * pinning `modelId` in a step's `modelOverride`, in every org by default. The
+ * caller's are named, other orgs' are counted. `acrossOrgs: false` counts in
+ * the caller's org only, for a customer org's admin (§111 t-811).
  */
 export function providerModelUsage(
   providerSlug: string,
-  modelId: string
+  modelId: string,
+  options: CountScope = {}
 ): Promise<ProviderModelUsage> {
   const isCallers = callersRows();
   // A prefilter, not the check: JSON containment (`@>`) narrows the read to
@@ -184,11 +205,18 @@ export function providerModelUsage(
   // JSON no longer crosses the wire; `definitionPinsModel` below still
   // decides, by step type (§107 t-752).
   const pins = { path: ['steps'], array_contains: [{ config: { modelOverride: modelId } }] };
-  return acrossOrgs(async () => {
+  return scoped(options, async () => {
     const [agentRows, workflowRows] = await Promise.all([
       prisma.aiAgent.findMany({
         where: { isActive: true, provider: providerSlug, model: modelId },
-        select: { id: true, name: true, slug: true, orgId: true },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          orgId: true,
+          isSystem: true,
+          bindingOwner: true,
+        },
         orderBy: { name: 'asc' },
       }),
       prisma.aiWorkflow.findMany({
@@ -214,10 +242,19 @@ export function providerModelUsage(
     );
     const agents = named(agentRows, isCallers);
     const workflows = named(pinning, isCallers);
+    const ownAgents = agentRows.filter((r) => isCallers(r.orgId));
     return {
-      agents: agents.own,
+      agents: ownAgents.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        followsPlatform: followsPlatform(r),
+      })),
       workflows: workflows.own,
       otherOrgAgents: agents.elsewhere,
+      otherOrgAgentsFollowingPlatform: agentRows.filter(
+        (r) => !isCallers(r.orgId) && followsPlatform(r)
+      ).length,
       otherOrgWorkflows: workflows.elsewhere,
     };
   });

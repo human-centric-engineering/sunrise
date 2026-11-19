@@ -35,7 +35,9 @@ import {
 import { cuidSchema } from '@/lib/validations/common';
 import { getClientIP } from '@/lib/security/ip';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { checkReplacement } from '@/lib/orchestration/model-lifecycle/state';
+import { checkReplacement, modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
+import { modelUses } from '@/lib/orchestration/model-lifecycle/uses';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { findReplacementById } from '@/lib/orchestration/model-lifecycle/replacement';
 
 /** The database CHECK that holds the price pair (A10, t-774). */
@@ -47,25 +49,41 @@ function pricePairError(input: number | null | undefined): ValidationError {
   });
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const id = validatePathParam(rawId, cuidSchema, { label: 'provider model id' });
 
-  const model = await prisma.aiProviderModel.findUnique({ where: { id } });
+  const model = await prisma.aiProviderModel.findUnique({
+    where: { id },
+    include: {
+      replacement: {
+        select: { id: true, name: true, modelId: true, isActive: true, retiresAt: true },
+      },
+    },
+  });
   if (!model) throw new NotFoundError(`Provider model ${id} not found`);
 
-  // Enrich with configured provider info
-  const config = await prisma.aiProviderConfig.findFirst({
-    where: { slug: model.providerSlug },
-    select: { slug: true, isActive: true },
-  });
+  // Other orgs' uses are counted for a platform admin; a customer org's admin
+  // would see only their own (§111 t-811), as on the models list.
+  const platform = await administersPlatform(session.principal);
+  const [config, uses] = await Promise.all([
+    prisma.aiProviderConfig.findFirst({
+      where: { slug: model.providerSlug },
+      select: { slug: true, isActive: true },
+    }),
+    modelUses(model, { acrossOrgs: platform }),
+  ]);
 
+  const { replacement, ...row } = model;
   log.info('Provider model fetched', { modelId: id });
   return successResponse({
-    ...model,
+    ...row,
     configured: !!config,
     configuredActive: config?.isActive ?? false,
+    // §136 t-1064 / t-1065: where it is in its retirement, and what uses it.
+    lifecycle: { state: modelLifecycleState(model), replacement },
+    uses,
   });
 });
 

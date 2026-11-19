@@ -556,7 +556,14 @@ The database cannot express a rule across two rows, so the foreign key only keep
 
 **Every catalogue change is in the admin audit log** (entity type `provider_model`): an admin's create (`provider_model.create`), bulk add (`provider_model.bulk_create`, one row per batch), edit (`provider_model.update`, each field's old and new value) and delete (`provider_model.delete`), and each write the audit applies (`provider_model.update`, `.create`, `.deactivate`, `.retire`, with `metadata.source: 'model_audit'` and the run's `workflowExecutionId`). That row is how a price change is noticed; there is no separate "repriced" state.
 
-What uses a retiring model, and moving it all to the replacement, are t-1065 and t-1066. The embedding model is never moved there: changing it means re-embedding (§132).
+**What uses a model** (§136 t-1065) is `modelUses()` in `lib/orchestration/model-lifecycle/uses.ts`, which composes two halves:
+
+- **Agents and workflows**, from `providerModelUsage` (`lib/orchestration/admin/global-config-usage.ts`, the one module that counts across orgs): active agents bound to the `(provider, model)` pair and active workflows pinning the model id in a step's `modelOverride`. The caller's org's are named; every other org's are counted, and only for a platform admin (`acrossOrgs: false` for anyone else). An agent is marked `followsPlatform` when it is a platform agent whose binding the platform picks (`bindingOwner: 'platform'`): the reconcile ranks a retiring model last and re-picks off a turned-off one, so it moves on its own (see [Platform agents](./platform-agents.md)). Every other platform agent inherits the defaults, which moving the defaults covers.
+- **The install settings** that name it, from `settingsPinsFor()` (`settings-pins.ts`): each task default (`routing`, `chat`, `reasoning`, `embeddings`, `audio`), marked `saved` or `suggested` (the system's pick for an unsaved slot, which an agent without a model inherits just the same), the model for confidential messages, and the active embedding model. The same matching rule gives the models list its `defaultFor`. The two embedding pins carry `movedBy: 'embedding_switch'`: changing the embedding model means re-embedding every org's documents (§132), so the move never touches them.
+
+`GET /provider-models/:id` returns them as `uses`, beside `lifecycle` (`state` and the `replacement`), and the model's edit page shows them in **Retirement and uses**. The models matrix shows a **Retiring** or **Retired** badge beside a dated model's name. Config health has two checks over every dated model (`retiringModelsInUse()`): `retired_model_in_use` (critical) and `retiring_model_in_use` (warning).
+
+Moving all of it to the replacement is t-1066.
 
 ## Cost Tracking
 

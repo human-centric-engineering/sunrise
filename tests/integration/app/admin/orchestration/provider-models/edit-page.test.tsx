@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
@@ -108,6 +108,16 @@ function makeModel(overrides: Record<string, unknown> = {}) {
     quality: null,
     strengths: null,
     setup: null,
+    // What the model route adds (§136 t-1065): nothing retiring, nothing using it.
+    lifecycle: { state: 'current', replacement: null },
+    uses: {
+      agents: [],
+      workflows: [],
+      otherOrgAgents: 0,
+      otherOrgAgentsFollowingPlatform: 0,
+      otherOrgWorkflows: 0,
+      settings: [],
+    },
     ...overrides,
   };
 }
@@ -334,5 +344,90 @@ describe('EditProviderModelPage — replacement options (§136 t-1064)', () => {
       'GPT-4o (gpt-4o)'
     );
     expect(screen.getByDisplayValue('2099-01-01')).toHaveAttribute('id', 'retiresAt');
+  });
+});
+
+describe('EditProviderModelPage — retirement and uses (§136 t-1065)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function renderPage(model: Record<string, unknown>) {
+    await answerWith(model);
+    const { default: EditPage } =
+      await import('@/app/admin/orchestration/provider-models/[id]/page');
+    render(
+      await EditPage({
+        params: Promise.resolve({ id: 'model-1' }),
+        searchParams: Promise.resolve({}),
+      })
+    );
+    return screen.getByRole('region', { name: 'Retirement and uses' });
+  }
+
+  it('says nothing uses a model nothing uses', async () => {
+    const panel = await renderPage(makeModel());
+    expect(panel).toHaveTextContent('Nothing uses this model.');
+  });
+
+  it('shows a retiring model, its replacement, and every kind of use', async () => {
+    const panel = await renderPage(
+      makeModel({
+        retiresAt: '2027-03-01T00:00:00.000Z',
+        lifecycle: {
+          state: 'retiring',
+          replacement: { id: 'model-2', name: 'GPT-5.1', modelId: 'gpt-5.1' },
+        },
+        uses: {
+          agents: [
+            { id: 'a1', name: 'Cleanup', followsPlatform: true },
+            { id: 'a2', name: 'Support', followsPlatform: false },
+          ],
+          workflows: [{ id: 'w1', name: 'Triage' }],
+          otherOrgAgents: 3,
+          otherOrgAgentsFollowingPlatform: 1,
+          otherOrgWorkflows: 1,
+          settings: [
+            { slot: 'chat', source: 'saved' },
+            { slot: 'reasoning', source: 'suggested' },
+            { slot: 'active_embedding', source: 'saved', movedBy: 'embedding_switch' },
+          ],
+        },
+      })
+    );
+
+    expect(within(panel).getByText('Retiring on 1 March 2027')).toBeInTheDocument();
+    expect(within(panel).getByRole('link', { name: 'GPT-5.1' })).toHaveAttribute(
+      'href',
+      '/admin/orchestration/provider-models/model-2'
+    );
+    expect(within(panel).getByRole('link', { name: 'Cleanup' })).toHaveAttribute(
+      'href',
+      '/admin/orchestration/agents/a1'
+    );
+    // Only the platform-picked agent carries the badge.
+    expect(within(panel).getAllByText('follows the platform')).toHaveLength(1);
+    expect(panel).toHaveTextContent('3 agents in other organisations, 1 following the platform');
+    expect(within(panel).getByRole('link', { name: 'Triage' })).toHaveAttribute(
+      'href',
+      '/admin/orchestration/workflows/w1'
+    );
+    expect(panel).toHaveTextContent('1 workflow in other organisations');
+    expect(panel).toHaveTextContent('Default model for chat');
+    expect(panel).toHaveTextContent("Default model for reasoning (the system's suggestion)");
+    expect(panel).toHaveTextContent('Active embedding model');
+    expect(panel).toHaveTextContent('changing the embedding model means re-embedding');
+  });
+
+  it('shows a retired model with no replacement named', async () => {
+    const panel = await renderPage(
+      makeModel({
+        retiresAt: '2026-01-01T00:00:00.000Z',
+        lifecycle: { state: 'retired', replacement: null },
+      })
+    );
+
+    expect(within(panel).getByText('Retired on 1 January 2026')).toBeInTheDocument();
+    expect(panel).toHaveTextContent('No replacement named yet.');
   });
 });

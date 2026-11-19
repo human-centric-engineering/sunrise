@@ -1276,3 +1276,30 @@ describe('ProviderModelsMatrix — read-only outside the install org (§107 t-75
     expect(screen.getByRole('button', { name: /1 agent/i })).toBeInTheDocument();
   });
 });
+
+// ─── Retirement badge (§136 t-1065) ──────────────────────────────────────────
+
+describe('ProviderModelsMatrix — retirement badge (§136 t-1065)', () => {
+  it('shows nothing for a model with no retirement known', () => {
+    render(<ProviderModelsMatrix initialModels={[makeModel({ retiresAt: null })]} />);
+    expect(screen.queryByText(/^Retir/)).not.toBeInTheDocument();
+  });
+
+  it('shows the day for a retiring model', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[makeModel({ retiresAt: '2099-03-01T00:00:00.000Z' })]}
+      />
+    );
+    expect(screen.getByText('Retiring 1 Mar 2099')).toBeInTheDocument();
+  });
+
+  it('shows Retired once the day has passed, while the model is still on', () => {
+    render(
+      <ProviderModelsMatrix
+        initialModels={[makeModel({ retiresAt: '2020-03-01T00:00:00.000Z', isActive: true })]}
+      />
+    );
+    expect(screen.getByText('Retired')).toHaveAttribute('title', 'Retired on 1 Mar 2020');
+  });
+});

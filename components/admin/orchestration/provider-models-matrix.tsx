@@ -14,6 +14,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { ArrowUpDown, ClipboardCheck, Loader2, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Table,
@@ -191,6 +192,8 @@ export interface ModelRow {
   // tracks inheritance via the default-models settings rather than
   // direct assignment.
   defaultFor?: TaskType[];
+  /** The day the vendor retires it (§136 t-1064), ISO, or null. */
+  retiresAt?: string | null;
   metadata?: {
     lastAudit?: {
       timestamp: string;
@@ -231,6 +234,35 @@ const RATING_ORDER: Record<string, number> = {
   none: 1,
   n_a: 0,
 };
+
+/**
+ * Retiring / Retired beside a model's name (§136 t-1065), from its
+ * `retiresAt`; nothing for a model with no retirement known. The model's page
+ * lists what uses it.
+ */
+function RetirementBadge({ retiresAt }: { retiresAt: string | null }) {
+  if (!retiresAt) return null;
+  const state = modelLifecycleState({ retiresAt: new Date(retiresAt) });
+  const day = new Date(retiresAt).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  return state === 'retired' ? (
+    <Badge variant="destructive" className="text-[10px]" title={`Retired on ${day}`}>
+      Retired
+    </Badge>
+  ) : (
+    <Badge
+      variant="outline"
+      className="border-amber-500/60 text-[10px] text-amber-700 dark:text-amber-300"
+      title={`Retiring on ${day}`}
+    >
+      Retiring {day}
+    </Badge>
+  );
+}
 
 function ratingBadge(value: string) {
   const colorMap: Record<string, string> = {
@@ -864,12 +896,15 @@ export function ProviderModelsMatrix({
                     </div>
                   </TableCell>
                   <TableCell className="font-medium">
-                    <Link
-                      href={`/admin/orchestration/provider-models/${model.id}`}
-                      className="hover:underline"
-                    >
-                      {model.name}
-                    </Link>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Link
+                        href={`/admin/orchestration/provider-models/${model.id}`}
+                        className="hover:underline"
+                      >
+                        {model.name}
+                      </Link>
+                      <RetirementBadge retiresAt={model.retiresAt ?? null} />
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col items-start gap-1">

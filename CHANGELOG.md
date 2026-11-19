@@ -18,6 +18,26 @@ release process.
 
 ### Added
 
+- **What uses a catalogue model, and a warning when a retiring one is in use
+  (§136, t-1065).** `GET /api/v1/admin/orchestration/provider-models/:id` now
+  returns `lifecycle` (`state`, `replacement`) and `uses`: the agents and
+  workflows using the model (the caller's org's named, other orgs' counted for
+  a platform admin) and `settings`, the install settings that name it (task
+  defaults marked saved or suggested, the confidential-message model, the
+  active embedding model; the embedding pins marked as left to §132).
+  `modelUses()` (`lib/orchestration/model-lifecycle/uses.ts`) and
+  `settingsPinsFor()` (`settings-pins.ts`) compute them. The edit page shows
+  them, the models matrix badges a retiring or retired model, and config
+  health gains `retired_model_in_use` (critical) and `retiring_model_in_use`
+  (warning). `providerModelUsage()` takes an optional `{ acrossOrgs }` scope,
+  marks each agent `followsPlatform`, and counts
+  `otherOrgAgentsFollowingPlatform`.
+  _Fork impact:_ the cleanup agent's platform-owned binding now ranks a model
+  with a retirement date after every model without one, so marking a model
+  retiring moves that binding at the next maintenance pass (a new agent
+  version). A test that builds a full `ProviderModelUsage` needs the new
+  count.
+
 - **Catalogue models record a vendor's retirement (§136, t-1064).**
   `AiProviderModel` gains two nullable columns: `retiresAt` (the day the vendor
   stops serving the model) and `replacementId` (a self-relation to its

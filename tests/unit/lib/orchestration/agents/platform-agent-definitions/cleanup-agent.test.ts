@@ -75,9 +75,10 @@ function modelRow(
   {
     toolUse = 'strong',
     capabilities = ['chat'],
-  }: { toolUse?: string; capabilities?: string[] } = {}
+    retiresAt = null,
+  }: { toolUse?: string; capabilities?: string[]; retiresAt?: Date | null } = {}
 ) {
-  return { providerSlug, modelId, tierRole, reasoningDepth, toolUse, capabilities };
+  return { providerSlug, modelId, tierRole, reasoningDepth, toolUse, capabilities, retiresAt };
 }
 
 /** The pick with a catalogue of its own, as every caller but the job asks it. */
@@ -160,6 +161,29 @@ describe('pickCleanupBinding', () => {
       [modelRow('openai', 'a-model'), modelRow('openai', 'B-model')]
     );
     expect(await pick(client)).toEqual({ provider: 'openai', model: 'B-model' });
+  });
+
+  it('ranks a model with a retirement date after every model without one (§136 t-1065)', async () => {
+    // gpt-4.1 would win on every other rule; its retirement date sends it last,
+    // even below a thinking-tier model.
+    const { client } = db(
+      [providerRow('openai', 'OPENAI_API_KEY')],
+      [
+        modelRow('openai', 'gpt-4.1', 'worker', 'high', { retiresAt: new Date('2099-01-01') }),
+        modelRow('openai', 'gpt-5', 'thinking', 'very_high'),
+      ]
+    );
+
+    expect(await pick(client)).toEqual({ provider: 'openai', model: 'gpt-5' });
+  });
+
+  it('still picks a retiring model when it is all the org can reach', async () => {
+    const { client } = db(
+      [providerRow('openai', 'OPENAI_API_KEY')],
+      [modelRow('openai', 'gpt-4.1', 'worker', 'high', { retiresAt: new Date('2099-01-01') })]
+    );
+
+    expect(await pick(client)).toEqual({ provider: 'openai', model: 'gpt-4.1' });
   });
 
   it('prefers a worker-tier model over a thinking-tier one', async () => {

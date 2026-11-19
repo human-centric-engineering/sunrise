@@ -160,6 +160,13 @@ export async function pickCleanupBinding(
   const TIER_RANK: Record<string, number> = { worker: 0, thinking: 1, control_plane: 2 };
   const REASONING_RANK: Record<string, number> = { very_high: 0, high: 1, medium: 2, none: 3 };
   const ranked = [...models].sort((a, b) => {
+    // A model with a retirement date (§136) ranks after every model without
+    // one, so a platform-owned binding moves off it before the day rather
+    // than failing on it. Never excluded: if it is all the org can reach, it
+    // is still better than no binding. Whether a date is set, not whether it
+    // has passed, so every instance ranks alike at any moment.
+    const retiring = Number(a.retiresAt != null) - Number(b.retiresAt != null);
+    if (retiring !== 0) return retiring;
     const tier = (TIER_RANK[a.tierRole] ?? 9) - (TIER_RANK[b.tierRole] ?? 9);
     if (tier !== 0) return tier;
     const reasoning =

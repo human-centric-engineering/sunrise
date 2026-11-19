@@ -64,6 +64,9 @@ vi.mock('@/lib/orchestration/settings', () => ({
   getOrchestrationSettings: vi.fn(() =>
     Promise.resolve({
       defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+      defaultModelsStored: {},
+      confidentialModel: null,
+      activeEmbeddingModelId: null,
     })
   ),
 }));
@@ -247,6 +250,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       // override is saved — must be ignored so the matrix doesn't
       // claim every row is the embeddings default.
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: {
           routing: 'gpt-4o-mini',
           chat: 'gpt-4o',
@@ -278,6 +284,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       // suite, but stated explicitly here so the empty case is read-
       // able alongside the populated case above.
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
       } as never);
 
@@ -303,6 +312,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
         { slug: 'groq', isActive: true },
       ] as never);
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: {
           routing: '',
           chat: '',
@@ -342,6 +354,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
         { slug: 'openai', isActive: true },
       ] as never);
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: {
           routing: '',
           chat: '',

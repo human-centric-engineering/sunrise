@@ -161,6 +161,10 @@ The edit page checks `model.isDefault`. When `true`, an amber banner warns:
 
 Any PATCH flips `isDefault` to `false` server-side so re-seeds leave the row alone afterwards.
 
+### Retirement and uses (edit page)
+
+Above the form, **Retirement and uses** shows a dated model's state (Retiring on / Retired on, and its replacement, linked) and everything that uses it, from the model route's `uses`: agents (linked; one whose model the platform picks says **follows the platform**, as it moves on its own), workflows (linked), other organisations' counted, and the install settings that name it (a default marked as the system's suggestion when nobody saved it; the embedding settings say they are not moved with the rest). The matrix shows a Retiring or Retired badge beside the name. See [Model lifecycle](../orchestration/llm-providers.md#model-lifecycle).
+
 ### Retirement (edit only)
 
 A **Retirement** section records the provider's announced retirement (§136 t-1064): **Retires on** (the day) and **Replacement** (a model on the same provider that is active and not itself retiring; the page loads them from the list endpoint with `?providerSlug=`, and keeps the saved replacement listed even if it has stopped qualifying). A replacement needs a day; the form says so beside the field. The server's `checkReplacement` decides, including the capability rule. See [Model lifecycle](../orchestration/llm-providers.md#model-lifecycle).
