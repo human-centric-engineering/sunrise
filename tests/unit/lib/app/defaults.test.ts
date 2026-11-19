@@ -44,6 +44,7 @@ import { initAppNav } from '@/lib/app/admin-nav';
 import { publicNavItems, footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
 import { protectedNavItems } from '@/lib/app/protected-nav';
 import { appAuthLandingRoute, appAuthLandingLabel } from '@/lib/app/auth-landing';
+import { appWelcomeRoute } from '@/lib/app/welcome';
 import { initApp } from '@/lib/app/bootstrap';
 import { initAppKnowledgeAccessContributors } from '@/lib/app/knowledge-access-contributors';
 import { initAppGuardFloorContributors } from '@/lib/app/guard-floor-contributors';
@@ -299,6 +300,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect(appAuthLandingRoute).toBeNull();
       expect(appAuthLandingLabel).toBeNull();
     },
+  },
+  {
+    seam: 'lib/app/welcome.ts',
+    risk: 'a stray value would send every member of every new org on every install to a welcome page after login',
+    assert: () => expect(appWelcomeRoute).toBeNull(),
   },
   {
     seam: 'lib/app/admin-breadcrumbs.ts',

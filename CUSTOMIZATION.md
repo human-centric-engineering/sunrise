@@ -345,6 +345,17 @@ sync-safe.
   `//host`). It reaches `safeCallbackUrl()` as the _fallback_, and that helper
   only sanitises the untrusted URL — so a non-relative value throws at module
   load instead of quietly becoming an off-site redirect.
+- A **welcome step for a new org** is **`lib/app/welcome.ts`**: set
+  `appWelcomeRoute` (default `null`, nobody redirected) and a signed-in member of
+  an org whose onboarding is unfinished, reaching the landing route, is sent
+  there instead, by the proxy. Every org created from this release on starts
+  unfinished; the install org and orgs that already existed read as finished.
+  When your welcome step is done, call `markOrgOnboarded(orgId)` from
+  `lib/tenancy/onboarding.ts` in your own server code, after checking the caller
+  may act for that org (it checks nothing itself); `isOrgOnboarded(orgId)` reads
+  it. Add the route's prefix to `lib/app/protected-routes.ts`. This is **per
+  org**: a person's own first-run tour is yours to keep, and Sunrise records
+  nothing per user for it.
 
 **Closing the front door — `SIGNUP_MODE`:**
 
@@ -466,6 +477,7 @@ small and conflict-free.)
 | `lib/app/protected-nav.ts`                 | authenticated nav link list                                            | `protected-nav.tsx` (client)                                                                                          |
 | `lib/app/footer.ts`                        | the footer's attribution / copyright line (`footerCopyright`)          | `public-footer.tsx`, `protected-footer.tsx` (client)                                                                  |
 | `lib/app/auth-landing.ts`                  | where a signed-in user lands, and its label                            | `lib/auth-landing/route.ts` → a dozen sites (proxy + server + client)                                                 |
+| `lib/app/welcome.ts`                       | where a member of an org with unfinished onboarding lands              | `lib/auth-landing/route.ts` → `welcomeRedirectFor()` in `proxy.ts` (proxy)                                            |
 | `lib/app/emails.ts`                        | auth email template overrides                                          | `lib/email/registry.ts` (server)                                                                                      |
 | `lib/app/waitlist-config.ts`               | whether the app has a waitlist, and its fields, lists and screening    | `getWaitlistConfig()` → the waitlist routes, page and erasure step (server)                                           |
 | `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)                                  | `instrumentation.ts` `register()` (server, all envs)                                                                  |

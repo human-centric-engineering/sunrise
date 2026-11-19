@@ -27,6 +27,7 @@ anti-pattern below.
 | The role a new user gets          | `initialMembershipFor()` / `membershipForNewUser()` — same module      |
 | The org a new session starts in   | `activeOrgForSession()` — same module                                  |
 | Where a self-serve signup lands   | `lib/app/signup-org.ts` → `lib/tenancy/signup-org.ts` (`multi` only)   |
+| A new org's welcome step          | `lib/app/welcome.ts` → `lib/tenancy/onboarding.ts`                     |
 | Change the org a session acts in  | `POST /api/v1/orgs/switch` — `app/api/v1/orgs/switch/route.ts`         |
 | Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`) — platform      |
 | …as that org's OWNER/ADMIN        | `POST /api/v1/orgs/[id]/invitations` — `checkInvitationInto()`         |
@@ -386,6 +387,55 @@ member (an erasure, a removal): a live org had a founder, so its mark is
 gone, and only [org erasure](../privacy/org-erasure.md) deletes it. All four
 conditions are re-tested on the row being deleted. What the org row cascades
 to goes with it; nothing else can be there, since nobody could act in it.
+
+## Onboarding: a new org's welcome step
+
+An app usually wants a new org's founder to go through a welcome step before
+using the product, and to stop seeing it once it is done. The platform keeps
+one fact for that, **per org**: whether its onboarding is finished
+(§134 t-1063).
+
+**The record.** `Org.settings.awaitingOnboarding` (`ORG_AWAITING_ONBOARDING_KEY`,
+`lib/tenancy/org-settings.ts`) is written `true` in the INSERT of every org
+`lib/tenancy/lifecycle.ts` creates, however it was made: staff, an app's own
+`createOrg()`, or a self-serve signup. **A missing key means finished.** So
+the install org (made by the migration, never by the lifecycle) and every org
+that existed before the key was introduced read as finished, and nobody who is
+already a member is sent to a welcome step. Only a literal `true` reads as
+unfinished; any other value reads as finished (`readOrgOnboarded()`), since a
+bad value that kept every member out of the product is the worse failure.
+
+**Reading and marking it.** `lib/tenancy/onboarding.ts`:
+
+- `isOrgOnboarded(orgId)` → `true`, `false`, or `null` for no such org. The
+  install org is always `true`.
+- `markOrgOnboarded(orgId)` → `'marked'`, `'already-finished'` or
+  `'no-such-org'`. It removes the key and keeps every other one, in the same
+  serializable read-modify-write as the other slices, and tries a clash with
+  another settings write again up to three times. **It checks nothing about
+  the caller**: call it from your own server code after deciding who may
+  finish onboarding (typically an OWNER or ADMIN of that org). There is no API
+  route for it; the welcome step is the app's, and so is its endpoint.
+
+**The redirect.** `lib/app/welcome.ts` ships `appWelcomeRoute = null`. Set it,
+and the proxy (`welcomeRedirectFor()`, called from `proxy.ts`) sends a
+signed-in request for the **landing route** (`AUTH_LANDING_ROUTE`) to the
+welcome route when the user is a member of the org the request acts for and
+that org is unfinished. Every door into the app (login, OAuth, signup,
+invitation acceptance, verification, the header brand link) lands on the
+landing route, which is why the check sits there. The org is the guard's
+choice: the app's tenant resolver, else the session's active org, else the
+install org at `single`. Only a membership counts, so platform staff looking at
+a customer's org are not sent to its welcome step. Other paths, a deep link
+included, are never redirected. A failed read lets the request through to the
+landing route, logged at `warn`. With the route `null` the proxy reads
+nothing. The value must be root-relative and not the landing route's own path,
+or it throws at module load (`lib/auth-landing/route.ts`).
+
+**Per user is the app's job.** An org has one founding moment a platform can
+record. A person's own first-run tour, inside an org that is already set up,
+differs per app; recording it here would be new personal data with its own
+erasure and export rules for no platform benefit. Keep it in your own model.
 
 ## Invitations: which org a new user joins
 

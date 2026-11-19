@@ -22,7 +22,8 @@ import { resolveAppFrameAncestors } from '@/lib/app/frame-ancestors';
 import appFrameablePaths from '@/lib/app/frameable-paths.json';
 import { frameablePrefixes } from '@/lib/security/frame-deny-source.cjs';
 import { resolveTenantFromRequest, TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
-import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE } from '@/lib/auth-landing/route';
+import { welcomeRedirectFor } from '@/lib/tenancy/onboarding';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
 
 // The fork's tenant resolver, registered once at module load — the
@@ -383,6 +384,23 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
     requestHeaders.set(TENANT_HEADER_NAME, tenantOrgId);
   } else {
     requestHeaders.delete(TENANT_HEADER_NAME);
+  }
+
+  // A member of an org whose onboarding is unfinished, reaching the landing
+  // route, goes to the app's welcome route instead (§134 t-1063). Every door
+  // into the app (login, OAuth, signup, invitations, the brand link) lands on
+  // that one route, so this is the one place that sees them all. With no
+  // welcome route set in lib/app/welcome.ts nothing is read.
+  if (AUTH_WELCOME_ROUTE !== null && authenticated) {
+    const welcome = await welcomeRedirectFor(request, tenantOrgId);
+    if (welcome) {
+      const redirectResponse = NextResponse.redirect(
+        new URL(welcome, request.url),
+        pageRedirectStatus
+      );
+      redirectResponse.headers.set('x-request-id', requestId);
+      return setVisitorCookie(redirectResponse);
+    }
   }
 
   // The sites allowed to frame this response, from the fork's

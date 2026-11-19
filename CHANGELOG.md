@@ -18,6 +18,23 @@ release process.
 
 ### Added
 
+- **An app can send a new org's members to a welcome step until it says
+  onboarding is done (§134 t-1063).** Every org created through
+  `lib/tenancy/lifecycle.ts` (staff, an app's `createOrg()`, a self-serve
+  signup) is now inserted with `Org.settings.awaitingOnboarding: true`
+  (`ORG_AWAITING_ONBOARDING_KEY`); a missing key reads as finished, so the
+  install org and every org that already exists are finished, with no
+  migration. `isOrgOnboarded()` and `markOrgOnboarded()` in the new
+  `lib/tenancy/onboarding.ts` read and clear it (`readOrgOnboarded()` in
+  `lib/tenancy/org-settings.ts` reads it from a settings object). A new fork
+  seam, `lib/app/welcome.ts` (`appWelcomeRoute`, ships `null`), resolved and
+  validated as `AUTH_WELCOME_ROUTE` in `lib/auth-landing/route.ts`: when set,
+  the proxy sends a signed-in member of an unfinished org who reaches the
+  landing route there instead. With it `null`, nothing is read or redirected.
+  Per-user onboarding stays the app's; Sunrise records it per org only.
+  _Fork impact:_ none until you set the route. A test that asserts the exact
+  `data` of `org.create` sees the new key.
+
 - **What uses a catalogue model, and a warning when a retiring one is in use
   (§136, t-1065).** `GET /api/v1/admin/orchestration/provider-models/:id` now
   returns `lifecycle` (`state`, `replacement`) and `uses`: the agents and

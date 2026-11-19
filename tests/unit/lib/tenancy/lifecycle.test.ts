@@ -200,7 +200,7 @@ describe('createOrg', () => {
     );
   });
 
-  it('with no org-created hook registered, writes exactly the org and dispatches nothing', async () => {
+  it('with no org-created hook registered, writes only the org and its onboarding mark, and dispatches nothing', async () => {
     db.org.findUnique.mockResolvedValue(null);
     db.org.create.mockResolvedValue(orgRow());
     mockHookKeys.mockReturnValue([]);
@@ -208,7 +208,7 @@ describe('createOrg', () => {
     await createOrg({ slug: 'other', name: 'Other Org', source: 'admin' });
 
     expect(db.org.create).toHaveBeenCalledWith({
-      data: { slug: 'other', name: 'Other Org' },
+      data: { slug: 'other', name: 'Other Org', settings: { awaitingOnboarding: true } },
       select: expect.any(Object),
     });
     expect(mockRunHooks).not.toHaveBeenCalled();
@@ -242,7 +242,10 @@ describe('createOrg', () => {
       data: {
         slug: 'other',
         name: 'Other Org',
-        settings: { orgCreated: { owed: ['app:provider', 'app:package'], source: 'admin' } },
+        settings: {
+          orgCreated: { owed: ['app:provider', 'app:package'], source: 'admin' },
+          awaitingOnboarding: true,
+        },
       },
       select: expect.any(Object),
     });
@@ -278,7 +281,10 @@ describe('createOrg', () => {
     expect(db.org.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          settings: { orgCreated: { owed: ['app:provider'], source: 'app' } },
+          settings: {
+            orgCreated: { owed: ['app:provider'], source: 'app' },
+            awaitingOnboarding: true,
+          },
         }),
       })
     );
@@ -368,6 +374,7 @@ describe('createSignupOrg (§134 t-1062)', () => {
         settings: {
           orgCreated: { owed: ['app:provider'], source: 'signup' },
           awaitingFounder: true,
+          awaitingOnboarding: true,
         },
       },
       select: expect.any(Object),
@@ -386,7 +393,9 @@ describe('createSignupOrg (§134 t-1062)', () => {
 
     expect(db.org.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ settings: { awaitingFounder: true } }),
+        data: expect.objectContaining({
+          settings: { awaitingFounder: true, awaitingOnboarding: true },
+        }),
       })
     );
   });
