@@ -310,6 +310,15 @@ release process.
 
 ### Fixed
 
+- **Phone photos are stored upright (#1152, t-1002).** `processImage`
+  (`lib/storage/image.ts`) ignored the EXIF Orientation tag and dropped it on
+  re-encoding, so a photo taken turned (most phone photos) was saved sideways
+  with nothing left to correct it. Avatars, and any fork upload that goes
+  through `processImage`, now apply the tag before the resize, and the output
+  is upright and untagged. An untagged or already-upright input comes out as
+  before, so a caller that pre-rotates is not turned twice. Images already
+  stored stay as they are; a new upload is the fix. See
+  `.context/storage/overview.md`.
 - **The embed widget connects behind a reverse proxy (t-1042).**
   `GET /api/v1/embed/widget.js` baked the request's own address into the
   script, which behind nginx, Caddy, a load balancer or a local `*.test`

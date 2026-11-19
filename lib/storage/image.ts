@@ -188,6 +188,9 @@ export interface ProcessedImage {
  * Process an image: validate, resize, and optimize
  *
  * - Validates the image using magic bytes
+ * - Applies the EXIF orientation tag, so a photo taken turned (most phone
+ *   photos) is stored upright with upright dimensions. The tag is not kept:
+ *   the output is upright and untagged. An untagged input is not turned.
  * - Resizes to the max dimensions — centre-cropped square by default
  *   (`fit: 'cover'`), or aspect-preserving with `fit: 'inside'`
  * - Optimizes quality for smaller file size
@@ -221,8 +224,15 @@ export async function processImage(
   const detectedType = validation.detectedType;
   logger.debug('Processing image', { detectedType, originalSize: buffer.length });
 
-  // Create Sharp instance
-  let image = sharp(buffer);
+  // Create Sharp instance. `.rotate()` with no angle applies the EXIF
+  // Orientation tag to the pixels, so phone photos are stored upright. It must
+  // come before the metadata read and the resize: `metadata()` still reports
+  // the sensor-order width/height (only swapped for quarter turns, which the
+  // square `cover` size is indifferent to). The tag itself is dropped on
+  // re-encode, so a sideways result could never be corrected later. An untagged
+  // (or orientation 1) input is left as it is, so a caller that pre-rotates is
+  // not turned twice.
+  let image = sharp(buffer).rotate();
   const metadata = await image.metadata();
 
   // Determine output format
