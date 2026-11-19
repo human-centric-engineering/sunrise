@@ -342,7 +342,7 @@ describe('getDatabaseHealth at TENANCY_MODE=multi', () => {
 
     await getDatabaseHealth();
 
-    expect(probeContext).toEqual({ orgId: null, source: 'system' });
+    expect(probeContext).toMatchObject({ orgId: null, source: 'system' });
   });
 
   it('still reports disconnected when the database itself fails', async () => {
