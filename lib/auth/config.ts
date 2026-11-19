@@ -27,6 +27,8 @@ import {
   type SignupRecord,
 } from '@/lib/tenancy/membership';
 import { ORG_ROLES } from '@/lib/tenancy/roles';
+import { asksSignupOrg, signupOrgMemberships } from '@/lib/tenancy/signup-org';
+import { completeSignupOrg } from '@/lib/tenancy/lifecycle';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import {
   getPendingSignup,
@@ -166,7 +168,8 @@ function redeemedInvitation(metadata: InvitationMetadata): RedeemedInvitation {
 async function recordPendingMembership(
   user: UserCreateData,
   invitation: InvitationMetadata | null,
-  viaInvitation: boolean
+  viaInvitation: boolean,
+  signupMethod: 'email' | 'oauth'
 ): Promise<SignupRecord> {
   // Three steps, each with its own failure: the fallback below is for a
   // decision that failed, and must not narrow a role when only recording did.
@@ -183,7 +186,15 @@ async function recordPendingMembership(
 
   let memberships;
   try {
-    memberships = await membershipsForNewUser(user, invitation);
+    // A self-serve signup at `multi` is asked where it lands (§134 t-1062):
+    // by default an org of their own. `null` is the decision below, as before.
+    const selfServe = asksSignupOrg(user, invitation, viaInvitation)
+      ? await signupOrgMemberships(user, {
+          signupMethod,
+          waitlistEntryId: invitation?.waitlistEntryId ?? null,
+        })
+      : null;
+    memberships = selfServe ?? (await membershipsForNewUser(user, invitation));
   } catch (error) {
     logger.error('Failed to decide the org membership for a new user', error, {
       email: user.email,
@@ -277,6 +288,7 @@ export async function userCreateBeforeHook(
   }
 
   const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+  const signupMethod = isOAuthSignup ? 'oauth' : 'email';
 
   // Set when a valid invitation token authorises this OAuth signup; read by the
   // invite_only gate below.
@@ -346,7 +358,12 @@ export async function userCreateBeforeHook(
             // The row this hook consumed is the only copy of the org the
             // invitation named; hand it to the hooks that follow now.
             const invited = { ...user, role: invitedRole };
-            const record = await recordPendingMembership(invited, invitation.metadata, true);
+            const record = await recordPendingMembership(
+              invited,
+              invitation.metadata,
+              true,
+              'oauth'
+            );
             return { data: { ...invited, ...record } };
           }
         }
@@ -445,7 +462,8 @@ export async function userCreateBeforeHook(
         const record = await recordPendingMembership(
           promoted,
           accepted ? { ...accepted, role: PLATFORM_ADMIN_ROLE } : null,
-          oauthInvitationAccepted || isInvitedSignup()
+          oauthInvitationAccepted || isInvitedSignup(),
+          signupMethod
         );
         return { data: { ...promoted, ...record } };
       }
@@ -475,7 +493,8 @@ export async function userCreateBeforeHook(
   const record = await recordPendingMembership(
     user,
     invitedSignupInvitation(),
-    oauthInvitationAccepted || isInvitedSignup()
+    oauthInvitationAccepted || isInvitedSignup(),
+    signupMethod
   );
   return { data: { ...user, ...record } };
 }
@@ -561,7 +580,11 @@ export async function userCreateAfterHook(
     // membership at all — so a floor skipped beside a written primary would
     // never be repaired.
     try {
-      await writeNewUserMemberships(user.id, memberships);
+      const { founded } = await writeNewUserMemberships(user.id, memberships);
+      // An org of their own, made by the before hook (§134 t-1062): its app
+      // setup and platform agents waited for its founder, who is now in it.
+      // Never throws.
+      if (founded) await completeSignupOrg(founded, user.id);
     } catch (membershipError) {
       logger.error('Failed to create org membership for new user', membershipError, {
         userId: user.id,

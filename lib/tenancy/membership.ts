@@ -30,6 +30,7 @@ import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE, type OrgRole } from '@/lib/tenancy/roles';
+import { ORG_AWAITING_FOUNDER_KEY } from '@/lib/tenancy/org-settings';
 
 /** The shape better-auth hands the user hooks, as far as the role rule reads it. */
 export interface NewUserShape {
@@ -415,7 +416,7 @@ export function undecidedMembershipsForNewUser(
  * of it.
  */
 export async function backfillInstallMemberships(
-  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$transaction'> = prisma
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$transaction' | '$executeRaw'> = prisma
 ): Promise<{ written: number }> {
   if (isMultiTenant()) {
     throw new Error(
@@ -520,7 +521,7 @@ const CLEARED_SIGNUP_RECORD: SignupRecord = { signupOrgId: null, signupOrgRole: 
  */
 export async function healSignupRecord(
   userId: string,
-  db: Pick<PrismaClient, 'user' | 'org' | 'orgMembership'> = prisma
+  db: Pick<PrismaClient, 'user' | 'org' | 'orgMembership' | '$executeRaw'> = prisma
 ): Promise<void> {
   const user = await db.user.findUnique({
     where: { id: userId },
@@ -532,6 +533,9 @@ export async function healSignupRecord(
   for (const membership of [recorded.membership, recorded.installMembership]) {
     if (membership) await upsertMembership(userId, membership, db);
   }
+  // A signup org founded here runs its deferred setup from the maintenance
+  // jobs (the mark is what kept them off it).
+  await clearAwaitingFounder(recorded.membership.orgId, db);
   await db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD });
 }
 
@@ -563,19 +567,44 @@ export function membershipsFromSignupRecord(
  * same transaction for the same reason — the heal runs only for a user with no
  * membership at all, so a floor skipped beside a written primary would never be
  * repaired.
+ *
+ * The same transaction removes the org's awaiting-founder mark when it is an
+ * org a self-serve signup made (§134 t-1062, `createSignupOrg()`), so an org
+ * either has its founder or is still marked, never neither. Answers the org
+ * whose mark it removed, so the caller can run that org's deferred setup
+ * (`completeSignupOrg()`), or `null`.
  */
 export async function writeNewUserMemberships(
   userId: string,
   memberships: NewUserMemberships,
-  db: Pick<PrismaClient, 'orgMembership' | 'user' | '$transaction'> = prisma
-): Promise<void> {
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | '$transaction' | '$executeRaw'> = prisma
+): Promise<{ founded: string | null }> {
   const writes = [memberships.membership, memberships.installMembership]
     .filter((m): m is InitialMembership => m !== undefined)
     .map((m) => upsertMembership(userId, m, db));
-  await db.$transaction([
+  const orgId = memberships.membership.orgId;
+  const [unmarked] = await db.$transaction([
+    clearAwaitingFounder(orgId, db),
     ...writes,
     db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD }),
   ]);
+  return { founded: unmarked > 0 ? orgId : null };
+}
+
+/**
+ * Remove an org's awaiting-founder mark (`ORG_AWAITING_FOUNDER_KEY`), if it
+ * has one; resolves to the rows changed, 1 or 0. One conditional statement
+ * because Prisma cannot remove a key from a JSON column, and so it can sit in
+ * the membership write's batch transaction. `org` is a system table, with no
+ * row policy, so this is the same write at `single` and `multi`.
+ */
+function clearAwaitingFounder(orgId: string, db: Pick<PrismaClient, '$executeRaw'>) {
+  return db.$executeRaw`
+    UPDATE org
+       SET settings = settings - ${ORG_AWAITING_FOUNDER_KEY}::text,
+           "updatedAt" = now()
+     WHERE id = ${orgId}
+       AND settings ? ${ORG_AWAITING_FOUNDER_KEY}`;
 }
 
 /**
@@ -627,7 +656,7 @@ export async function writeNewUserMemberships(
  */
 export async function activeOrgForSession(
   userId: string,
-  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$transaction'> = prisma
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$transaction' | '$executeRaw'> = prisma
 ): Promise<{ orgId: string | null; healed: boolean }> {
   const all = await db.orgMembership.findMany({
     where: { userId },

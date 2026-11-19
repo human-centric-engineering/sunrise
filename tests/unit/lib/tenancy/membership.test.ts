@@ -67,12 +67,14 @@ const mocks = {
   // The batch form: every operation was already issued, so the transaction is
   // their settlement. A rejected one rejects it, as Prisma's does.
   $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+  // Removing a signup org's awaiting-founder mark (t-1062): rows changed.
+  $executeRaw: vi.fn(() => Promise.resolve(0)),
 };
 // These delegates' methods are all these functions call; anything else is a
 // TypeError at the call site, which is the point of not mocking more.
 const db = mocks as unknown as Pick<
   PrismaClient,
-  'orgMembership' | 'user' | 'org' | '$transaction'
+  'orgMembership' | 'user' | 'org' | '$transaction' | '$executeRaw'
 >;
 
 const OTHER_ORG = 'cmorg000000000000000other';
@@ -659,10 +661,11 @@ describe('backfillInstallMemberships (t-835)', () => {
     },
     org: { findUnique: vi.fn(async () => ({ id: OTHER_ORG })) },
     $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+    $executeRaw: vi.fn(async () => 0),
   };
   const storeDb = store as unknown as Pick<
     PrismaClient,
-    'orgMembership' | 'user' | 'org' | '$transaction'
+    'orgMembership' | 'user' | 'org' | '$transaction' | '$executeRaw'
   >;
 
   beforeEach(() => {
@@ -886,7 +889,8 @@ describe('the signup record (t-838)', () => {
 
     expect(mocks.$transaction).toHaveBeenCalledTimes(1);
     const [ops] = mocks.$transaction.mock.calls[0];
-    expect(ops).toHaveLength(3);
+    // The awaiting-founder clear, both memberships, the cleared record.
+    expect(ops).toHaveLength(4);
     expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { orgId: OTHER_ORG, userId: USER_ID, role: ORG_ADMIN_ROLE },
@@ -898,6 +902,52 @@ describe('the signup record (t-838)', () => {
       })
     );
     expect(mocks.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: cleared });
+  });
+
+  it('removes the org’s awaiting-founder mark in the same transaction, and reports the org it founded (t-1062)', async () => {
+    mocks.$executeRaw.mockResolvedValueOnce(1);
+
+    const result = await writeNewUserMemberships(
+      USER_ID,
+      { membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE } },
+      db
+    );
+
+    expect(result).toEqual({ founded: OTHER_ORG });
+    const [ops] = mocks.$transaction.mock.calls[0];
+    expect(ops).toHaveLength(3);
+    // The clear is conditional on the mark and names the membership's org.
+    const [sql, ...params] = mocks.$executeRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    expect(sql.join('?')).toMatch(
+      /UPDATE org[\s\S]*settings - [\s\S]*WHERE id = \?[\s\S]*settings \? \?/
+    );
+    expect(params).toEqual(['awaitingFounder', OTHER_ORG, 'awaitingFounder']);
+  });
+
+  it('reports no founded org when the membership’s org carries no mark', async () => {
+    const result = await writeNewUserMemberships(
+      USER_ID,
+      { membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE } },
+      db
+    );
+    expect(result).toEqual({ founded: null });
+  });
+
+  it('healSignupRecord removes the awaiting-founder mark of the org it grants (t-1062)', async () => {
+    mocks.user.findUnique.mockResolvedValue({
+      ...human,
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: ORG_OWNER_ROLE,
+    });
+    mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
+
+    await healSignupRecord(USER_ID, db);
+
+    expect(mocks.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.$executeRaw.mock.calls[0]).toContain(OTHER_ORG);
   });
 
   it('a failed membership write fails the transaction, so the record is not reported cleared', async () => {

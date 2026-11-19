@@ -7,9 +7,10 @@
  * in a create step of its own, so an org platform staff made from Sunrise's
  * admin skipped it and could call no AI provider.
  *
- * **Every org passes through `createOrg()`** (`lib/tenancy/lifecycle.ts`), the
- * one place an org row is written, so a dispatch there covers the admin route
- * and a fork calling it (and, once §134 t-1062 ships, self-serve signup).
+ * **Every org is written in `lib/tenancy/lifecycle.ts`**: `createOrg()`, for
+ * the admin route and a fork calling it, and `createSignupOrg()`, for the org
+ * a self-serve signup founds (§134 t-1062), whose hooks wait for its founder's
+ * membership (`completeSignupOrg()`). A dispatch there covers every path.
  *
  * **Hooks run after the create commits, never inside it.** A hook that could
  * fail the create would let a fault in app code (or a vendor's outage) refuse
@@ -53,6 +54,7 @@ import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import {
   clearOrgCreatedOwed,
   readOrgCreatedOwed,
+  ORG_AWAITING_FOUNDER_KEY,
   type OrgCreatedSource,
 } from '@/lib/tenancy/org-settings';
 
@@ -68,8 +70,9 @@ export interface OrgCreatedContext {
   name: string;
   /**
    * How it was made: `admin` from Sunrise's admin, `app` by an app's own call
-   * to `createOrg()`. `signup` is reserved for Sunrise's self-serve signup
-   * (§134 t-1062), which does not create orgs yet.
+   * to `createOrg()`, `signup` for the org of their own a self-serve signup
+   * founds at `multi` (§134 t-1062). A `signup` org's hooks run once its
+   * founder's membership exists, so `ownerUserId` names them.
    */
   source: OrgCreatedSource;
   /**
@@ -383,7 +386,8 @@ export interface OrgCreatedRetryResult {
  * keep failing cannot hold the rest back), and enters each one's own scope to
  * run them. It starts no further org once {@link ORG_CREATED_JOB_BUDGET_MS}
  * has passed. With no hook registered it returns without a query. A suspended
- * org's owed hooks wait until it is reinstated.
+ * org's owed hooks wait until it is reinstated, and a signup org's until its
+ * founder has joined it (`ORG_AWAITING_FOUNDER_KEY`).
  */
 export async function retryOwedOrgCreatedHooks(): Promise<OrgCreatedRetryResult> {
   const result: OrgCreatedRetryResult = { orgs: 0, succeeded: 0, failed: 0 };
@@ -397,6 +401,7 @@ export async function retryOwedOrgCreatedHooks(): Promise<OrgCreatedRetryResult>
     SELECT id FROM org
      WHERE status = 'ACTIVE'
        AND settings->'orgCreated'->'owed' ?| ${keys}::text[]
+       AND NOT settings ? ${ORG_AWAITING_FOUNDER_KEY}
      ORDER BY random()
      LIMIT ${ORG_CREATED_JOB_BATCH}`;
 

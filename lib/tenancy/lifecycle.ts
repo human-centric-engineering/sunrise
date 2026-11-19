@@ -70,6 +70,7 @@ import {
   applyOrgSettingsPatch,
   definedEntries,
   orgCreatedSettings,
+  ORG_AWAITING_FOUNDER_KEY,
   type OrgCreatedSource,
 } from '@/lib/tenancy/org-settings';
 import { orgCreatedHookKeys, runOrgCreatedHooks } from '@/lib/tenancy/org-created-hooks';
@@ -270,38 +271,14 @@ export async function createOrg(
   // The app's org-created hooks this org is owed, recorded in the same
   // INSERT so a crash after the commit still leaves them owed (t-1061).
   const settings = orgCreatedSettings(orgCreatedHookKeys(), input.source ?? 'app');
-
-  const org = await db
-    .$transaction(async (tx) => {
-      const created = await tx.org.create({
-        data: { slug: input.slug, name: input.name, ...(settings ? { settings } : {}) },
-        select: orgSelect,
-      });
-      if (owner) {
-        await healSignupRecord(owner.id, tx);
-        await tx.orgMembership.create({
-          data: { orgId: created.id, userId: owner.id, role: ORG_OWNER_ROLE },
-        });
-      }
-      return created;
-    })
-    .catch((err: unknown) => {
-      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.orgSlug)) {
-        throw new OrgLifecycleError('SLUG_TAKEN', 'An organisation with that slug already exists');
-      }
-      throw err;
-    });
+  const org = await insertOrg(input, settings, owner?.id ?? null, db);
 
   logger.info('Org created', { orgId: org.id, slug: org.slug, ownerUserId: owner?.id ?? null });
-  // The app's setup first, so a provider it grants is there for the platform
-  // agents' bindings to be picked from. Never fatal: what fails stays owed and
-  // the `orgCreatedHooks` maintenance job retries it.
   if (!settings) {
     await materialisePlatformAgents(org.id);
     return org;
   }
-  await runOrgCreatedHooks(org.id, { ownerUserId: owner?.id ?? null });
-  await materialisePlatformAgents(org.id);
+  await setUpCreatedOrg(org.id, owner?.id ?? null);
   // The row as inserted still lists every hook as owed; answer with what the
   // hooks left, so a caller is not told setup is pending when it is not.
   const current = await db.org
@@ -314,6 +291,99 @@ export async function createOrg(
       return null;
     });
   return current ?? org;
+}
+
+/**
+ * Create the org a self-serve signup will found (§134 t-1062), before the
+ * founder's user row exists: `userCreateBeforeHook` records the org on that
+ * row, so it must exist first.
+ *
+ * It is created with no member, marked as awaiting its founder
+ * (`Org.settings.awaitingFounder`), and with the app's org-created hooks
+ * recorded as owed but **not run**: a hook is told the org's owner, and there
+ * is none yet. The platform agents wait too. The mark is removed in the
+ * transaction that writes the founder's membership (`writeNewUserMemberships`,
+ * `healSignupRecord`), and then {@link completeSignupOrg} runs both. The
+ * org-created retry job skips a marked org.
+ *
+ * A signup that fails after this (the user INSERT is refused) leaves a marked
+ * org with no member that no user's signup record names; the
+ * `abandonedSignupOrgs` maintenance job deletes it
+ * (`sweepAbandonedSignupOrgs`, `lib/tenancy/signup-org.ts`). The mark is what
+ * tells it from a live org that has lost its members: it never had one.
+ */
+export async function createSignupOrg(
+  input: { slug: string; name: string },
+  db: LifecycleDb = prisma
+): Promise<OrgRecord> {
+  await requireSlugFree(input.slug, null, db);
+  const settings = {
+    ...orgCreatedSettings(orgCreatedHookKeys(), 'signup'),
+    [ORG_AWAITING_FOUNDER_KEY]: true,
+  };
+  const org = await insertOrg(input, settings, null, db);
+  logger.info('Org created for a signup, awaiting its founder', {
+    orgId: org.id,
+    slug: org.slug,
+  });
+  return org;
+}
+
+/**
+ * Run what {@link createSignupOrg} deferred, once the founder's membership
+ * exists: the app's org-created hooks, told the founder as owner, then the
+ * platform agents. Called by the signup's after hook when its membership write
+ * removed the org's awaiting-founder mark. Never throws: whatever fails is
+ * caught up by the `orgCreatedHooks` and `platformAgents` maintenance jobs,
+ * which also cover a founder whose membership was written at a later sign-in.
+ */
+export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {
+  logger.info('Signup org founded', { orgId, ownerUserId });
+  await setUpCreatedOrg(orgId, ownerUserId);
+}
+
+/**
+ * The app's setup first, so a provider it grants is there for the platform
+ * agents' bindings to be picked from. Never fatal: what fails stays owed and
+ * the `orgCreatedHooks` maintenance job retries it.
+ */
+async function setUpCreatedOrg(orgId: string, ownerUserId: string | null): Promise<void> {
+  await runOrgCreatedHooks(orgId, { ownerUserId });
+  await materialisePlatformAgents(orgId);
+}
+
+/**
+ * The INSERT both creates share, with the founding OWNER's membership in the
+ * same transaction when one is named. The pre-check on the slug gives a clean
+ * 409; a race past it surfaces as Prisma's P2002 on `org_slug_key`, answered
+ * with the same 409 `SLUG_TAKEN` (t-814).
+ */
+async function insertOrg(
+  input: { slug: string; name: string },
+  settings: Prisma.InputJsonObject | undefined,
+  ownerId: string | null,
+  db: LifecycleDb
+): Promise<OrgRecord> {
+  return db
+    .$transaction(async (tx) => {
+      const created = await tx.org.create({
+        data: { slug: input.slug, name: input.name, ...(settings ? { settings } : {}) },
+        select: orgSelect,
+      });
+      if (ownerId) {
+        await healSignupRecord(ownerId, tx);
+        await tx.orgMembership.create({
+          data: { orgId: created.id, userId: ownerId, role: ORG_OWNER_ROLE },
+        });
+      }
+      return created;
+    })
+    .catch((err: unknown) => {
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.orgSlug)) {
+        throw new OrgLifecycleError('SLUG_TAKEN', 'An organisation with that slug already exists');
+      }
+      throw err;
+    });
 }
 
 /**
@@ -758,7 +828,7 @@ export async function removeMember(
  */
 export async function syncInstallMembershipRole(
   user: { id: string; role: string | null; accountType: string | null },
-  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org'> = prisma
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$executeRaw'> = prisma
 ): Promise<MembershipRecord> {
   // A surviving signup record is paid first (t-838): the floor written alone
   // would stop the sign-in heal ever placing them in the org that invited them.
