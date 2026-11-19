@@ -12,16 +12,19 @@ import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import {
   requestActingOrg,
   requestAdminReach,
+  requestLockedSwitches,
   requestSupportSession,
 } from '@/lib/auth/admin-page-viewer';
 import { SupportBanner } from '@/components/admin/support-banner';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
+import { orgSettableSwitches } from '@/lib/tenancy/entitlements';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import {
   ADMIN_PATHNAME_HEADER,
   adminPageRequirementOf,
   adminPageTierOf,
+  lockedAdminPageOf,
   reachesAdminPage,
 } from '@/lib/auth/admin-tier';
 import {
@@ -91,7 +94,10 @@ export default async function AdminLayout({
   // facts, so a platform admin still reaches the console to switch org — see
   // `lib/auth/session-principal.ts`. A page registered with `requires`
   // (§135 t-1034) opens only where the reach records the policy admitting
-  // the viewer to that tier with that switch as `scope.requires`.
+  // the viewer to that tier with that switch as `scope.requires`. One whose
+  // switch the app shows locked (`whenLacking: 'lock'`, t-1053), and which the
+  // viewer's org lacks, is not redirected: `AdminTierGate` renders why it is
+  // closed in its place, never the page.
   //
   // This runs on a full load only — Next.js does not re-render a layout on
   // in-app navigation — so `AdminTierGate` below re-checks each navigation
@@ -104,13 +110,12 @@ export default async function AdminLayout({
   const namedTierPages = namedTierAdminPages();
   const pageRequirements = adminPageRequirements();
   const reach = await requestAdminReach();
+  const lockedSwitches = await requestLockedSwitches();
+  const pageTier = adminPageTierOf(pathname, orgTierPages, namedTierPages);
+  const pageRequires = adminPageRequirementOf(pathname, orgTierPages, pageRequirements);
   if (
-    !reachesAdminPage(
-      reach,
-      pathname,
-      adminPageTierOf(pathname, orgTierPages, namedTierPages),
-      adminPageRequirementOf(pathname, orgTierPages, pageRequirements)
-    )
+    !reachesAdminPage(reach, pathname, pageTier, pageRequires) &&
+    !lockedAdminPageOf(reach, pathname, pageTier, pageRequires, lockedSwitches)
   ) {
     redirect(AUTH_LANDING_ROUTE);
   }
@@ -152,7 +157,9 @@ export default async function AdminLayout({
           orgTierPages={orgTierPages}
           namedTierPages={namedTierPages}
           pageRequirements={pageRequirements}
+          lockedSwitches={lockedSwitches}
           waitlistEnabled={isWaitlistEnabled()}
+          orgOptionsEnabled={orgSettableSwitches().length > 0}
         />
         <div className="flex flex-1 flex-col overflow-hidden">
           {supportSession && <SupportBanner view={supportSession} />}
@@ -177,6 +184,7 @@ export default async function AdminLayout({
                   orgTierPages={orgTierPages}
                   namedTierPages={namedTierPages}
                   pageRequirements={pageRequirements}
+                  lockedSwitches={lockedSwitches}
                 >
                   {children}
                 </AdminTierGate>

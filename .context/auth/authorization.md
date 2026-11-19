@@ -485,6 +485,27 @@ switch to go and get it. A caller the tier refuses anyway gets the ordinary
 `Admin access required`, which says nothing about the org's switches; so does
 one whose switch reads on, which only a fork's own policy refuses.
 
+**Hidden or locked, and the app's own words** (t-1053). By default an item
+whose switch the org lacks is hidden, its page sends the viewer to their
+landing, and the refusal is the sentence above. A switch registered with
+`whenLacking: 'lock'` instead shows the item with a lock, which opens the
+app's message and upgrade link rather than the page, and shows the page as
+locked in its place, saying the same; the page's content is not shown and its
+routes still refuse. Like the gate, that is the reader's lock: the page still
+renders on the server, so it reads its rows through its routes. `refusalMessage` replaces the sentence on the 403 and on
+the locked item and page, and `upgradeUrl` (a path on this site or an
+`https://` address, checked at registration) rides on the 403 as
+`details.upgradeUrl` and is the locked item's and page's link. Neither is used
+when the org's switches could not be read: the route says it could not check,
+and the item and page stay hidden, so nobody is told to buy what their org may
+have. A surface is locked only when the tier admits the viewer and the org's
+switches show the switch off; closed for any other reason it is hidden as
+before.
+The layout reads which switches to lock once per request
+(`requestLockedSwitches()`, `lib/auth/admin-page-viewer.ts`): one read of the
+org's switches, and none unless a page requires a switch the app locks. See
+[`../tenancy/entitlements.md`](../tenancy/entitlements.md#hidden-or-locked).
+
 One switch per surface. A surface that needs two is two surfaces, or a policy
 of your own. Mark the page, its routes and its nav item alike: the item and
 the page are the reader's refusal, and the routes are the boundary.

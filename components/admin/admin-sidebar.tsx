@@ -41,8 +41,12 @@ import {
   KeySquare,
   LifeBuoy,
   Hourglass,
+  Lock,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { UpgradeLink } from '@/components/admin/locked-admin-page';
 import { API } from '@/lib/api/endpoints';
 import { executionCountsResponseSchema } from '@/lib/validations/orchestration';
 import {
@@ -55,12 +59,14 @@ import { initAppNav } from '@/lib/app/admin-nav';
 import {
   adminPageRequirementOf,
   adminPageTierOf,
+  lockedSwitchFor,
   reachesTier,
   type AdminPageRequirement,
   type AdminReach,
+  type LockedAdminSwitch,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
 // Auto-wire the app's admin-nav registrations (fork-readiness — the `lib/app/`
@@ -100,6 +106,13 @@ export const coreNavSections: NavSection[] = [
         label: 'Members',
         icon: UsersRound,
         description: 'People in this organisation',
+      },
+      {
+        href: '/admin/org-options',
+        tier: 'org',
+        label: 'Options',
+        icon: SlidersHorizontal,
+        description: 'Parts of the app this organisation turns on or off',
       },
       {
         href: '/admin/provider-keys',
@@ -310,6 +323,60 @@ function isItemActive(item: NavItem, pathname: string): boolean {
     : pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
+/**
+ * The items shown locked for this viewer (§135 t-1053), by href: kept in the
+ * nav, but rendered as a lock with the app's message rather than a link.
+ * Empty unless the app registered a switch `whenLacking: 'lock'` that the
+ * viewer's org lacks.
+ */
+const LockedItemsContext = createContext<ReadonlyMap<string, LockedAdminSwitch>>(new Map());
+
+/**
+ * An item the viewer's org lacks the switch for, shown locked: its icon and
+ * label with a lock, opening the app's message and upgrade link rather than
+ * the page. Any other item renders as `children`, the link.
+ */
+function LockedOr({
+  item,
+  collapsed,
+  nested,
+  children,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  nested?: boolean;
+  children: React.ReactNode;
+}) {
+  const locked = useContext(LockedItemsContext).get(item.href);
+  if (!locked) return <>{children}</>;
+  const Icon = item.icon;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'text-muted-foreground/70 hover:bg-accent flex w-full items-center rounded-md text-left transition-colors',
+            nested ? 'gap-2.5 px-2 py-1.5 text-[13px]' : 'gap-3 px-2 py-2 text-sm font-medium',
+            collapsed && 'justify-center'
+          )}
+          title={collapsed ? `${item.label} (locked)` : undefined}
+          aria-label={`${item.label} (locked)`}
+        >
+          <Icon className={cn('shrink-0', nested ? 'h-4 w-4' : 'h-5 w-5')} />
+          {!collapsed && <span className="flex-1">{item.label}</span>}
+          {!collapsed && <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="right" align="start" className="space-y-3 text-sm">
+        <p className="font-medium">{locked.label} is not available</p>
+        <p className="text-muted-foreground">{locked.message}</p>
+        <UpgradeLink locked={locked} size="sm" />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function NavItemList({
   items,
   pathname,
@@ -331,29 +398,33 @@ function NavItemList({
 
         return (
           <li key={item.href}>
-            <Link
-              href={item.href}
-              className={cn(
-                'flex items-center rounded-md transition-colors',
-                nested ? 'gap-2.5 px-2 py-1.5 text-[13px]' : 'gap-3 px-2 py-2 text-sm font-medium',
-                active
-                  ? nested
-                    ? 'bg-primary/10 text-primary font-medium'
-                    : 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                collapsed && 'justify-center'
-              )}
-              title={collapsed ? item.label : undefined}
-              aria-current={active ? 'page' : undefined}
-            >
-              <Icon className={cn('shrink-0', nested ? 'h-4 w-4' : 'h-5 w-5')} />
-              {!collapsed && <span className="flex-1">{item.label}</span>}
-              {!collapsed && item.badge != null && item.badge > 0 && (
-                <span className="ml-auto rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] leading-none font-medium text-white">
-                  {item.badge}
-                </span>
-              )}
-            </Link>
+            <LockedOr item={item} collapsed={collapsed} nested={nested}>
+              <Link
+                href={item.href}
+                className={cn(
+                  'flex items-center rounded-md transition-colors',
+                  nested
+                    ? 'gap-2.5 px-2 py-1.5 text-[13px]'
+                    : 'gap-3 px-2 py-2 text-sm font-medium',
+                  active
+                    ? nested
+                      ? 'bg-primary/10 text-primary font-medium'
+                      : 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  collapsed && 'justify-center'
+                )}
+                title={collapsed ? item.label : undefined}
+                aria-current={active ? 'page' : undefined}
+              >
+                <Icon className={cn('shrink-0', nested ? 'h-4 w-4' : 'h-5 w-5')} />
+                {!collapsed && <span className="flex-1">{item.label}</span>}
+                {!collapsed && item.badge != null && item.badge > 0 && (
+                  <span className="ml-auto rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] leading-none font-medium text-white">
+                    {item.badge}
+                  </span>
+                )}
+              </Link>
+            </LockedOr>
           </li>
         );
       })}
@@ -480,6 +551,12 @@ interface AdminSidebarProps {
    */
   pageRequirements?: readonly AdminPageRequirement[];
   /**
+   * The switches the viewer's org lacks that the app shows locked rather than
+   * hidden (§135 t-1053), as the layout read them. An item closed only by one
+   * of these is shown with a lock and the app's message instead of hidden.
+   */
+  lockedSwitches?: readonly LockedAdminSwitch[];
+  /**
    * The install runs `TENANCY_MODE=multi`. Items that only mean something
    * with more than one org (`MULTI_TENANT_ONLY`) are hidden otherwise, so the
    * console at `single` is what it was before them.
@@ -490,6 +567,12 @@ interface AdminSidebarProps {
    * Its item is hidden otherwise, as its routes answer 404.
    */
   waitlistEnabled?: boolean;
+  /**
+   * The app registers a switch an org's own admins may set (`setBy: 'org'`,
+   * §135 t-1054). The Options item is hidden otherwise, as its page lists
+   * nothing.
+   */
+  orgOptionsEnabled?: boolean;
 }
 
 /**
@@ -521,14 +604,23 @@ export function sectionsForMode(sections: NavSection[], multiTenant: boolean): N
 
 /** Items shown only when the app has switched their capability on. */
 const WAITLIST_ITEM = '/admin/waitlist';
+/** Shown only when the app registers a switch an org's own admins may set (t-1054). */
+const ORG_OPTIONS_ITEM = '/admin/org-options';
 
-/** The sections without the waitlist item, when the app has no waitlist. */
+/** The sections without the waitlist item when the app has no waitlist, nor the options item when it has no org-set switch. */
 export function sectionsForCapabilities(
   sections: NavSection[],
-  { waitlistEnabled }: { waitlistEnabled: boolean }
+  {
+    waitlistEnabled,
+    orgOptionsEnabled = false,
+  }: { waitlistEnabled: boolean; orgOptionsEnabled?: boolean }
 ): NavSection[] {
-  if (waitlistEnabled) return sections;
-  const kept = (items: NavItem[]) => items.filter((item) => item.href !== WAITLIST_ITEM);
+  if (waitlistEnabled && orgOptionsEnabled) return sections;
+  const hidden = new Set([
+    ...(waitlistEnabled ? [] : [WAITLIST_ITEM]),
+    ...(orgOptionsEnabled ? [] : [ORG_OPTIONS_ITEM]),
+  ]);
+  const kept = (items: NavItem[]) => items.filter((item) => !hidden.has(item.href));
   return sections.map((section) => ({
     ...section,
     ...(section.items ? { items: kept(section.items) } : {}),
@@ -651,19 +743,28 @@ export function sectionsForViewer(
   reach: AdminReach,
   orgTierPages: readonly string[],
   namedTierPages: readonly NamedTierAdminPage[] = [],
-  pageRequirements: readonly AdminPageRequirement[] = []
+  pageRequirements: readonly AdminPageRequirement[] = [],
+  lockedSwitches: readonly LockedAdminSwitch[] = []
 ): NavSection[] {
   if (reach === 'platform') return sections;
   const reachable = (items: NavItem[]) =>
     items.filter((item) => {
       const page = item.href.split(/[?#]/)[0];
       return (
-        reachesTier(reach, item.tier, item.requires) &&
-        reachesTier(
+        (reachesTier(reach, item.tier, item.requires) &&
+          reachesTier(
+            reach,
+            adminPageTierOf(page, orgTierPages, namedTierPages),
+            adminPageRequirementOf(page, orgTierPages, pageRequirements)
+          )) ||
+        lockedNavItemSwitch(
+          item,
           reach,
-          adminPageTierOf(page, orgTierPages, namedTierPages),
-          adminPageRequirementOf(page, orgTierPages, pageRequirements)
-        )
+          orgTierPages,
+          namedTierPages,
+          pageRequirements,
+          lockedSwitches
+        ) !== null
       );
     });
   return sections.flatMap((section) => {
@@ -682,10 +783,44 @@ export function sectionsForViewer(
   });
 }
 
+/**
+ * The locked switch an item is shown locked by for this reach (§135 t-1053),
+ * or `null`. Set only when the item, and its page, are of tiers the reach
+ * holds and a switch in `lockedSwitches` is the one thing missing, so an item
+ * closed for any other reason is still hidden. A platform reach locks nothing.
+ */
+export function lockedNavItemSwitch(
+  item: NavItem,
+  reach: AdminReach,
+  orgTierPages: readonly string[],
+  namedTierPages: readonly NamedTierAdminPage[],
+  pageRequirements: readonly AdminPageRequirement[],
+  lockedSwitches: readonly LockedAdminSwitch[]
+): LockedAdminSwitch | null {
+  if (reach === 'platform' || lockedSwitches.length === 0) return null;
+  const page = item.href.split(/[?#]/)[0];
+  const pageTier = adminPageTierOf(page, orgTierPages, namedTierPages);
+  const pageRequires = adminPageRequirementOf(page, orgTierPages, pageRequirements);
+  // Closed for a reason other than a switch: hidden, as before.
+  if (!reachesTier(reach, item.tier) || !reachesTier(reach, pageTier)) return null;
+  const itemOpens = reachesTier(reach, item.tier, item.requires);
+  const pageOpens = reachesTier(reach, pageTier, pageRequires);
+  if (itemOpens && pageOpens) return null;
+  const byItem = itemOpens
+    ? null
+    : lockedSwitchFor(reach, item.tier, item.requires, lockedSwitches);
+  const byPage = pageOpens ? null : lockedSwitchFor(reach, pageTier, pageRequires, lockedSwitches);
+  // Each closing switch must be a locked one; one the app hides hides the item.
+  if ((!itemOpens && !byItem) || (!pageOpens && !byPage)) return null;
+  return byItem ?? byPage;
+}
+
 /** The default for {@link AdminSidebarProps.namedTierPages}: one array, so the memo below is not rebuilt each render. */
 const NO_NAMED_TIER_PAGES: readonly NamedTierAdminPage[] = Object.freeze([]);
 /** The default for {@link AdminSidebarProps.pageRequirements}, for the same reason. */
 const NO_PAGE_REQUIREMENTS: readonly AdminPageRequirement[] = Object.freeze([]);
+/** The default for {@link AdminSidebarProps.lockedSwitches}, for the same reason. */
+const NO_LOCKED_SWITCHES: readonly LockedAdminSwitch[] = Object.freeze([]);
 
 export function AdminSidebar({
   className,
@@ -693,8 +828,10 @@ export function AdminSidebar({
   orgTierPages,
   namedTierPages = NO_NAMED_TIER_PAGES,
   pageRequirements = NO_PAGE_REQUIREMENTS,
+  lockedSwitches = NO_LOCKED_SWITCHES,
   multiTenant = false,
   waitlistEnabled = false,
+  orgOptionsEnabled = false,
 }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
@@ -710,12 +847,13 @@ export function AdminSidebar({
         sectionsForViewer(
           sectionsForCapabilities(
             sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
-            { waitlistEnabled }
+            { waitlistEnabled, orgOptionsEnabled }
           ),
           reach,
           orgTierPages,
           namedTierPages,
-          pageRequirements
+          pageRequirements,
+          lockedSwitches
         ),
         {
           '/admin/orchestration/approvals': approvalCount,
@@ -729,115 +867,148 @@ export function AdminSidebar({
       orgTierPages,
       namedTierPages,
       pageRequirements,
+      lockedSwitches,
       multiTenant,
       waitlistEnabled,
+      orgOptionsEnabled,
     ]
   );
+  // Which shown items are locked, by href, for every item renderer below.
+  const lockedItems = useMemo(() => {
+    const map = new Map<string, LockedAdminSwitch>();
+    if (lockedSwitches.length === 0) return map;
+    for (const section of sections) {
+      const items = [
+        ...(section.items ?? []),
+        ...(section.subgroups ?? []).flatMap((g) => g.items),
+      ];
+      for (const item of items) {
+        const locked = lockedNavItemSwitch(
+          item,
+          reach,
+          orgTierPages,
+          namedTierPages,
+          pageRequirements,
+          lockedSwitches
+        );
+        if (locked) map.set(item.href, locked);
+      }
+    }
+    return map;
+  }, [sections, reach, orgTierPages, namedTierPages, pageRequirements, lockedSwitches]);
 
   return (
-    <aside
-      className={cn(
-        'bg-muted/30 border-r transition-all duration-300',
-        collapsed ? 'w-16' : 'w-64',
-        className
-      )}
-    >
-      <div className="flex h-full flex-col">
-        {/* Header */}
-        <div className="flex h-16 items-center justify-between border-b px-4">
-          {!collapsed && (
-            <Link href="/admin" className="text-lg font-semibold">
-              Admin
-            </Link>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setCollapsed(!collapsed)}
-            className={cn('h-8 w-8', collapsed && 'mx-auto')}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-          </Button>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 space-y-6 overflow-y-auto p-4">
-          {sections.map((section) => (
-            <div key={section.title}>
-              {!collapsed && (
-                <h3
-                  // A custom node carries no text of its own (a wordmark image,
-                  // say), so `title` stays the accessible name for the heading.
-                  aria-label={section.titleNode ? section.title : undefined}
-                  className={cn(
-                    'mb-2 px-2',
-                    !section.titleNode &&
-                      'text-muted-foreground text-xs font-semibold tracking-wider uppercase'
-                  )}
-                >
-                  {section.titleNode ?? section.title}
-                </h3>
-              )}
-              {section.items && (
-                <NavItemList items={section.items} pathname={pathname} collapsed={collapsed} />
-              )}
-              {section.subgroups && (
-                <ul className="space-y-0.5">
-                  {section.subgroups.map((group) =>
-                    group.label ? (
-                      <CollapsibleSubgroup
-                        key={group.label}
-                        group={group}
-                        pathname={pathname}
-                        collapsed={collapsed}
-                      />
-                    ) : (
-                      group.items.map((item) => {
-                        const active = isItemActive(item, pathname);
-                        const Icon = item.icon;
-                        return (
-                          <li key={item.href}>
-                            <Link
-                              href={item.href}
-                              className={cn(
-                                'flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors',
-                                active
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-                                collapsed && 'justify-center'
-                              )}
-                              title={collapsed ? item.label : undefined}
-                              aria-current={active ? 'page' : undefined}
-                            >
-                              <Icon className="h-5 w-5 shrink-0" />
-                              {!collapsed && <span>{item.label}</span>}
-                            </Link>
-                          </li>
-                        );
-                      })
-                    )
-                  )}
-                </ul>
-              )}
-            </div>
-          ))}
-        </nav>
-
-        {/* Footer */}
-        <div className="border-t p-4">
-          <Link
-            href={AUTH_LANDING_ROUTE}
-            className={cn(
-              'text-muted-foreground hover:text-foreground flex items-center gap-2 text-sm transition-colors',
-              collapsed && 'justify-center'
+    <LockedItemsContext.Provider value={lockedItems}>
+      <aside
+        className={cn(
+          'bg-muted/30 border-r transition-all duration-300',
+          collapsed ? 'w-16' : 'w-64',
+          className
+        )}
+      >
+        <div className="flex h-full flex-col">
+          {/* Header */}
+          <div className="flex h-16 items-center justify-between border-b px-4">
+            {!collapsed && (
+              <Link href="/admin" className="text-lg font-semibold">
+                Admin
+              </Link>
             )}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            {!collapsed && <span>Back to {AUTH_LANDING_LABEL}</span>}
-          </Link>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCollapsed(!collapsed)}
+              className={cn('h-8 w-8', collapsed && 'mx-auto')}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {collapsed ? (
+                <ChevronRight className="h-4 w-4" />
+              ) : (
+                <ChevronLeft className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+
+          {/* Navigation */}
+          <nav className="flex-1 space-y-6 overflow-y-auto p-4">
+            {sections.map((section) => (
+              <div key={section.title}>
+                {!collapsed && (
+                  <h3
+                    // A custom node carries no text of its own (a wordmark image,
+                    // say), so `title` stays the accessible name for the heading.
+                    aria-label={section.titleNode ? section.title : undefined}
+                    className={cn(
+                      'mb-2 px-2',
+                      !section.titleNode &&
+                        'text-muted-foreground text-xs font-semibold tracking-wider uppercase'
+                    )}
+                  >
+                    {section.titleNode ?? section.title}
+                  </h3>
+                )}
+                {section.items && (
+                  <NavItemList items={section.items} pathname={pathname} collapsed={collapsed} />
+                )}
+                {section.subgroups && (
+                  <ul className="space-y-0.5">
+                    {section.subgroups.map((group) =>
+                      group.label ? (
+                        <CollapsibleSubgroup
+                          key={group.label}
+                          group={group}
+                          pathname={pathname}
+                          collapsed={collapsed}
+                        />
+                      ) : (
+                        group.items.map((item) => {
+                          const active = isItemActive(item, pathname);
+                          const Icon = item.icon;
+                          return (
+                            <li key={item.href}>
+                              <LockedOr item={item} collapsed={collapsed}>
+                                <Link
+                                  href={item.href}
+                                  className={cn(
+                                    'flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors',
+                                    active
+                                      ? 'bg-primary text-primary-foreground'
+                                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                                    collapsed && 'justify-center'
+                                  )}
+                                  title={collapsed ? item.label : undefined}
+                                  aria-current={active ? 'page' : undefined}
+                                >
+                                  <Icon className="h-5 w-5 shrink-0" />
+                                  {!collapsed && <span>{item.label}</span>}
+                                </Link>
+                              </LockedOr>
+                            </li>
+                          );
+                        })
+                      )
+                    )}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </nav>
+
+          {/* Footer */}
+          <div className="border-t p-4">
+            <Link
+              href={AUTH_LANDING_ROUTE}
+              className={cn(
+                'text-muted-foreground hover:text-foreground flex items-center gap-2 text-sm transition-colors',
+                collapsed && 'justify-center'
+              )}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              {!collapsed && <span>Back to {AUTH_LANDING_LABEL}</span>}
+            </Link>
+          </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </LockedItemsContext.Provider>
   );
 }

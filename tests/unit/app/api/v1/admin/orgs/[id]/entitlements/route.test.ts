@@ -155,6 +155,8 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
           label: 'Reports',
           description: 'Build reports.',
           whenNothingSet: false,
+          // Registered without setBy: platform staff alone set it (t-1054).
+          setBy: 'platform',
           on: false,
           atDefault: true,
         },
@@ -163,6 +165,7 @@ describe('GET /api/v1/admin/orgs/[id]/entitlements', () => {
           label: 'Lead generation',
           description: 'Funnels and leads.',
           whenNothingSet: true,
+          setBy: 'platform',
           on: true,
           atDefault: true,
         },

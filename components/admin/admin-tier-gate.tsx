@@ -19,6 +19,10 @@
  * page. It is the reader's refusal, not the security boundary: the API routes
  * the page calls each ask the policy themselves.
  *
+ * A page whose switch the app shows locked (`whenLacking: 'lock'`, t-1053),
+ * and which the viewer's org lacks, renders why it is closed in its place
+ * instead: the app's message and upgrade link, never the page.
+ *
  * A platform viewer passes straight through, so the console of every platform
  * admin is what it was before this existed.
  */
@@ -26,12 +30,15 @@
 import { useEffect } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 
+import { LockedAdminPage } from '@/components/admin/locked-admin-page';
 import {
   adminPageRequirementOf,
   adminPageTierOf,
+  lockedAdminPageOf,
   reachesAdminPage,
   type AdminPageRequirement,
   type AdminReach,
+  type LockedAdminSwitch,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
@@ -45,28 +52,34 @@ export interface AdminTierGateProps {
   namedTierPages?: readonly NamedTierAdminPage[];
   /** The switch each of the fork's pages requires (t-1034), as the layout read them. Empty unless one declared `requires`. */
   pageRequirements?: readonly AdminPageRequirement[];
+  /** The switches the viewer's org lacks that the app shows locked (t-1053), as the layout read them. */
+  lockedSwitches?: readonly LockedAdminSwitch[];
   children: React.ReactNode;
 }
+
+const NO_LOCKED_SWITCHES: readonly LockedAdminSwitch[] = Object.freeze([]);
 
 export function AdminTierGate({
   reach,
   orgTierPages,
   namedTierPages = [],
   pageRequirements = [],
+  lockedSwitches = NO_LOCKED_SWITCHES,
   children,
 }: AdminTierGateProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const allowed = reachesAdminPage(
-    reach,
-    pathname,
-    adminPageTierOf(pathname, orgTierPages, namedTierPages),
-    adminPageRequirementOf(pathname, orgTierPages, pageRequirements)
-  );
+  const pageTier = adminPageTierOf(pathname, orgTierPages, namedTierPages);
+  const pageRequires = adminPageRequirementOf(pathname, orgTierPages, pageRequirements);
+  const allowed = reachesAdminPage(reach, pathname, pageTier, pageRequires);
+  const locked = allowed
+    ? null
+    : lockedAdminPageOf(reach, pathname, pageTier, pageRequires, lockedSwitches);
 
   useEffect(() => {
-    if (!allowed) router.replace(AUTH_LANDING_ROUTE);
-  }, [allowed, router]);
+    if (!allowed && !locked) router.replace(AUTH_LANDING_ROUTE);
+  }, [allowed, locked, router]);
 
-  return allowed ? <>{children}</> : null;
+  if (allowed) return <>{children}</>;
+  return locked ? <LockedAdminPage locked={locked} /> : null;
 }

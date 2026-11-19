@@ -158,6 +158,8 @@ describe('the pins', () => {
       '/admin/orchestration/executions/[id]',
       '/admin/orchestration/executions/live',
       '/admin/members',
+      // §135 t-1054: the switches an org's own admins may set, over the org arm.
+      '/admin/org-options',
       // §137 t-1045: the org's own AI keys, over the org arm.
       '/admin/provider-keys',
       // §121 t-823: the org's consent to vendor support, over the org arm.
@@ -402,6 +404,7 @@ describe('the core sections', () => {
       'logs',
       'members',
       'orchestration',
+      'org-options',
       'orgs',
       'overview',
       'provider-keys',

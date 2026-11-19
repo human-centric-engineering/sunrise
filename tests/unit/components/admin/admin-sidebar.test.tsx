@@ -15,6 +15,7 @@ import type { ComponentType } from 'react';
 
 import {
   AdminSidebar,
+  lockedNavItemSwitch,
   sectionsForViewer,
   sectionsForMode,
   sectionsForCapabilities,
@@ -729,8 +730,20 @@ describe('sectionsForCapabilities', () => {
     },
   ];
 
-  it('returns the very array it was given when the app has a waitlist', () => {
-    expect(sectionsForCapabilities(sections, { waitlistEnabled: true })).toBe(sections);
+  it('returns the very array it was given when the app has a waitlist and org options', () => {
+    expect(
+      sectionsForCapabilities(sections, { waitlistEnabled: true, orgOptionsEnabled: true })
+    ).toBe(sections);
+  });
+
+  it('removes /admin/org-options when no switch is org-set, the default (t-1054)', () => {
+    const withOptions = [{ title: 'M', items: [item('/admin/org-options'), item('/o')] }];
+    expect(sectionsForCapabilities(withOptions, { waitlistEnabled: true })).toEqual([
+      { title: 'M', items: [item('/o')] },
+    ]);
+    expect(
+      sectionsForCapabilities(withOptions, { waitlistEnabled: true, orgOptionsEnabled: true })
+    ).toBe(withOptions);
   });
 
   it('removes /admin/waitlist, from items and subgroups, and leaves everything else', () => {
@@ -750,9 +763,9 @@ describe('sectionsForCapabilities', () => {
       secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
 
     const before = flat(coreNavSections).map((i) => i.href);
-    const after = flat(sectionsForCapabilities(coreNavSections, { waitlistEnabled: false })).map(
-      (i) => i.href
-    );
+    const after = flat(
+      sectionsForCapabilities(coreNavSections, { waitlistEnabled: false, orgOptionsEnabled: true })
+    ).map((i) => i.href);
 
     expect(before).toContain('/admin/waitlist');
     expect(after).toEqual(before.filter((h) => h !== '/admin/waitlist'));
@@ -830,5 +843,123 @@ describe('sectionsForViewer with switch requirements (t-1034)', () => {
 
   it('hides nothing from a platform viewer', () => {
     expect(sectionsForViewer(sections, 'platform', PAGES, [], REQUIRED)).toBe(sections);
+  });
+});
+
+describe('locked items: a switch the app shows locked rather than hides (t-1053)', () => {
+  const Icon: ComponentType<{ className?: string }> = () => null;
+  const item = (href: string, requires?: string, tier = 'org') => ({
+    href,
+    label: href.replace('/admin/', ''),
+    icon: Icon,
+    description: '',
+    tier,
+    ...(requires ? { requires } : {}),
+  });
+  const PAGES = ['/admin/leads', '/admin/briefs', '/admin/reports'];
+  const REQUIRED = [
+    { pattern: '/admin/leads', requires: 'lead_gen' },
+    { pattern: '/admin/briefs', requires: 'briefs' },
+  ];
+  const LOCKED = [
+    {
+      requires: 'lead_gen',
+      label: 'Lead generation',
+      message: 'Lead generation comes with the Growth plan.',
+      upgradeUrl: '/pricing',
+    },
+  ];
+  const sections = [
+    {
+      title: 'Leads',
+      items: [
+        item('/admin/leads', 'lead_gen'),
+        item('/admin/briefs', 'briefs'),
+        item('/admin/reports'),
+      ],
+    },
+  ];
+  const lacks: AdminReach = { tiers: ['org'], landing: null, switchesMet: [] };
+  const shown = (reach: AdminReach, locked = LOCKED) =>
+    sectionsForViewer(sections, reach, PAGES, [], REQUIRED, locked).flatMap((s) =>
+      (s.items ?? []).map((i) => i.href)
+    );
+
+  it('keeps an item whose locked switch the org lacks, and still hides one whose switch the app hides', () => {
+    expect(shown(lacks)).toEqual(['/admin/leads', '/admin/reports']);
+    expect(
+      lockedNavItemSwitch(item('/admin/leads', 'lead_gen'), lacks, PAGES, [], REQUIRED, LOCKED)
+    ).toBe(LOCKED[0]);
+    expect(
+      lockedNavItemSwitch(item('/admin/briefs', 'briefs'), lacks, PAGES, [], REQUIRED, LOCKED)
+    ).toBeNull();
+  });
+
+  it('hides it as before when nothing is locked: the default', () => {
+    expect(shown(lacks, [])).toEqual(['/admin/reports']);
+  });
+
+  it('does not lock an item closed for a reason other than the switch', () => {
+    // A viewer who holds no tier at all is not shown a locked item to buy.
+    const none: AdminReach = { tiers: [], landing: null };
+    expect(shown(none)).toEqual([]);
+    expect(
+      lockedNavItemSwitch(item('/admin/leads', 'lead_gen'), none, PAGES, [], REQUIRED, LOCKED)
+    ).toBeNull();
+  });
+
+  it('locks nothing for an org whose switch is met, nor for a platform viewer', () => {
+    const has: AdminReach = {
+      tiers: ['org'],
+      landing: null,
+      switchesMet: [
+        { tier: 'org', requires: 'lead_gen' },
+        { tier: 'org', requires: 'briefs' },
+      ],
+    };
+    expect(
+      lockedNavItemSwitch(item('/admin/leads', 'lead_gen'), has, PAGES, [], REQUIRED, LOCKED)
+    ).toBeNull();
+    expect(
+      lockedNavItemSwitch(item('/admin/leads', 'lead_gen'), 'platform', PAGES, [], REQUIRED, LOCKED)
+    ).toBeNull();
+  });
+
+  describe('rendered', () => {
+    beforeEach(() => {
+      vi.stubGlobal('fetch', vi.fn<typeof fetch>());
+      registerNavSection({ title: 'Leads', items: [item('/admin/leads', 'lead_gen')] });
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      __resetNavRegistryForTests();
+    });
+
+    it("shows it as a locked button, not a link, opening the app's message and upgrade link", async () => {
+      const user = userEvent.setup();
+      render(
+        <AdminSidebar
+          reach={lacks}
+          orgTierPages={PAGES}
+          pageRequirements={REQUIRED}
+          lockedSwitches={LOCKED}
+        />
+      );
+      expect(screen.queryByRole('link', { name: /^leads$/i })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'leads (locked)' }));
+      expect(
+        await screen.findByText('Lead generation comes with the Growth plan.')
+      ).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'How to get Lead generation' })).toHaveAttribute(
+        'href',
+        '/pricing'
+      );
+    });
+
+    it('hides it, rendering nothing, when the app hides that switch', () => {
+      render(<AdminSidebar reach={lacks} orgTierPages={PAGES} pageRequirements={REQUIRED} />);
+      expect(screen.queryByRole('button', { name: /locked/ })).not.toBeInTheDocument();
+      expect(screen.queryByText('leads')).not.toBeInTheDocument();
+    });
   });
 });

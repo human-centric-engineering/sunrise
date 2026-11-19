@@ -222,6 +222,50 @@ describe('withAdminAuth({ tier, requires }) (t-1034)', () => {
     );
   });
 
+  it("carries the app's own refusal and upgrade link on the 403 when it registered them (t-1053)", async () => {
+    fork.switches = () => {
+      registerEntitlementSwitch({
+        key: 'lead_gen',
+        label: 'Lead generation',
+        description: '',
+        refusalMessage: 'Lead generation comes with the Growth plan.',
+        upgradeUrl: 'https://example.com/plans',
+      });
+    };
+    signedIn('USER', ORG_ADMIN_ROLE);
+    const { call, ran } = route(LEADS);
+    const { status, body } = await call();
+    expect(status).toBe(403);
+    expect(body.error?.message).toBe('Lead generation comes with the Growth plan.');
+    expect(body.error?.details).toEqual({
+      reason: SWITCH_REQUIRED_REASON,
+      requires: 'lead_gen',
+      upgradeUrl: 'https://example.com/plans',
+    });
+    expect(ran).toEqual([]);
+  });
+
+  it("does not use the app's refusal when the org's switches could not be read (t-1053)", async () => {
+    fork.switches = () => {
+      registerEntitlementSwitch({
+        key: 'lead_gen',
+        label: 'Lead generation',
+        description: '',
+        refusalMessage: 'Lead generation comes with the Growth plan.',
+        upgradeUrl: '/pricing',
+      });
+    };
+    signedIn('USER', ORG_ADMIN_ROLE);
+    mockPrisma.org.findUnique.mockRejectedValue(new Error('db down'));
+    const { status, body } = await route(LEADS).call();
+    expect(status).toBe(403);
+    expect(body.error?.message).not.toContain('Growth plan');
+    expect(body.error?.details).toEqual({
+      reason: SWITCH_UNVERIFIED_REASON,
+      requires: 'lead_gen',
+    });
+  });
+
   it('answers as before for a route that requires nothing — no switch read', async () => {
     signedIn('USER', ORG_ADMIN_ROLE);
     const { call, ran } = route({ tier: 'org', ...OWNED });

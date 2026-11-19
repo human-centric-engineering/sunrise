@@ -82,6 +82,7 @@ import {
   SWITCH_UNVERIFIED_REASON,
   switchRequiredMessage,
   switchUnverifiedMessage,
+  switchUpgradeUrl,
 } from '@/lib/tenancy/entitlements';
 
 /**
@@ -1484,9 +1485,13 @@ export function withAdminAuth(
             if (await canAdminister(principal, resource, withoutSwitch)) {
               const state = await orgSwitchState(principal.orgId, required);
               if (state === 'off') {
+                // The app's own words and upgrade link when it registered
+                // them (t-1053); said only here, where the switch reads off.
+                const upgradeUrl = switchUpgradeUrl(required);
                 throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
                   reason: SWITCH_REQUIRED_REASON,
                   requires: required,
+                  ...(upgradeUrl ? { upgradeUrl } : {}),
                 });
               }
               if (state === 'unknown') {
