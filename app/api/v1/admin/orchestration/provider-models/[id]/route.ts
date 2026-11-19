@@ -192,15 +192,20 @@ export const PATCH = withAdminAuth<{ id: string }>(
         fieldsChanged: Object.keys(data),
       });
 
-      logAdminAction({
-        userId: session.user.id,
-        action: 'provider_model.update',
-        entityType: 'provider_model',
-        entityId: id,
-        entityName: updated.name,
-        changes: computeChanges(current, updated, { ignoreKeys: ['updatedAt', 'createdAt'] }),
-        clientIp: getClientIP(request),
-      });
+      // The edit form sends every field on every save, so a save that
+      // changed nothing still reaches here; it writes no audit row.
+      const changes = computeChanges(current, updated, { ignoreKeys: ['updatedAt', 'createdAt'] });
+      if (changes) {
+        logAdminAction({
+          userId: session.user.id,
+          action: 'provider_model.update',
+          entityType: 'provider_model',
+          entityId: id,
+          entityName: updated.name,
+          changes,
+          clientIp: getClientIP(request),
+        });
+      }
 
       return successResponse(updated);
     } catch (err) {
@@ -271,6 +276,13 @@ export const DELETE = withAdminAuth<{ id: string }>(
       });
     }
 
+    // Models naming this one as their replacement lose it (`ON DELETE SET
+    // NULL`), which no other row records; the delete's row names them.
+    const replacing = await prisma.aiProviderModel.findMany({
+      where: { replacementId: id },
+      select: { id: true, name: true },
+    });
+
     await prisma.aiProviderModel.delete({ where: { id } });
 
     invalidateModelCache();
@@ -281,7 +293,11 @@ export const DELETE = withAdminAuth<{ id: string }>(
       entityType: 'provider_model',
       entityId: id,
       entityName: current.name,
-      metadata: { providerSlug: current.providerSlug, modelId: current.modelId },
+      metadata: {
+        providerSlug: current.providerSlug,
+        modelId: current.modelId,
+        ...(replacing.length > 0 ? { replacementClearedFor: replacing } : {}),
+      },
       clientIp: getClientIP(request),
     });
 

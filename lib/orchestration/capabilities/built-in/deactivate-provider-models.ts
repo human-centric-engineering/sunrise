@@ -34,6 +34,7 @@ import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector'
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { isEmbedUserId } from '@/lib/embed/auth';
 import {
   checkReplacement,
   modelLifecycleState,
@@ -182,8 +183,17 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
       return this.success(counts, { skipFollowup: true });
     }
 
+    // Models this same batch records as retiring or retired. Entries apply in
+    // order, so without this a successor named early could be retired by a
+    // later entry, leaving its predecessor pointing at a model going away.
+    const retiringInBatch = new Set(
+      args.deactivateModels
+        .filter((e) => e.retiresAt != null && parseRetirementDate(e.retiresAt) !== null)
+        .map((e) => e.modelId)
+    );
+
     for (const entry of args.deactivateModels) {
-      const result = await this.applyEntry(entry, context);
+      const result = await this.applyEntry(entry, context, retiringInBatch);
       counts[result.status]++;
       counts.models.push(result);
     }
@@ -195,7 +205,11 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
     return this.success(counts, { skipFollowup: true });
   }
 
-  private async applyEntry(entry: Entry, context: CapabilityContext): Promise<DeactivatedModel> {
+  private async applyEntry(
+    entry: Entry,
+    context: CapabilityContext,
+    retiringInBatch: ReadonlySet<string>
+  ): Promise<DeactivatedModel> {
     const model = await prisma.aiProviderModel.findUnique({
       where: { id: entry.modelId },
       select: MODEL_SELECT,
@@ -222,7 +236,7 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
         reason: `Retirement date "${entry.retiresAt}" is not a day as YYYY-MM-DD`,
       };
     }
-    return this.retire(model, entry, retiresAt, context);
+    return this.retire(model, entry, retiresAt, context, retiringInBatch);
   }
 
   /** No retirement date: take the model out of the registry, as before §136. */
@@ -273,17 +287,15 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
     model: ModelRow,
     entry: Entry,
     retiresAt: Date,
-    context: CapabilityContext
+    context: CapabilityContext,
+    retiringInBatch: ReadonlySet<string>
   ): Promise<DeactivatedModel> {
     let replacementId = model.replacementId;
     let replacementNote: string | undefined;
     if (entry.replacedBy != null) {
-      const candidate = await findReplacementByModelId(model.providerSlug, entry.replacedBy);
-      const refusal = candidate
-        ? checkReplacement(model, candidate)
-        : `"${entry.replacedBy}" is not in the ${model.providerSlug} catalogue`;
-      if (refusal === null && candidate) replacementId = candidate.id;
-      else replacementNote = `Successor not recorded: ${refusal}`;
+      const resolved = await this.resolveSuccessor(model, entry.replacedBy, retiringInBatch);
+      if (resolved.id !== null) replacementId = resolved.id;
+      else replacementNote = `Successor not recorded: ${resolved.refusal}`;
     }
 
     const retired = modelLifecycleState({ retiresAt }) === 'retired';
@@ -314,6 +326,37 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
         ...(replacementNote ? { replacementNote } : {}),
       }
     );
+  }
+
+  /**
+   * The successor's row id, or why it cannot be one. A failed lookup is a
+   * refusal for this entry, not a throw: the retirement is still recorded and
+   * the rest of the batch still applies.
+   */
+  private async resolveSuccessor(
+    model: ModelRow,
+    replacedBy: string,
+    retiringInBatch: ReadonlySet<string>
+  ): Promise<{ id: string; refusal?: undefined } | { id: null; refusal: string }> {
+    let candidate;
+    try {
+      candidate = await findReplacementByModelId(model.providerSlug, replacedBy);
+    } catch (err) {
+      logger.error('Audit: successor lookup failed', {
+        modelId: model.id,
+        replacedBy,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return { id: null, refusal: `the lookup of "${replacedBy}" failed` };
+    }
+    if (!candidate) {
+      return { id: null, refusal: `"${replacedBy}" is not in the ${model.providerSlug} catalogue` };
+    }
+    if (retiringInBatch.has(candidate.id)) {
+      return { id: null, refusal: `"${candidate.name}" is itself being retired in this audit` };
+    }
+    const refusal = checkReplacement(model, candidate);
+    return refusal === null ? { id: candidate.id } : { id: null, refusal };
   }
 
   /**
@@ -361,7 +404,9 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
       isActive: model.isActive,
     };
     logAdminAction({
-      userId: context.userId,
+      // An embed visitor is not a User row; its id would fail the audit row's
+      // foreign key and the row would be lost.
+      userId: isEmbedUserId(context.userId) ? null : context.userId,
       action,
       entityType: 'provider_model',
       entityId: model.id,

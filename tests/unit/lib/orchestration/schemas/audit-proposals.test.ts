@@ -923,9 +923,12 @@ describe('audit-proposals schema — retirement on deactivations', () => {
     expect(withDeactivation({ retiresAt: null, replacedBy: null }).success).toBe(true);
   });
 
-  it('refuses a retirement day that is not a day', () => {
-    const result = withDeactivation({ retiresAt: '2027-02-30' });
-    expect(messages(result)).toEqual(['retiresAt "2027-02-30" must be a day as YYYY-MM-DD']);
+  it('accepts a day that is not a day: the capability makes that one entry invalid', () => {
+    // A malformed day for one model must not fail the branch, and with it
+    // every other proposal in the run.
+    for (const retiresAt of ['2027-02-30', '2027-06', '2027-06-01T00:00:00Z', 'TBD']) {
+      expect(messages(withDeactivation({ retiresAt }))).toEqual([]);
+    }
   });
 
   it('accepts a successor without a retirement day: the capability leaves it out and says so', () => {

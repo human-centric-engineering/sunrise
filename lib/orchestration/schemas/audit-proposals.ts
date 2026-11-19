@@ -53,7 +53,6 @@ import {
   TOOL_USE,
 } from '@/lib/orchestration/model-audit/enums';
 import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
-import { parseRetirementDate } from '@/lib/orchestration/model-lifecycle/state';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -272,28 +271,19 @@ const emptyAsNull = z.preprocess(
   z.string().nullish()
 );
 
-const deactivationSchema = z
-  .object({
-    modelId: z.string().min(1),
-    reason: z.string().min(1),
-    sources: z.array(sourceAttributionSchema).min(1),
-    // Vendor retirement (§136 t-1064): the announced day, and the vendor's
-    // model id of the same-provider successor. `null` or `""` = none found:
-    // models write either for "none", and one stray field must not fail the
-    // whole analysis branch. A successor without a day is accepted and left
-    // out by the capability, which says so in its result.
-    retiresAt: emptyAsNull,
-    replacedBy: emptyAsNull,
-  })
-  .superRefine((d, ctx) => {
-    if (d.retiresAt != null && parseRetirementDate(d.retiresAt) === null) {
-      ctx.addIssue({
-        code: 'custom',
-        message: `retiresAt "${d.retiresAt}" must be a day as YYYY-MM-DD`,
-        path: ['retiresAt'],
-      });
-    }
-  });
+const deactivationSchema = z.object({
+  modelId: z.string().min(1),
+  reason: z.string().min(1),
+  sources: z.array(sourceAttributionSchema).min(1),
+  // Vendor retirement (§136 t-1064): the announced day, and the vendor's
+  // model id of the same-provider successor. `null` or `""` = none found.
+  // Neither is refined here: one stray field must not fail the whole
+  // analysis branch, and every other proposal with it. The capability
+  // judges each entry: a day that is not YYYY-MM-DD makes that entry
+  // `invalid`, and a successor without a day is left out with a note.
+  retiresAt: emptyAsNull,
+  replacedBy: emptyAsNull,
+});
 
 const analysisBranchSchema = z.object({
   models: z.array(modelProposalSchema),

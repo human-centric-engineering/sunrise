@@ -1135,6 +1135,28 @@ describe('ProviderModelForm — retirement (§136 t-1064)', () => {
     expect(sentBody()).toMatchObject({ retiresAt: null, replacementId: null });
   });
 
+  it('offers no replacement while the provider is being changed, and the save clears it', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProviderModelForm
+        model={makeModel({ retiresAt: '2027-03-01T00:00:00.000Z', replacementId: 'model-2' })}
+        replacementOptions={OPTIONS}
+      />
+    );
+
+    const provider = screen.getByLabelText(/provider slug/i, { selector: 'input' });
+    await user.clear(provider);
+    await user.type(provider, 'openai');
+
+    expect(screen.getByRole('combobox', { name: 'Replacement' })).toHaveTextContent(
+      'No replacement'
+    );
+    expect(screen.getByText(/saving a new provider clears the replacement/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(sentBody()).toMatchObject({ providerSlug: 'openai', replacementId: null });
+  });
+
   it('refuses a replacement picked without a day, beside the day field', async () => {
     const user = userEvent.setup();
     render(<ProviderModelForm model={makeModel()} replacementOptions={OPTIONS} />);

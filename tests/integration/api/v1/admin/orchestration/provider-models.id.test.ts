@@ -42,6 +42,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiProviderModel: {
       findUnique: vi.fn(),
+      findMany: vi.fn(() => Promise.resolve([])),
       update: vi.fn(),
       delete: vi.fn(),
     },
@@ -685,6 +686,27 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     });
   });
 
+  it('names, in the delete row, the models whose replacement the delete clears', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValueOnce([
+      { id: 'cm_a', name: 'Claude 3 Opus' },
+    ] as never);
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+
+    await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith({
+      where: { replacementId: MODEL_ID },
+      select: { id: true, name: true },
+    });
+    expect(vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0].data.metadata).toEqual({
+      providerSlug: 'anthropic',
+      modelId: 'claude-opus-4',
+      replacementClearedFor: [{ id: 'cm_a', name: 'Claude 3 Opus' }],
+    });
+  });
+
   it('writes no audit row when the delete is refused as in use', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
@@ -1105,6 +1127,15 @@ describe('PATCH vendor retirement (§136 t-1064)', () => {
 
     expect(response.status).toBe(200);
     expect(updateData().description).toBe('Edited');
+  });
+
+  it('writes no audit row for a save that changed nothing', async () => {
+    // The form re-sends the saved values; the update returns the row as it was.
+    const response = await patchWith({ name: 'Claude Opus 4', retiresAt: null });
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.update).toHaveBeenCalled();
+    expect(prisma.aiAdminAuditLog.create).not.toHaveBeenCalled();
   });
 
   it('treats the same capabilities in another order as unchanged', async () => {

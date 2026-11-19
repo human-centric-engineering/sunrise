@@ -365,6 +365,11 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
   const replacementId = watch('replacementId');
   const currentName = watch('name');
   const providerSlug = watch('providerSlug');
+  // The options are the saved provider's models. While the provider is being
+  // changed none of them qualify, so none is offered, and the save clears the
+  // stored one (a replacement must be on the model's own provider).
+  const providerChanged = isEdit && providerSlug !== model.providerSlug;
+  const offeredReplacements = providerChanged ? [] : replacementOptions;
   const capabilities = watch('capabilities');
   const hasEmbedding = capabilities.includes('embedding');
   // Chat and reasoning models carry input/output prices (t-774).
@@ -447,7 +452,8 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
     // day field has already reset the replacement on screen.
     if (isEdit) {
       payload.retiresAt = data.retiresAt === '' ? null : data.retiresAt;
-      payload.replacementId = data.replacementId === NO_REPLACEMENT ? null : data.replacementId;
+      payload.replacementId =
+        data.replacementId === NO_REPLACEMENT || providerChanged ? null : data.replacementId;
     }
 
     // Prices: sent as a pair, or cleared as a pair on edit — but only while
@@ -1156,10 +1162,11 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
                 <Label htmlFor="retiresAt">
                   Retires on{' '}
                   <FieldHelp title="Retires on">
-                    The day the provider stops serving this model, from its deprecation notice.
-                    Before that day the model is <em>retiring</em>; from that day it is{' '}
-                    <em>retired</em> and calls to it fail at the provider. Leave empty when no
-                    retirement is announced; clearing it also clears the replacement.
+                    The day the provider stops serving this model, from its deprecation notice, read
+                    in UTC. Before that day the model is <em>retiring</em>; from that day it is{' '}
+                    <em>retired</em> and calls to it fail at the provider. It stays offered until
+                    you turn it off with the Active switch below. Leave empty when no retirement is
+                    announced; clearing it also clears the replacement.
                   </FieldHelp>
                 </Label>
                 <Input
@@ -1191,7 +1198,7 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
                   </FieldHelp>
                 </Label>
                 <Select
-                  value={replacementId}
+                  value={providerChanged ? NO_REPLACEMENT : replacementId}
                   onValueChange={(v) =>
                     setValue('replacementId', v, { shouldDirty: true, shouldValidate: true })
                   }
@@ -1201,13 +1208,19 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NO_REPLACEMENT}>No replacement</SelectItem>
-                    {replacementOptions.map((option) => (
+                    {offeredReplacements.map((option) => (
                       <SelectItem key={option.id} value={option.id}>
                         {option.name} ({option.modelId})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                {providerChanged && (
+                  <p className="text-muted-foreground text-xs">
+                    Saving a new provider clears the replacement. Choose one on that provider after
+                    saving.
+                  </p>
+                )}
                 {errors.replacementId && (
                   <p className="text-destructive text-xs">{errors.replacementId.message}</p>
                 )}

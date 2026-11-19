@@ -1302,6 +1302,45 @@ describe('ApplyAuditChangesCapability — admin audit log (§136 t-1064)', () =>
     });
   });
 
+  it('logs a price the analyser wrote as a string as the number it is, not redacted', async () => {
+    mockFindUnique.mockResolvedValue(
+      makeModel({ inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 })
+    );
+    const cap = new ApplyAuditChangesCapability();
+
+    await cap.execute(
+      cap.validate({
+        model_id: 'model-1',
+        changes: [
+          makeChange({ field: 'inputCostPerMillionTokens', currentValue: '3', proposedValue: 4 }),
+          makeChange({
+            field: 'outputCostPerMillionTokens',
+            currentValue: '15',
+            proposedValue: 20,
+          }),
+        ],
+      }),
+      context
+    );
+
+    expect(mockLogAdminAction.mock.calls[0][0].changes).toEqual({
+      inputCostPerMillionTokens: { from: 3, to: 4 },
+      outputCostPerMillionTokens: { from: 15, to: 20 },
+    });
+  });
+
+  it('logs an embed visitor as no user, so the audit row is not lost to its foreign key', async () => {
+    mockFindUnique.mockResolvedValue(makeModel());
+    const cap = new ApplyAuditChangesCapability();
+
+    await cap.execute(cap.validate({ model_id: 'model-1', changes: [makeChange()] }), {
+      ...context,
+      userId: 'embed_visitor-1',
+    });
+
+    expect(mockLogAdminAction.mock.calls[0][0].userId).toBeNull();
+  });
+
   it('leaves a change skipped for drift out of the row', async () => {
     // The row moved on: costEfficiency is no longer what the audit saw.
     mockFindUnique.mockResolvedValue(makeModel({ costEfficiency: 'none' }));

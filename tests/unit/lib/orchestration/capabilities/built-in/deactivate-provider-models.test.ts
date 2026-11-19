@@ -587,6 +587,71 @@ describe('DeactivateProviderModelsCapability — vendor retirement (§136 t-1064
     expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('replacementId');
   });
 
+  it('turns a failed successor lookup into a note, and the rest of the batch still applies', async () => {
+    const OTHER = { ...RETIRING, id: 'model-9', name: 'GPT-3.5' };
+    mockFindUnique.mockImplementation(((args: {
+      where: { id?: string; providerSlug_modelId?: unknown };
+    }) => {
+      if (args.where.providerSlug_modelId) return Promise.reject(new Error('connection reset'));
+      return Promise.resolve(args.where.id === 'model-9' ? OTHER : RETIRING);
+    }) as never);
+    const cap = new DeactivateProviderModelsCapability();
+
+    const result = await cap.execute(
+      cap.validate({
+        deactivateModels: [
+          { modelId: 'model-1', reason: 'EOL', retiresAt: FUTURE_DAY, replacedBy: 'gpt-5' },
+          { modelId: 'model-9', reason: 'EOL' },
+        ],
+      }),
+      context
+    );
+
+    expect(result.data?.models.map((m) => m.status)).toEqual(['retiring', 'deactivated']);
+    expect(result.data?.models[0].replacementNote).toBe(
+      'Successor not recorded: the lookup of "gpt-5" failed'
+    );
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a successor the same batch is retiring', async () => {
+    const B = { ...RETIRING, id: 'model-2', name: 'GPT-5' };
+    mockFindUnique.mockImplementation(((args: {
+      where: { id?: string; providerSlug_modelId?: unknown };
+    }) => {
+      if (args.where.providerSlug_modelId) return Promise.resolve(SUCCESSOR);
+      return Promise.resolve(args.where.id === 'model-2' ? B : RETIRING);
+    }) as never);
+    const cap = new DeactivateProviderModelsCapability();
+
+    const result = await cap.execute(
+      cap.validate({
+        deactivateModels: [
+          { modelId: 'model-1', reason: 'EOL', retiresAt: FUTURE_DAY, replacedBy: 'gpt-5' },
+          { modelId: 'model-2', reason: 'EOL too', retiresAt: '2099-06-01' },
+        ],
+      }),
+      context
+    );
+
+    expect(result.data?.models[0].replacementNote).toBe(
+      'Successor not recorded: "GPT-5" is itself being retired in this audit'
+    );
+    expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('replacementId');
+  });
+
+  it('logs an embed visitor as no user, so the audit row is not lost to its foreign key', async () => {
+    catalogue(RETIRING);
+    const cap = new DeactivateProviderModelsCapability();
+
+    await cap.execute(cap.validate({ deactivateModels: [{ modelId: 'model-1', reason: 'EOL' }] }), {
+      ...context,
+      userId: 'embed_visitor-1',
+    });
+
+    expect(mockLogAdminAction.mock.calls[0][0].userId).toBeNull();
+  });
+
   it('writes no audit row when the update fails', async () => {
     catalogue(RETIRING);
     mockUpdate.mockRejectedValueOnce(new Error('db down'));

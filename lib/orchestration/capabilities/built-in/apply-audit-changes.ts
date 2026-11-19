@@ -29,6 +29,7 @@ import {
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { isEmbedUserId } from '@/lib/embed/auth';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -374,7 +375,9 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
       invalidateModelCache();
 
       logAdminAction({
-        userId: context.userId,
+        // An embed visitor is not a User row; its id would fail the audit
+        // row's foreign key and the row would be lost.
+        userId: isEmbedUserId(context.userId) ? null : context.userId,
         action: 'provider_model.update',
         entityType: 'provider_model',
         entityId: modelId,
@@ -514,7 +517,12 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
         case 'applied':
           return {
             field: change.field,
-            previousValue: change.currentValue,
+            // Read the way the drift check read it: a model may write a
+            // numeric currentValue as "3", and the check only passed because
+            // it equals the row's number. Logged raw, a string under a
+            // key/token name is redacted, which hid the very price change the
+            // audit row records (§136 t-1064).
+            previousValue: coerceNumeric(change.field, change.currentValue),
             newValue: value,
             status: 'applied',
           };
