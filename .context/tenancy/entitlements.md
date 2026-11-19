@@ -12,30 +12,33 @@ needs to know. When billing arrives it becomes a second writer of the same
 slice, and nothing that reads a switch changes.
 
 This page covers switches (t-1033), requiring one on a page, route or menu
-item (t-1034), and **meters**: counting what an org has and limiting it
+item (t-1034) and how a surface looks to an org without it (t-1053), and
+**meters**: counting what an org has and limiting it
 (t-1035, [Meters and limits](#meters-and-limits)).
 
 ## Quick Reference
 
-| Need                             | Where                                                                                                       |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Register your switches           | `initAppEntitlements()` in `lib/app/entitlements.ts` → `registerEntitlementSwitch()`                        |
-| Does this org have a switch?     | `orgHasSwitch(orgId, key)`, `lib/tenancy/entitlements.ts`                                                   |
-| Every switch an org has          | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, atDefault, unregistered }`                        |
-| Resolve a row you already hold   | `resolveOrgSwitches(readOrgEntitlements(org.settings))`                                                     |
-| What is stored                   | `Org.settings.entitlements` = `{ on: string[], off: string[] }`, `lib/tenancy/org-settings.ts`              |
-| Set switches from your own code  | `setOrgSwitches(orgId, { on, off })`, or `null` for every switch back to its default                        |
-| Who may write it                 | `mayChangeOrgCommercialSettings()`, `lib/tenancy/shared-settings.ts`, after an admin check                  |
-| Read / set over HTTP             | `GET` / `PATCH` / `DELETE /api/v1/admin/orgs/[id]/entitlements` (platform admins; set from the install org) |
-| Set it by hand                   | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered                     |
-| Did the app's registration fail? | `entitlementSwitchesFailed()`; the org page says so                                                         |
-| The audit row                    | `org.entitlements.update`, with what it replaced                                                            |
-| Require one on a surface         | `requires` beside `tier`: page, `withAdminAuth`, nav item; see [Requiring a switch](#requiring-a-switch)    |
-| Key format                       | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`                       |
-| Register a meter                 | `registerMeter({ key, label, period, count })` in the same `initAppEntitlements()`                          |
-| May this org add one more?       | `checkMeterQuota(orgId, key)`, `lib/tenancy/meters.ts` → `{ allowed, used, limit, label, window }`          |
-| Set limits from your own code    | `writeOrgMeterLimits(orgId, { key: n \| null })`, `lib/tenancy/org-settings.ts`                             |
-| Read / set limits over HTTP      | `GET` / `PATCH /api/v1/admin/orgs/[id]/meters`; the **Limits** section on `/admin/orgs/[id]`                |
+| Need                               | Where                                                                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Register your switches             | `initAppEntitlements()` in `lib/app/entitlements.ts` → `registerEntitlementSwitch()`                                                          |
+| Does this org have a switch?       | `orgHasSwitch(orgId, key)`, `lib/tenancy/entitlements.ts`                                                                                     |
+| Every switch an org has            | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, atDefault, unregistered }`                                                          |
+| Resolve a row you already hold     | `resolveOrgSwitches(readOrgEntitlements(org.settings))`                                                                                       |
+| What is stored                     | `Org.settings.entitlements` = `{ on: string[], off: string[] }`, `lib/tenancy/org-settings.ts`                                                |
+| Set switches from your own code    | `setOrgSwitches(orgId, { on, off })`, or `null` for every switch back to its default                                                          |
+| Who may write it                   | `mayChangeOrgCommercialSettings()`, `lib/tenancy/shared-settings.ts`, after an admin check                                                    |
+| Read / set over HTTP               | `GET` / `PATCH` / `DELETE /api/v1/admin/orgs/[id]/entitlements` (platform admins; set from the install org)                                   |
+| Set it by hand                     | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered                                                       |
+| Did the app's registration fail?   | `entitlementSwitchesFailed()`; the org page says so                                                                                           |
+| The audit row                      | `org.entitlements.update`, with what it replaced                                                                                              |
+| Require one on a surface           | `requires` beside `tier`: page, `withAdminAuth`, nav item; see [Requiring a switch](#requiring-a-switch)                                      |
+| Let an org's admins set one        | `setBy: 'org'` on the switch; `/admin/org-options`, `PATCH /api/v1/orgs/[id]/entitlements`; see [Switches an org sets](#switches-an-org-sets) |
+| Show it locked, say your own words | `whenLacking: 'lock'`, `refusalMessage`, `upgradeUrl` on the switch; see [Hidden or locked](#hidden-or-locked)                                |
+| Key format                         | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`                                                         |
+| Register a meter                   | `registerMeter({ key, label, period, count })` in the same `initAppEntitlements()`                                                            |
+| May this org add one more?         | `checkMeterQuota(orgId, key)`, `lib/tenancy/meters.ts` → `{ allowed, used, limit, label, window }`                                            |
+| Set limits from your own code      | `writeOrgMeterLimits(orgId, { key: n \| null })`, `lib/tenancy/org-settings.ts`                                                               |
+| Read / set limits over HTTP        | `GET` / `PATCH /api/v1/admin/orgs/[id]/meters`; the **Limits** section on `/admin/orgs/[id]`                                                  |
 
 ### Anti-patterns
 
@@ -55,12 +58,18 @@ item (t-1034), and **meters**: counting what an org has and limiting it
   `setOrgSwitches()`, which keeps them.
 - **Keeping your own copy.** A `packages` key of your own beside this one is
   two answers to one question, and billing will only ever write this one.
-- **Letting an org set its own.** A switch is what an org bought. The write
-  route is platform-only and, at `multi`, install-org only. A fork writing
-  switches from a surface of its own owns the same two refusals: a
-  platform-admin guard, and `mayChangeOrgCommercialSettings()` from
+- **Letting an org set what it bought.** A switch is what an org bought
+  unless the app registers it `setBy: 'org'`
+  ([Switches an org sets](#switches-an-org-sets)). The platform write route
+  is platform-only and, at `multi`, install-org only. A fork writing
+  platform-set switches from a surface of its own owns the same two refusals:
+  a platform-admin guard, and `mayChangeOrgCommercialSettings()` from
   `lib/tenancy/shared-settings.ts` (`setOrgSwitches` decides nothing about
   who may).
+- **Marking a bought switch `setBy: 'org'`** to save building a billing
+  writer. Every org admin can then give their org that area for nothing.
+  `'org'` is for what is not sold: a beta opt-in, a free add-on, a feature an
+  org may turn off for its own users.
 - **Renaming a key orgs already hold.** The key is what is stored. Register a
   new key and leave the old one unregistered: it reads as off, and a save from
   the admin keeps it.
@@ -174,6 +183,94 @@ How the three places stay in step, and what the roster test checks, is in
 
 Use the same key on the page, its routes and its item. The item and the page
 are what the reader sees; the routes are the boundary.
+
+### Hidden or locked
+
+By default a surface whose switch the org lacks is hidden: the item is not in
+the sidebar, the page sends the viewer to their landing, and a route's 403
+says the sentence above. An app that would rather show what an org could have
+says so on the switch (t-1053):
+
+```ts
+registerEntitlementSwitch({
+  key: 'lead_gen',
+  label: 'Lead generation',
+  description: 'Funnels, leads and lead briefs.',
+  whenLacking: 'lock', // show it locked rather than hide it
+  refusalMessage: 'Lead generation comes with the Growth plan.',
+  upgradeUrl: '/pricing', // or https://…
+});
+```
+
+- **`whenLacking: 'lock'`**: the item is shown with a lock. Choosing it opens
+  the message and a **How to get Lead generation** link, not the page. The
+  page shows **Lead generation is not available** with the same message and
+  link in place of its content. Nothing opens: the page's content is not shown
+  and its routes refuse, as before. The lock is the reader's, like
+  `AdminTierGate` on in-app navigation, not the security boundary: the page
+  still renders on the server, so it must read its rows through its routes
+  (`serverFetch`), as every admin page does, never straight from the database.
+- **`refusalMessage`**: replaces the platform's sentence on the 403, the
+  locked item and the locked page. At most 300 characters
+  (`MAX_SWITCH_REFUSAL_MESSAGE`).
+- **`upgradeUrl`**: a path on this site starting `/`, or an `https://`
+  address. The 403 carries it as `details.upgradeUrl`
+  (`switchUpgradeUrl(key)` reads it), and the locked item and page link to it.
+
+Each is optional and works without the others: a switch that hides can still
+give a refusal message and an upgrade link on its 403. A value that is not one
+of these (a `whenLacking` of `'show'`, a `javascript:` or `//` link, an empty
+message) throws at registration, which rolls back the init like any other.
+
+A surface is locked only when the viewer's tier admits them and their org's
+switches were read and the switch is off. One the viewer's tier does not admit
+is hidden as before, and so is one whose org's switches could not be read: the
+route says it could not check, and nobody is told to buy what their org may
+have. A policy that also refuses that tier-and-switch for a reason of its own
+(a role, say) cannot be told apart from the missing switch, so the surface is
+shown locked while the org lacks it; once the org has it, the policy's own
+refusal applies. A platform admin sees every surface unlocked.
+
+## Switches an org sets
+
+Most switches are bought, so platform staff set them. A switch that is not
+bought can be left to the org (t-1054):
+
+```ts
+registerEntitlementSwitch({
+  key: 'beta_editor',
+  label: 'New editor (beta)',
+  description: 'Try the new editor before it is the default.',
+  setBy: 'org', // the org's own admins may set it; the default is 'platform'
+});
+```
+
+- **Who.** By default the org's OWNER and ADMIN, for the org they are acting
+  in. The route asks the authorization policy about the resource
+  `{ kind: 'org.switches', id: orgId, orgId }` (`ORG_SWITCHES_RESOURCE_KIND`),
+  so a fork's policy can narrow it, to OWNERs say, or to a named tier. It
+  also needs a browser session and the caller acting in that org. A support
+  session can read them but not change them.
+- **Where.** `/admin/org-options` (**Options** in the sidebar, shown only when
+  the app registers at least one `'org'` switch) over
+  `GET` / `PATCH /api/v1/orgs/[id]/entitlements`. The page lists only the
+  `'org'` switches. `PATCH` takes `{ on, off }` like the platform route and
+  sets only what it names.
+- **What it refuses.** A switch registered without `setBy` (or `'platform'`)
+  is a 403 with `details: { reason: 'switch_set_by_platform', switches }`, and
+  nothing is written: this route never sets what an org buys. An unregistered
+  key is a 400. With no `'org'` switch registered a write is a 409. Over a
+  stored slice that could not be read it is a 409 with `details.reason:
+'switches_unreadable'`, writing nothing (`setOrgSwitches(…, { refuseUnreadable:
+true })`): the platform's write would store every switch it does not name as
+  off, which from here would close what the org bought.
+- **The record.** A write that changes something is audited as
+  `org.entitlements.update`, as the platform's are, with `metadata.setBy:
+'org'` and what it named.
+
+Platform staff still set an `'org'` switch from `/admin/orgs/[id]` as any
+other (marked **organisation can change** there), and their write and the
+org's are the same slice, so the later one wins on the switch both name.
 
 ## What is stored, and how it fails
 

@@ -24,6 +24,8 @@ import {
   adminPageTier,
   adminPageTierOf,
   mostSpecificAdminPagePattern,
+  lockedAdminPageOf,
+  lockedSwitchFor,
   reachesAdminPage,
   registerAdminTier,
   registeredAppNamedTierAdminPages,
@@ -615,5 +617,40 @@ describe('switch requirements (t-1034)', () => {
       expect(reachesAdminPage(unmet, '/admin/leads', 'org')).toBe(true);
       expect(reachesAdminPage('platform', '/admin/leads', 'org', 'lead_gen')).toBe(true);
     });
+  });
+});
+
+describe('lockedSwitchFor / lockedAdminPageOf (§135 t-1053)', () => {
+  const LOCK = {
+    requires: 'lead_gen',
+    label: 'Lead generation',
+    message: 'Lead generation comes with the Growth plan.',
+    upgradeUrl: null,
+  };
+  const lacks = { tiers: ['org'], landing: null, switchesMet: [] } as const;
+  const has = {
+    tiers: ['org'],
+    landing: null,
+    switchesMet: [{ tier: 'org', requires: 'lead_gen' }],
+  } as const;
+
+  it('locks a surface whose only missing piece is a locked switch', () => {
+    expect(lockedSwitchFor(lacks, 'org', 'lead_gen', [LOCK])).toBe(LOCK);
+    expect(lockedAdminPageOf(lacks, '/admin/leads', 'org', 'lead_gen', [LOCK])).toBe(LOCK);
+  });
+
+  it('locks nothing by default: no locked switch is handed down', () => {
+    expect(lockedAdminPageOf(lacks, '/admin/leads', 'org', 'lead_gen', [])).toBeNull();
+  });
+
+  it('locks nothing that opens, nor for a platform reach', () => {
+    expect(lockedAdminPageOf(has, '/admin/leads', 'org', 'lead_gen', [LOCK])).toBeNull();
+    expect(lockedAdminPageOf('platform', '/admin/leads', 'org', 'lead_gen', [LOCK])).toBeNull();
+  });
+
+  it('locks nothing closed for another reason: a tier not held, a platform page, no requirement', () => {
+    expect(lockedSwitchFor({ tiers: [], landing: null }, 'org', 'lead_gen', [LOCK])).toBeNull();
+    expect(lockedAdminPageOf(lacks, '/admin/users', null, null, [LOCK])).toBeNull();
+    expect(lockedSwitchFor(lacks, 'org', 'other', [LOCK])).toBeNull();
   });
 });

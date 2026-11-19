@@ -264,6 +264,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   // page a pattern names on the list by name.
   '/admin/orchestration/executions/live',
   '/admin/members',
+  '/admin/org-options',
   '/admin/provider-keys',
   '/admin/support-access',
   '/admin/waitlist',
@@ -283,6 +284,7 @@ export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
   'logs',
   'members',
   'orchestration',
+  'org-options',
   'orgs',
   'overview',
   'provider-keys',
@@ -1110,6 +1112,57 @@ export function reachesTier(
   return (reach.switchesMet ?? []).some(
     (grant) => grant.tier === surface && grant.requires === requires
   );
+}
+
+/**
+ * A switch the viewer's org lacks whose app asked for surfaces requiring it
+ * to be shown locked rather than hidden (`whenLacking: 'lock'`, §135
+ * t-1053), as the layout read it and handed it down. Plain data, like
+ * {@link AdminReach}.
+ */
+export interface LockedAdminSwitch {
+  readonly requires: string;
+  /** The switch's label, to name what is closed. */
+  readonly label: string;
+  /** What the refusal says: the app's `refusalMessage`, or the platform's sentence. */
+  readonly message: string;
+  /** Where the org can get it, or `null` when the app gave none. */
+  readonly upgradeUrl: string | null;
+}
+
+/**
+ * The locked switch that closes a surface of this tier, requiring this switch,
+ * to this reach (t-1053): set only when the reach takes in the tier and the
+ * switch is the one thing missing, and the switch is in `locked`. `null` when
+ * the surface opens, when it is closed for another reason (it is then hidden
+ * as before), and when the switch is one the app hides.
+ */
+export function lockedSwitchFor(
+  reach: AdminReach,
+  surface: DeclaredAdminTier | null | undefined,
+  requires: string | null | undefined,
+  locked: readonly LockedAdminSwitch[]
+): LockedAdminSwitch | null {
+  if (requires === null || requires === undefined || locked.length === 0) return null;
+  if (reachesTier(reach, surface, requires) || !reachesTier(reach, surface)) return null;
+  return locked.find((l) => l.requires === requires) ?? null;
+}
+
+/**
+ * The locked switch that closes the page at this pathname to this reach, or
+ * `null`: the layout and the gate show such a page locked, with what the app
+ * said, rather than send the viewer to their landing. Judged with
+ * {@link reachesAdminPage}'s inputs, so a page that opens is never locked.
+ */
+export function lockedAdminPageOf(
+  reach: AdminReach,
+  pathname: string | null | undefined,
+  pageTier: DeclaredAdminTier | null,
+  pageRequires: string | null,
+  locked: readonly LockedAdminSwitch[]
+): LockedAdminSwitch | null {
+  if (reachesAdminPage(reach, pathname, pageTier, pageRequires)) return null;
+  return lockedSwitchFor(reach, pageTier, pageRequires, locked);
 }
 
 /** The console's index, which sends each viewer to their landing and shows nothing itself. */

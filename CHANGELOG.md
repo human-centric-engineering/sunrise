@@ -125,6 +125,45 @@ release process.
   `mockResolvedValueOnce` should answer by slug instead: confidential routing
   asks `isLocalProvider` first.
 
+- **Switches an org's own admins may set (§135 t-1054).**
+  `registerEntitlementSwitch()` takes `setBy: 'platform' | 'org'`, defaulting
+  to `'platform'`, so every switch registered today stays platform-only. An
+  `'org'` switch (a beta opt-in, a free add-on) can also be set by the org's
+  own admins for their own org, on a new org-tier page, **Options**
+  (`/admin/org-options`, shown only when such a switch is registered), over
+  new routes `GET` / `PATCH /api/v1/orgs/[id]/entitlements`. Who may is the
+  authorization policy's answer about a new resource kind, `org.switches`
+  (`ORG_SWITCHES_RESOURCE_KIND`): by default the org's OWNER and ADMIN while
+  acting in it, so a fork's policy can narrow it. The route needs a browser
+  session, refuses writes from a support session, refuses any platform-set
+  key with a 403 (`details.reason: 'switch_set_by_platform'`) and writes
+  nothing over a stored slice it cannot read (409, `switches_unreadable`). A
+  write is audited as `org.entitlements.update` with `metadata.setBy: 'org'`.
+  New: `orgSettableSwitches()`, `setOrgSwitches()`'s optional fourth argument
+  `{ refuseUnreadable }` and `OrgSwitchesUnreadableError`, `API.ORGS.entitlements()`,
+  and an `orgOptionsEnabled` prop on `AdminSidebar`. The platform route's
+  switches now carry `setBy`, and `/admin/orgs/[id]` marks the org-set ones.
+  **A new core admin section, `org-options`**, joins `CORE_ADMIN_SECTIONS` and
+  `ORG_TIER_ADMIN_PAGES`: a fork with its own page under `/admin/org-options`
+  must move it.
+- **Show a surface an org lacks locked, with your own words (§135
+  t-1053).** `registerEntitlementSwitch()` takes three new optional fields.
+  `whenLacking: 'lock'` shows a nav item whose switch the org lacks with a
+  lock (opening the app's message and an upgrade link, not the page) and shows
+  its page locked in place of its content, rather than hiding the item and
+  redirecting; nothing opens, and the routes still refuse. `refusalMessage`
+  replaces the platform's sentence on the 403 and on the locked item and page.
+  `upgradeUrl` (a site path or an `https://` address, checked at
+  registration) is carried on the 403 as `details.upgradeUrl`. All three are
+  optional and the defaults are as t-1034 shipped: hidden, the platform's
+  sentence, no link. **`RegisteredEntitlementSwitch` is now its own interface**
+  rather than `Readonly<Required<EntitlementSwitch>>`, with `refusalMessage`
+  and `upgradeUrl` as `string | null`; code reading the four earlier fields
+  is unaffected. New: `switchUpgradeUrl()`, `MAX_SWITCH_REFUSAL_MESSAGE`,
+  `LockedAdminSwitch`, `lockedSwitchFor()`, `lockedAdminPageOf()`,
+  `requestLockedSwitches()`, and a `lockedSwitches` prop on `AdminSidebar` and
+  `AdminTierGate`. A switch is locked only when the org's switches were read
+  and it is off; a failed read keeps it hidden.
 - **Meters and limits: how much an org may have (§135 t-1035).** An app
   registers a meter in the same `initAppEntitlements()` seam with
   `registerMeter({ key, label, description, period, count })`

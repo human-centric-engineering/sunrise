@@ -88,6 +88,8 @@ function describe(orgId: string, read: OrgEntitlementsRead, mayChange: boolean) 
       label: s.label,
       description: s.description,
       whenNothingSet: s.whenNothingSet,
+      // 'org' when the org's own admins may set it too (t-1054).
+      setBy: s.setBy,
       on: on.has(s.key),
       atDefault: atDefault.has(s.key),
     })),
