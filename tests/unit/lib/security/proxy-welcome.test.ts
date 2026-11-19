@@ -90,16 +90,6 @@ describe('proxy — welcome redirect, welcome route set', () => {
     expect(mockWelcomeRedirectFor).toHaveBeenCalledWith(request, 'org_acme');
   });
 
-  it('turns a POST into a GET with 303, as the proxy’s other page redirects do', async () => {
-    mockWelcomeRedirectFor.mockResolvedValue('/welcome');
-
-    const response = await proxy(
-      createMockRequest('/dashboard', { cookies: SESSION_COOKIE, method: 'POST' })
-    );
-
-    expect(response.status).toBe(303);
-  });
-
   it('does not ask for a request with no session cookie', async () => {
     const response = await proxy(createMockRequest('/'));
 

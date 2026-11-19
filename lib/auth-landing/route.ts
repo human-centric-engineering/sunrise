@@ -111,7 +111,7 @@ export function isAuthRoutePath(pathname: string): boolean {
 /**
  * Fail loudly on a bad welcome route, for the landing route's reasons: it is
  * a redirect target. A welcome route on the landing route's own path would
- * redirect a member of an unfinished org to the page they were already
+ * redirect an owner of an unfinished org to the page they were already
  * redirected from, for as long as the org stays unfinished, so that throws too.
  * So does one on or under an auth route: the proxy sends a signed-in user from
  * there back to the landing route, which sends them to the welcome route again.
@@ -129,7 +129,7 @@ function resolveWelcomeRoute(): string | null {
   if (routePathname(normalized) === routePathname(AUTH_LANDING_ROUTE)) {
     throw new Error(
       `Invalid appWelcomeRoute in lib/app/welcome.ts: ${JSON.stringify(appWelcomeRoute)} is the ` +
-        'landing route itself, so a member of an unfinished org would be redirected to it forever. ' +
+        'landing route itself, so an owner of an unfinished org would be redirected to it forever. ' +
         'Give the welcome step its own page.'
     );
   }
@@ -137,7 +137,7 @@ function resolveWelcomeRoute(): string | null {
     throw new Error(
       `Invalid appWelcomeRoute in lib/app/welcome.ts: ${JSON.stringify(appWelcomeRoute)} is on an ` +
         `auth route (${AUTH_ROUTES.join(', ')}), which sends a signed-in user back to the landing ` +
-        'route, so a member of an unfinished org would loop between the two. ' +
+        'route, so an owner of an unfinished org would loop between the two. ' +
         'Give the welcome step a page outside the auth routes.'
     );
   }
@@ -146,7 +146,7 @@ function resolveWelcomeRoute(): string | null {
 }
 
 /**
- * Where a signed-in member of an org whose onboarding is unfinished lands
+ * Where a signed-in OWNER or ADMIN of an org whose onboarding is unfinished lands
  * instead of {@link AUTH_LANDING_ROUTE} (§134 t-1063), or `null` when the app
  * sets none and nobody is redirected. The proxy applies it; see
  * `lib/tenancy/onboarding.ts`.

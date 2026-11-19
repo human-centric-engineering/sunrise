@@ -382,8 +382,8 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
     requestHeaders.delete(TENANT_HEADER_NAME);
   }
 
-  // A member of an org whose onboarding is unfinished, reaching the landing
-  // route, goes to the app's welcome route instead (§134 t-1063). Every door
+  // An OWNER or ADMIN of an org whose onboarding is unfinished, reaching the
+  // landing route with a GET, goes to the app's welcome route instead (§134 t-1063). Every door
   // into the app (login, OAuth, signup, invitations, the brand link) lands on
   // that one route, so this is the one place that sees them all. With no
   // welcome route set in lib/app/welcome.ts nothing is read.

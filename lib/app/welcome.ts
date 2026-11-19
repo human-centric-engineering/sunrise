@@ -1,5 +1,6 @@
 /**
- * App welcome route — where a member of an org whose onboarding is unfinished
+ * App welcome route — where an OWNER or ADMIN of an org whose onboarding is
+ * unfinished
  * lands after sign-in.
  *
  * **Fork-owned scaffold** — Sunrise ships this `null` (= nobody is redirected)
@@ -34,5 +35,5 @@
  * Full guide: CUSTOMIZATION.md §4 · .context/tenancy/identity.md
  */
 
-/** Where a member of an unfinished org lands. `null` = nobody is redirected. */
+/** Where an OWNER or ADMIN of an unfinished org lands. `null` = nobody is redirected. */
 export const appWelcomeRoute: string | null = null;

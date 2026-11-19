@@ -78,10 +78,14 @@ function conflict(): Prisma.PrismaClientKnownRequestError {
   return new Prisma.PrismaClientKnownRequestError('clash', { code: 'P2034', clientVersion: 't' });
 }
 
-function requestFor(pathname: string): NextRequest {
+function requestFor(
+  pathname: string,
+  { method = 'GET', headers = {} }: { method?: string; headers?: Record<string, string> } = {}
+): NextRequest {
   return {
+    method,
     nextUrl: new URL(`http://localhost:3000${pathname}`),
-    headers: new Headers({ cookie: 'better-auth.session_token=x' }),
+    headers: new Headers({ cookie: 'better-auth.session_token=x', ...headers }),
   } as unknown as NextRequest;
 }
 
@@ -192,6 +196,11 @@ describe('markOrgOnboarded', () => {
 
     await expect(markOrgOnboarded(ORG, store.db)).rejects.toMatchObject({ code: 'P2034' });
     expect(store.$transaction).toHaveBeenCalledTimes(3);
+    expect(mockLogger.debug).toHaveBeenCalledTimes(2);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Org onboarding mark clashed with another settings write on every attempt',
+      { orgId: ORG, attempts: 3 }
+    );
   });
 
   it('throws any other failure at once', async () => {
@@ -238,6 +247,38 @@ describe('welcomeRedirectFor (welcome route set)', () => {
     memberOf({ awaitingOnboarding: true }, 'OWNER', 'SUSPENDED');
 
     expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
+  });
+
+  it('leaves a non-GET and a server action alone, reading nothing', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard', { method: 'POST' }), null)).toBeNull();
+    expect(
+      await welcomeRedirectFor(
+        requestFor('/dashboard', { headers: { 'next-action': 'abc' } }),
+        null
+      )
+    ).toBeNull();
+    expect(mockGetSession).not.toHaveBeenCalled();
+  });
+
+  it('answers a HEAD as it does a GET', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard', { method: 'HEAD' }), null)).toBe(
+      '/welcome'
+    );
+  });
+
+  it('does not copy Next’s _rsc key to the welcome route', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard?_rsc=abc&joined=acme'), null)).toBe(
+      '/welcome?joined=acme'
+    );
   });
 
   it('carries the landing request’s query string to the welcome route', async () => {

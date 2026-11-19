@@ -18,7 +18,7 @@ release process.
 
 ### Added
 
-- **An app can send a new org's members to a welcome step until it says
+- **An app can send a new org's owners and admins to a welcome step until it says
   onboarding is done (§134 t-1063).** Every org created through
   `lib/tenancy/lifecycle.ts` (staff, an app's `createOrg()`, a self-serve
   signup) is now inserted with `Org.settings.awaitingOnboarding: true`

@@ -433,7 +433,11 @@ acts for, and that org is `ACTIVE` and unfinished. A plain MEMBER is not sent:
 they could not finish the step, and would be bounced off the landing route on
 every visit until the owner did. A suspended org is left to the landing
 route's own guard. The landing request's query string is carried across to
-the welcome route (a key the welcome route already sets keeps its value). Every door into the app (login, OAuth, signup,
+the welcome route (a key the welcome route already sets keeps its value). Only a
+GET or HEAD page load is redirected, never a server action posted from the
+landing page. Next's prefetch of the landing route (the header brand link) is
+answered too, so while a welcome route is set each prefetch costs a session
+and membership read in the proxy. Every door into the app (login, OAuth, signup,
 invitation acceptance, verification, the header brand link) lands on the
 landing route, which is why the check sits there. The org is the guard's
 choice: the app's tenant resolver, else the session's active org, else the

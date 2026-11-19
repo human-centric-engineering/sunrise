@@ -91,7 +91,18 @@ export async function markOrgOnboarded(
       if (result.written) logger.info('Org onboarding marked finished', { orgId });
       return result.written ? 'marked' : 'already-finished';
     } catch (error) {
-      if (attempt >= MARK_ATTEMPTS || !isSettingsWriteConflict(error)) throw error;
+      if (!isSettingsWriteConflict(error)) throw error;
+      if (attempt >= MARK_ATTEMPTS) {
+        logger.warn('Org onboarding mark clashed with another settings write on every attempt', {
+          orgId,
+          attempts: attempt,
+        });
+        throw error;
+      }
+      logger.debug('Org onboarding mark clashed with another settings write; trying again', {
+        orgId,
+        attempt,
+      });
     }
     await new Promise((resolve) => setTimeout(resolve, Math.random() * MARK_RETRY_JITTER_MS));
   }
@@ -113,7 +124,10 @@ export async function markOrgOnboarded(
  * MEMBER invited before the owner finished could not complete the step, and
  * would be bounced off the landing route on every visit until the owner did.
  * A suspended org is not redirected either; the landing route's own guard
- * refuses it there, as it would without a welcome route. A read
+ * refuses it there, as it would without a welcome route. Only a GET or HEAD
+ * page load is redirected, never a server action. Next's prefetch of the
+ * landing route (the header brand link) is answered too, so it costs a
+ * session and membership read per prefetch while a welcome route is set. A read
  * that fails lets the request through to the landing route, logged at
  * `warn`: a welcome step is not worth an outage.
  *
@@ -125,6 +139,10 @@ export async function welcomeRedirectFor(
   headerOrgId: string | null
 ): Promise<string | null> {
   if (AUTH_WELCOME_ROUTE === null) return null;
+  // A page load only. A server action posted from the landing page (or any
+  // other non-GET) answered with a redirect would fail in the client.
+  if (request.method !== 'GET' && request.method !== 'HEAD') return null;
+  if (request.headers.has('next-action')) return null;
   if (routePathname(request.nextUrl.pathname) !== landingPathname) return null;
 
   try {
@@ -155,16 +173,21 @@ export async function welcomeRedirectFor(
 
 const landingPathname = routePathname(AUTH_LANDING_ROUTE);
 
+/** The query key Next adds to RSC and prefetch requests to bust caches. */
+const NEXT_RSC_QUERY_KEY = '_rsc';
+
 /**
  * The welcome route with the landing request's query string added, so a
  * parameter a door into the app passed (`?joined=acme`) survives the hop. A
- * key the welcome route already sets keeps its own value.
+ * key the welcome route already sets keeps its own value. Next's own `_rsc`
+ * cache-busting key belongs to the landing request and is not copied.
  */
 function withQuery(route: string, search: string): string {
   if (search === '' || search === '?') return route;
   const url = new URL(route, 'http://localhost');
   for (const [key, value] of new URLSearchParams(search)) {
-    if (!url.searchParams.has(key)) url.searchParams.append(key, value);
+    if (key === NEXT_RSC_QUERY_KEY || url.searchParams.has(key)) continue;
+    url.searchParams.append(key, value);
   }
   return `${url.pathname}${url.search}${url.hash}`;
 }
