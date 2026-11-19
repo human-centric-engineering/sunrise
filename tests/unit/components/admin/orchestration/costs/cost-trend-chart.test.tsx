@@ -360,6 +360,15 @@ describe('CostTrendChart — spend on orgs’ own keys (§137 t-1058)', () => {
     );
   });
 
+  it('shows "no spend" when the platform part is only float residue', () => {
+    // Summed apart, all-own-key spend can subtract to -1e-17, not 0.
+    render(
+      <CostTrendChart trend={[withOwnKey(today, 0.1 + 0.2, 0.3)]} perModel={[]} models={[]} />
+    );
+
+    expect(screen.getByText("No spend on the platform's keys in this period.")).toBeInTheDocument();
+  });
+
   it('does not say "no spend" when all of it was on own keys', () => {
     render(<CostTrendChart trend={[withOwnKey(today, 50, 50)]} perModel={[]} models={[]} />);
 

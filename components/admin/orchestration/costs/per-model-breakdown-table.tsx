@@ -28,6 +28,7 @@ import { Tip } from '@/components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
+import { platformSpend } from '@/components/admin/orchestration/costs/platform-spend';
 import { buildModelIndex, lookupModel } from '@/components/admin/orchestration/costs/model-index';
 import type { CostSummaryModelRow } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -58,7 +59,7 @@ export function PerModelBreakdownTable({ rows, models }: PerModelBreakdownTableP
           ...row,
           info,
           isLocal,
-          displaySpend: isLocal ? 0 : row.monthSpend - row.ownKeyMonthSpend,
+          displaySpend: isLocal ? 0 : platformSpend(row.monthSpend, row.ownKeyMonthSpend),
           ownKeySpend: isLocal ? 0 : row.ownKeyMonthSpend,
         };
       })

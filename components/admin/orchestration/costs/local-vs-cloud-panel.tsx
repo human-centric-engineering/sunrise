@@ -20,6 +20,7 @@ import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recha
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
+import { platformSpend } from '@/components/admin/orchestration/costs/platform-spend';
 import { buildModelIndex, lookupModel } from '@/components/admin/orchestration/costs/model-index';
 import type { CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -55,7 +56,7 @@ export function LocalVsCloudPanel({ summary, models }: LocalVsCloudPanelProps) {
         // Savings value tracked elsewhere; actual local spend is $0.
         local += 0;
       } else {
-        cloud += row.monthSpend - row.ownKeyMonthSpend;
+        cloud += platformSpend(row.monthSpend, row.ownKeyMonthSpend);
       }
     }
     return { localSpend: local, cloudSpend: cloud };

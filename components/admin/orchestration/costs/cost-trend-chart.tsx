@@ -32,6 +32,7 @@ import {
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
+import { platformSpend } from '@/components/admin/orchestration/costs/platform-spend';
 import { formatUsd } from '@/lib/utils/format-currency';
 import type { CostBreakdownRow, CostSummaryTrendPoint } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -116,12 +117,12 @@ function buildPlotRows(
   for (const row of perModel ?? []) {
     const tier = tierByModel.get(row.key);
     if (!tier) continue;
-    tierTotals[tier] += row.totalCostUsd - row.ownKeyCostUsd;
+    tierTotals[tier] += platformSpend(row.totalCostUsd, row.ownKeyCostUsd);
   }
   const tierSum = tierTotals.budget + tierTotals.mid + tierTotals.frontier + tierTotals.local;
 
   return trendList.map((pt) => {
-    const total = pt.totalCostUsd - pt.ownKeyCostUsd;
+    const total = platformSpend(pt.totalCostUsd, pt.ownKeyCostUsd);
     if (tierSum > 0 && total > 0) {
       return {
         date: pt.date,
