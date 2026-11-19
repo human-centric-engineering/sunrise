@@ -66,12 +66,13 @@ const LLM_STEP_TYPES = new Set([
 /**
  * Step types whose `modelOverride` chooses a provider, for the org-approval
  * check (§120 t-743): the above plus `supervisor`, which passes its override
- * to `runLlmCall` too. Kept apart so adding it here does not also subject
- * supervisor steps to the existence checks above, at execution, unasked.
- * (`chat_turn` takes an override too, but only of the model on the agent's
- * own provider binding, so it names no provider.)
+ * to `runLlmCall` too, and `chat_turn`. Kept apart so adding them here does
+ * not also subject them to the existence checks above, at execution, unasked.
+ * A `chat_turn` override by bare id replaces the model on the agent's own
+ * binding and names no provider; one naming its provider (§136 t-1068) runs
+ * there, so only those are collected for it.
  */
-const PROVIDER_CHOOSING_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'supervisor']);
+const PROVIDER_CHOOSING_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'supervisor', 'chat_turn']);
 
 // ── Org approval ───────────────────────────────────────────────────────────
 
@@ -87,9 +88,9 @@ function collectModelOverrides(
   for (const step of def.steps) {
     if (!types.has(step.type)) continue;
     const override = step.config?.modelOverride;
-    if (typeof override === 'string' && override.length > 0) {
-      modelSteps.set(override, [...(modelSteps.get(override) ?? []), step.id]);
-    }
+    if (typeof override !== 'string' || override.length === 0) continue;
+    if (step.type === 'chat_turn' && parseModelPin(override)?.providerSlug == null) continue;
+    modelSteps.set(override, [...(modelSteps.get(override) ?? []), step.id]);
   }
   return modelSteps;
 }

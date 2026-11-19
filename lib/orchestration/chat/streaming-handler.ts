@@ -1318,6 +1318,14 @@ export class StreamingChatHandler {
             // A moved turn's summary holds what moved it: made on the model
             // for confidential messages, not the routing default (§130 t-1038).
             ...(route.kind === 'move' ? { model: resolvedModel } : {}),
+            // A conversation holding confidential content is summarised on the
+            // provider routing judged for it, never on one a routing default
+            // names elsewhere (§136 t-1068): stickiness is routing's, not the
+            // stage's.
+            ...(route.kind !== 'move' &&
+            (route.found.length > 0 || readFlaggedGroups(conversation.metadata).length > 0)
+              ? { confidential: { model: resolvedModel } }
+              : {}),
             // The roster table in `.context/orchestration/capabilities.md`
             // names this boundary as carrying the caller's tags. It has to
             // actually carry them, or the doc is asserting something false

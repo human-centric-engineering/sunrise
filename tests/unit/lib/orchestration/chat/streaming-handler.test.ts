@@ -5085,6 +5085,56 @@ describe('rolling conversation summarization', () => {
     );
   }
 
+  /** Summarise a 52-message conversation whose metadata is `metadata`; the summariser's options. */
+  async function summariserOptions(
+    metadata: unknown
+  ): Promise<Record<string, unknown> | undefined> {
+    const history = makeHistoryMessages(HISTORY_SIZE);
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [...history].reverse()
+    );
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConversation({ id: 'conv-summ', metadata })
+    );
+    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      summary: 'summary-text',
+      fellBack: false,
+      model: 'claude-haiku-4-5',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0,
+    });
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: mockProvider([
+        [
+          { type: 'text', content: 'Answer.' },
+          { type: 'done', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+      ]),
+      usedSlug: 'anthropic',
+    });
+    await collect(streamChat({ ...baseRequest, conversationId: 'conv-summ' }));
+    const call = (summarizeMessages as ReturnType<typeof vi.fn>).mock.calls[0] as
+      [unknown, string, string[], Record<string, unknown> | undefined] | undefined;
+    return call?.[3];
+  }
+
+  it('keeps a conversation flagged confidential on its own provider and model for its summary (§136 t-1068)', async () => {
+    // Flagged on an earlier turn: routing keeps it where it judged it, so a
+    // routing default naming another provider must not take the summary there.
+    const options = await summariserOptions({ confidentialFlagged: ['personal'] });
+
+    expect(options).toMatchObject({ confidential: { model: 'claude-sonnet-4-6' } });
+  });
+
+  it('leaves the routing default to a conversation with nothing flagged', async () => {
+    const options = await summariserOptions(null);
+
+    expect(options).toBeDefined();
+    expect(options).not.toHaveProperty('confidential');
+  });
+
   it('generates and persists a new summary when historyRows > MAX_HISTORY_MESSAGES and no reusable summary exists', async () => {
     // Arrange: seed 52 messages (> 50 threshold); conversation has no prior summary.
     // Pass conversationId in the request so the existing conversation (with no summary)

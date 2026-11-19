@@ -700,4 +700,25 @@ describe('a modelOverride that names its provider (§136 t-1068)', () => {
 
     expect(found.map((e) => [e.code, e.stepId])).toEqual([['PROVIDER_NOT_APPROVED', 's1']]);
   });
+
+  it('checks a chat_turn override naming its provider, which runs there, against the org approvals', async () => {
+    mockUnapprovedProviders.mockImplementation(async (slugs) =>
+      slugs.filter((slug) => slug === 'microsoft')
+    );
+    const chatTurn = (id: string, modelOverride: string) => ({
+      id,
+      name: id,
+      type: 'chat_turn',
+      config: { agentSlug: 'a', conversationId: 'c', message: 'm', modelOverride },
+      nextSteps: [],
+    });
+
+    const found = await findUnapprovedModelOverrides(
+      // A bare id stays on the agent's own provider, so it names none to check.
+      makeDef([chatTurn('t1', 'microsoft::gpt-4o'), chatTurn('t2', 'gpt-4o')])
+    );
+
+    expect(found.map((e) => [e.code, e.stepId])).toEqual([['PROVIDER_NOT_APPROVED', 't1']]);
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['microsoft']);
+  });
 });

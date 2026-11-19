@@ -525,6 +525,41 @@ describe('summarizeMessages — routing default pin (§136 t-1068)', () => {
     expect(mockGetProvider).toHaveBeenCalledWith('openai', ['anthropic'], undefined);
   });
 
+  it('stays on a confidential conversation’s provider, with its own model, when the pin names another', async () => {
+    mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });
+    const mockProvider = makeMockProvider();
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });
+    const provenance = { task: 'chat', primary: 'explicit', fallbacks: 'explicit' } as const;
+
+    await summarizeMessages(MESSAGES, 'anthropic', ['openai'], {
+      provenance,
+      confidential: { model: 'claude-sonnet-4-6' },
+    });
+
+    // Never the routing default's provider, which routing did not judge.
+    expect(mockGetProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetProvider).toHaveBeenCalledWith('anthropic', ['openai'], provenance);
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({
+      model: 'claude-sonnet-4-6',
+      maxTokens: 500,
+    });
+  });
+
+  it('keeps the routing model for a confidential conversation when the pin names its own provider', async () => {
+    mockGetModel.mockResolvedValue({ providerSlug: 'anthropic', modelId: 'claude-haiku-4-5' });
+    const mockProvider = makeMockProvider();
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });
+
+    await summarizeMessages(MESSAGES, 'anthropic', [], {
+      confidential: { model: 'claude-sonnet-4-6' },
+    });
+
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({
+      model: 'claude-haiku-4-5',
+      maxTokens: 500,
+    });
+  });
+
   it('ignores the routing pin entirely when options.model is passed', async () => {
     // A pin naming another provider would reroute the call if it were read.
     mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });

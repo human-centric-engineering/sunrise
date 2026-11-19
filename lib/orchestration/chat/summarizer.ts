@@ -119,6 +119,16 @@ export interface SummarizeResult {
  */
 export interface SummarizeOptions {
   /**
+   * Set when the conversation holds confidential content (§130): its model,
+   * on its provider, which confidential routing has judged for that content.
+   * A routing default naming another provider (§136 t-1068) is then not used
+   * — that provider was never judged for this conversation, and the stage
+   * alone, reading one call, does not know what was flagged on earlier turns
+   * — and the summary is made with this model instead. Ignored when `model`
+   * is given.
+   */
+  confidential?: { model: string };
+  /**
    * The summary text this call extends. When set, only `messages` (the rows
    * that come *after* what it covers) are sent, and the model is asked to fold
    * them in — so a long conversation never re-derives its whole prefix.
@@ -263,9 +273,16 @@ export async function summarizeMessages(
     // pin is called on exactly the provider it names. A bare id runs on the
     // conversation's provider, as it always has.
     const pin = options.model === undefined ? await getDefaultModelPinForTask('routing') : null;
-    const model = pin === null ? (options.model ?? '') : pin.modelId;
-    const pinnedElsewhere =
+    const elsewhere =
       pin?.providerSlug != null && pin.providerSlug !== providerSlug ? pin.providerSlug : null;
+    // A conversation holding confidential content stays on its own provider.
+    const pinnedElsewhere = options.confidential ? null : elsewhere;
+    const model =
+      pin === null
+        ? (options.model ?? '')
+        : elsewhere !== null && options.confidential
+          ? options.confidential.model
+          : pin.modelId;
     const { provider, usedSlug } =
       pinnedElsewhere === null
         ? await getProviderWithFallbacks(providerSlug, fallbackSlugs, options.provenance)
