@@ -56,6 +56,8 @@ function makeRow(overrides: Partial<AiProviderModel>): AiProviderModel {
     setup: null,
     isDefault: false,
     isActive: true,
+    retiresAt: null,
+    replacementId: null,
     metadata: null,
     createdBy: null,
     createdAt: new Date(),

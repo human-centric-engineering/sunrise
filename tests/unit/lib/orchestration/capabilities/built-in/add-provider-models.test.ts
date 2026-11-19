@@ -40,6 +40,10 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Dynamic imports (after mocks are in place)
 // ---------------------------------------------------------------------------

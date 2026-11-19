@@ -338,14 +338,18 @@ Respond with a JSON object containing two arrays:
   }
 ]
 
-2. "deactivateModels" — models that should be removed from the active registry:
+2. "deactivateModels" — models the vendor has deprecated, retired or announced a retirement for:
 [
   {
     "modelId": "<id>",
     "reason": "Model deprecated by <provider> on <date> — replaced by <successor>",
+    "retiresAt": "<YYYY-MM-DD the vendor stops serving it>" | null,
+    "replacedBy": "<the vendor's model id of the successor on the SAME provider>" | null,
     "sources": [ { "source": "...", "confidence": "...", "reference": "...", "snippet": "...", "note": "..." } ]
   }
 ]
+
+"retiresAt" is the day the vendor stops serving the model, from the vendor's own deprecation notice. A day still to come keeps the model working until then, so agents using it can be moved first; leave it null only when no day is announced. "replacedBy" is the successor the vendor names, as its API model id on the same provider (for example "gpt-5.1", not "openai-gpt-5-1"); it may be a model you are proposing as new in this audit. Never name a successor on another provider. Set "replacedBy" only together with "retiresAt".
 
 Only include models that need changes or deactivation. If no deactivations are needed, use an empty array.
 Respond with ONLY the JSON object, no markdown fencing.`,
@@ -412,14 +416,18 @@ Respond with a JSON object containing two arrays:
   }
 ]
 
-2. "deactivateModels" — models that should be removed from the active registry:
+2. "deactivateModels" — models the vendor has deprecated, retired or announced a retirement for:
 [
   {
     "modelId": "<id>",
     "reason": "Model deprecated by <provider> on <date> — replaced by <successor>",
+    "retiresAt": "<YYYY-MM-DD the vendor stops serving it>" | null,
+    "replacedBy": "<the vendor's model id of the successor on the SAME provider>" | null,
     "sources": [ { "source": "...", "confidence": "...", "reference": "...", "snippet": "...", "note": "..." } ]
   }
 ]
+
+"retiresAt" is the day the vendor stops serving the model, from the vendor's own deprecation notice. A day still to come keeps the model working until then, so agents using it can be moved first; leave it null only when no day is announced. "replacedBy" is the successor the vendor names, as its API model id on the same provider (for example "gpt-5.1", not "openai-gpt-5-1"); it may be a model you are proposing as new in this audit. Never name a successor on another provider. Set "replacedBy" only together with "retiresAt".
 
 Only include models that need changes or deactivation. If no deactivations are needed, use an empty array.
 Respond with ONLY the JSON object, no markdown fencing.`,
@@ -831,13 +839,17 @@ RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}.
                 id: 'deactivateModels',
                 title: 'Proposed deactivations',
                 description:
-                  'Models the audit flagged as deprecated or discontinued. Soft-delete only — they can be reactivated later.',
+                  'Models the audit flagged as deprecated or discontinued. With a retirement day still to come the model is marked retiring and stays on; otherwise it is turned off. Soft-delete only — it can be reactivated later.',
                 source:
                   '__merge__:{{analyse_chat.output.deactivateModels}},{{analyse_embedding.output.deactivateModels}}',
                 itemKey: 'modelId',
                 itemTitle: '{{item.modelId}}',
                 fields: [
                   { key: 'reason', label: 'Reason', display: 'text', readonly: true },
+                  // §136 t-1064: a day still to come marks the model retiring
+                  // and keeps it on; a day already here retires it.
+                  { key: 'retiresAt', label: 'Retires on', display: 'text', readonly: true },
+                  { key: 'replacedBy', label: 'Successor', display: 'text', readonly: true },
                   { key: 'sources', label: 'Sources', display: 'sources', readonly: true },
                 ],
               },
@@ -912,7 +924,7 @@ RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}.
         config: {
           agentSlug: 'audit-report-writer',
           message:
-            'Compile a consolidated, human-readable audit report from the following results.\n\n## Audit Scope\n{{load_models.output}}\n\n## Model Classification\n{{classify_models.output}}\n\n## Web Search Context\n{{search_provider_info.output}}\n\n## Chat Model Analysis\n{{analyse_chat.output}}\n\n## Embedding Model Analysis\n{{analyse_embedding.output}}\n\n## New Models Discovered\n{{discover_new_models.output}}\n\n## Validation Results\n{{validate_proposals.output}}\n\n## Reflection/Refinement\n{{refine_findings.output}}\n\n## Quality Score\n{{score_audit.output}}\n\n## Changes Applied\n{{apply_changes.output}}\n\n## New Models Added\n{{add_new_models.output}}\n\n## Models Deactivated\n{{deactivate_models.output}}\n\nWrite a structured report with these sections:\n1. **Executive Summary** — one paragraph overview of what was audited and key outcomes\n2. **Changes Applied** — table or list of field changes made, grouped by provider\n3. **New Models Added** — list of newly registered models with key attributes\n4. **Models Deactivated** — list of deactivated models with reasons\n5. **Quality Assessment** — summary of the audit quality scores\n6. **Recommendations** — any follow-up actions recommended (e.g. models needing manual review, providers to watch)\n\nUse clear formatting. Be specific — cite model names, providers, and field values.',
+            'Compile a consolidated, human-readable audit report from the following results.\n\n## Audit Scope\n{{load_models.output}}\n\n## Model Classification\n{{classify_models.output}}\n\n## Web Search Context\n{{search_provider_info.output}}\n\n## Chat Model Analysis\n{{analyse_chat.output}}\n\n## Embedding Model Analysis\n{{analyse_embedding.output}}\n\n## New Models Discovered\n{{discover_new_models.output}}\n\n## Validation Results\n{{validate_proposals.output}}\n\n## Reflection/Refinement\n{{refine_findings.output}}\n\n## Quality Score\n{{score_audit.output}}\n\n## Changes Applied\n{{apply_changes.output}}\n\n## New Models Added\n{{add_new_models.output}}\n\n## Models Deactivated\n{{deactivate_models.output}}\n\nWrite a structured report with these sections:\n1. **Executive Summary** — one paragraph overview of what was audited and key outcomes\n2. **Changes Applied** — table or list of field changes made, grouped by provider\n3. **New Models Added** — list of newly registered models with key attributes\n4. **Models Deactivated or Retiring** — each model turned off, marked retiring or retired, with its reason, its retirement day and its successor; name any successor that was not recorded and why (`replacementNote`)\n5. **Quality Assessment** — summary of the audit quality scores\n6. **Recommendations** — any follow-up actions recommended (e.g. models needing manual review, providers to watch)\n\nUse clear formatting. Be specific — cite model names, providers, and field values.',
           maxToolIterations: 1,
         },
         nextSteps: [{ targetStepId: 'supervisor_review' }],
@@ -944,7 +956,7 @@ RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}.
         type: 'supervisor',
         config: {
           assessmentCriteria:
-            'Audit success means: (1) every proposed change cites a defensible source — web search, training knowledge with explicit confidence, or a prior step output; (2) the validator passed only proposals consistent with their cited evidence; (3) approved capability dispatches actually mutated the database (apply_changes / add_new_models / deactivate_models report nonzero counts when proposals existed); (4) the compiled report does not contradict the trace; (5) the audit explored every model in scope rather than silently dropping any.',
+            'Audit success means: (1) every proposed change cites a defensible source — web search, training knowledge with explicit confidence, or a prior step output; (2) the validator passed only proposals consistent with their cited evidence; (3) approved capability dispatches actually mutated the database (apply_changes / add_new_models / deactivate_models report nonzero counts when proposals existed; for deactivate_models a model marked `retiring` or `retired` counts as written); (4) the compiled report does not contradict the trace; (5) the audit explored every model in scope rather than silently dropping any.',
           redTeamPrompts: [
             'Did any proposal change a field without a corresponding source?',
             'Did the validator pass a proposal that contradicts an earlier step output?',

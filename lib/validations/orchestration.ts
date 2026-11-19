@@ -36,6 +36,7 @@ import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
 import { provenanceItemArraySchema } from '@/lib/orchestration/provenance/types';
 import { validateScopes, listValidApiKeyScopes } from '@/lib/auth/api-key-scopes';
 import { jurisdictionSchema, orgIdSchema } from '@/lib/validations/tenancy';
+import { parseRetirementDate } from '@/lib/orchestration/model-lifecycle/state';
 import {
   CONFIDENTIAL_POLICIES_BY_STRICTNESS,
   ENTITY_TYPE_PATTERN,
@@ -2194,6 +2195,22 @@ export const createProviderModelSchema = z
   })
   .superRefine(requirePricePair);
 
+/**
+ * The day a vendor retires a model (§136 t-1064), as `YYYY-MM-DD`, read as the
+ * UTC midnight that begins it. A day, not a timestamp: vendors announce days.
+ */
+export const retirementDaySchema = z
+  .string()
+  .trim()
+  .transform((day, ctx) => {
+    const date = parseRetirementDate(day);
+    if (date === null) {
+      ctx.addIssue({ code: 'custom', message: 'Retirement date must be a day, as YYYY-MM-DD' });
+      return z.NEVER;
+    }
+    return date;
+  });
+
 /** PATCH body for updating a provider model. All fields optional. */
 export const updateProviderModelSchema = z.object({
   name: z
@@ -2255,6 +2272,12 @@ export const updateProviderModelSchema = z.object({
   setup: z.string().trim().max(500).nullable().optional(),
 
   isActive: z.boolean().optional(),
+
+  // Vendor retirement (§136 t-1064). `null` clears. The replacement's
+  // same-provider and capability rules span two rows, so the route checks them
+  // (`checkReplacement`), not this schema.
+  retiresAt: retirementDaySchema.nullable().optional(),
+  replacementId: cuidSchema.nullable().optional(),
 
   metadata: metadataSchema,
 });

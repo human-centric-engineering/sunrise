@@ -8,7 +8,10 @@
  * so subsequent queries reflect the new data.
  *
  * Audit metadata (timestamp, source, confidence) is stored in the
- * model's `metadata` JSON field for provenance tracking.
+ * model's `metadata` JSON field for provenance tracking, and every model
+ * with an applied change gets one admin audit log row naming each field's
+ * old and new value (§136 t-1064). That row is how a price change is
+ * noticed after the fact: there is no separate "repriced" state.
  */
 
 import { z } from 'zod';
@@ -25,6 +28,7 @@ import {
 } from '@/lib/validations/model-pricing';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -368,6 +372,25 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
       });
 
       invalidateModelCache();
+
+      logAdminAction({
+        userId: context.userId,
+        action: 'provider_model.update',
+        entityType: 'provider_model',
+        entityId: modelId,
+        entityName: modelName,
+        changes: Object.fromEntries(
+          results
+            .filter((r) => r.status === 'applied')
+            .map((r) => [r.field, { from: r.previousValue, to: r.newValue }])
+        ),
+        metadata: {
+          source: 'model_audit',
+          ...(context.workflowExecutionId
+            ? { workflowExecutionId: context.workflowExecutionId }
+            : {}),
+        },
+      });
     }
 
     if (capturedName === undefined) {

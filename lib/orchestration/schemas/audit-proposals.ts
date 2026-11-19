@@ -53,6 +53,7 @@ import {
   TOOL_USE,
 } from '@/lib/orchestration/model-audit/enums';
 import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+import { parseRetirementDate } from '@/lib/orchestration/model-lifecycle/state';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -265,11 +266,32 @@ const modelProposalSchema = z
     }
   });
 
-const deactivationSchema = z.object({
-  modelId: z.string().min(1),
-  reason: z.string().min(1),
-  sources: z.array(sourceAttributionSchema).min(1),
-});
+const deactivationSchema = z
+  .object({
+    modelId: z.string().min(1),
+    reason: z.string().min(1),
+    sources: z.array(sourceAttributionSchema).min(1),
+    // Vendor retirement (§136 t-1064): the announced day, and the vendor's
+    // model id of the same-provider successor. `null` = none found.
+    retiresAt: z.string().nullish(),
+    replacedBy: z.string().min(1).nullish(),
+  })
+  .superRefine((d, ctx) => {
+    if (d.retiresAt != null && parseRetirementDate(d.retiresAt) === null) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `retiresAt "${d.retiresAt}" must be a day as YYYY-MM-DD`,
+        path: ['retiresAt'],
+      });
+    }
+    if (d.replacedBy != null && d.retiresAt == null) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'replacedBy needs a retiresAt: a successor is recorded with a retirement',
+        path: ['replacedBy'],
+      });
+    }
+  });
 
 const analysisBranchSchema = z.object({
   models: z.array(modelProposalSchema),

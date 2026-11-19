@@ -2,7 +2,10 @@
  * Admin Orchestration — Single provider model (GET / PATCH / DELETE)
  *
  * GET    /api/v1/admin/orchestration/provider-models/:id — single model
- * PATCH  /api/v1/admin/orchestration/provider-models/:id — update, sets isDefault=false
+ * PATCH  /api/v1/admin/orchestration/provider-models/:id — update, sets isDefault=false.
+ *        Sets or clears the vendor retirement (`retiresAt`, `replacementId`,
+ *        §136 t-1064); a replacement must pass `checkReplacement`. Every
+ *        change is written to the admin audit log.
  * DELETE /api/v1/admin/orchestration/provider-models/:id — hard delete, refused
  *        (409 MODEL_IN_USE) when any active agent or active workflow still
  *        references the row's (providerSlug, modelId) pair.
@@ -30,6 +33,10 @@ import {
   PRICE_PAIR_MESSAGE,
 } from '@/lib/validations/model-pricing';
 import { cuidSchema } from '@/lib/validations/common';
+import { getClientIP } from '@/lib/security/ip';
+import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { checkReplacement } from '@/lib/orchestration/model-lifecycle/state';
+import { findReplacementById } from '@/lib/orchestration/model-lifecycle/replacement';
 
 /** The database CHECK that holds the price pair (A10, t-774). */
 const PRICE_PAIR_CONSTRAINT = 'ai_provider_model_price_pair';
@@ -85,6 +92,44 @@ export const PATCH = withAdminAuth<{ id: string }>(
         : current.outputCostPerMillionTokens;
     if (isHalfPrice(nextInput, nextOutput)) throw pricePairError(nextInput);
 
+    // A replacement is only meaningful beside a retirement date. Clearing the
+    // date clears the replacement with it; naming one without a date is refused.
+    const nextRetiresAt = body.retiresAt !== undefined ? body.retiresAt : current.retiresAt;
+    const nextReplacementId =
+      body.replacementId !== undefined
+        ? body.replacementId
+        : body.retiresAt === null
+          ? null
+          : current.replacementId;
+    if (nextReplacementId !== null && nextRetiresAt === null) {
+      throw new ValidationError('Set a retirement date before naming a replacement', {
+        replacementId: ['Set a retirement date before naming a replacement'],
+      });
+    }
+    // Checked whenever anything the rule reads changes: the replacement
+    // itself, or this model's provider or capabilities.
+    if (
+      nextReplacementId !== null &&
+      (body.replacementId !== undefined ||
+        body.providerSlug !== undefined ||
+        body.capabilities !== undefined)
+    ) {
+      const candidate = await findReplacementById(nextReplacementId);
+      const refusal = candidate
+        ? checkReplacement(
+            {
+              id,
+              providerSlug: body.providerSlug ?? current.providerSlug,
+              capabilities: body.capabilities ?? current.capabilities,
+            },
+            candidate
+          )
+        : `Provider model ${nextReplacementId} not found`;
+      if (refusal !== null) {
+        throw new ValidationError(refusal, { replacementId: [refusal] });
+      }
+    }
+
     const data: Prisma.AiProviderModelUpdateInput = {};
     if (body.name !== undefined) data.name = body.name;
     if (body.slug !== undefined) data.slug = body.slug;
@@ -114,6 +159,11 @@ export const PATCH = withAdminAuth<{ id: string }>(
     if (body.strengths !== undefined) data.strengths = body.strengths;
     if (body.setup !== undefined) data.setup = body.setup;
     if (body.isActive !== undefined) data.isActive = body.isActive;
+    if (body.retiresAt !== undefined) data.retiresAt = body.retiresAt;
+    if (nextReplacementId !== current.replacementId) {
+      data.replacement =
+        nextReplacementId === null ? { disconnect: true } : { connect: { id: nextReplacementId } };
+    }
     if (body.metadata !== undefined) data.metadata = body.metadata;
 
     // Admin editing a seed-managed row opts it out of future seed updates
@@ -137,6 +187,16 @@ export const PATCH = withAdminAuth<{ id: string }>(
         modelId: id,
         adminId: session.user.id,
         fieldsChanged: Object.keys(data),
+      });
+
+      logAdminAction({
+        userId: session.user.id,
+        action: 'provider_model.update',
+        entityType: 'provider_model',
+        entityId: id,
+        entityName: updated.name,
+        changes: computeChanges(current, updated, { ignoreKeys: ['updatedAt', 'createdAt'] }),
+        clientIp: getClientIP(request),
       });
 
       return successResponse(updated);
