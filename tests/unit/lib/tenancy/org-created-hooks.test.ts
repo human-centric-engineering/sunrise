@@ -257,6 +257,71 @@ describe('runOrgCreatedHooks', () => {
     );
   });
 
+  it('logs a readable reason when a hook throws something that is not an Error', async () => {
+    initAppOrgCreatedHooks.mockImplementation(() => {
+      registerOrgCreatedHook('app:crm', () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the case under test
+        throw 'CRM said no';
+      });
+    });
+    seedOrg(['app:crm']);
+
+    await runOrgCreatedHooks(ORG, { ownerUserId: null });
+
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringMatching(/org-created hook failed/),
+      expect.objectContaining({ error: 'CRM said no' })
+    );
+    expect(owedNow()).toEqual(['app:crm']);
+  });
+
+  it('runs nothing for an org that no longer exists', async () => {
+    const provider = vi.fn();
+    register({ 'app:provider': provider });
+
+    await expect(runOrgCreatedHooks('org-gone')).resolves.toEqual({
+      succeeded: 0,
+      failed: 0,
+      dropped: 0,
+    });
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('passes no founder on a retry for an org with no OWNER', async () => {
+    const provider = vi.fn();
+    register({ 'app:provider': provider });
+    seedOrg(['app:provider'], {}, []);
+
+    await runOrgCreatedHooks(ORG);
+
+    expect(provider).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: null }));
+  });
+
+  it('logs a readable reason when recording the successes fails with a non-Error', async () => {
+    register({ 'app:provider': () => {} });
+    seedOrg(['app:provider']);
+    db.org.update.mockRejectedValueOnce('serialization failure');
+
+    await runOrgCreatedHooks(ORG, { ownerUserId: null });
+
+    expect(loggerWarn).toHaveBeenCalledWith(
+      expect.stringMatching(/could not record/),
+      expect.objectContaining({ error: 'serialization failure' })
+    );
+  });
+
+  it('never throws when the org cannot be read, even for a non-Error', async () => {
+    register({ 'app:provider': () => {} });
+    db.org.findUnique.mockRejectedValueOnce('socket hang up');
+
+    await runOrgCreatedHooks(ORG);
+
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringMatching(/could not be run/),
+      expect.objectContaining({ error: 'socket hang up' })
+    );
+  });
+
   it('never throws when the org cannot be read', async () => {
     register({ 'app:provider': () => {} });
     db.org.findUnique.mockRejectedValueOnce(new Error('connection reset'));

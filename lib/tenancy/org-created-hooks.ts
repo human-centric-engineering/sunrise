@@ -168,6 +168,10 @@ export async function runOrgCreatedHooks(
       retry: known === undefined,
     };
 
+    const runnable = owed.owed.flatMap((key) => {
+      const hook = hooks.get(key);
+      return hook ? [{ key, hook }] : [];
+    });
     const dropped = owed.owed.filter((key) => !hooks.has(key));
     if (dropped.length > 0) {
       logger.warn('org-created: owed hooks are no longer registered; dropped', {
@@ -178,23 +182,20 @@ export async function runOrgCreatedHooks(
 
     const outcomes = await runAsOrg(orgId, () =>
       Promise.all(
-        owed.owed
-          .filter((key) => hooks.has(key))
-          .map(async (key) => {
-            const hook = hooks.get(key);
-            try {
-              await hook?.(ctx);
-              return { key, ok: true };
-            } catch (err) {
-              logger.error('org-created hook failed; the maintenance job retries it', {
-                hook: key,
-                orgId,
-                retry: ctx.retry,
-                error: err instanceof Error ? err.message : String(err),
-              });
-              return { key, ok: false };
-            }
-          })
+        runnable.map(async ({ key, hook }) => {
+          try {
+            await hook(ctx);
+            return { key, ok: true };
+          } catch (err) {
+            logger.error('org-created hook failed; the maintenance job retries it', {
+              hook: key,
+              orgId,
+              retry: ctx.retry,
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return { key, ok: false };
+          }
+        })
       )
     );
 
