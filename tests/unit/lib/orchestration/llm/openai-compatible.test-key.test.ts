@@ -5,8 +5,10 @@
  * The SDK is mocked per client, keyed by the API key it was built with, so a
  * test can say how the host answers the submitted key and how it answers a key
  * known to be wrong. The shapes follow what real hosts answered a made-up key
- * on 2026-11-19: OpenAI refuses it on its model list (401); OpenRouter serves
- * its model list to anyone (200) and refuses it on chat (401).
+ * on 2026-11-19: OpenAI (401), Mistral (401) and Groq (403) refuse it on their
+ * model list, Gemini and xAI with 400; OpenRouter serves its model list to
+ * anyone (200) and refuses it on chat (401); Perplexity has no model list
+ * (404) and refuses it on chat (401).
  *
  * @see lib/orchestration/llm/openai-compatible.ts
  */
@@ -20,7 +22,10 @@ interface HostAnswers {
 }
 
 const answers = vi.hoisted((): { byKey: Map<string, HostAnswers> } => ({ byKey: new Map() }));
-const calls = vi.hoisted((): { log: string[] } => ({ log: [] }));
+const calls = vi.hoisted((): { log: string[]; timeouts: unknown[] } => ({
+  log: [],
+  timeouts: [],
+}));
 
 vi.mock('openai', () => {
   /** An SDK error carrying an HTTP status, as the real APIError does. */
@@ -41,7 +46,8 @@ vi.mock('openai', () => {
     public models: { list: () => Promise<unknown> };
     public chat: { completions: { create: (body: unknown) => Promise<unknown> } };
     public embeddings = { create: vi.fn() };
-    constructor(opts: { apiKey: string }) {
+    constructor(opts: { apiKey: string; timeout?: unknown }) {
+      calls.timeouts.push(opts.timeout);
       this.models = { list: () => answer(opts.apiKey, 'list') };
       this.chat = { completions: { create: () => answer(opts.apiKey, 'chat') } };
     }
@@ -75,7 +81,11 @@ function host(mine: HostAnswers, wrong: HostAnswers) {
 beforeEach(() => {
   answers.byKey.clear();
   calls.log = [];
+  calls.timeouts = [];
 });
+
+/** The calls made, in a stable order: each pair is sent together. */
+const made = () => [...calls.log].sort();
 
 describe('OpenAiCompatibleProvider.testKey', () => {
   it('passes on a host that checks keys on its model list, sending no chat request (OpenAI)', async () => {
@@ -84,7 +94,57 @@ describe('OpenAiCompatibleProvider.testKey', () => {
     const result = await provider().testKey();
 
     expect(result).toEqual({ ok: true, models: ['model-a'] });
-    expect(calls.log).toEqual([`list:${KEY}`, `list:${WRONG}`]);
+    expect(made()).toEqual([`list:${KEY}`, `list:${WRONG}`]);
+  });
+
+  it.each([400, 403])(
+    'passes on a host that fails a wrong key on its model list with %i (Gemini, xAI, Groq)',
+    async (status) => {
+      host({ list: 'ok', chat: 400 }, { list: status, chat: status });
+
+      const result = await provider().testKey();
+
+      expect(result).toEqual({ ok: true, models: ['model-a'] });
+      expect(made()).toEqual([`list:${KEY}`, `list:${WRONG}`]);
+    }
+  );
+
+  it.each([429, 503])(
+    'does not take a wrong key’s %i on the model list as a check, and asks the chat endpoint',
+    async (status) => {
+      host({ list: 'ok', chat: 400 }, { list: status, chat: 401 });
+
+      const result = await provider().testKey();
+
+      expect(result.ok).toBe(true);
+      expect(made()).toContain(`chat:${WRONG}`);
+    }
+  );
+
+  it('on a host with no model list, decides on the chat endpoint (Perplexity)', async () => {
+    host({ list: 404, chat: 400 }, { list: 404, chat: 401 });
+    await expect(provider().testKey()).resolves.toEqual({ ok: true, models: [] });
+
+    host({ list: 404, chat: 401 }, { list: 404, chat: 401 });
+    await expect(provider().testKey()).resolves.toMatchObject({ ok: false });
+  });
+
+  it('fails a key a host refuses with 400 everywhere, with the model list’s reason (Gemini)', async () => {
+    host({ list: 400, chat: 400 }, { list: 400, chat: 400 });
+
+    const result = await provider().testKey();
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/model list: 400/);
+  });
+
+  it('holds every call to a short timeout, not the provider’s two minutes', async () => {
+    host({ list: 'ok', chat: 'ok' }, { list: 401, chat: 401 });
+
+    await provider().testKey();
+
+    // The provider's own client, then the two the test builds.
+    expect(calls.timeouts.slice(1)).toEqual([15_000, 15_000]);
   });
 
   it('fails a key the host refuses on its model list', async () => {
@@ -103,7 +163,7 @@ describe('OpenAiCompatibleProvider.testKey', () => {
     const result = await provider().testKey();
 
     expect(result).toEqual({ ok: true, models: ['model-a'] });
-    expect(calls.log).toEqual([`list:${KEY}`, `list:${WRONG}`, `chat:${KEY}`, `chat:${WRONG}`]);
+    expect(made()).toEqual([`chat:${KEY}`, `chat:${WRONG}`, `list:${KEY}`, `list:${WRONG}`]);
   });
 
   it.each([401, 403])(
@@ -131,6 +191,14 @@ describe('OpenAiCompatibleProvider.testKey', () => {
     });
   });
 
+  it('fails with the network error, not "cannot be tested", when the wrong key’s chat gets no answer', async () => {
+    host({ list: 'ok', chat: 400 }, { list: 'ok', chat: new Error('socket hang up') });
+
+    const result = await provider().testKey();
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/socket hang up/) });
+  });
+
   it('fails when the chat check gets no answer at all', async () => {
     host({ list: 'ok', chat: new Error('connect ECONNREFUSED') }, { list: 'ok', chat: 401 });
 
@@ -145,6 +213,6 @@ describe('OpenAiCompatibleProvider.testKey', () => {
     const result = await provider().testKey();
 
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/ENOTFOUND/) });
-    expect(calls.log).toEqual([`list:${KEY}`]);
+    expect(made()).toEqual([`list:${KEY}`, `list:${WRONG}`]);
   });
 });

@@ -712,13 +712,18 @@ export class AnthropicProvider implements LlmProvider {
    * The key alone (§137 t-1056): Anthropic's model list, which it
    * authenticates and does not bill. Unlike `testConnection()` it sends no
    * message, so it does not depend on the key's workspace being able to use
-   * the ping model.
+   * the ping model. A host with no model list (404 or 405: a gateway behind
+   * `ANTHROPIC_BASE_URL` that serves only messages) falls back to
+   * `testConnection()`, the one-token message, so a key such a gateway
+   * passed before still passes.
    */
   async testKey(): Promise<ProviderTestResult> {
     try {
       await this.client.models.list({ limit: 1 });
       return { ok: true, models: CLAUDE_MODELS.map((m) => m.id) };
     } catch (err) {
+      const status = toProviderError(err, 'Anthropic key test failed').status;
+      if (status === 404 || status === 405) return this.testConnection();
       const error = err instanceof Error ? err.message : String(err);
       return { ok: false, models: [], error };
     }

@@ -8,10 +8,11 @@
  *   - `input_type`: 'document' | 'query' — improves retrieval quality
  *   - `output_dimension`: truncate to match the pgvector column width
  *
- * This provider delegates `chat()`, `chatStream()`, `listModels()`, and
- * `testConnection()` to an inner `OpenAiCompatibleProvider` pointing at
- * `https://api.voyageai.com/v1`. The `embed()` method is custom to pass
- * Voyage-specific parameters.
+ * This provider delegates `chat()`, `chatStream()` and `listModels()` to an
+ * inner `OpenAiCompatibleProvider` pointing at `https://api.voyageai.com/v1`.
+ * The `embed()` method is custom to pass Voyage-specific parameters, and
+ * `testConnection()` / `testKey()` make one embedding call, since Voyage has
+ * no model list.
  *
  * Platform-agnostic: no Next.js imports.
  */
@@ -43,6 +44,9 @@ import type {
 
 /** Voyage API base URL. */
 const VOYAGE_BASE_URL = 'https://api.voyageai.com/v1';
+
+/** How much of a failed key test's response is kept for the log. */
+const KEY_TEST_DETAIL_LIMIT = 500;
 
 /** Default embedding model. */
 const DEFAULT_EMBEDDING_MODEL = 'voyage-3';
@@ -96,7 +100,7 @@ export class VoyageProvider implements LlmProvider {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
 
-    // Delegate chat/stream/models/test to OpenAI-compatible layer
+    // Delegate chat/stream/models to OpenAI-compatible layer
     this.inner = new OpenAiCompatibleProvider({
       name: config.name,
       baseUrl: config.baseUrl ?? VOYAGE_BASE_URL,
@@ -263,16 +267,22 @@ export class VoyageProvider implements LlmProvider {
     return this.inner.listModels();
   }
 
+  /**
+   * The same check as {@link testKey}, for the platform's own provider test
+   * (§137 t-1056). Voyage has no model list, so asking for one, as the inner
+   * OpenAI-compatible provider would, fails every Voyage row with 404.
+   */
   testConnection(): Promise<ProviderTestResult> {
-    return this.inner.testConnection();
+    return this.testKey();
   }
 
   /**
    * The key alone (§137 t-1056): one embedding of one word, at the row's
-   * host. Voyage has no model list (`GET /models` answers 404 to any key,
-   * which is why `testConnection()` cannot pass one), and its embeddings call
-   * refuses a wrong key with 401. Billed, a token or two. One attempt: a
-   * key test is not retried.
+   * host. Voyage has no model list (`GET /models` answers 404 to any key),
+   * and its embeddings call refuses a wrong key with 401. Billed, a token or
+   * two. One attempt: a key test is not retried. Passes only on a 2xx whose
+   * body is an embeddings answer, so a proxy that answers anything with 200
+   * does not pass a key.
    */
   async testKey(): Promise<ProviderTestResult> {
     try {
@@ -292,12 +302,23 @@ export class VoyageProvider implements LlmProvider {
         },
         this.timeoutMs
       );
-      if (response.ok) return { ok: true, models: [this.embeddingModel] };
-      const detail = await response.text().catch(() => '');
+      const text = await response.text().catch(() => '');
+      if (response.ok) {
+        if (voyageEmbeddingsResponseSchema.safeParse(safeJsonParse(text)).success) {
+          return { ok: true, models: [this.embeddingModel] };
+        }
+        return {
+          ok: false,
+          models: [],
+          error: `Voyage key test got an answer that is not an embeddings response (${response.status})`,
+        };
+      }
+      const detail = z.object({ detail: z.string() }).safeParse(safeJsonParse(text));
+      const reason = (detail.success ? detail.data.detail : text).slice(0, KEY_TEST_DETAIL_LIMIT);
       return {
         ok: false,
         models: [],
-        error: `Voyage key test failed (${response.status})${detail ? `: ${detail}` : ''}`,
+        error: `Voyage key test failed (${response.status})${reason ? `: ${reason}` : ''}`,
       };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

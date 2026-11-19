@@ -1221,6 +1221,35 @@ describe('AnthropicProvider.testKey (§137 t-1056)', () => {
     expect(result).toEqual({ ok: false, models: [], error: '401 invalid x-api-key' });
   });
 
+  it.each([404, 405])(
+    'falls back to the one-token message on a host with no model list (%i, a gateway)',
+    async (status) => {
+      modelsListMock.mockRejectedValue(Object.assign(new Error(`${status} not found`), { status }));
+      createMock.mockResolvedValue({
+        content: [{ type: 'text', text: 'pong' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+        model: 'claude-haiku-4-5',
+        stop_reason: 'end_turn',
+      });
+
+      const result = await makeProvider().testKey();
+
+      expect(result.ok).toBe(true);
+      expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ max_tokens: 1 }));
+    }
+  );
+
+  it('does not fall back for a refused key', async () => {
+    modelsListMock.mockRejectedValue(
+      Object.assign(new Error('401 invalid x-api-key'), { status: 401 })
+    );
+
+    const result = await makeProvider().testKey();
+
+    expect(result.ok).toBe(false);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
   it('stringifies a non-Error rejection', async () => {
     modelsListMock.mockRejectedValue('down');
 

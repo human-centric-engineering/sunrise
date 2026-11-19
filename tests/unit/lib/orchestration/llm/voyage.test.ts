@@ -513,18 +513,15 @@ describe('VoyageProvider delegation', () => {
     expect(result).toBe(mockModels);
   });
 
-  it('testConnection() should delegate to the inner provider', async () => {
-    // Arrange
-    const mockResult = { ok: true, models: ['voyage-3'] };
-    mockInnerTestConnection.mockResolvedValue(mockResult);
+  it('testConnection() makes the key test’s embedding call, not the inner model list (t-1056)', async () => {
+    // Voyage has no model list, so the inner provider's would fail every row.
+    mockFetchWithTimeout.mockResolvedValue(makeEmbeddingResponse());
 
-    // Act
     const result = await provider.testConnection();
 
-    // Assert
-    // test-review:accept no_arg_called — delegate method takes no arguments; result assertion below proves real delegation
-    expect(mockInnerTestConnection).toHaveBeenCalled();
-    expect(result).toBe(mockResult);
+    expect(result).toEqual({ ok: true, models: ['voyage-3'] });
+    expect(mockInnerTestConnection).not.toHaveBeenCalled();
+    expect(mockFetchWithTimeout.mock.calls[0][0]).toBe('https://api.voyageai.com/v1/embeddings');
   });
 });
 
@@ -727,10 +724,32 @@ describe('VoyageProvider.testKey', () => {
     expect(result).toEqual({
       ok: false,
       models: [],
-      error: 'Voyage key test failed (401): {"detail":"Provided API key is invalid."}',
+      error: 'Voyage key test failed (401): Provided API key is invalid.',
     });
     // A key test is not retried.
     expect(mockFetchWithTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails a 200 that is not an embeddings answer, as a proxy might give any key', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      makeMockResponse({ ok: true, status: 200, text: '<html>Welcome</html>' })
+    );
+
+    await expect(new VoyageProvider(VALID_CONFIG).testKey()).resolves.toEqual({
+      ok: false,
+      models: [],
+      error: 'Voyage key test got an answer that is not an embeddings response (200)',
+    });
+  });
+
+  it('keeps only the start of a long error body', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      makeMockResponse({ ok: false, status: 502, text: 'x'.repeat(10_000) })
+    );
+
+    const result = await new VoyageProvider(VALID_CONFIG).testKey();
+
+    expect(result.error).toBe(`Voyage key test failed (502): ${'x'.repeat(500)}`);
   });
 
   it('fails with the status alone when the body cannot be read', async () => {

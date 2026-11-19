@@ -2,8 +2,9 @@
  * One provider's key, in an org's own AI keys (§137 t-1045)
  *
  * PUT    /api/v1/orgs/[id]/provider-keys/[providerId] — save a key, or replace
- *        the saved one: `{ apiKey }`. The key is tested first with one cheap
- *        vendor call, and a key that fails is not stored (422
+ *        the saved one: `{ apiKey }`. The key is tested first with a call
+ *        the vendor authenticates (`testProviderKey`), and a key that fails
+ *        is not stored (422
  *        `KEY_TEST_FAILED`). Refused, before any vendor call, while
  *        organisations' own keys are switched off or no master key is
  *        configured, for a provider the org is not approved for, and from a
