@@ -733,14 +733,22 @@ export class StreamingChatHandler {
       // The cap that refuses a paid call to `slug` now, as the provider gate
       // answers it under the hold above, or null when the call may go: a local
       // provider is never refused, and one on the org's own key only by the
-      // agent's cap, since the vendor bills the org (§137).
-      const capRefusalFor = async (slug: string): Promise<BudgetRefusalReason | null> => {
-        const isLocal = await isLocalProvider(slug);
-        const ownKey = !isLocal && (await providerUsesOrgOwnKey(slug));
-        const refused = await spendCapRefusal(slug, isLocal, { ownKey });
-        if (!refused) return null;
-        const code = SPEND_CAP_CODES[refused.cap];
-        return { code, cap: refused.cap, message: refusalText(code) };
+      // agent's cap, since the vendor bills the org (§137). Asked ahead of any
+      // call, so quietly, and once per provider for the turn.
+      const capAnswers = new Map<string, Promise<BudgetRefusalReason | null>>();
+      const capRefusalFor = (slug: string): Promise<BudgetRefusalReason | null> => {
+        const known = capAnswers.get(slug);
+        if (known) return known;
+        const answer = (async () => {
+          const isLocal = await isLocalProvider(slug);
+          const ownKey = !isLocal && (await providerUsesOrgOwnKey(slug));
+          const refused = await spendCapRefusal(slug, isLocal, { ownKey, quiet: true });
+          if (!refused) return null;
+          const code = SPEND_CAP_CODES[refused.cap];
+          return { code, cap: refused.cap, message: refusalText(code) };
+        })();
+        capAnswers.set(slug, answer);
+        return answer;
       };
 
       // Refused here, before anything is read or saved, when routing cannot
@@ -1058,7 +1066,18 @@ export class StreamingChatHandler {
         omittedBeforeHistory = read.omitted;
       }
 
-      // Enforce message-per-conversation cap using actual DB count
+      if (!routing) {
+        routing = await routeTurn(history, conversation.metadata);
+        if (routing.unsupported) {
+          yield routing.unsupported;
+          return;
+        }
+        if (yield* capsEndTurn(routing.route.binding)) return;
+      }
+
+      // Enforce message-per-conversation cap using actual DB count, after a
+      // reached budget cap has had its say, so that refusal (and its webhook)
+      // is not pre-empted by this one
       // (a history read returns at most HISTORY_LOAD_LIMIT rows, so
       // history.length can't detect conversations that exceed it).
       const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
@@ -1077,14 +1096,6 @@ export class StreamingChatHandler {
         }
       }
 
-      if (!routing) {
-        routing = await routeTurn(history, conversation.metadata);
-        if (routing.unsupported) {
-          yield routing.unsupported;
-          return;
-        }
-        if (yield* capsEndTurn(routing.route.binding)) return;
-      }
       const { route } = routing;
       await keepFlaggedGroups(
         { id: conversation.id, ...conversationOwner(request.userId) },
