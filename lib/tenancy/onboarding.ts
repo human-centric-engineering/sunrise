@@ -32,6 +32,7 @@ import { logger } from '@/lib/logging';
 import { auth } from '@/lib/auth/config';
 import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, routePathname } from '@/lib/auth-landing/route';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { orgAdministers } from '@/lib/tenancy/roles';
 import { sessionActingOrgId } from '@/lib/tenancy/entry';
 import {
   clearOrgAwaitingOnboarding,
@@ -59,6 +60,12 @@ export type MarkOrgOnboardedResult = 'marked' | 'already-finished' | 'no-such-or
 const MARK_ATTEMPTS = 3;
 
 /**
+ * The longest pause before trying a clashed write again, in ms. The pause is
+ * random up to this, so two writers that clashed do not clash again in step.
+ */
+const MARK_RETRY_JITTER_MS = 50;
+
+/**
  * Record that an org's onboarding is finished. Idempotent: an org that is
  * already finished is left as it was.
  *
@@ -69,7 +76,8 @@ const MARK_ATTEMPTS = 3;
  *
  * Another write to the same org's settings at the same moment (an org-created
  * hook finishing, staff saving the org) can clash with this one; it is tried
- * again, up to three times, before the clash is thrown.
+ * again after a short random pause, up to three attempts in all, before the
+ * clash is thrown.
  */
 export async function markOrgOnboarded(
   orgId: string,
@@ -85,19 +93,27 @@ export async function markOrgOnboarded(
     } catch (error) {
       if (attempt >= MARK_ATTEMPTS || !isSettingsWriteConflict(error)) throw error;
     }
+    await new Promise((resolve) => setTimeout(resolve, Math.random() * MARK_RETRY_JITTER_MS));
   }
 }
 
 /**
  * Where the proxy should send this request instead, when it is a signed-in
- * member of an unfinished org reaching the landing route; `null` to let it
- * through.
+ * OWNER or ADMIN of an unfinished, active org reaching the landing route;
+ * `null` to let it through. The landing request's query string is carried
+ * across.
  *
  * Reads nothing when the app sets no welcome route, or the path is not the
  * landing route. The org is the one the request acts for, in the guard's
  * precedence (the app's tenant resolver, else the session's active org, else
  * the install org at `single`), and only a membership of it counts: platform
- * staff looking at a customer's org are not sent to its welcome step. A read
+ * staff looking at a customer's org are not sent to its welcome step.
+ *
+ * Only a role that may finish onboarding is sent (`orgAdministers`): a plain
+ * MEMBER invited before the owner finished could not complete the step, and
+ * would be bounced off the landing route on every visit until the owner did.
+ * A suspended org is not redirected either; the landing route's own guard
+ * refuses it there, as it would without a welcome route. A read
  * that fails lets the request through to the landing route, logged at
  * `warn`: a welcome step is not worth an outage.
  *
@@ -120,10 +136,12 @@ export async function welcomeRedirectFor(
 
     const membership = await prisma.orgMembership.findUnique({
       where: { orgId_userId: { orgId, userId } },
-      select: { org: { select: { settings: true } } },
+      select: { role: true, org: { select: { status: true, settings: true } } },
     });
-    if (!membership || readOrgOnboarded(membership.org.settings)) return null;
-    return AUTH_WELCOME_ROUTE;
+    if (!membership || !orgAdministers(membership.role)) return null;
+    if (membership.org.status !== 'ACTIVE') return null;
+    if (readOrgOnboarded(membership.org.settings)) return null;
+    return withQuery(AUTH_WELCOME_ROUTE, request.nextUrl.search);
   } catch (error) {
     logger.warn(
       'Could not read org onboarding for the landing route; letting the request through',
@@ -136,3 +154,17 @@ export async function welcomeRedirectFor(
 }
 
 const landingPathname = routePathname(AUTH_LANDING_ROUTE);
+
+/**
+ * The welcome route with the landing request's query string added, so a
+ * parameter a door into the app passed (`?joined=acme`) survives the hop. A
+ * key the welcome route already sets keeps its own value.
+ */
+function withQuery(route: string, search: string): string {
+  if (search === '' || search === '?') return route;
+  const url = new URL(route, 'http://localhost');
+  for (const [key, value] of new URLSearchParams(search)) {
+    if (!url.searchParams.has(key)) url.searchParams.append(key, value);
+  }
+  return `${url.pathname}${url.search}${url.hash}`;
+}

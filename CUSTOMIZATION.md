@@ -346,14 +346,15 @@ sync-safe.
   only sanitises the untrusted URL — so a non-relative value throws at module
   load instead of quietly becoming an off-site redirect.
 - A **welcome step for a new org** is **`lib/app/welcome.ts`**: set
-  `appWelcomeRoute` (default `null`, nobody redirected) and a signed-in member of
-  an org whose onboarding is unfinished, reaching the landing route, is sent
-  there instead, by the proxy. Every org created from this release on starts
+  `appWelcomeRoute` (default `null`, nobody redirected) and a signed-in OWNER or
+  ADMIN of an org whose onboarding is unfinished, reaching the landing route, is
+  sent there instead, by the proxy. Every org created from this release on starts
   unfinished; the install org and orgs that already existed read as finished.
   When your welcome step is done, call `markOrgOnboarded(orgId)` from
   `lib/tenancy/onboarding.ts` in your own server code, after checking the caller
-  may act for that org (it checks nothing itself); `isOrgOnboarded(orgId)` reads
-  it. Add the route's prefix to `lib/app/protected-routes.ts`. This is **per
+  may act for that org (it checks nothing itself), then
+  `revalidatePath('/', 'layout')` and `redirect()` to the landing route so a
+  cached prefetch does not bounce them back; `isOrgOnboarded(orgId)` reads it. Add the route's prefix to `lib/app/protected-routes.ts`. This is **per
   org**: a person's own first-run tour is yours to keep, and Sunrise records
   nothing per user for it.
 

@@ -204,8 +204,8 @@ describe('markOrgOnboarded', () => {
 });
 
 describe('welcomeRedirectFor (welcome route set)', () => {
-  function memberOf(settings: unknown): void {
-    mockMembershipFind.mockResolvedValue({ org: { settings } });
+  function memberOf(settings: unknown, role = 'OWNER', status = 'ACTIVE'): void {
+    mockMembershipFind.mockResolvedValue({ role, org: { status, settings } });
   }
 
   it('sends a member of an unfinished org on the landing route to the welcome route', async () => {
@@ -215,8 +215,38 @@ describe('welcomeRedirectFor (welcome route set)', () => {
     expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
     expect(mockMembershipFind).toHaveBeenCalledWith({
       where: { orgId_userId: { orgId: ORG, userId: USER } },
-      select: { org: { select: { settings: true } } },
+      select: { role: true, org: { select: { status: true, settings: true } } },
     });
+  });
+
+  it('sends an ADMIN too', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true }, 'ADMIN');
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
+  });
+
+  it('lets a plain MEMBER through, since they cannot finish the step', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true }, 'MEMBER');
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
+  });
+
+  it('lets an owner of a suspended org through to the landing route’s own guard', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true }, 'OWNER', 'SUSPENDED');
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
+  });
+
+  it('carries the landing request’s query string to the welcome route', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard?joined=acme&x=1'), null)).toBe(
+      '/welcome?joined=acme&x=1'
+    );
   });
 
   it('treats the landing route with a trailing slash as the landing route', async () => {
@@ -307,7 +337,10 @@ describe('welcomeRedirectFor (no welcome route set)', () => {
     vi.doMock('@/lib/app/welcome', () => ({ appWelcomeRoute: null }));
     const fresh = await import('@/lib/tenancy/onboarding');
     signedIn();
-    mockMembershipFind.mockResolvedValue({ org: { settings: { awaitingOnboarding: true } } });
+    mockMembershipFind.mockResolvedValue({
+      role: 'OWNER',
+      org: { status: 'ACTIVE', settings: { awaitingOnboarding: true } },
+    });
 
     expect(await fresh.welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
     expect(mockGetSession).not.toHaveBeenCalled();

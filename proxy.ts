@@ -22,7 +22,7 @@ import { resolveAppFrameAncestors } from '@/lib/app/frame-ancestors';
 import appFrameablePaths from '@/lib/app/frameable-paths.json';
 import { frameablePrefixes } from '@/lib/security/frame-deny-source.cjs';
 import { resolveTenantFromRequest, TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
-import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE } from '@/lib/auth-landing/route';
+import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, isAuthRoutePath } from '@/lib/auth-landing/route';
 import { welcomeRedirectFor } from '@/lib/tenancy/onboarding';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
 
@@ -84,12 +84,6 @@ const protectedRoutes = [
     .map((route) => route.replace(/\/+$/, ''))
     .filter((route) => route.startsWith('/')),
 ];
-
-/**
- * Define which routes are auth pages (login, signup, etc.)
- * Authenticated users will be redirected away from these
- */
-const authRoutes = ['/login', '/signup', '/reset-password'];
 
 /**
  * Whether `pathname` is `route` or a path beneath it, matching on whole path
@@ -293,7 +287,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   const isProtectedRoute = protectedRoutes.some((route) => matchesRoute(pathname, route));
 
   // Check if the current route is an auth page
-  const isAuthRoute = authRoutes.some((route) => matchesRoute(pathname, route));
+  // (AUTH_ROUTES in lib/auth-landing/route.ts, shared with the welcome route's
+  // load-time check). Authenticated users are redirected away from these.
+  const isAuthRoute = isAuthRoutePath(pathname);
 
   // A POST that reaches a page is a form pressed before React attached (t-998).
   // 303 turns it into a GET: a 307 would re-send the body, password included, to

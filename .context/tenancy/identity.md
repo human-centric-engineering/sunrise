@@ -412,16 +412,28 @@ bad value that kept every member out of the product is the worse failure.
 - `markOrgOnboarded(orgId)` → `'marked'`, `'already-finished'` or
   `'no-such-org'`. It removes the key and keeps every other one, in the same
   serializable read-modify-write as the other slices, and tries a clash with
-  another settings write again up to three times. **It checks nothing about
-  the caller**: call it from your own server code after deciding who may
-  finish onboarding (typically an OWNER or ADMIN of that org). There is no API
-  route for it; the welcome step is the app's, and so is its endpoint.
+  another settings write again after a short random pause, up to three
+  attempts in all. **It checks nothing about the caller**: call it from your
+  own server code after deciding who may finish onboarding (typically an OWNER
+  or ADMIN of that org). There is no API route for it; the welcome step is the
+  app's, and so is its endpoint.
+- **After marking, purge the client cache before leaving the welcome page.**
+  The proxy's redirect also answers Next's prefetch of the landing route, and
+  the client router can keep that cached redirect after the org is marked, so
+  a client-side `router.push()` to the landing route bounces back to the
+  welcome route. Mark from a server action and end it with
+  `revalidatePath('/', 'layout')` (which purges the client cache) and
+  `redirect(AUTH_LANDING_ROUTE)`.
 
 **The redirect.** `lib/app/welcome.ts` ships `appWelcomeRoute = null`. Set it,
 and the proxy (`welcomeRedirectFor()`, called from `proxy.ts`) sends a
 signed-in request for the **landing route** (`AUTH_LANDING_ROUTE`) to the
-welcome route when the user is a member of the org the request acts for and
-that org is unfinished. Every door into the app (login, OAuth, signup,
+welcome route when the user is an **OWNER or ADMIN** of the org the request
+acts for, and that org is `ACTIVE` and unfinished. A plain MEMBER is not sent:
+they could not finish the step, and would be bounced off the landing route on
+every visit until the owner did. A suspended org is left to the landing
+route's own guard. The landing request's query string is carried across to
+the welcome route (a key the welcome route already sets keeps its value). Every door into the app (login, OAuth, signup,
 invitation acceptance, verification, the header brand link) lands on the
 landing route, which is why the check sits there. The org is the guard's
 choice: the app's tenant resolver, else the session's active org, else the
@@ -429,8 +441,10 @@ install org at `single`. Only a membership counts, so platform staff looking at
 a customer's org are not sent to its welcome step. Other paths, a deep link
 included, are never redirected. A failed read lets the request through to the
 landing route, logged at `warn`. With the route `null` the proxy reads
-nothing. The value must be root-relative and not the landing route's own path,
-or it throws at module load (`lib/auth-landing/route.ts`).
+nothing. The value must be root-relative, not the landing route's own path,
+and not on or under an auth route (`AUTH_ROUTES`: `/login`, `/signup`,
+`/reset-password`, from which the proxy sends a signed-in user back to the
+landing route), or it throws at module load (`lib/auth-landing/route.ts`).
 
 **Per user is the app's job.** An org has one founding moment a platform can
 record. A person's own first-run tour, inside an org that is already set up,

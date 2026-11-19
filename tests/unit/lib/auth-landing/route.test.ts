@@ -144,6 +144,21 @@ describe('AUTH_WELCOME_ROUTE (§134 t-1063)', () => {
     await expect(loadWith(landing, null, welcome)).rejects.toThrow(/landing route itself/);
   });
 
+  it.each([
+    ['an auth route', '/signup'],
+    ['a path beneath an auth route', '/signup/welcome'],
+    ['the login route with a query', '/login?next=1'],
+    ['the password-reset route with a trailing slash', '/reset-password/'],
+  ])('throws when it is %s, which would loop with the landing route', async (_label, welcome) => {
+    await expect(loadWith(null, null, welcome)).rejects.toThrow(/auth route/);
+  });
+
+  it('accepts a path that only shares an auth route’s letters', async () => {
+    const { AUTH_WELCOME_ROUTE } = await loadWith(null, null, '/signups-welcome');
+
+    expect(AUTH_WELCOME_ROUTE).toBe('/signups-welcome');
+  });
+
   it('accepts a path beneath the landing route', async () => {
     const { AUTH_WELCOME_ROUTE } = await loadWith(null, null, '/dashboard/welcome');
 

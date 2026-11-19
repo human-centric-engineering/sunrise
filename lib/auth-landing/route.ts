@@ -98,10 +98,23 @@ export function routePathname(route: string): string {
 }
 
 /**
+ * The auth pages (login, signup, password reset). The proxy sends a signed-in
+ * user away from these, and from any path beneath them, to the landing route.
+ */
+export const AUTH_ROUTES: readonly string[] = ['/login', '/signup', '/reset-password'];
+
+/** Whether `pathname` is one of {@link AUTH_ROUTES} or a path beneath it. */
+export function isAuthRoutePath(pathname: string): boolean {
+  return AUTH_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
+
+/**
  * Fail loudly on a bad welcome route, for the landing route's reasons: it is
  * a redirect target. A welcome route on the landing route's own path would
  * redirect a member of an unfinished org to the page they were already
  * redirected from, for as long as the org stays unfinished, so that throws too.
+ * So does one on or under an auth route: the proxy sends a signed-in user from
+ * there back to the landing route, which sends them to the welcome route again.
  */
 function resolveWelcomeRoute(): string | null {
   if (appWelcomeRoute === null) return null;
@@ -118,6 +131,14 @@ function resolveWelcomeRoute(): string | null {
       `Invalid appWelcomeRoute in lib/app/welcome.ts: ${JSON.stringify(appWelcomeRoute)} is the ` +
         'landing route itself, so a member of an unfinished org would be redirected to it forever. ' +
         'Give the welcome step its own page.'
+    );
+  }
+  if (isAuthRoutePath(routePathname(normalized))) {
+    throw new Error(
+      `Invalid appWelcomeRoute in lib/app/welcome.ts: ${JSON.stringify(appWelcomeRoute)} is on an ` +
+        `auth route (${AUTH_ROUTES.join(', ')}), which sends a signed-in user back to the landing ` +
+        'route, so a member of an unfinished org would loop between the two. ' +
+        'Give the welcome step a page outside the auth routes.'
     );
   }
 

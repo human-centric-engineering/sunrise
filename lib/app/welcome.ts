@@ -10,17 +10,21 @@
  * Every org created after §134 t-1063 starts with its onboarding unfinished
  * (`Org.settings.awaitingOnboarding`); the install org and every org that
  * existed before read as finished. Set this to your welcome page, and a
- * signed-in member of an unfinished org who reaches the landing route
- * (`lib/app/auth-landing.ts`) is redirected here instead, by the proxy. Once
- * the welcome step is done, your server code calls
- * `markOrgOnboarded(orgId)` (`lib/tenancy/onboarding.ts`) and they land on the
- * usual route from then on. The welcome page itself is yours.
+ * signed-in OWNER or ADMIN of an unfinished org who reaches the landing route
+ * (`lib/app/auth-landing.ts`) is redirected here instead, by the proxy (a
+ * plain MEMBER is not: they could not finish it). Once the welcome step is
+ * done, your server action calls `markOrgOnboarded(orgId)`
+ * (`lib/tenancy/onboarding.ts`), then `revalidatePath('/', 'layout')` and
+ * `redirect(AUTH_LANDING_ROUTE)`: the purge drops a prefetched redirect the
+ * client router may still hold. They land on the usual route from then on.
+ * The welcome page itself is yours.
  *
  *   export const appWelcomeRoute: string | null = '/welcome';
  *
- * Must be a root-relative path, and not the landing route itself (that would
- * redirect to itself): either mistake throws at module load, as the landing
- * route does. Add its prefix to `lib/app/protected-routes.ts` so a signed-out
+ * Must be a root-relative path, not the landing route itself (that would
+ * redirect to itself), and not on or under an auth route such as `/signup`
+ * (the proxy sends a signed-in user from there back to the landing route):
+ * each mistake throws at module load, as the landing route does. Add its prefix to `lib/app/protected-routes.ts` so a signed-out
  * visitor is sent to login rather than shown the page.
  *
  * This is per org. A person's own first-run tour (one per user, inside an org
