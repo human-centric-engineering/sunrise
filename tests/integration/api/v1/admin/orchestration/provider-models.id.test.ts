@@ -65,17 +65,6 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   invalidateModelCache: vi.fn(),
 }));
 
-// The registry's answer for a bare id (§136 t-1065): hydrating reads nothing
-// here, and an id resolves to no provider unless a test says, so every row
-// with the id counts.
-vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
-  hydrateFromDb: vi.fn(() => Promise.resolve()),
-}));
-vi.mock('@/lib/orchestration/llm/model-registry', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/orchestration/llm/model-registry')>();
-  return { ...actual, getModel: vi.fn(() => undefined) };
-});
-
 // The install settings the model's uses read (§136 t-1065): nothing pinned
 // unless a test says so.
 vi.mock('@/lib/orchestration/settings', () => ({
@@ -350,9 +339,9 @@ describe('GET /provider-models/:id — lifecycle and uses (§136 t-1065)', () =>
     const body = await parseJson<Body>(await GET(makeGetRequest(MODEL_ID), routeContext(MODEL_ID)));
 
     expect(body.data.uses.settings).toEqual([
-      { slot: 'chat', source: 'saved' },
-      { slot: 'reasoning', source: 'suggested' },
-      { slot: 'embeddings', source: 'suggested', movedBy: 'embedding_switch' },
+      { slot: 'chat', source: 'saved', byIdOnly: true },
+      { slot: 'reasoning', source: 'suggested', byIdOnly: true },
+      { slot: 'embeddings', source: 'suggested', movedBy: 'embedding_switch', byIdOnly: true },
       { slot: 'confidential', source: 'saved' },
       { slot: 'active_embedding', source: 'saved', movedBy: 'embedding_switch' },
     ]);
@@ -857,9 +846,13 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
   it('names, in the delete row, the models whose replacement the delete clears', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
-    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValueOnce([
-      { id: 'cm_a', name: 'Claude 3 Opus' },
-    ] as never);
+    // Answer the replacement lookup; the same-id lookup finds nothing.
+    vi.mocked(prisma.aiProviderModel.findMany).mockImplementation(((args: {
+      where: { replacementId?: string };
+    }) =>
+      Promise.resolve(
+        args.where.replacementId === MODEL_ID ? [{ id: 'cm_a', name: 'Claude 3 Opus' }] : []
+      )) as never);
     vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
 
     await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
@@ -950,9 +943,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
 
     expect(response.status).toBe(409);
-    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'gpt-4o-mini', {
-      bareIdProvider: null,
-    });
+    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'gpt-4o-mini', {});
     expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
     const body = await parseJson<{
       error: { code: string; message: string; details: Record<string, unknown> };

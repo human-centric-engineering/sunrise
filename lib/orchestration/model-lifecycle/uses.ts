@@ -8,6 +8,16 @@
  * `settingsPinsFor`. This composes the two for the model's page and for
  * config health; it reads nothing across orgs itself.
  *
+ * **A model named by its id alone.** An agent names provider and model; a
+ * workflow step's `modelOverride` and most task defaults name the id only.
+ * When another provider offers the same id (`gpt-4o` under OpenAI and
+ * Azure), such a pin cannot say which row it runs on. It is not guessed
+ * (owner ruling): it counts as a use of every row with the id, and
+ * `sharedWith` names the other providers so the page can say so. For config
+ * health that is narrowed the safe way: a by-id-only use raises a model's
+ * alert only when every row with the id is dated, since then it runs on a
+ * dated model whichever row it is. t-1068 makes every pin name its provider.
+ *
  * Platform-agnostic: no Next.js imports.
  */
 
@@ -24,13 +34,16 @@ import {
 } from '@/lib/orchestration/model-lifecycle/settings-pins';
 import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
-import { getModel } from '@/lib/orchestration/llm/model-registry';
-import { logger } from '@/lib/logging';
 
 export interface ModelUses extends ProviderModelUsage {
   /** The install settings that name the model. */
   settings: SettingsPin[];
+  /**
+   * The other providers whose catalogue rows have the same model id. Empty
+   * when the id is the model's alone; then a by-id-only pin is exactly this
+   * model's use.
+   */
+  sharedWith: string[];
 }
 
 /** Whether anything at all uses the model. */
@@ -45,40 +58,13 @@ export function isInUse(uses: ModelUses): boolean {
   );
 }
 
-/**
- * The provider the runtime resolves a bare model id to, or `null` when it
- * cannot tell. A task default and a workflow's `modelOverride` name an id
- * alone; when two providers offer it, the registry settles it on one (its
- * built-in and OpenRouter entries first, then the catalogue's, oldest row
- * first), and only that provider's row is the one they use. The registry is
- * hydrated from the catalogue first, as every LLM call does; a failed
- * hydrate answers `null`, which counts every row with the id, rather than
- * hiding a use.
- */
-export async function bareIdProvider(modelId: string): Promise<string | null> {
-  return (await hydrateRegistry()) ? registryProvider(modelId) : null;
-}
-
-/**
- * Hydrate the model registry from the catalogue (throttled, as every LLM call
- * does). `false` when that failed: the caller then knows nothing about which
- * provider an id resolves to.
- */
-export async function hydrateRegistry(): Promise<boolean> {
-  try {
-    await hydrateFromDb();
-    return true;
-  } catch (err) {
-    logger.warn('Model registry hydrate failed; counting every row with a shared id', {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return false;
-  }
-}
-
-/** The provider the (hydrated) registry resolves `modelId` to, or `null`. */
-export function registryProvider(modelId: string): string | null {
-  return getModel(modelId)?.provider ?? null;
+/** The other catalogue rows with `model`'s id, on other providers. */
+function siblings(model: PinnedModelRef) {
+  return prisma.aiProviderModel.findMany({
+    where: { modelId: model.modelId, providerSlug: { not: model.providerSlug } },
+    select: { providerSlug: true, retiresAt: true },
+    orderBy: { providerSlug: 'asc' },
+  });
 }
 
 /** Everything that uses `model`. `options` as `providerModelUsage`'s. */
@@ -86,12 +72,16 @@ export async function modelUses(
   model: PinnedModelRef,
   options: CountScope = {}
 ): Promise<ModelUses> {
-  const resolved = await bareIdProvider(model.modelId);
-  const [usage, settings] = await Promise.all([
-    providerModelUsage(model.providerSlug, model.modelId, { ...options, bareIdProvider: resolved }),
+  const [usage, settings, others] = await Promise.all([
+    providerModelUsage(model.providerSlug, model.modelId, options),
     getOrchestrationSettings(),
+    siblings(model),
   ]);
-  return { ...usage, settings: settingsPinsFor(model, settings, { bareIdProvider: resolved }) };
+  return {
+    ...usage,
+    settings: settingsPinsFor(model, settings),
+    sharedWith: others.map((o) => o.providerSlug),
+  };
 }
 
 /** How many models with a retirement date are still in use, by state. */
@@ -116,12 +106,20 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
   for (const model of dated) {
     const state = modelLifecycleState(model, now);
     if (state === 'current') continue;
-    const resolved = await bareIdProvider(model.modelId);
-    const usage = await providerModelUsage(model.providerSlug, model.modelId, {
-      bareIdProvider: resolved,
-    });
-    const pins = settingsPinsFor(model, settings, { bareIdProvider: resolved });
-    if (isInUse({ ...usage, settings: pins })) counts[state]++;
+    const [usage, others] = await Promise.all([
+      providerModelUsage(model.providerSlug, model.modelId),
+      siblings(model),
+    ]);
+    const pins = settingsPinsFor(model, settings);
+    // Agents and provider-naming settings are this model's own uses.
+    const exact =
+      usage.agents.length + usage.otherOrgAgents + pins.filter((p) => !p.byIdOnly).length;
+    // Workflow pins and by-id-only settings may be another provider's row's,
+    // unless every row with the id is dated: then it is a dated model either way.
+    const byIdOnly =
+      usage.workflows.length + usage.otherOrgWorkflows + pins.filter((p) => p.byIdOnly).length;
+    const allRowsDated = others.every((o) => o.retiresAt != null);
+    if (exact > 0 || (byIdOnly > 0 && allRowsDated)) counts[state]++;
   }
   return counts;
 }

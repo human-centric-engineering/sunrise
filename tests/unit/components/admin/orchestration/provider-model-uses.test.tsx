@@ -24,6 +24,7 @@ const NONE: ProviderModelUsesData = {
   otherOrgAgentsFollowingPlatform: 0,
   otherOrgWorkflows: 0,
   settings: [],
+  sharedWith: [],
 };
 
 function panel(uses: Partial<ProviderModelUsesData>, retiresAt: string | null = null) {
@@ -133,5 +134,28 @@ describe('ProviderModelUses', () => {
     expect(screen.getByRole('region', { name: 'Retirement and uses' })).not.toHaveTextContent(
       'choose another'
     );
+  });
+
+  it('says when a use names the model by id alone and another provider offers the id', () => {
+    const region = panel({
+      workflows: [{ id: 'w1', name: 'Triage' }],
+      settings: [{ slot: 'chat', source: 'saved', byIdOnly: true }],
+      sharedWith: ['microsoft'],
+    });
+
+    expect(region).toHaveTextContent('Default model for chat*');
+    expect(region).toHaveTextContent(
+      "name this model by its id alone, which microsoft also offers. They may run on that provider's model instead"
+    );
+  });
+
+  it("says nothing about shared ids when the id is the model's alone", () => {
+    const region = panel({
+      workflows: [{ id: 'w1', name: 'Triage' }],
+      settings: [{ slot: 'chat', source: 'saved', byIdOnly: true }],
+    });
+
+    expect(region).not.toHaveTextContent('by its id alone');
+    expect(region).not.toHaveTextContent('chat*');
   });
 });

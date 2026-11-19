@@ -57,13 +57,6 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   invalidateModelCache: vi.fn(),
 }));
 
-// Which provider a bare model id resolves to (§136 t-1065): unknown unless a
-// test says, so every row with the id counts, as before.
-vi.mock('@/lib/orchestration/model-lifecycle/uses', () => ({
-  hydrateRegistry: vi.fn(() => Promise.resolve(false)),
-  registryProvider: vi.fn(() => null),
-}));
-
 // Default-models enrichment pulls from the settings singleton. Stub
 // it with an empty merged map by default so existing tests don't see
 // any default-role badges; the dedicated test below overrides this.
@@ -83,7 +76,6 @@ vi.mock('@/lib/orchestration/settings', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { hydrateRegistry, registryProvider } from '@/lib/orchestration/model-lifecycle/uses';
 import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -281,7 +273,7 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       expect(byId.get('text-embedding-3-small')).toEqual(['embeddings']);
     });
 
-    it('gives a shared bare id only to the row the registry resolves it to (§136 t-1065)', async () => {
+    it('gives a bare id two providers share to both rows, not a guess (§136 t-1065)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
         makeModel({ id: 'm-openai', providerSlug: 'openai', modelId: 'gpt-4o' }),
@@ -295,8 +287,6 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
         activeEmbeddingModelId: null,
         defaultModels: { routing: '', chat: 'gpt-4o', reasoning: '', embeddings: '' },
       } as never);
-      vi.mocked(hydrateRegistry).mockResolvedValueOnce(true);
-      vi.mocked(registryProvider).mockReturnValue('openai');
 
       const response = await GET(makeGetRequest());
       const body = await parseJson<{
@@ -305,9 +295,8 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
 
       const byId = new Map(body.data.map((r) => [r.id, r.defaultFor]));
       expect(byId.get('m-openai')).toEqual(['chat']);
-      expect(byId.get('m-azure')).toEqual([]);
+      expect(byId.get('m-azure')).toEqual(['chat']);
       expect(body.data[0].lifecycleState).toBe('current');
-      vi.mocked(registryProvider).mockReturnValue(null);
     });
 
     it('returns empty defaultFor when no default slot points at the row', async () => {

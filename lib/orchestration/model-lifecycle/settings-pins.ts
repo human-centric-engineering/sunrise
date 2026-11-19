@@ -12,15 +12,17 @@
  * `defaultFor` badge) and the model's uses, so the two cannot disagree:
  *
  * - **Task defaults** (`routing`, `chat`, `reasoning`, `embeddings`) store a
- *   bare model id, which the registry settles on one provider when two
- *   offer it (`gpt-4o` under OpenAI and Azure). Given that provider
- *   (`bareIdProvider`), a default names only that provider's row; without
- *   it, every row with the id. The effective map is used,
+ *   bare model id, so they match on `modelId` alone and are marked
+ *   `byIdOnly`: when two providers offer the id (`gpt-4o` under OpenAI and
+ *   Azure), the pin cannot say which it runs on, and every row with the id is
+ *   given it rather than a guess (owner ruling; t-1068 makes every pin name
+ *   its provider). The effective map is used,
  *   saved values and the system's suggestions for unsaved slots alike,
  *   because both are what an agent without a model inherits; `source` says
  *   which.
  * - **`audio`** stores `${providerSlug}::${modelId}` (`audio-default.ts`), so
- *   both must agree; a legacy bare model id still matches on the id.
+ *   both must agree; a legacy bare model id still matches on the id, and is
+ *   `byIdOnly`.
  * - **The confidential model** (§130) stores provider and model apart; both
  *   must agree.
  * - **The active embedding model** is a row id.
@@ -47,6 +49,12 @@ export interface SettingsPin {
   source: 'saved' | 'suggested';
   /** Set when this feature's move leaves the pin alone, and what moves it instead. */
   movedBy?: 'embedding_switch';
+  /**
+   * Set when the setting names the model by its id alone, with no provider:
+   * if another provider offers the same id, it may run on that provider's
+   * model instead.
+   */
+  byIdOnly?: true;
 }
 
 /** The model being looked up. */
@@ -64,47 +72,30 @@ export interface ModelPinSettings {
   activeEmbeddingModelId: string | null;
 }
 
-/** What is known about how the runtime resolves the model's bare id. */
-export interface PinMatchOptions {
-  /** The provider the registry resolves `model.modelId` to, or `null` when unknown. */
-  bareIdProvider?: string | null;
-}
-
-/** Whether the task default `value` for `task` names `model`. */
-function defaultNames(
-  task: TaskType,
-  value: string,
-  model: PinnedModelRef,
-  bareIdProvider: string | null
-): boolean {
-  if (task !== 'audio') {
-    return (
-      value === model.modelId && (bareIdProvider === null || bareIdProvider === model.providerSlug)
-    );
-  }
+/**
+ * How the task default `value` for `task` names `model`: `'pair'` by provider
+ * and model, `'id'` by model id alone, or `null` when it does not.
+ */
+function defaultNames(task: TaskType, value: string, model: PinnedModelRef): 'pair' | 'id' | null {
+  if (task !== 'audio') return value === model.modelId ? 'id' : null;
   const parsed = parseAudioDefault(value);
-  return (
-    parsed !== null &&
-    parsed.modelId === model.modelId &&
-    (parsed.providerSlug === null || parsed.providerSlug === model.providerSlug)
-  );
+  if (parsed === null || parsed.modelId !== model.modelId) return null;
+  if (parsed.providerSlug === null) return 'id';
+  return parsed.providerSlug === model.providerSlug ? 'pair' : null;
 }
 
 /** Every settings slot that names `model`, task defaults first in `TASK_TYPES` order. */
-export function settingsPinsFor(
-  model: PinnedModelRef,
-  settings: ModelPinSettings,
-  options: PinMatchOptions = {}
-): SettingsPin[] {
-  const bareIdProvider = options.bareIdProvider ?? null;
+export function settingsPinsFor(model: PinnedModelRef, settings: ModelPinSettings): SettingsPin[] {
   const pins: SettingsPin[] = [];
   for (const task of TASK_TYPES) {
     const value = settings.defaultModels[task];
-    if (!value || !defaultNames(task, value, model, bareIdProvider)) continue;
+    const how = value ? defaultNames(task, value, model) : null;
+    if (how === null) continue;
     pins.push({
       slot: task,
       source: settings.defaultModelsStored[task] ? 'saved' : 'suggested',
       ...(task === 'embeddings' ? { movedBy: 'embedding_switch' as const } : {}),
+      ...(how === 'id' ? { byIdOnly: true as const } : {}),
     });
   }
   const confidential = settings.confidentialModel;

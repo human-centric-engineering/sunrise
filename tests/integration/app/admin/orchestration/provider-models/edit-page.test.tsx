@@ -117,6 +117,7 @@ function makeModel(overrides: Record<string, unknown> = {}) {
       otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 0,
       settings: [],
+      sharedWith: [],
     },
     ...overrides,
   };
@@ -392,6 +393,7 @@ describe('EditProviderModelPage — retirement and uses (§136 t-1065)', () => {
             { slot: 'reasoning', source: 'suggested' },
             { slot: 'active_embedding', source: 'saved', movedBy: 'embedding_switch' },
           ],
+          sharedWith: [],
         },
       })
     );

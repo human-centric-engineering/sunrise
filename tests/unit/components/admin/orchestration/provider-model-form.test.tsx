@@ -30,11 +30,12 @@ import {
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockPush = vi.fn();
+const mockRefresh = vi.fn();
 const mockPost = vi.fn();
 const mockPatch = vi.fn();
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, refresh: mockRefresh }),
 
   useSearchParams: () => ({ get: () => null }),
 }));
@@ -1080,6 +1081,26 @@ describe('ProviderModelForm — retirement (§136 t-1064)', () => {
   it('is not offered when creating a model', () => {
     render(<ProviderModelForm />);
     expect(screen.queryByRole('combobox', { name: 'Replacement' })).not.toBeInTheDocument();
+  });
+
+  it('re-renders the page after a save, so the uses panel shows what was saved', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel()} replacementOptions={OPTIONS} />);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not re-render when the save fails', async () => {
+    const user = userEvent.setup();
+    mockPatch.mockRejectedValueOnce(new Error('nope'));
+    render(<ProviderModelForm model={makeModel()} replacementOptions={OPTIONS} />);
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(mockRefresh).not.toHaveBeenCalled();
   });
 
   it('sends nulls on an edit with no retirement set', async () => {

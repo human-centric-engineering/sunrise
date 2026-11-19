@@ -45,8 +45,8 @@ describe('settingsPinsFor', () => {
       })
     );
     expect(pins).toEqual([
-      { slot: 'chat', source: 'saved' },
-      { slot: 'reasoning', source: 'suggested' },
+      { slot: 'chat', source: 'saved', byIdOnly: true },
+      { slot: 'reasoning', source: 'suggested', byIdOnly: true },
     ]);
   });
 
@@ -56,9 +56,10 @@ describe('settingsPinsFor', () => {
         { id: 'w', providerSlug: 'openai', modelId: 'whisper-1' },
         settings({ defaultModels: { ...settings().defaultModels, audio } })
       );
+    // The composite names the provider; a legacy bare id does not.
     expect(on('openai::whisper-1')).toEqual([{ slot: 'audio', source: 'suggested' }]);
     expect(on('groq::whisper-1')).toEqual([]);
-    expect(on('whisper-1')).toEqual([{ slot: 'audio', source: 'suggested' }]);
+    expect(on('whisper-1')).toEqual([{ slot: 'audio', source: 'suggested', byIdOnly: true }]);
   });
 
   it('matches the confidential model on provider and model both', () => {
@@ -79,7 +80,7 @@ describe('settingsPinsFor', () => {
   it('marks both embedding pins as moved by the embedding switch, not by this feature', () => {
     const model = { id: 'e1', providerSlug: 'openai', modelId: 'text-embedding-3-small' };
     expect(settingsPinsFor(model, settings({ activeEmbeddingModelId: 'e1' }))).toEqual([
-      { slot: 'embeddings', source: 'suggested', movedBy: 'embedding_switch' },
+      { slot: 'embeddings', source: 'suggested', movedBy: 'embedding_switch', byIdOnly: true },
       { slot: 'active_embedding', source: 'saved', movedBy: 'embedding_switch' },
     ]);
   });

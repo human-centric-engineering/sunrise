@@ -22,7 +22,6 @@ import { getRouteLogger } from '@/lib/api/context';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { defaultSlots, settingsPinsFor } from '@/lib/orchestration/model-lifecycle/settings-pins';
-import { hydrateRegistry, registryProvider } from '@/lib/orchestration/model-lifecycle/uses';
 import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
 import {
   listProviderModelsQuerySchema,
@@ -92,20 +91,13 @@ export const GET = withAdminAuth(
     );
 
     const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
-    // A bare model id two providers share resolves to one of them (§136
-    // t-1065); only that row is the default's.
-    const registryReady = await hydrateRegistry();
 
     // Task slots each row serves as the effective default, by the one
     // matching rule the model's uses page applies too (`settingsPinsFor`).
     const data = rows.map((model) => {
       const config = configBySlug.get(model.providerSlug);
       const used = usage.get(modelUsageKey(model.providerSlug, model.modelId));
-      const defaultFor = defaultSlots(
-        settingsPinsFor(model, settings, {
-          bareIdProvider: registryReady ? registryProvider(model.modelId) : null,
-        })
-      );
+      const defaultFor = defaultSlots(settingsPinsFor(model, settings));
       return {
         ...model,
         configured: !!config,

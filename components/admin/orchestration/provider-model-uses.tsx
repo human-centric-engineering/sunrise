@@ -42,6 +42,8 @@ export interface ProviderModelUsesData {
   otherOrgAgentsFollowingPlatform: number;
   otherOrgWorkflows: number;
   settings: SettingsPin[];
+  /** Other providers that offer the same model id (§136 t-1065). */
+  sharedWith: string[];
 }
 
 const SLOT_LABEL: Record<SettingsPinSlot, string> = {
@@ -213,6 +215,9 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
               {uses.settings.map((pin) => (
                 <li key={pin.slot}>
                   {SLOT_LABEL[pin.slot]}
+                  {pin.byIdOnly && uses.sharedWith.length > 0 && (
+                    <span title="Named by model id alone">*</span>
+                  )}
                   {pin.source === 'suggested' && (
                     <span className="text-muted-foreground"> (the system&apos;s suggestion)</span>
                   )}
@@ -228,6 +233,18 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
           </div>
         </div>
       )}
+
+      {!nothing &&
+        uses.sharedWith.length > 0 &&
+        (uses.workflows.length > 0 ||
+          uses.otherOrgWorkflows > 0 ||
+          uses.settings.some((pin) => pin.byIdOnly)) && (
+          <p className="text-muted-foreground text-xs">
+            Workflows, and the settings marked *, name this model by its id alone, which{' '}
+            {uses.sharedWith.join(', ')} also {uses.sharedWith.length === 1 ? 'offers' : 'offer'}.
+            They may run on that provider&apos;s model instead, so they are listed here too.
+          </p>
+        )}
     </section>
   );
 }

@@ -184,19 +184,6 @@ export interface ProviderModelUsage {
   otherOrgWorkflows: number;
 }
 
-/** Options for {@link providerModelUsage}. */
-export interface ProviderModelUsageOptions extends CountScope {
-  /**
-   * The provider the runtime resolves the bare `modelId` to, when known. A
-   * workflow's `modelOverride` names a model id alone, which two providers
-   * can share (`gpt-4o` under OpenAI and Azure); the registry settles it on
-   * one. When this names another provider, a pin is that provider's row's
-   * use, not this one's. `null` or absent: count every pin of the id, since
-   * nothing says which provider it runs on.
-   */
-  bareIdProvider?: string | null;
-}
-
 /**
  * Active agents bound to `(providerSlug, modelId)` and active workflows
  * pinning `modelId` in a step's `modelOverride`, in every org by default. The
@@ -206,10 +193,8 @@ export interface ProviderModelUsageOptions extends CountScope {
 export function providerModelUsage(
   providerSlug: string,
   modelId: string,
-  options: ProviderModelUsageOptions = {}
+  options: CountScope = {}
 ): Promise<ProviderModelUsage> {
-  const countsBareIdPins =
-    options.bareIdProvider == null || options.bareIdProvider === providerSlug;
   const isCallers = callersRows();
   // A prefilter, not the check: JSON containment (`@>`) narrows the read to
   // definitions with SOME step pinning `modelId`, so every org's workflow
@@ -246,13 +231,11 @@ export function providerModelUsage(
         orderBy: { name: 'asc' },
       }),
     ]);
-    const pinning = countsBareIdPins
-      ? workflowRows.filter(
-          (w) =>
-            definitionPinsModel(w.draftDefinition, modelId) ||
-            definitionPinsModel(w.publishedVersion?.snapshot, modelId)
-        )
-      : [];
+    const pinning = workflowRows.filter(
+      (w) =>
+        definitionPinsModel(w.draftDefinition, modelId) ||
+        definitionPinsModel(w.publishedVersion?.snapshot, modelId)
+    );
     const agents = named(agentRows, isCallers);
     const workflows = named(pinning, isCallers);
     const ownAgents = agentRows.filter((r) => isCallers(r.orgId));

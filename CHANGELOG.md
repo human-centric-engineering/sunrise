@@ -26,8 +26,9 @@ release process.
   defaults marked saved or suggested, the confidential-message model, the
   active embedding model; the embedding pins marked as left to §132).
   `modelUses()` (`lib/orchestration/model-lifecycle/uses.ts`) and
-  `settingsPinsFor()` (`settings-pins.ts`) compute them; a bare model id two
-  providers share counts only for the provider the registry resolves it to.
+  `settingsPinsFor()` (`settings-pins.ts`) compute them. A pin that names a
+  model by id alone (`byIdOnly`) counts on every row with that id, and
+  `uses.sharedWith` names the other providers that offer it.
   `DELETE /provider-models/:id` now also refuses (409, `details.settings`)
   while a saved setting names the model, and each list row gains
   `lifecycleState`. The edit page shows

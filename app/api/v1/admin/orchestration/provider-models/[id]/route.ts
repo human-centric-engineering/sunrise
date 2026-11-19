@@ -270,8 +270,10 @@ export const DELETE = withAdminAuth<{ id: string }>(
     // And while a saved install setting names it (§136 t-1065): a saved task
     // default or the confidential-message model would name a row that no
     // longer exists, and the active embedding model would be cleared under
-    // every org's vectors. A default the system merely suggests is left out:
-    // it moves to another model on its own once this one is gone.
+    // every org's vectors. A default the system only suggests does not block
+    // it: nobody chose it, and the suggestion is recomputed from the registry.
+    // (The registry may still list a deleted model's id, so the suggestion is
+    // not guaranteed to move; config health's retired check names that case.)
     const usage = await modelUses(current);
     const agentCount = usage.agents.length + usage.otherOrgAgents;
     const workflowCount = usage.workflows.length + usage.otherOrgWorkflows;
