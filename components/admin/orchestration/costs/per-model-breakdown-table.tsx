@@ -8,6 +8,10 @@
  * Local rows always render `$0.00` regardless of what `byModel`
  * reports, because cost-tracker logs `totalCostUsd: 0` for local
  * providers anyway — the explicit rendering is just defensive.
+ *
+ * Spend is the platform's, as the cards above show it. Spend on orgs' own
+ * keys, which the vendor bills to the org (§137 t-1058), has a column of its
+ * own when there is any.
  */
 
 import * as React from 'react';
@@ -24,6 +28,7 @@ import { Tip } from '@/components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
+import { platformSpend } from '@/components/admin/orchestration/costs/platform-spend';
 import { buildModelIndex, lookupModel } from '@/components/admin/orchestration/costs/model-index';
 import type { CostSummaryModelRow } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -54,11 +59,13 @@ export function PerModelBreakdownTable({ rows, models }: PerModelBreakdownTableP
           ...row,
           info,
           isLocal,
-          displaySpend: isLocal ? 0 : row.monthSpend,
+          displaySpend: isLocal ? 0 : platformSpend(row.monthSpend, row.ownKeyMonthSpend),
+          ownKeySpend: isLocal ? 0 : row.ownKeyMonthSpend,
         };
       })
-      .sort((a, b) => b.displaySpend - a.displaySpend);
+      .sort((a, b) => b.displaySpend - a.displaySpend || b.ownKeySpend - a.ownKeySpend);
   }, [rows, modelIndex]);
+  const showOwnKeys = enriched.some((row) => row.ownKeySpend > 0);
 
   return (
     <Card data-testid="per-model-breakdown-table">
@@ -90,10 +97,17 @@ export function PerModelBreakdownTable({ rows, models }: PerModelBreakdownTableP
                   </Tip>
                 </TableHead>
                 <TableHead className="text-right">
-                  <Tip label="Month-to-date LLM cost for this model across all agents">
+                  <Tip label="Month-to-date LLM cost for this model across all agents, on the platform's keys">
                     <span>Spend</span>
                   </Tip>
                 </TableHead>
+                {showOwnKeys && (
+                  <TableHead className="text-right">
+                    <Tip label="Month-to-date LLM cost for this model on organisations' own AI keys, billed to them by the provider">
+                      <span>Own keys</span>
+                    </Tip>
+                  </TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -129,6 +143,11 @@ export function PerModelBreakdownTable({ rows, models }: PerModelBreakdownTableP
                   <TableCell className="text-right">
                     <Usd value={row.displaySpend} />
                   </TableCell>
+                  {showOwnKeys && (
+                    <TableCell className="text-right">
+                      <Usd value={row.ownKeySpend} />
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

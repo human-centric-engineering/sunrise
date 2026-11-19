@@ -325,10 +325,14 @@ export function orgCapStateOrSkip(
 export type SpendCap = keyof typeof SPEND_CAP_CODES;
 
 /**
- * A chat turn's hold on paid calls. `cap` is set when the turn finds a cap
- * reached but goes on, on a local model; from then on the gate refuses every
- * paid call the turn makes. Mutable, so the handler can set it part way
- * through a turn that is already running inside {@link withPaidCallHold}.
+ * A chat turn's hold on paid calls. `cap` is set as soon as the turn finds a
+ * cap reached, whether it then goes on (on a local model, or on the org's own
+ * key) or is refused, and between tool calls when it goes on locally. From
+ * then on the gate refuses every paid call the turn makes on the platform's
+ * keys; one on the org's own key only when `agentCapReached` is set or `cap`
+ * is `'agent'`. So `cap !== null` does not mean the turn runs locally. Mutable,
+ * so the handler can set it part way through a turn that is already running
+ * inside {@link withPaidCallHold}.
  */
 export interface PaidCallHold {
   cap: SpendCap | null;
@@ -420,21 +424,26 @@ const OPERATOR_MESSAGES: Record<SpendCap, string> = {
  *
  * `ownKey`: the call goes out on the org's own key (`usesOrgOwnKey`). Only the
  * turn's hold for its agent's cap refuses it, and no cap is read.
+ *
+ * `quiet`: the caller is asking ahead of any call, as chat does before a turn
+ * (§137 t-1057), so a refusal is not logged as a refused call.
  */
 export async function spendCapRefusal(
   providerSlug: string,
   isLocal: boolean,
-  options: { ownKey?: boolean } = {}
+  options: { ownKey?: boolean; quiet?: boolean } = {}
 ): Promise<SpendCapExceededError | null> {
   if (isLocal) return null;
   const orgId = orgIdForCall();
   if (options.ownKey) {
     const hold = paidCallHold.getStore();
     if (!hold?.agentCapReached && hold?.cap !== 'agent') return null;
-    logger.warn("Refusing a call on the org's own key: the agent's monthly budget is reached", {
-      providerSlug,
-      orgId,
-    });
+    if (!options.quiet) {
+      logger.warn("Refusing a call on the org's own key: the agent's monthly budget is reached", {
+        providerSlug,
+        orgId,
+      });
+    }
     return new SpendCapExceededError('agent', providerSlug);
   }
   const [global, org] = await Promise.all([
@@ -448,16 +457,18 @@ export async function spendCapRefusal(
       ? 'org'
       : (paidCallHold.getStore()?.cap ?? null);
   if (cap === null) return null;
-  logger.warn('Refusing a paid provider call: monthly spend cap reached', {
-    providerSlug,
-    cap,
-    orgId,
-    ...(cap === 'global'
-      ? { limitUsd: global?.cap, spentUsd: global?.spent }
-      : cap === 'org'
-        ? { limitUsd: org?.limit, spentUsd: org?.spent }
-        : {}),
-  });
+  if (!options.quiet) {
+    logger.warn('Refusing a paid provider call: monthly spend cap reached', {
+      providerSlug,
+      cap,
+      orgId,
+      ...(cap === 'global'
+        ? { limitUsd: global?.cap, spentUsd: global?.spent }
+        : cap === 'org'
+          ? { limitUsd: org?.limit, spentUsd: org?.spent }
+          : {}),
+    });
+  }
   return new SpendCapExceededError(cap, providerSlug);
 }
 

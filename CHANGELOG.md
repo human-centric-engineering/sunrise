@@ -104,6 +104,27 @@ release process.
   org's own-key spend in them counts against the org's and the global caps. The
   migration adds one column with a default.
 
+- **The cost trend and the per-model breakdowns split own-key spend too, and
+  chat asks the provider a turn is routed to (§137, t-1057, t-1058).** Each
+  point of `GET /costs/summary`'s `trend` gains `ownKeyCostUsd`, each `byModel`
+  row `ownKeyMonthSpend`, and each row and the totals of `GET /costs` (all three
+  `groupBy`s) `ownKeyCostUsd`: the part of the spend on orgs' own keys. The
+  costs page's trend chart, the dashboard's 7-day chart, the per-model table and
+  the local-vs-cloud panel show the platform's spend, as the cards beside them
+  do: the charts say what they leave out, and the table gains an Own keys
+  column. With the org's or the global cap reached, a chat turn is now answered
+  when the model for confidential messages that routing moves it to is local or
+  on the org's own key, rather than refused because the agent's provider is on
+  the platform's key; the refusal, when there is one, comes after routing and
+  still before anything is saved or sent. A fallback still does not let a capped
+  turn in. `spendCapRefusal()` gains a `quiet` option, for a check made ahead of
+  any call, so it is not logged as a refused one. _Fork impact:_ a test fixture
+  typed as `CostSummaryTrendPoint`, `CostSummaryModelRow`, `CostBreakdownRow` or
+  `CostBreakdownTotals` needs the new field. A test that mocks `isLocalProvider`
+  or `providerUsesOrgOwnKey` for the agent's primary with
+  `mockResolvedValueOnce` should answer by slug instead: confidential routing
+  asks `isLocalProvider` first.
+
 - **Meters and limits: how much an org may have (§135 t-1035).** An app
   registers a meter in the same `initAppEntitlements()` seam with
   `registerMeter({ key, label, description, period, count })`

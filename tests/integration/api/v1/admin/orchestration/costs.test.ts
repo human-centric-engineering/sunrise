@@ -55,12 +55,19 @@ function makeBreakdownResult(groupBy: 'day' | 'agent' | 'model') {
         key: groupBy === 'day' ? DATE_FROM : 'cmjbv4i3x00003wsloputgwu1',
         label: groupBy !== 'day' ? 'Test Agent' : undefined,
         totalCostUsd: 1.23,
+        ownKeyCostUsd: 0,
         inputTokens: 1000,
         outputTokens: 500,
         count: 10,
       },
     ],
-    totals: { totalCostUsd: 1.23, inputTokens: 1000, outputTokens: 500, count: 10 },
+    totals: {
+      totalCostUsd: 1.23,
+      ownKeyCostUsd: 0,
+      inputTokens: 1000,
+      outputTokens: 500,
+      count: 10,
+    },
   };
 }
 

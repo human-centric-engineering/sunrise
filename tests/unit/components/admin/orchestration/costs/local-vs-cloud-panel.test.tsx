@@ -50,7 +50,14 @@ import type { ModelInfo } from '@/lib/orchestration/llm/types';
 function makeSummary(localSavings: LocalSavingsResult | null, cloudSpend = 0): CostSummary {
   const byModel =
     cloudSpend > 0
-      ? [{ model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: cloudSpend }]
+      ? [
+          {
+            model: 'claude-sonnet-4-6',
+            provider: 'anthropic',
+            monthSpend: cloudSpend,
+            ownKeyMonthSpend: 0,
+          },
+        ]
       : [];
   return {
     totals: { today: 0, week: 0, month: cloudSpend },
@@ -169,8 +176,8 @@ describe('LocalVsCloudPanel spend split', () => {
     // that starts charging for local inference must not have it silently
     // reported as cloud spend.
     const summary = summaryWithRows([
-      { model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: 30 },
-      { model: 'llama-3.3-70b', provider: 'ollama', monthSpend: 99 },
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: 30, ownKeyMonthSpend: 0 },
+      { model: 'llama-3.3-70b', provider: 'ollama', monthSpend: 99, ownKeyMonthSpend: 0 },
     ]);
 
     render(<LocalVsCloudPanel summary={summary} models={[CLOUD_MODEL, LOCAL_MODEL]} />);
@@ -182,7 +189,9 @@ describe('LocalVsCloudPanel spend split', () => {
   it('counts a row whose model is absent from the catalogue as cloud', () => {
     // Unknown tier is treated as cloud: under-reporting real spend would be the
     // worse error, and a deleted registry entry must not make spend vanish.
-    const summary = summaryWithRows([{ model: 'ghost', provider: 'nowhere', monthSpend: 12 }]);
+    const summary = summaryWithRows([
+      { model: 'ghost', provider: 'nowhere', monthSpend: 12, ownKeyMonthSpend: 0 },
+    ]);
 
     render(<LocalVsCloudPanel summary={summary} models={[CLOUD_MODEL]} />);
 
@@ -195,11 +204,24 @@ describe('LocalVsCloudPanel spend split', () => {
     // last and the spend could land on the wrong side of the split.
     const sharedLocal: ModelInfo = { ...LOCAL_MODEL, id: 'gpt-4o', provider: 'local-proxy' };
     const sharedCloud: ModelInfo = { ...CLOUD_MODEL, id: 'gpt-4o', provider: 'openai' };
-    const summary = summaryWithRows([{ model: 'gpt-4o', provider: 'openai', monthSpend: 25 }]);
+    const summary = summaryWithRows([
+      { model: 'gpt-4o', provider: 'openai', monthSpend: 25, ownKeyMonthSpend: 0 },
+    ]);
 
     render(<LocalVsCloudPanel summary={summary} models={[sharedLocal, sharedCloud]} />);
 
     expect(screen.getByText('Cloud spend:').parentElement).toHaveTextContent('$25.00');
+  });
+
+  it('counts only the platform’s spend as cloud, as the cards beside it do (§137 t-1058)', () => {
+    // $40 of the model's $50 was on an org's own key, billed to the org.
+    const summary = summaryWithRows([
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: 50, ownKeyMonthSpend: 40 },
+    ]);
+
+    render(<LocalVsCloudPanel summary={summary} models={[CLOUD_MODEL]} />);
+
+    expect(screen.getByText('Cloud spend:').parentElement).toHaveTextContent('$10.00');
   });
 });
 

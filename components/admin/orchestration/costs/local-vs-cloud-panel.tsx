@@ -9,6 +9,9 @@
  * (the tier `'local'` flags local models). Savings are pulled from
  * `summary.localSavings` — `null` means the helper errored and we
  * render a muted placeholder rather than throwing.
+ *
+ * Cloud spend is the platform's, as the cards on the same page show it:
+ * spend on orgs' own keys is billed to them by the vendor (§137 t-1058).
  */
 
 import * as React from 'react';
@@ -17,6 +20,7 @@ import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recha
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
+import { platformSpend } from '@/components/admin/orchestration/costs/platform-spend';
 import { buildModelIndex, lookupModel } from '@/components/admin/orchestration/costs/model-index';
 import type { CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -52,7 +56,7 @@ export function LocalVsCloudPanel({ summary, models }: LocalVsCloudPanelProps) {
         // Savings value tracked elsewhere; actual local spend is $0.
         local += 0;
       } else {
-        cloud += row.monthSpend;
+        cloud += platformSpend(row.monthSpend, row.ownKeyMonthSpend);
       }
     }
     return { localSpend: local, cloudSpend: cloud };

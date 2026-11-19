@@ -126,7 +126,8 @@ describe('getCostSummary — byModel provider attribution (#436)', () => {
     // model id that exists under two providers.
     const groupings = mockedGroupBy.mock.calls.map(([args]) => (args as { by: string[] }).by);
     const byModel = groupings.find((by) => by.includes('model'));
-    expect(byModel).toEqual(['model', 'provider']);
+    // …and by `ownKey`, folded back into the row (§137 t-1058).
+    expect(byModel).toEqual(['model', 'provider', 'ownKey']);
   });
 
   it('keeps the same model id under two providers as separate rows', async () => {
@@ -150,8 +151,56 @@ describe('getCostSummary — byModel provider attribution (#436)', () => {
 
     // Assert — two rows, each carrying the provider that served it, sorted by spend
     expect(summary.byModel).toEqual([
-      { model: 'gpt-4o', provider: 'openai', monthSpend: 1.9 },
-      { model: 'gpt-4o', provider: 'microsoft', monthSpend: 0.4 },
+      { model: 'gpt-4o', provider: 'openai', monthSpend: 1.9, ownKeyMonthSpend: 0 },
+      { model: 'gpt-4o', provider: 'microsoft', monthSpend: 0.4, ownKeyMonthSpend: 0 },
     ]);
+  });
+});
+
+describe('getCostSummary — spend on orgs’ own keys in the trend and byModel (§137 t-1058)', () => {
+  it('folds a model’s own-key and platform halves into one row that says how much was on own keys', async () => {
+    mockedGroupBy
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 1 } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 5 } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 20 } }]);
+    mockedGroupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { model: 'gpt-4o', provider: 'openai', ownKey: false, _sum: { totalCostUsd: 2 } },
+      { model: 'claude', provider: 'anthropic', ownKey: true, _sum: { totalCostUsd: 4 } },
+      { model: 'gpt-4o', provider: 'openai', ownKey: true, _sum: { totalCostUsd: 3 } },
+      { model: 'gpt-4o', provider: 'microsoft', ownKey: false, _sum: { totalCostUsd: null } },
+    ]);
+    mockedRaw.mockResolvedValueOnce([]);
+    mockedAgentFind.mockResolvedValueOnce([]);
+    mockedCalcLocalSavings.mockResolvedValueOnce(null);
+
+    const summary = await getCostSummary();
+
+    // One row per provider and model, sorted by all spend.
+    expect(summary.byModel).toEqual([
+      { model: 'gpt-4o', provider: 'openai', monthSpend: 5, ownKeyMonthSpend: 3 },
+      { model: 'claude', provider: 'anthropic', monthSpend: 4, ownKeyMonthSpend: 4 },
+      { model: 'gpt-4o', provider: 'microsoft', monthSpend: 0, ownKeyMonthSpend: 0 },
+    ]);
+  });
+
+  it('gives each trend point the part of its day on orgs’ own keys, summed by the query', async () => {
+    setupDefaultMocks();
+    mockedRaw.mockReset();
+    mockedRaw.mockResolvedValueOnce([
+      { day: new Date('2026-11-18T00:00:00Z'), total_cost_usd: '60', own_key_cost_usd: '50' },
+      { day: new Date('2026-11-19T00:00:00Z'), total_cost_usd: 3, own_key_cost_usd: 0 },
+    ]);
+    mockedCalcLocalSavings.mockResolvedValueOnce(null);
+
+    const summary = await getCostSummary();
+
+    expect(summary.trend).toEqual([
+      { date: '2026-11-18', totalCostUsd: 60, ownKeyCostUsd: 50 },
+      { date: '2026-11-19', totalCostUsd: 3, ownKeyCostUsd: 0 },
+    ]);
+    const [sql] = mockedRaw.mock.calls[0] as [string];
+    expect(sql.replace(/\s+/g, ' ')).toContain(
+      'SUM(CASE WHEN "ownKey" THEN "totalCostUsd" ELSE 0 END) AS own_key_cost_usd'
+    );
   });
 });

@@ -231,7 +231,7 @@ export default async function OrchestrationDashboardPage() {
   // The platform's spend, as the costs page's Today card shows it: calls on an
   // org's own key are billed to that org (§137).
   const todayCostUsd = costSummary ? costSummary.totals.today - costSummary.ownKey.today : null;
-  const weekTrend = costSummary?.trend.slice(-7) ?? null;
+  const trend = costSummary?.trend ?? null;
 
   return (
     <div className="space-y-6">
@@ -271,12 +271,13 @@ export default async function OrchestrationDashboardPage() {
 
       <section aria-label="Trends and activity" className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          {weekTrend === null ? (
+          {trend === null ? (
             <LoadFailedNotice what="the spend trend" />
           ) : (
             <CostTrendChart
               title="7-day spend trend"
-              trend={weekTrend}
+              trend={trend}
+              days={7}
               perModel={null}
               models={models}
             />

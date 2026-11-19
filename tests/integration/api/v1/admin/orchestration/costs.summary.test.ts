@@ -55,8 +55,10 @@ function makeCostSummary() {
         utilisation: 0.128,
       },
     ],
-    byModel: [{ model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: 12.8 }],
-    trend: [{ date: '2025-01-01', totalCostUsd: 0.4 }],
+    byModel: [
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: 12.8, ownKeyMonthSpend: 0 },
+    ],
+    trend: [{ date: '2025-01-01', totalCostUsd: 0.4, ownKeyCostUsd: 0 }],
     localSavings: null,
   };
 }

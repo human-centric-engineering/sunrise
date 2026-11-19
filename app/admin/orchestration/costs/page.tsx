@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import type { PerModelRow } from '@/components/admin/orchestration/costs/cost-trend-chart';
 import { CostsView } from '@/components/admin/orchestration/costs/costs-view';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -59,17 +60,12 @@ interface AlertsResponse {
   globalCap: GlobalCapStatus;
 }
 
-interface PerModelDaily {
-  key: string;
-  totalCostUsd: number;
-}
-
-async function getPerModel30Day(): Promise<LoadResult<{ rows: PerModelDaily[]; groupBy: string }>> {
+async function getPerModel30Day(): Promise<LoadResult<{ rows: PerModelRow[]; groupBy: string }>> {
   const now = new Date();
   const from = new Date(now.getTime() - 29 * 24 * 60 * 60 * 1000);
   const dateFrom = from.toISOString().slice(0, 10);
   const dateTo = now.toISOString().slice(0, 10);
-  return loadServerData<{ rows: PerModelDaily[]; groupBy: string }>(
+  return loadServerData<{ rows: PerModelRow[]; groupBy: string }>(
     `${API.ADMIN.ORCHESTRATION.COSTS}?groupBy=model&dateFrom=${dateFrom}&dateTo=${dateTo}`
   );
 }

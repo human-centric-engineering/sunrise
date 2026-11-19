@@ -16,8 +16,9 @@
  * still includes it, and the summary and the org usage say how much of it was
  * on the org's own key (`ownKey`, `ownKeyCostUsd`): the vendor bills the org
  * for that part, so it is not the platform's spend, and the org's and the
- * global caps leave it out. An agent's spend and the agent breakdowns keep
- * it, since the agent's cap counts it.
+ * global caps leave it out. So does each trend point, each model row and each
+ * breakdown row (t-1058). An agent's spend in the summary keeps it with no
+ * split, since the agent's cap counts it.
  */
 
 import { prisma } from '@/lib/db/client';
@@ -39,7 +40,10 @@ export interface CostBreakdownRow {
   key: string;
   /** Human-friendly label (agent name / model id). Undefined for `day`. */
   label?: string;
+  /** All of the row's spend, the part on orgs' own keys included. */
   totalCostUsd: number;
+  /** The part of `totalCostUsd` on an org's own key (§137 t-1058). */
+  ownKeyCostUsd: number;
   inputTokens: number;
   outputTokens: number;
   count: number;
@@ -47,6 +51,8 @@ export interface CostBreakdownRow {
 
 export interface CostBreakdownTotals {
   totalCostUsd: number;
+  /** The part of `totalCostUsd` on an org's own key (§137 t-1058). */
+  ownKeyCostUsd: number;
   inputTokens: number;
   outputTokens: number;
   count: number;
@@ -87,13 +93,19 @@ export interface CostSummaryModelRow {
    * last — a provider the operator may never have configured.
    */
   provider: string;
+  /** All of the model's spend this month, the part on orgs' own keys included. */
   monthSpend: number;
+  /** The part of `monthSpend` on an org's own key (§137 t-1058). */
+  ownKeyMonthSpend: number;
 }
 
 export interface CostSummaryTrendPoint {
   /** ISO date (YYYY-MM-DD), UTC. */
   date: string;
+  /** All of the day's spend, the part on orgs' own keys included. */
   totalCostUsd: number;
+  /** The part of `totalCostUsd` on an org's own key (§137 t-1058). */
+  ownKeyCostUsd: number;
 }
 
 export interface CostSummary {
@@ -222,6 +234,7 @@ function isoDate(date: Date): string {
 interface DayGroupRow {
   day: Date;
   total_cost_usd: number | string;
+  own_key_cost_usd: number | string;
   input_tokens: number | bigint | string;
   output_tokens: number | bigint | string;
   row_count: number | bigint | string;
@@ -267,6 +280,7 @@ export async function getCostBreakdown(opts: CostBreakdownOptions): Promise<Cost
       SELECT
         date_trunc('day', "createdAt") AS day,
         SUM("totalCostUsd") AS total_cost_usd,
+        SUM(CASE WHEN "ownKey" THEN "totalCostUsd" ELSE 0 END) AS own_key_cost_usd,
         SUM("inputTokens")  AS input_tokens,
         SUM("outputTokens") AS output_tokens,
         COUNT(*)            AS row_count
@@ -281,17 +295,22 @@ export async function getCostBreakdown(opts: CostBreakdownOptions): Promise<Cost
     rows = raw.map((r) => ({
       key: isoDate(r.day),
       totalCostUsd: toNumber(r.total_cost_usd),
+      ownKeyCostUsd: toNumber(r.own_key_cost_usd),
       inputTokens: toNumber(r.input_tokens),
       outputTokens: toNumber(r.output_tokens),
       count: toNumber(r.row_count),
     }));
   } else if (opts.groupBy === 'agent') {
-    const grouped = await prisma.aiCostLog.groupBy({
-      by: ['agentId'],
-      where,
-      _sum: { totalCostUsd: true, inputTokens: true, outputTokens: true },
-      _count: { _all: true },
-    });
+    // By `ownKey` too, folded back to one row per agent below.
+    const grouped = foldOwnKeyGroups(
+      await prisma.aiCostLog.groupBy({
+        by: ['agentId', 'ownKey'],
+        where,
+        _sum: { totalCostUsd: true, inputTokens: true, outputTokens: true },
+        _count: { _all: true },
+      }),
+      (g) => g.agentId
+    );
 
     const agentIds = grouped
       .map((g) => g.agentId)
@@ -308,57 +327,79 @@ export async function getCostBreakdown(opts: CostBreakdownOptions): Promise<Cost
     rows = grouped.map((g) => ({
       key: g.agentId ?? '(deleted)',
       label: g.agentId ? (nameById.get(g.agentId) ?? '(unknown agent)') : '(deleted)',
-      totalCostUsd: g._sum.totalCostUsd ?? 0,
-      inputTokens: g._sum.inputTokens ?? 0,
-      outputTokens: g._sum.outputTokens ?? 0,
-      count: g._count._all,
+      ...g.sums,
     }));
     rows.sort((a, b) => b.totalCostUsd - a.totalCostUsd);
   } else {
-    const grouped = await prisma.aiCostLog.groupBy({
-      by: ['model'],
-      where,
-      _sum: { totalCostUsd: true, inputTokens: true, outputTokens: true },
-      _count: { _all: true },
-    });
+    const grouped = foldOwnKeyGroups(
+      await prisma.aiCostLog.groupBy({
+        by: ['model', 'ownKey'],
+        where,
+        _sum: { totalCostUsd: true, inputTokens: true, outputTokens: true },
+        _count: { _all: true },
+      }),
+      (g) => g.model
+    );
 
-    rows = grouped.map((g) => ({
-      key: g.model,
-      label: g.model,
-      totalCostUsd: g._sum.totalCostUsd ?? 0,
-      inputTokens: g._sum.inputTokens ?? 0,
-      outputTokens: g._sum.outputTokens ?? 0,
-      count: g._count._all,
-    }));
+    rows = grouped.map((g) => ({ key: g.model, label: g.model, ...g.sums }));
     rows.sort((a, b) => b.totalCostUsd - a.totalCostUsd);
   }
 
-  const totals = rows.reduce<CostBreakdownTotals>(
-    (acc, r) => {
-      acc.totalCostUsd += r.totalCostUsd;
-      acc.inputTokens += r.inputTokens;
-      acc.outputTokens += r.outputTokens;
-      acc.count += r.count;
-      return acc;
-    },
-    { totalCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 }
-  );
+  const totals: CostBreakdownTotals = rows.reduce(addTotals, emptyTotals());
 
   return { groupBy: opts.groupBy, rows, totals };
 }
 
-/** A window's spend grouped by `ownKey`: all of it, and the own-key part. */
-function splitByOwnKey(
-  groups: ReadonlyArray<{ ownKey: boolean; _sum: { totalCostUsd: number | null } }>
-): { total: number; ownKey: number } {
-  let total = 0;
-  let ownKey = 0;
+/** A `groupBy` row that `ownKey` is among the keys of. */
+interface OwnKeyGroup {
+  ownKey: boolean;
+  _sum: {
+    totalCostUsd: number | null;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+  };
+  /** Absent when the read does not count rows (the summary's `byModel`). */
+  _count?: { _all: number };
+}
+
+/** What a fold adds up for one key: the sums of both halves, and the own-key part. */
+type OwnKeySums = Omit<CostBreakdownRow, 'key' | 'label'>;
+
+/**
+ * Fold `groupBy` rows split by `ownKey` back into one per `keyOf`, in the
+ * order each key is first seen. Each result keeps the grouping fields of the
+ * first row seen for its key, and `sums`: the sums of both halves, and the
+ * own-key part of the spend. A row's own `_sum`, `_count` and `ownKey` are
+ * left out, since they would hold only one half. `sums.count` is 0 for a
+ * read that does not count rows.
+ */
+function foldOwnKeyGroups<G extends OwnKeyGroup, K>(
+  groups: readonly G[],
+  keyOf: (g: G) => K
+): Array<Omit<G, keyof OwnKeyGroup> & { sums: OwnKeySums }> {
+  const folded = new Map<K, Omit<G, keyof OwnKeyGroup> & { sums: OwnKeySums }>();
   for (const g of groups) {
-    const spend = g._sum.totalCostUsd ?? 0;
-    total += spend;
-    if (g.ownKey) ownKey += spend;
+    const { ownKey, _sum, _count, ...fields } = g;
+    const spend = _sum.totalCostUsd ?? 0;
+    const key = keyOf(g);
+    const into = folded.get(key) ?? {
+      ...fields,
+      sums: { totalCostUsd: 0, ownKeyCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 },
+    };
+    into.sums.totalCostUsd += spend;
+    if (ownKey) into.sums.ownKeyCostUsd += spend;
+    into.sums.inputTokens += _sum.inputTokens ?? 0;
+    into.sums.outputTokens += _sum.outputTokens ?? 0;
+    into.sums.count += _count?._all ?? 0;
+    folded.set(key, into);
   }
-  return { total, ownKey };
+  return [...folded.values()];
+}
+
+/** A window's spend grouped by `ownKey`: all of it, and the own-key part. */
+function splitByOwnKey(groups: readonly OwnKeyGroup[]): { total: number; ownKey: number } {
+  const sums = foldOwnKeyGroups(groups, () => 'window')[0]?.sums;
+  return { total: sums?.totalCostUsd ?? 0, ownKey: sums?.ownKeyCostUsd ?? 0 };
 }
 
 // ----------------------------------------------------------------------------
@@ -368,6 +409,7 @@ function splitByOwnKey(
 interface TrendRow {
   day: Date;
   total_cost_usd: number | string;
+  own_key_cost_usd: number | string;
 }
 
 /**
@@ -412,7 +454,7 @@ export async function getCostSummary(): Promise<CostSummary> {
       // model id, and without the provider the UI can only guess which
       // catalogue entry a spend row belongs to.
       prisma.aiCostLog.groupBy({
-        by: ['model', 'provider'],
+        by: ['model', 'provider', 'ownKey'],
         where: { createdAt: { gte: monthStart } },
         _sum: { totalCostUsd: true },
       }),
@@ -420,7 +462,8 @@ export async function getCostSummary(): Promise<CostSummary> {
         `
         SELECT
           date_trunc('day', "createdAt") AS day,
-          SUM("totalCostUsd") AS total_cost_usd
+          SUM("totalCostUsd") AS total_cost_usd,
+          SUM(CASE WHEN "ownKey" THEN "totalCostUsd" ELSE 0 END) AS own_key_cost_usd
         FROM "ai_cost_log"
         WHERE "createdAt" >= $1 AND "createdAt" < $2
         GROUP BY day
@@ -466,17 +509,23 @@ export async function getCostSummary(): Promise<CostSummary> {
     .filter((r): r is CostSummaryAgentRow => r !== null)
     .sort((a, b) => b.monthSpend - a.monthSpend);
 
-  const byModel: CostSummaryModelRow[] = byModelGrouped
+  // Split by `ownKey` too, folded back to one row per provider and model.
+  const byModel: CostSummaryModelRow[] = foldOwnKeyGroups(
+    byModelGrouped,
+    (g) => `${g.provider}::${g.model}`
+  )
     .map((g) => ({
       model: g.model,
       provider: g.provider,
-      monthSpend: g._sum.totalCostUsd ?? 0,
+      monthSpend: g.sums.totalCostUsd,
+      ownKeyMonthSpend: g.sums.ownKeyCostUsd,
     }))
     .sort((a, b) => b.monthSpend - a.monthSpend);
 
   const trend: CostSummaryTrendPoint[] = trendRaw.map((r) => ({
     date: isoDate(r.day),
     totalCostUsd: toNumber(r.total_cost_usd),
+    ownKeyCostUsd: toNumber(r.own_key_cost_usd),
   }));
 
   // Savings is a purely additive signal — any failure here is logged and
@@ -665,22 +714,10 @@ export async function getOrgUsage(opts: OrgUsageOptions): Promise<OrgUsageReport
     ? await runAsSystem('org usage rollup (every org spend for one month)', read)
     : await read();
 
-  const byOrg = new Map<string | null, UsageTotals>();
-  for (const g of grouped) {
-    const spend = g._sum.totalCostUsd ?? 0;
-    let totals = byOrg.get(g.orgId);
-    if (!totals) {
-      totals = emptyTotals();
-      byOrg.set(g.orgId, totals);
-    }
-    addTotals(totals, {
-      totalCostUsd: spend,
-      ownKeyCostUsd: g.ownKey ? spend : 0,
-      inputTokens: g._sum.inputTokens ?? 0,
-      outputTokens: g._sum.outputTokens ?? 0,
-      count: g._count._all,
-    });
-  }
+  // Split by `ownKey` too, folded back to one entry per org.
+  const byOrg = new Map<string | null, UsageTotals>(
+    foldOwnKeyGroups(grouped, (g) => g.orgId).map((g) => [g.orgId, g.sums])
+  );
 
   let detached: UsageTotals | null = null;
   if (multi) {
