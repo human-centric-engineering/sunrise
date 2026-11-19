@@ -277,8 +277,8 @@ export function runAsOrg<T>(
 
 /**
  * The null-org system scope — the one body behind {@link runAsSystem},
- * {@link runAsCredentialLookup} and {@link runAsCrossOrgCount}, which differ
- * only in what they log. At `multi` the data layer reads it as the bypass.
+ * {@link runAsCredentialLookup}, {@link runAsCrossOrgCount} and
+ * {@link runAsLivenessProbe}, which differ only in what they log. At `multi` the data layer reads it as the bypass.
  */
 function inSystemScope<T>(fn: () => Promise<T>): Promise<T> {
   return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
@@ -343,6 +343,29 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
  */
 export function runAsCrossOrgCount<T>(reason: string, fn: () => Promise<T>): Promise<T> {
   logger.debug('Entering system tenant scope for a cross-org usage count', { reason });
+  return inSystemScope(fn);
+}
+
+/**
+ * Run `fn` as the system scope for the database liveness probe (#1262).
+ *
+ * `getDatabaseHealth()` runs a raw `SELECT 1`, and at `multi` the data layer
+ * refuses raw SQL with no tenant context. Its callers include the
+ * unauthenticated `/api/health` route, which has no org to enter. So the
+ * probe runs in the same scope as {@link runAsSystem}, with the same
+ * `app.bypass_rls` setter. `SELECT 1` reads no rows, so the bypass reaches
+ * nothing.
+ *
+ * Logged at debug, as {@link runAsCredentialLookup} is, and for its reason:
+ * load balancers and monitors poll the health route every few seconds, and
+ * an info line per poll would drown the signal {@link runAsSystem}'s log
+ * exists to give. The trade is only safe while the probe is the one thing
+ * inside, so it has one caller, `lib/db/utils.ts`, and
+ * `tests/unit/lib/tenancy/liveness-probe-sites.test.ts` (always-run) fails
+ * naming any other.
+ */
+export function runAsLivenessProbe<T>(fn: () => Promise<T>): Promise<T> {
+  logger.debug('Entering system tenant scope for the database liveness probe');
   return inSystemScope(fn);
 }
 
