@@ -184,3 +184,26 @@ describe('ProviderModelUses', () => {
     expect(region).not.toHaveTextContent('chat*');
   });
 });
+
+describe('the move action (§136 t-1066)', () => {
+  function withAction(uses: Partial<ProviderModelUsesData>) {
+    render(
+      <ProviderModelUses
+        retiresAt={null}
+        lifecycle={{ state: 'current', replacement: null }}
+        uses={{ ...NONE, ...uses }}
+        action={<button type="button">Move uses…</button>}
+      />
+    );
+  }
+
+  it('is shown beside the heading when something uses the model', () => {
+    withAction({ otherOrgWorkflows: 1 });
+    expect(screen.getByRole('button', { name: 'Move uses…' })).toBeInTheDocument();
+  });
+
+  it('is not shown when nothing uses it', () => {
+    withAction({});
+    expect(screen.queryByRole('button', { name: 'Move uses…' })).toBeNull();
+  });
+});

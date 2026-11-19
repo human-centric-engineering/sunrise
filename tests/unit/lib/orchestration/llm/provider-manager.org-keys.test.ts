@@ -84,6 +84,8 @@ const sdkFailure = vi.hoisted((): { next: Error | null } => ({ next: null }));
 const refusedKeys = vi.hoisted((): { keys: Set<unknown> } => ({
   keys: new Set(['sunrise-key-check-not-a-real-key']),
 }));
+/** Models the vendor will not serve on any key here, as a key restricted to some models. */
+const refusedModels = vi.hoisted((): { models: Set<unknown> } => ({ models: new Set() }));
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages: { create: ReturnType<typeof vi.fn> };
@@ -91,8 +93,13 @@ vi.mock('@anthropic-ai/sdk', () => {
     constructor(opts: { apiKey?: unknown }) {
       const refused = () =>
         Object.assign(new Error(`401 invalid x-api-key ${String(opts.apiKey)}`), { status: 401 });
-      const create = vi.fn(async () => {
+      const create = vi.fn(async (args?: { model?: unknown }) => {
         if (refusedKeys.keys.has(opts.apiKey)) throw refused();
+        if (refusedModels.models.has(args?.model)) {
+          throw Object.assign(new Error(`403 model not allowed for ${String(opts.apiKey)}`), {
+            status: 403,
+          });
+        }
         const failure = sdkFailure.next;
         sdkFailure.next = null;
         if (failure) throw failure;
@@ -142,6 +149,7 @@ import {
   getProvider,
   getProviderWithFallbacks,
   testProviderKey,
+  testProviderKeyOnModel,
 } from '@/lib/orchestration/llm/provider-manager';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { orgKeyTable } from '@/tests/helpers/org-provider-key-table';
@@ -455,5 +463,63 @@ describe('testing a key before it is saved (t-1045)', () => {
     expect(result).toEqual({ ok: false, models: [], error: `401 invalid x-api-key ${KEY_B}` });
     // Built from the row it was handed: no read of the provider table.
     expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('testing an org’s key against one model, before the model move (§136 t-1066)', () => {
+  afterEach(() => {
+    refusedModels.models.clear();
+    refusedKeys.keys.delete(KEY_B);
+  });
+
+  it('passes a key the vendor accepts and a short message to the model succeeds on', async () => {
+    const result = await testProviderKeyOnModel(ROW as never, KEY_B, 'claude-new', { chat: true });
+
+    expect(result).toEqual({ ok: true });
+    // The key test's clients (the key and a known-wrong one), then the message
+    // on the key's own client, to the model named.
+    const mine = clients.filter((c) => c.apiKey === KEY_B);
+    const sent = mine.flatMap((c) => c.create.mock.calls);
+    expect(sent).toHaveLength(1);
+    expect(sent[0][0]).toMatchObject({
+      model: 'claude-new',
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+  });
+
+  it('fails at the model when the key passes but may not use it', async () => {
+    refusedModels.models.add('claude-new');
+
+    const result = await testProviderKeyOnModel(ROW as never, KEY_B, 'claude-new', { chat: true });
+
+    expect(result).toEqual({
+      ok: false,
+      failedAt: 'model',
+      error: expect.stringContaining('403 model not allowed'),
+    });
+  });
+
+  it('fails at the key, sending the model nothing, when the vendor refuses the key', async () => {
+    refusedKeys.keys.add(KEY_B);
+
+    const result = await testProviderKeyOnModel(ROW as never, KEY_B, 'claude-new', { chat: true });
+
+    expect(result).toMatchObject({ ok: false, failedAt: 'key' });
+    // The key test may send its own one-token message where the model list
+    // proves nothing; none goes to the model under test.
+    const toModel = clients.flatMap((c) =>
+      c.create.mock.calls.filter((call) => (call[0] as { model?: unknown }).model === 'claude-new')
+    );
+    expect(toModel).toEqual([]);
+  });
+
+  it('tests the key alone for a model that is not a chat model', async () => {
+    refusedModels.models.add('voyage-x');
+
+    const result = await testProviderKeyOnModel(ROW as never, KEY_B, 'voyage-x', { chat: false });
+
+    expect(result).toEqual({ ok: true });
+    expect(clients.every((c) => c.create.mock.calls.length === 0)).toBe(true);
   });
 });
