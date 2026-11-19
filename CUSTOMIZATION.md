@@ -471,6 +471,7 @@ small and conflict-free.)
 | `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)                                  | `instrumentation.ts` `register()` (server, all envs)                                                                  |
 | `lib/app/user-created.ts`                  | react to a new account (`initAppUserCreatedHooks`)                     | better-auth `user.create.after` (server)                                                                              |
 | `lib/app/org-created.ts`                   | set up every new org (`initAppOrgCreatedHooks`)                        | `createOrg()`, then the `orgCreatedHooks` maintenance job until it succeeds (server)                                  |
+| `lib/app/signup-org.ts`                    | where a self-serve signup lands (`initAppSignupOrgResolver`)           | `userCreateBeforeHook`, before the membership is written (server)                                                     |
 | `lib/app/erasure.ts`                       | erasure cleanup for your data (`initAppErasureHooks`)                  | `eraseUser()` via `getErasureCleanupHooks()` (server)                                                                 |
 | `lib/app/jobs.ts`                          | recurring background work (`initAppJobs`)                              | the maintenance tick (server)                                                                                         |
 | `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)                             | root `eslint.config.mjs` spread (lint)                                                                                |
@@ -574,19 +575,25 @@ reserved leaf hook (e.g. `lib/app/leaf-bootstrap.ts`), so a leaf-on-framework
 fork can still hook boot without colliding on `bootstrap.ts`.
 
 **Reacting to a new account — `lib/app/user-created.ts`.** To provision a
-profile row, seed a default workspace, start an onboarding sequence or push to a
-CRM when someone signs up, fill the empty `initAppUserCreatedHooks()`:
+profile row, start an onboarding sequence or push to a CRM when someone signs
+up, fill the empty `initAppUserCreatedHooks()`:
 
 ```typescript
 // lib/app/user-created.ts — yours to edit
 import { registerUserCreatedHook } from '@/lib/auth/user-created-hooks';
 
 export function initAppUserCreatedHooks(): void {
-  registerUserCreatedHook('app:seed-workspace', async ({ userId, email, signupMethod }) => {
-    await prisma.appWorkspace.create({ data: { ownerId: userId, name: email } });
+  registerUserCreatedHook('app:profile', async ({ userId }) => {
+    await prisma.appProfile.upsert({ where: { userId }, update: {}, create: { userId } });
   });
 }
 ```
+
+This is not the place to choose or set up the org a new person works in. At
+`multi` a self-serve signup already has an org of their own when this runs;
+to send them somewhere else, use `lib/app/signup-org.ts` (below), and to set
+every new org up (a default workspace, a starting package), use
+`lib/app/org-created.ts`.
 
 better-auth's `user.create.after` hook calls the initializer once, then
 dispatches every registered hook. The context is
@@ -631,12 +638,13 @@ export function initAppOrgCreatedHooks(): void {
 }
 ```
 
-Every org is made by `createOrg()` (`lib/tenancy/lifecycle.ts`), whether from
-Admin → Organisations or your own code, so the hooks run for all of them. The
-context is `{ orgId, slug, name, source, ownerUserId, retry, signal }`: `source`
-is `admin` or `app` (your own call, the default; `signup` is reserved for
-Sunrise's self-serve signup, which §134 adds next), and `ownerUserId` is the
-founding OWNER or `null`. Each hook runs inside the new org's tenant scope, and
+Every org is made in `lib/tenancy/lifecycle.ts`, whether from Admin →
+Organisations, your own code or a self-serve signup, so the hooks run for all
+of them. The context is `{ orgId, slug, name, source, ownerUserId, retry,
+signal }`: `source` is `admin`, `app` (your own call to `createOrg()`, the
+default) or `signup` (the org of their own a self-serve signup founds at
+`multi`), and `ownerUserId` is the founding OWNER or `null`. A `signup` org's
+hooks run once its founder's membership exists, so `ownerUserId` names them. Each hook runs inside the new org's tenant scope, and
 before the platform agents are placed in it, so a provider you grant is the one
 their bindings are picked from.
 
@@ -663,6 +671,55 @@ an owed key no hook is registered under is left owed rather than dropped (during
 a rolling deploy another instance may have it), so a key you rename is never
 run for the orgs that still owe the old one. The retry runs over active orgs, so
 an org suspended while it still owes a hook gets it once reinstated.
+
+**Where a self-serve signup lands — `lib/app/signup-org.ts`.** At
+`TENANCY_MODE=multi` the install org is yours (the vendor's) and holds the
+control plane, so someone who signs up on their own gets **an org of their own,
+as its OWNER**, and their first session starts in it. That covers a signup with
+no invitation and one let in from the install org's own waitlist. To choose
+otherwise, fill the empty `initAppSignupOrgResolver()`:
+
+```typescript
+// lib/app/signup-org.ts — yours to edit
+import { prisma } from '@/lib/db/client';
+import { registerSignupOrgResolver } from '@/lib/tenancy/signup-org';
+
+export function initAppSignupOrgResolver(): void {
+  // People from a customer's domain join that customer's org.
+  registerSignupOrgResolver(async ({ email }) => {
+    const domain = email.split('@')[1]?.toLowerCase();
+    const slug = domain ? ORG_SLUG_BY_DOMAIN[domain] : undefined;
+    const org = slug ? await prisma.org.findUnique({ where: { slug } }) : null;
+    return org ? { kind: 'join', orgId: org.id } : { kind: 'own' };
+  });
+}
+```
+
+The resolver is told `{ email, emailVerified, name, signupMethod,
+waitlistEntryId }` and answers one of:
+
+| Answer                           | The person lands as                                                       |
+| -------------------------------- | ------------------------------------------------------------------------- |
+| `{ kind: 'own', name? }`         | OWNER of a new org (`name` is its display name; the platform picks one)   |
+| `{ kind: 'join', orgId, role? }` | `role` (default MEMBER) in an org that exists; the role is taken as given |
+| `{ kind: 'install' }`            | the install org, as before this seam existed                              |
+
+It is asked **before the user row exists**, while the membership is decided, so
+the membership, the record on the row and the first session all agree; asking
+from `lib/app/user-created.ts` instead would leave a window, and a failure, in
+which the person stays in your org. A fault never refuses a signup: a resolver
+that throws, runs past 5 seconds (`SIGNUP_ORG_RESOLVER_TIMEOUT_MS`), answers
+nothing usable, or names an org that does not exist puts the person in the
+install org, logged at `error`. On an email signup the address is not proven
+yet (`emailVerified: false`), so matching on it is safe only where sign-in
+requires verification (`REQUIRE_EMAIL_VERIFICATION`, the production default).
+
+Never asked: an invited signup (an org's own waitlist invitation names that
+org), platform staff (the first person on a fresh database), and anyone at
+`single`, where nothing changes. An org made this way runs your org-created
+hooks with its founder as `ownerUserId`. If the signup fails after its org was
+made, the org is left with no member; the `abandonedSignupOrgs` maintenance job
+deletes such an org after an hour ([identity guide](.context/tenancy/identity.md#self-serve-signup-an-org-of-their-own)).
 
 **Recurring background work — `lib/app/jobs.ts`.** To run periodic work on the
 existing maintenance tick instead of standing up a second scheduler, fill the

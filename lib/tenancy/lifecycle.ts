@@ -301,7 +301,8 @@ export async function createOrg(
  * It is created with no member, marked as awaiting its founder
  * (`Org.settings.awaitingFounder`), and with the app's org-created hooks
  * recorded as owed but **not run**: a hook is told the org's owner, and there
- * is none yet. The platform agents wait too. The mark is removed in the
+ * is none yet. Nor are the platform agents placed. (The `platformAgents` job
+ * may still reach a marked org; what it writes cascades with the org.) The mark is removed in the
  * transaction that writes the founder's membership (`writeNewUserMemberships`,
  * `healSignupRecord`), and then {@link completeSignupOrg} runs both. The
  * org-created retry job skips a marked org.
