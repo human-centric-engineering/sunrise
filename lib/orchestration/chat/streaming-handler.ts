@@ -712,54 +712,84 @@ export class StreamingChatHandler {
       const budget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
       budgetNotice = { agent, budget };
 
-      // Neither the org's nor the global cap holds a turn on the org's own key
-      // (§137): the vendor bills the org. Such a turn goes ahead unless its
-      // agent's cap is reached (below).
-      const onOwnKey =
-        !budget.withinBudget && (await providerUsesOrgOwnKey(resolvedBinding.providerSlug));
-      const refused = !budget.withinBudget && (!onOwnKey || budget.agentCapExceeded === true);
-
-      // Budget warning at 80%, for any turn that goes on with its agent's cap
-      // not yet reached.
-      if (
-        !refused &&
-        budget.limit !== null &&
-        budget.limit > 0 &&
-        budget.spent / budget.limit >= 0.8
-      ) {
-        const pct = ((budget.spent / budget.limit) * 100).toFixed(0);
-        log.warn('Agent approaching budget limit', {
-          agentId: agent.id,
-          spent: budget.spent,
-          limit: budget.limit,
-          percent: pct,
-        });
-        yield {
-          type: 'warning',
-          code: 'budget_warning',
-          message: `This agent has used ${pct}% of its $${budget.limit.toFixed(2)} monthly budget.`,
-        };
-      }
-
-      // A cap that has been reached stops paid calls, not free ones: an agent
-      // whose primary is local still answers on it, and a cap of 0 means "no
-      // paid calls". The turn holds paid calls instead (`hold`), and the
-      // provider gate refuses each one it would make — a fallback, a failover
-      // mid-stream, a tool, the summarizer. (The org and global caps are
-      // enforced at the gate in any case; the agent's cap is known only here.)
+      // A cap that has been reached stops paid calls, not free ones: a cap of 0
+      // means "no paid calls", and a turn that can be answered without one is.
+      // From here the turn holds paid calls (`hold`), and the provider gate
+      // refuses each one it would make — a fallback, a failover mid-stream, a
+      // tool, the summarizer. (The org and global caps are enforced at the gate
+      // in any case; the agent's cap is known only here.) A call on the org's
+      // own key is held by its agent's cap alone (§137).
       //
-      // A turn on the org's own key goes ahead with nothing held, and any call
-      // it makes on the platform's keys meets the org's and the global caps at
-      // the gate.
-      if (refused && (await isLocalProvider(resolvedBinding.providerSlug))) {
+      // Whether the turn can be answered at all waits for `capsEndTurn`, once
+      // confidential routing has said where it goes.
+      if (!budget.withinBudget) {
         hold.cap = budgetRefusal(budget).cap;
         hold.agentCapReached = budget.agentCapExceeded === true;
-      } else if (refused) {
-        const refusal = budgetRefusal(budget, { ownKey: onOwnKey });
-        yield errorEvent(refusal.code, refusal.message);
-        notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
-        return;
       }
+
+      // Whether a reached cap ends the turn, asked of the providers the turn
+      // may use once it is routed (§137 t-1057): the one it is bound for and
+      // each fallback, which provider selection tries in turn, passing over a
+      // paid one the caps refuse. The turn is answered if one of them is local,
+      // or on the org's own key with the agent's cap not reached: neither the
+      // org's cap nor the global one holds a call the vendor bills to the org.
+      // Otherwise it is refused here, before anything is saved or sent.
+      // Yields the 80% warning for a turn that goes on; returns true when the
+      // turn has ended.
+      const capsEndTurn = async function* (binding: {
+        providerSlug: string;
+        fallbacks: readonly string[];
+      }): AsyncGenerator<ChatEvent, boolean> {
+        const agentCapReached = budget.agentCapExceeded === true;
+        if (!budget.withinBudget) {
+          let answered = false;
+          let ownKeyCandidate = false;
+          for (const slug of [binding.providerSlug, ...binding.fallbacks]) {
+            if (await isLocalProvider(slug)) {
+              answered = true;
+              break;
+            }
+            if (await providerUsesOrgOwnKey(slug)) {
+              ownKeyCandidate = true;
+              if (!agentCapReached) {
+                answered = true;
+                break;
+              }
+            }
+          }
+          if (!answered) {
+            // With a candidate on the org's own key, only the agent's cap
+            // refused it, so that is the cap the refusal names.
+            const refusal = budgetRefusal(budget, { ownKey: ownKeyCandidate });
+            yield errorEvent(refusal.code, refusal.message);
+            notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
+            return true;
+          }
+        }
+
+        // Budget warning at 80%, for a turn that goes on with its agent's cap
+        // not yet reached.
+        if (
+          !agentCapReached &&
+          budget.limit !== null &&
+          budget.limit > 0 &&
+          budget.spent / budget.limit >= 0.8
+        ) {
+          const pct = ((budget.spent / budget.limit) * 100).toFixed(0);
+          log.warn('Agent approaching budget limit', {
+            agentId: agent.id,
+            spent: budget.spent,
+            limit: budget.limit,
+            percent: pct,
+          });
+          yield {
+            type: 'warning',
+            code: 'budget_warning',
+            message: `This agent has used ${pct}% of its $${budget.limit.toFixed(2)} monthly budget.`,
+          };
+        }
+        return false;
+      };
 
       // Resolve the effective per-turn cost cap lazily.
       //
@@ -953,6 +983,8 @@ export class StreamingChatHandler {
         yield routing.unsupported;
         return;
       }
+      // …and so is a reached cap's say on it: a refused turn creates nothing.
+      if (routing && (yield* capsEndTurn(routing.route.binding))) return;
 
       // Load cap settings once — used for conversation and message limits.
       const capSettings = await prisma.aiOrchestrationSettings.findUnique({
@@ -1034,6 +1066,7 @@ export class StreamingChatHandler {
           yield routing.unsupported;
           return;
         }
+        if (yield* capsEndTurn(routing.route.binding)) return;
       }
       const { route } = routing;
       await keepFlaggedGroups(
@@ -1041,21 +1074,6 @@ export class StreamingChatHandler {
         route.found,
         conversation.metadata
       );
-      // A turn let past a reached org or global cap because its primary is on
-      // the org's own key is refused cleanly here, rather than by the gate
-      // part way through, if routing moved it to a provider that is not.
-      if (
-        onOwnKey &&
-        !refused &&
-        route.binding.providerSlug !== resolvedBinding.providerSlug &&
-        !(await providerUsesOrgOwnKey(route.binding.providerSlug)) &&
-        !(await isLocalProvider(route.binding.providerSlug))
-      ) {
-        const refusal = budgetRefusal(budget);
-        yield errorEvent(refusal.code, refusal.message);
-        notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
-        return;
-      }
       resolvedBinding = route.binding;
       resolvedModel = route.binding.model;
       resolvedFallbackProviders = route.binding.fallbacks;
