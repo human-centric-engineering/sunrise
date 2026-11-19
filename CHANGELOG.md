@@ -67,6 +67,45 @@ release process.
   own tests (add the two fields) or call `deactivate_provider_models` yourself
   (entries without `retiresAt` behave as before).
 
+- **An app chooses where a self-serve signup lands at `multi` (§134 t-1062,
+  #1232).** A new fork seam, `lib/app/signup-org.ts`
+  (`initAppSignupOrgResolver()`, ships empty), where an app calls
+  `registerSignupOrgResolver()` from `lib/tenancy/signup-org.ts`. It is asked
+  by `userCreateBeforeHook`, before the membership is written, for a signup
+  with no invitation or one from the install org's own waitlist, told
+  `{ email, emailVerified, name, signupMethod, waitlistEntryId }`
+  (`SignupOrgRequest`), and answers `{ kind: 'own', name? }`,
+  `{ kind: 'join', orgId, role? }` or `{ kind: 'install' }`
+  (`SignupOrgAnswer`). A resolver that throws, runs past
+  `SIGNUP_ORG_RESOLVER_TIMEOUT_MS` (5 s), answers nothing usable or names a
+  missing org falls back to the install org, logged at `error`. Invited
+  signups, platform staff and `single` installs are never asked. An org made
+  this way is created by the new `createSignupOrg()` marked
+  `Org.settings.awaitingFounder` (`ORG_AWAITING_FOUNDER_KEY`), and its
+  org-created hooks (`source: 'signup'`) and platform agents run through
+  `completeSignupOrg()`, after the response, once its founder is a member
+  and can act there: where `REQUIRE_EMAIL_VERIFICATION` holds, when they
+  verify or sign in (`completeFoundedSignupOrgs()`,
+  `releaseFoundedSignupOrgs()`), with
+  the `orgCreatedHooks` job releasing a missed one after
+  `ORG_CREATED_FOUNDER_GRACE_MS` (15 min). `requiresEmailVerification()`
+  (`lib/auth/verification-status.ts`) is the one statement of that rule. A
+  resolver naming a suspended org, one at its seats limit, or another
+  signup's still awaiting its founder, falls back like a missing one. With no
+  app-chosen name the org is "My organisation" (`DEFAULT_SIGNUP_ORG_NAME`) with
+  an `org-<random>` slug: nothing of the person is copied onto it. A new
+  system-scoped `abandonedSignupOrgs` maintenance job (appended to
+  `backgroundTasks`, hourly) deletes a marked org with no member that no
+  user's signup record names, after `SIGNUP_ORG_ABANDONED_AFTER_MS` (1 h).
+  `writeNewUserMemberships()` now answers `{ founded }`,
+  `activeOrgForSession()` adds `founded`, and `writeNewUserMemberships()`,
+  `healSignupRecord()` / `syncInstallMembershipRole()` take a client with
+  `$executeRaw` (a transaction client has it). See
+  [`.context/tenancy/identity.md`](./.context/tenancy/identity.md#self-serve-signup-an-org-of-their-own).
+  _Fork impact:_ a test double passed to those three needs `$executeRaw`; a
+  fork filling the seam pins one new row in
+  `tests/unit/lib/app/defaults.test.ts`.
+
 - **An app's own setup runs for every new organisation (§134 t-1061, #1270).**
   A new fork seam, `lib/app/org-created.ts` (`initAppOrgCreatedHooks()`, ships
   empty), where an app calls `registerOrgCreatedHook(key, hook)` from
@@ -76,7 +115,7 @@ release process.
   `{ orgId, slug, name, source, ownerUserId, retry, signal }`
   (`OrgCreatedContext`, `OrgCreatedSource`). `createOrg()` takes an optional
   `source` (`'admin' | 'signup' | 'app'`, default `'app'`; `'signup'` is
-  reserved for self-serve signup, which does not create orgs yet). Hooks run
+  the org a self-serve signup founds, made by `createSignupOrg()`). Hooks run
   after the create commits, one at a time in registration order, each bounded
   by `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) and the run by
   `ORG_CREATED_RUN_BUDGET_MS` (30 s), in the new org's scope and before
@@ -475,6 +514,16 @@ release process.
   `runLlmCall` needs no change. A test that builds a full `ProviderModelUsage`
   needs the new count, and a mock of `settings-resolver` or `judge-model`
   needs the new exports where the code under test calls them.
+
+- **At `multi`, a self-serve signup gets an org of their own instead of
+  joining the install org (§134 t-1062, #1232).** Someone who signs up with no
+  invitation, or from the install org's own waitlist, now lands as `OWNER` of
+  a new org and their first session starts there; before, they became a
+  `MEMBER` of the install org, which is the vendor's own and holds the control
+  plane. This is the new default on every multi-tenant install. To keep the
+  old behaviour, register a resolver in `lib/app/signup-org.ts` that answers
+  `{ kind: 'install' }`. Invited signups, an org's own waitlist and the first
+  human on a fresh database are unchanged, and `single` is unchanged.
 
 - **Writing an `Org.settings` slice with the value it already holds no longer
   writes the row (§135 t-1033).** `writeOrgQuotas()`, the provider policy and

@@ -895,6 +895,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The org-created hooks an app registers from code (§134 t-1061), the same for every org. Which hooks an org is still owed is in its own `settings` row, read on every run and never held here.',
   },
   {
+    file: 'lib/tenancy/signup-org.ts',
+    holders: ['resolver', 'appInit'],
+    posture: 'no-tenant-data',
+    why: 'The signup-org resolver an app registers from code (§134 t-1062), the same for every org. Where each signup lands is decided per signup and written to its own user row, never held here.',
+  },
+  {
     file: 'lib/tenancy/resolver.ts',
     holders: ['resolver'],
     posture: 'no-tenant-data',

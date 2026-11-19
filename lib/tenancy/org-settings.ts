@@ -276,6 +276,22 @@ export async function writePlatformAgentsMarker(
   await writeSettingsSlice(orgId, ORG_PLATFORM_AGENTS_KEY, marker, db);
 }
 
+/**
+ * The key that marks an org made at self-serve signup whose founder has not
+ * joined it, or cannot act there yet (§134 t-1062): `true` while it is there.
+ * Removed, once the founder is its OWNER and can act there (a verified address
+ * where one is required, or a session), by whichever comes first: the
+ * transaction that writes their membership (`writeNewUserMemberships`,
+ * `healSignupRecord`), their verification or any sign-in
+ * (`releaseFoundedSignupOrgs`, `lib/tenancy/membership.ts`), or the
+ * `orgCreatedHooks` job's backstop after 15 minutes. Written by
+ * `createSignupOrg()` (`lib/tenancy/lifecycle.ts`). While it is set the
+ * org-created retry job skips the org, and once the org is older than an hour
+ * with no member and no user's signup record naming it, the
+ * `abandonedSignupOrgs` job deletes it (`lib/tenancy/signup-org.ts`).
+ */
+export const ORG_AWAITING_FOUNDER_KEY = 'awaitingFounder';
+
 /** The key the org-created seam owns inside `Org.settings` (§134 t-1061). */
 export const ORG_CREATED_HOOKS_KEY = 'orgCreated';
 

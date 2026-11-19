@@ -216,8 +216,15 @@ account is linked to the entry. `lib/waitlist/invite.ts`.
   its reason (`409 { reason }` for one entry, a refused row in a wave):
   `removed` (restore first), `joined`, `unconfirmed`, `flagged`,
   `account_exists`, `invitation_pending`, or `changed`.
-- **Always `USER`, always into the entry's org.** Nobody is made an admin, or
-  put in another org, from a waitlist.
+- **Always `USER`, and into the entry's org, except from the install org's
+  list at `multi`.** Nobody is made a platform admin from a waitlist. An org's
+  own list invites into that org. The install org's list (the public one)
+  names no org, and at `single` its invitee lands in the install org. At
+  `multi` the install org is the vendor's own, so its invitee is treated as a
+  self-serve signup instead: an org of their own, as its OWNER, unless the
+  app's `lib/app/signup-org.ts` resolver chooses otherwise
+  ([identity guide](../tenancy/identity.md#self-serve-signup-an-org-of-their-own)).
+  The resolver is told the entry's id (`waitlistEntryId`).
 - **One live invitation per address.** Invitations are install-wide and keyed
   by address. The entry's own pending invitation is re-sent (a new link, a new
   `invitedAt`). Anyone else's (Admin → Users → Invite, another org's list) is
@@ -293,7 +300,10 @@ sign-up is open, it shows nothing new.
 
 Both tables are tenant-owned. Public joins land in the **install org**, entered
 with `runAsOrg(INSTALL_ORG_ID, …, { source: 'public-form' })`. At `multi`, a
-fork's tenant resolver does not route a join to another org yet.
+fork's tenant resolver does not route a join to another org yet. The entry
+stays in the install org's list after its invitee signs up, even at `multi`,
+where the invitee's account is in an org of their own (see the invite rules
+above).
 
 The migration that creates the tables enables and forces row-level security on
 them **if the install's switch is already on** (it reads `ai_agent`'s flag).

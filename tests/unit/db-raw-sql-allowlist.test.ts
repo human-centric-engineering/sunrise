@@ -181,9 +181,19 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express, plus `SELECT now()` for the run pre-pass's start time (the database clock, not the app's); deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read. And (t-843) a running workflow's own check for erasure receipts since its run started: `data_erasure_receipt` is install-wide (no orgId), and the subquery reads only the run's own row, in the org context the engine writes it under; and erasure's pass after its commit, which lists the runs not finished or written since by id and then locks each one by id (system-scoped, as every erasure read). And (§122 t-901) the same receipt check anchored on a copy's read time rather than a run's start, for a retroactive review: install-wide receipts only. And (t-882) a run's rows in other tables — running-step turns, step-dispatch results, lease events — read by the run's id and narrowed by the same text search, for the run erasure already holds locked; system-scoped like every erasure read",
   },
   {
+    file: 'lib/tenancy/membership.ts',
+    calls: 2,
+    why: "self-serve signup orgs (§134 t-1062): removing an org's awaiting-founder mark (`settings - 'awaitingFounder'`) in the batch transaction that writes the founder's membership, conditional on the mark (`settings ? …`) and on the founder being able to act (a verified address, when the install requires one); and `releaseFoundedSignupOrgs`, one `UPDATE … RETURNING` that removes the mark from the marked orgs whose OWNER can now act (on verification, and as the org-created job's backstop), so two callers cannot both release one org. Prisma can neither remove a JSON key nor run a read-modify-write inside a batch transaction. Touches `org`, and reads `org_membership` and `user`, all system tables with no row policy; every value is a bound parameter",
+  },
+  {
     file: 'lib/tenancy/org-created-hooks.ts',
     calls: 2,
-    why: "the org-created seam (§134 t-1061): a run's lease on an org's owed hooks, taken in one conditional `UPDATE … RETURNING` on the database's clock so the create and every instance's maintenance job cannot both see it free (Prisma has no conditional JSON update), and the job's select of the ACTIVE orgs whose settings still hold an owed record (`settings ? 'orgCreated'`, a JSON key test Prisma cannot express). Both touch only `org`, a system table with no row policy; the org id is a bound parameter",
+    why: "the org-created seam (§134 t-1061): a run's lease on an org's owed hooks, taken in one conditional `UPDATE … RETURNING` on the database's clock so the create and every instance's maintenance job cannot both see it free (Prisma has no conditional JSON update), and the job's select of the ACTIVE orgs whose settings still hold an owed record (`settings ? 'orgCreated'`, a JSON key test Prisma cannot express), skipping one still awaiting its signup founder (t-1062). Both touch only `org`, a system table with no row policy; the org id is a bound parameter",
+  },
+  {
+    file: 'lib/tenancy/signup-org.ts',
+    calls: 1,
+    why: "the abandonedSignupOrgs job (§134 t-1062): one DELETE of the orgs a failed signup left, each still marked as awaiting its founder, past the grace period, with no member and no user's signup record naming it — every condition re-tested on the row deleted, so a founder joining between the select and the delete keeps their org. A JSON key test and two anti-joins Prisma cannot express in a delete. System-scoped: `org` has no row policy, and the job runs once, not per org",
   },
 ];
 

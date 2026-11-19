@@ -8,8 +8,14 @@
  *
  * Auto-wired: better-auth's `user.create.after` hook calls this once before it
  * first dispatches (server runtime). Add `registerUserCreatedHook(key, hook)`
- * calls to react to a new account — provision a profile row, seed a default
- * workspace, start an onboarding sequence, push to a CRM.
+ * calls to react to a new account — provision a profile row, start an
+ * onboarding sequence, push to a CRM.
+ *
+ * Not for choosing or seeding the org a new person works in. At `multi` a
+ * self-serve signup already has an org of their own by the time this runs;
+ * to send them elsewhere, use `lib/app/signup-org.ts`, which decides before
+ * the membership is written. To set every new org up (a default workspace, a
+ * starting package), use `lib/app/org-created.ts`.
  *
  * The hook receives `{ userId, email, name, signupMethod, viaInvitation }`.
  * `signupMethod` distinguishes OAuth (address already verified) from
