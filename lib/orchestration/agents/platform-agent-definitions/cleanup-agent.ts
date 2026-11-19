@@ -151,20 +151,27 @@ export async function pickCleanupBinding(
   const candidates = new Set([...credentials.reachable.map((p) => p.slug), ...unavailable.keys()]);
   if (candidates.size === 0) return null;
 
+  // A model past its retirement day (§136) is no candidate even while it is
+  // still on: every call to it fails at the vendor, so no binding (the agent
+  // then inherits the defaults) is better. Read against the clock, so two
+  // instances can disagree only for the moment the day turns.
+  const now = Date.now();
   const models = (await catalogue.activeModels(db)).filter(
     (m) =>
-      candidates.has(m.providerSlug) && m.toolUse === 'strong' && m.capabilities.includes('chat')
+      candidates.has(m.providerSlug) &&
+      m.toolUse === 'strong' &&
+      m.capabilities.includes('chat') &&
+      !(m.retiresAt != null && m.retiresAt.getTime() <= now)
   );
   if (models.length === 0) return null;
 
   const TIER_RANK: Record<string, number> = { worker: 0, thinking: 1, control_plane: 2 };
   const REASONING_RANK: Record<string, number> = { very_high: 0, high: 1, medium: 2, none: 3 };
   const ranked = [...models].sort((a, b) => {
-    // A model with a retirement date (§136) ranks after every model without
-    // one, so a platform-owned binding moves off it before the day rather
-    // than failing on it. Never excluded: if it is all the org can reach, it
-    // is still better than no binding. Whether a date is set, not whether it
-    // has passed, so every instance ranks alike at any moment.
+    // A retiring model (§136: a day still to come; past days were filtered
+    // out above) ranks after every model without one, so a platform-owned
+    // binding moves off it before the day. It is still picked when it is all
+    // the org can reach: it works until then.
     const retiring = Number(a.retiresAt != null) - Number(b.retiresAt != null);
     if (retiring !== 0) return retiring;
     const tier = (TIER_RANK[a.tierRole] ?? 9) - (TIER_RANK[b.tierRole] ?? 9);

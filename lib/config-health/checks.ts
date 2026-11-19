@@ -19,7 +19,10 @@ import { prisma } from '@/lib/db/client';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
+import {
+  retiringModelsInUse,
+  type RetiringModelsInUse,
+} from '@/lib/orchestration/model-lifecycle/uses';
 import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import type { ConfigHealthCheck } from '@/lib/config-health/types';
@@ -39,6 +42,19 @@ const POOLER_MARKERS = [
   'prisma://',
   'prisma+postgres://',
 ];
+
+/**
+ * One `retiringModelsInUse()` for the two checks that read it. The runner
+ * starts every check in the same tick, so both join the one in flight; it is
+ * forgotten when it settles, so the next report reads afresh.
+ */
+let retiringInFlight: Promise<RetiringModelsInUse> | null = null;
+function sharedRetiringModelsInUse(): Promise<RetiringModelsInUse> {
+  retiringInFlight ??= retiringModelsInUse().finally(() => {
+    retiringInFlight = null;
+  });
+  return retiringInFlight;
+}
 
 export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
   {
@@ -148,11 +164,12 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
       'setting, so calls to it fail.',
     remediation:
       'Under Admin → Orchestration → Providers → Models, open each model marked Retired: it lists ' +
-      'what still uses it. Move those to its replacement, or to another model.',
+      'what still uses it. Move those to its replacement, or to another model. A default shown as ' +
+      "the system's suggestion is fixed by saving a default under Settings.",
     docsPath: '.context/orchestration/llm-providers.md',
     // §136 t-1065. Counts every org's agents and workflows: the catalogue is
     // shared, so a retired model one org still uses is the operator's to see.
-    detect: async (): Promise<boolean> => (await retiringModelsInUse()).retired === 0,
+    detect: async (): Promise<boolean> => (await sharedRetiringModelsInUse()).retired === 0,
   },
   {
     key: 'retiring_model_in_use',
@@ -165,7 +182,7 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
       'Under Admin → Orchestration → Providers → Models, open each model marked Retiring: it lists ' +
       'what uses it and its replacement. Move those before the day.',
     docsPath: '.context/orchestration/llm-providers.md',
-    detect: async (): Promise<boolean> => (await retiringModelsInUse()).retiring === 0,
+    detect: async (): Promise<boolean> => (await sharedRetiringModelsInUse()).retiring === 0,
   },
   {
     key: 'email',

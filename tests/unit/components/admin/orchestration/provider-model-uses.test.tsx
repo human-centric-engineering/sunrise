@@ -88,4 +88,50 @@ describe('ProviderModelUses', () => {
     expect(region).toHaveTextContent('No replacement named yet.');
     expect(region).toHaveTextContent('Nothing uses this model.');
   });
+
+  it.each([
+    ['turned off', { isActive: false, retiresAt: null }, 'It has been turned off'],
+    [
+      'itself retiring',
+      { isActive: true, retiresAt: '2099-01-01T00:00:00.000Z' },
+      'It is itself being retired',
+    ],
+  ])('says when the stored replacement has been %s', (_label, state, message) => {
+    render(
+      <ProviderModelUses
+        retiresAt="2098-01-01T00:00:00.000Z"
+        lifecycle={{
+          state: 'retiring',
+          replacement: { id: 'm2', name: 'GPT-5', modelId: 'gpt-5', ...state },
+        }}
+        uses={NONE}
+      />
+    );
+    const region = screen.getByRole('region', { name: 'Retirement and uses' });
+
+    expect(region).toHaveTextContent(`${message}: choose another before moving anything to it.`);
+  });
+
+  it('adds no note for a replacement that still qualifies', () => {
+    render(
+      <ProviderModelUses
+        retiresAt="2098-01-01T00:00:00.000Z"
+        lifecycle={{
+          state: 'retiring',
+          replacement: {
+            id: 'm2',
+            name: 'GPT-5',
+            modelId: 'gpt-5',
+            isActive: true,
+            retiresAt: null,
+          },
+        }}
+        uses={NONE}
+      />
+    );
+
+    expect(screen.getByRole('region', { name: 'Retirement and uses' })).not.toHaveTextContent(
+      'choose another'
+    );
+  });
 });

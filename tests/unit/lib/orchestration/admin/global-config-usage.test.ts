@@ -155,10 +155,10 @@ describe('providerModelUsage', () => {
     const platform = { isSystem: true, bindingOwner: 'platform' };
     db.aiAgent.findMany.mockImplementation(
       answering([
-        { ...agent('a1', ORG_A), ...platform },
+        { ...agent('a1', ORG_A), slug: 'cleanup-agent', ...platform },
         // A platform agent the org has taken over is the org's to move.
         { ...agent('a2', ORG_A), isSystem: true, bindingOwner: 'org' },
-        { ...agent('b1', ORG_B), ...platform },
+        { ...agent('b1', ORG_B), slug: 'cleanup-agent', ...platform },
         { ...agent('b2', ORG_B), isSystem: false, bindingOwner: null },
       ])
     );

@@ -12,8 +12,10 @@
  * `defaultFor` badge) and the model's uses, so the two cannot disagree:
  *
  * - **Task defaults** (`routing`, `chat`, `reasoning`, `embeddings`) store a
- *   bare model id, resolved through the registry where ids are globally
- *   unique, so they match on `modelId` alone. The effective map is used,
+ *   bare model id, which the registry settles on one provider when two
+ *   offer it (`gpt-4o` under OpenAI and Azure). Given that provider
+ *   (`bareIdProvider`), a default names only that provider's row; without
+ *   it, every row with the id. The effective map is used,
  *   saved values and the system's suggestions for unsaved slots alike,
  *   because both are what an agent without a model inherits; `source` says
  *   which.
@@ -62,9 +64,24 @@ export interface ModelPinSettings {
   activeEmbeddingModelId: string | null;
 }
 
+/** What is known about how the runtime resolves the model's bare id. */
+export interface PinMatchOptions {
+  /** The provider the registry resolves `model.modelId` to, or `null` when unknown. */
+  bareIdProvider?: string | null;
+}
+
 /** Whether the task default `value` for `task` names `model`. */
-function defaultNames(task: TaskType, value: string, model: PinnedModelRef): boolean {
-  if (task !== 'audio') return value === model.modelId;
+function defaultNames(
+  task: TaskType,
+  value: string,
+  model: PinnedModelRef,
+  bareIdProvider: string | null
+): boolean {
+  if (task !== 'audio') {
+    return (
+      value === model.modelId && (bareIdProvider === null || bareIdProvider === model.providerSlug)
+    );
+  }
   const parsed = parseAudioDefault(value);
   return (
     parsed !== null &&
@@ -74,11 +91,16 @@ function defaultNames(task: TaskType, value: string, model: PinnedModelRef): boo
 }
 
 /** Every settings slot that names `model`, task defaults first in `TASK_TYPES` order. */
-export function settingsPinsFor(model: PinnedModelRef, settings: ModelPinSettings): SettingsPin[] {
+export function settingsPinsFor(
+  model: PinnedModelRef,
+  settings: ModelPinSettings,
+  options: PinMatchOptions = {}
+): SettingsPin[] {
+  const bareIdProvider = options.bareIdProvider ?? null;
   const pins: SettingsPin[] = [];
   for (const task of TASK_TYPES) {
     const value = settings.defaultModels[task];
-    if (!value || !defaultNames(task, value, model)) continue;
+    if (!value || !defaultNames(task, value, model, bareIdProvider)) continue;
     pins.push({
       slot: task,
       source: settings.defaultModelsStored[task] ? 'saved' : 'suggested',

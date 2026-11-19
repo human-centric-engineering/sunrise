@@ -24,6 +24,9 @@ import {
 } from '@/lib/orchestration/model-lifecycle/settings-pins';
 import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
+import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { logger } from '@/lib/logging';
 
 export interface ModelUses extends ProviderModelUsage {
   /** The install settings that name the model. */
@@ -42,16 +45,53 @@ export function isInUse(uses: ModelUses): boolean {
   );
 }
 
+/**
+ * The provider the runtime resolves a bare model id to, or `null` when it
+ * cannot tell. A task default and a workflow's `modelOverride` name an id
+ * alone; when two providers offer it, the registry settles it on one (its
+ * built-in and OpenRouter entries first, then the catalogue's, oldest row
+ * first), and only that provider's row is the one they use. The registry is
+ * hydrated from the catalogue first, as every LLM call does; a failed
+ * hydrate answers `null`, which counts every row with the id, rather than
+ * hiding a use.
+ */
+export async function bareIdProvider(modelId: string): Promise<string | null> {
+  return (await hydrateRegistry()) ? registryProvider(modelId) : null;
+}
+
+/**
+ * Hydrate the model registry from the catalogue (throttled, as every LLM call
+ * does). `false` when that failed: the caller then knows nothing about which
+ * provider an id resolves to.
+ */
+export async function hydrateRegistry(): Promise<boolean> {
+  try {
+    await hydrateFromDb();
+    return true;
+  } catch (err) {
+    logger.warn('Model registry hydrate failed; counting every row with a shared id', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
+/** The provider the (hydrated) registry resolves `modelId` to, or `null`. */
+export function registryProvider(modelId: string): string | null {
+  return getModel(modelId)?.provider ?? null;
+}
+
 /** Everything that uses `model`. `options` as `providerModelUsage`'s. */
 export async function modelUses(
   model: PinnedModelRef,
   options: CountScope = {}
 ): Promise<ModelUses> {
+  const resolved = await bareIdProvider(model.modelId);
   const [usage, settings] = await Promise.all([
-    providerModelUsage(model.providerSlug, model.modelId, options),
+    providerModelUsage(model.providerSlug, model.modelId, { ...options, bareIdProvider: resolved }),
     getOrchestrationSettings(),
   ]);
-  return { ...usage, settings: settingsPinsFor(model, settings) };
+  return { ...usage, settings: settingsPinsFor(model, settings, { bareIdProvider: resolved }) };
 }
 
 /** How many models with a retirement date are still in use, by state. */
@@ -76,8 +116,12 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
   for (const model of dated) {
     const state = modelLifecycleState(model, now);
     if (state === 'current') continue;
-    const usage = await providerModelUsage(model.providerSlug, model.modelId);
-    if (isInUse({ ...usage, settings: settingsPinsFor(model, settings) })) counts[state]++;
+    const resolved = await bareIdProvider(model.modelId);
+    const usage = await providerModelUsage(model.providerSlug, model.modelId, {
+      bareIdProvider: resolved,
+    });
+    const pins = settingsPinsFor(model, settings, { bareIdProvider: resolved });
+    if (isInUse({ ...usage, settings: pins })) counts[state]++;
   }
   return counts;
 }

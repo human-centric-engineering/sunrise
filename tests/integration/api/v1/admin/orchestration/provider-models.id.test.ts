@@ -65,6 +65,17 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   invalidateModelCache: vi.fn(),
 }));
 
+// The registry's answer for a bare id (§136 t-1065): hydrating reads nothing
+// here, and an id resolves to no provider unless a test says, so every row
+// with the id counts.
+vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
+  hydrateFromDb: vi.fn(() => Promise.resolve()),
+}));
+vi.mock('@/lib/orchestration/llm/model-registry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/orchestration/llm/model-registry')>();
+  return { ...actual, getModel: vi.fn(() => undefined) };
+});
+
 // The install settings the model's uses read (§136 t-1065): nothing pinned
 // unless a test says so.
 vi.mock('@/lib/orchestration/settings', () => ({
@@ -272,7 +283,7 @@ describe('GET /provider-models/:id — lifecycle and uses (§136 t-1065)', () =>
       {
         id: 'a1',
         name: 'Cleanup',
-        slug: 'cleanup',
+        slug: 'cleanup-agent',
         orgId: null,
         isSystem: true,
         bindingOwner: 'platform',
@@ -311,7 +322,7 @@ describe('GET /provider-models/:id — lifecycle and uses (§136 t-1065)', () =>
     const body = await parseJson<Body>(await GET(makeGetRequest(MODEL_ID), routeContext(MODEL_ID)));
 
     expect(body.data.uses.agents).toEqual([
-      { id: 'a1', name: 'Cleanup', slug: 'cleanup', followsPlatform: true },
+      { id: 'a1', name: 'Cleanup', slug: 'cleanup-agent', followsPlatform: true },
       { id: 'a2', name: 'Support', slug: 'support', followsPlatform: false },
       { id: 'a3', name: 'Advisor', slug: 'advisor', followsPlatform: false },
     ]);
@@ -939,7 +950,9 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
 
     expect(response.status).toBe(409);
-    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'gpt-4o-mini');
+    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'gpt-4o-mini', {
+      bareIdProvider: null,
+    });
     expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
     const body = await parseJson<{
       error: { code: string; message: string; details: Record<string, unknown> };
@@ -951,6 +964,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(body.error.details).toEqual({
       agents: [],
       workflows: [],
+      settings: [],
       otherOrgAgentCount: 1,
       otherOrgWorkflowCount: 2,
     });
@@ -1371,5 +1385,75 @@ describe('PATCH capabilities (t-1064)', () => {
       'vision',
       'documents',
     ]);
+  });
+});
+
+describe('DELETE refuses while a saved setting names the model (§136 t-1065)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
+  });
+
+  function settingsNaming(overrides: Record<string, unknown>) {
+    vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+      defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '', audio: '' },
+      defaultModelsStored: {},
+      confidentialModel: null,
+      activeEmbeddingModelId: null,
+      ...overrides,
+    } as never);
+  }
+
+  it('refuses for the confidential-message model, naming the setting', async () => {
+    settingsNaming({ confidentialModel: { providerSlug: 'anthropic', model: 'claude-opus-4' } });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ error: { message: string; details: { settings: string[] } } }>(
+      response
+    );
+    expect(body.error.details.settings).toEqual(['confidential']);
+    expect(body.error.message).toContain('1 saved setting still references it');
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('refuses for a saved default and the active embedding model', async () => {
+    settingsNaming({
+      defaultModels: {
+        routing: '',
+        chat: 'claude-opus-4',
+        reasoning: '',
+        embeddings: '',
+        audio: '',
+      },
+      defaultModelsStored: { chat: 'claude-opus-4' },
+      activeEmbeddingModelId: MODEL_ID,
+    });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ error: { details: { settings: string[] } } }>(response);
+    expect(body.error.details.settings).toEqual(['chat', 'active_embedding']);
+  });
+
+  it("allows it when only the system's suggestion names it, which moves on its own", async () => {
+    settingsNaming({
+      defaultModels: {
+        routing: '',
+        chat: 'claude-opus-4',
+        reasoning: '',
+        embeddings: '',
+        audio: '',
+      },
+    });
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.delete).toHaveBeenCalled();
   });
 });

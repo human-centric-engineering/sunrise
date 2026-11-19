@@ -22,10 +22,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
-import {
-  providerModelUsage,
-  type ProviderModelUsage,
-} from '@/lib/orchestration/admin/global-config-usage';
+import type { ProviderModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { updateProviderModelSchema } from '@/lib/validations/orchestration';
 import {
   isHalfPrice,
@@ -269,11 +266,18 @@ export const DELETE = withAdminAuth<{ id: string }>(
     // In every org (t-731): the model is global config, so another org's
     // agents and workflows refuse the delete too. Only the caller's own are
     // named; another org's are a count.
-    const usage = await providerModelUsage(current.providerSlug, current.modelId);
+    //
+    // And while a saved install setting names it (§136 t-1065): a saved task
+    // default or the confidential-message model would name a row that no
+    // longer exists, and the active embedding model would be cleared under
+    // every org's vectors. A default the system merely suggests is left out:
+    // it moves to another model on its own once this one is gone.
+    const usage = await modelUses(current);
     const agentCount = usage.agents.length + usage.otherOrgAgents;
     const workflowCount = usage.workflows.length + usage.otherOrgWorkflows;
+    const savedSettings = usage.settings.filter((pin) => pin.source === 'saved');
 
-    if (agentCount > 0 || workflowCount > 0) {
+    if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0) {
       log.info('Provider model delete refused — model in use', {
         modelId: id,
         slug: current.slug,
@@ -281,8 +285,9 @@ export const DELETE = withAdminAuth<{ id: string }>(
         workflowCount,
         otherOrgAgentCount: usage.otherOrgAgents,
         otherOrgWorkflowCount: usage.otherOrgWorkflows,
+        savedSettings: savedSettings.map((pin) => pin.slot),
       });
-      return errorResponse(buildInUseMessage(current.name, usage), {
+      return errorResponse(buildInUseMessage(current.name, usage, savedSettings.length), {
         code: 'MODEL_IN_USE',
         status: 409,
         details: {
@@ -290,6 +295,7 @@ export const DELETE = withAdminAuth<{ id: string }>(
           workflows: usage.workflows,
           otherOrgAgentCount: usage.otherOrgAgents,
           otherOrgWorkflowCount: usage.otherOrgWorkflows,
+          settings: savedSettings.map((pin) => pin.slot),
         },
       });
     }
@@ -337,7 +343,11 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
   return left.size === right.size && [...left].every((c) => right.has(c));
 }
 
-function buildInUseMessage(modelName: string, usage: ProviderModelUsage): string {
+function buildInUseMessage(
+  modelName: string,
+  usage: ProviderModelUsage,
+  savedSettings: number
+): string {
   const agents = usage.agents.length + usage.otherOrgAgents;
   const workflows = usage.workflows.length + usage.otherOrgWorkflows;
   const parts: string[] = [];
@@ -347,9 +357,12 @@ function buildInUseMessage(modelName: string, usage: ProviderModelUsage): string
   if (workflows > 0) {
     parts.push(`${workflows} active workflow${workflows === 1 ? '' : 's'}`);
   }
+  if (savedSettings > 0) {
+    parts.push(`${savedSettings} saved setting${savedSettings === 1 ? '' : 's'}`);
+  }
   const elsewhere = usage.otherOrgAgents + usage.otherOrgWorkflows;
   return `Cannot delete model "${modelName}" — ${parts.join(' and ')} still reference${
-    agents + workflows === 1 ? 's' : ''
+    agents + workflows + savedSettings === 1 ? 's' : ''
   } it${
     elsewhere > 0 ? ` (${elsewhere} of them in other organisations)` : ''
   }. Re-point them to a different model first.`;

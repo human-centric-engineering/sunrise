@@ -1302,4 +1302,17 @@ describe('ProviderModelsMatrix — retirement badge (§136 t-1065)', () => {
     );
     expect(screen.getByText('Retired')).toHaveAttribute('title', 'Retired on 1 Mar 2020');
   });
+
+  it("shows the server's state over the browser's clock", () => {
+    // The day has passed by this browser's clock; the server still says retiring.
+    render(
+      <ProviderModelsMatrix
+        initialModels={[
+          makeModel({ retiresAt: '2020-03-01T00:00:00.000Z', lifecycleState: 'retiring' }),
+        ]}
+      />
+    );
+    expect(screen.getByText('Retiring 1 Mar 2020')).toBeInTheDocument();
+    expect(screen.queryByText('Retired')).not.toBeInTheDocument();
+  });
 });

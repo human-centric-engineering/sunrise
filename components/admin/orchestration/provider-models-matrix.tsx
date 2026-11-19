@@ -14,7 +14,10 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { ArrowUpDown, ClipboardCheck, Loader2, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
+import {
+  modelLifecycleState,
+  type ModelLifecycleState,
+} from '@/lib/orchestration/model-lifecycle/state';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Table,
@@ -194,6 +197,8 @@ export interface ModelRow {
   defaultFor?: TaskType[];
   /** The day the vendor retires it (§136 t-1064), ISO, or null. */
   retiresAt?: string | null;
+  /** Its state on the server's clock (§136 t-1065), so the matrix and the model's page agree. */
+  lifecycleState?: ModelLifecycleState;
   metadata?: {
     lastAudit?: {
       timestamp: string;
@@ -240,9 +245,18 @@ const RATING_ORDER: Record<string, number> = {
  * `retiresAt`; nothing for a model with no retirement known. The model's page
  * lists what uses it.
  */
-function RetirementBadge({ retiresAt }: { retiresAt: string | null }) {
+function RetirementBadge({
+  retiresAt,
+  state: serverState,
+}: {
+  retiresAt: string | null;
+  state?: ModelLifecycleState;
+}) {
   if (!retiresAt) return null;
-  const state = modelLifecycleState({ retiresAt: new Date(retiresAt) });
+  // The server's answer when the list sent one; the browser's clock only as a
+  // fallback, since it can be skewed and the server is what alerts.
+  const state = serverState ?? modelLifecycleState({ retiresAt: new Date(retiresAt) });
+  if (state === 'current') return null;
   const day = new Date(retiresAt).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
@@ -903,7 +917,10 @@ export function ProviderModelsMatrix({
                       >
                         {model.name}
                       </Link>
-                      <RetirementBadge retiresAt={model.retiresAt ?? null} />
+                      <RetirementBadge
+                        retiresAt={model.retiresAt ?? null}
+                        state={model.lifecycleState}
+                      />
                     </div>
                   </TableCell>
                   <TableCell>

@@ -25,7 +25,14 @@ import type { ModelLifecycleState } from '@/lib/orchestration/model-lifecycle/st
 
 export interface ProviderModelLifecycleData {
   state: ModelLifecycleState;
-  replacement: { id: string; name: string; modelId: string } | null;
+  replacement: {
+    id: string;
+    name: string;
+    modelId: string;
+    /** Read so the page can say when a stored replacement has stopped qualifying. */
+    isActive?: boolean;
+    retiresAt?: string | null;
+  } | null;
 }
 
 export interface ProviderModelUsesData {
@@ -55,6 +62,19 @@ function formatDay(iso: string): string {
     year: 'numeric',
     timeZone: 'UTC',
   });
+}
+
+/**
+ * Why a stored replacement no longer qualifies, or `null`. The rows can change
+ * after the replacement was chosen (§136 t-1064), so it is checked as shown.
+ */
+function replacementProblem(replacement: {
+  isActive?: boolean;
+  retiresAt?: string | null;
+}): string | null {
+  if (replacement.isActive === false) return 'It has been turned off';
+  if (replacement.retiresAt) return 'It is itself being retired';
+  return null;
 }
 
 function workflowCount(count: number): string {
@@ -108,6 +128,11 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
                 {replacement.name}
               </Link>{' '}
               <span className="text-muted-foreground">({replacement.modelId})</span>
+              {replacementProblem(replacement) && (
+                <span className="text-destructive block text-xs">
+                  {replacementProblem(replacement)}: choose another before moving anything to it.
+                </span>
+              )}
             </>
           ) : (
             <span className="text-muted-foreground">No replacement named yet.</span>

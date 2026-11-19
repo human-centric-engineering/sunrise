@@ -17,8 +17,13 @@ vi.mock('@/lib/orchestration/admin/global-config-usage', () => ({
   providerModelUsage: vi.fn(),
 }));
 vi.mock('@/lib/orchestration/settings', () => ({ getOrchestrationSettings: vi.fn() }));
+vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({ hydrateFromDb: vi.fn() }));
+vi.mock('@/lib/orchestration/llm/model-registry', () => ({ getModel: vi.fn() }));
+vi.mock('@/lib/logging', () => ({ logger: { warn: vi.fn() } }));
 
 import { prisma } from '@/lib/db/client';
+import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
+import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { isInUse, modelUses, retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
@@ -55,7 +60,10 @@ describe('modelUses', () => {
       { acrossOrgs: false }
     );
 
-    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'pinned-chat', { acrossOrgs: false });
+    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'pinned-chat', {
+      acrossOrgs: false,
+      bareIdProvider: null,
+    });
     expect(uses).toEqual({ ...UNUSED, settings: [{ slot: 'chat', source: 'saved' }] });
   });
 });
@@ -109,6 +117,42 @@ describe('retiringModelsInUse', () => {
     // `pinned-chat` is used only by a setting, which counts too.
     expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 1, retired: 2 });
     // Counted across every org: no scope narrowing.
-    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'retiring-used');
+    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'retiring-used', {
+      bareIdProvider: null,
+    });
+  });
+});
+
+describe('a bare model id two providers share (§136 t-1065)', () => {
+  const AZURE = { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o' };
+
+  it("does not give another provider's row the uses of an id the registry resolves elsewhere", async () => {
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as never);
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      ...SETTINGS,
+      defaultModels: { ...SETTINGS.defaultModels, chat: 'gpt-4o' },
+      defaultModelsStored: { chat: 'gpt-4o' },
+    } as never);
+
+    const uses = await modelUses(AZURE);
+
+    expect(providerModelUsage).toHaveBeenCalledWith('microsoft', 'gpt-4o', {
+      bareIdProvider: 'openai',
+    });
+    expect(uses.settings).toEqual([]);
+  });
+
+  it('counts every row with the id when the registry cannot be read', async () => {
+    vi.mocked(hydrateFromDb).mockRejectedValueOnce(new Error('db down'));
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      ...SETTINGS,
+      defaultModels: { ...SETTINGS.defaultModels, chat: 'gpt-4o' },
+      defaultModelsStored: {},
+    } as never);
+
+    const uses = await modelUses(AZURE);
+
+    expect(uses.settings).toEqual([{ slot: 'chat', source: 'suggested' }]);
+    expect(getModel).not.toHaveBeenCalled();
   });
 });

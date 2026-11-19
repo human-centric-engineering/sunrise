@@ -29,7 +29,7 @@ export function modelLifecycleState(
   model: { retiresAt: Date | null },
   now: Date = new Date()
 ): ModelLifecycleState {
-  if (model.retiresAt === null) return 'current';
+  if (model.retiresAt == null) return 'current';
   return model.retiresAt.getTime() <= now.getTime() ? 'retired' : 'retiring';
 }
 

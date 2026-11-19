@@ -32,6 +32,7 @@
 import { prisma } from '@/lib/db/client';
 import type { CapabilityAgentRef } from '@/types/orchestration';
 import { getTenantContext, isMultiTenant, runAsCrossOrgCount } from '@/lib/tenancy/context';
+import { bindingFollowsPlatform } from '@/lib/orchestration/agents/platform-agent-guard';
 
 const REASON = 'in-use check on global config (counted across orgs)';
 
@@ -161,11 +162,11 @@ function definitionPinsModel(definition: unknown, modelId: string): boolean {
 /** An agent bound to a model, as {@link providerModelUsage} names it. */
 export interface ModelAgentRef extends NamedRef {
   /**
-   * A platform agent whose provider and model the platform picks
-   * (`bindingOwner: 'platform'`, §116 t-798): the reconcile re-picks it when
-   * its model is turned off, and ranks a retiring model last, so it moves on
-   * its own (§136 t-1065). Any other agent stays where it is until someone
-   * moves it.
+   * Whether the agent's provider and model follow the platform's pick
+   * (`bindingFollowsPlatform`, the reconcile's own rule, §116 t-798): the
+   * reconcile re-picks it off a turned-off or retired model and ranks a
+   * retiring one last, so it moves on its own (§136 t-1065). Any other agent
+   * stays where it is until someone moves it.
    */
   followsPlatform: boolean;
 }
@@ -183,9 +184,17 @@ export interface ProviderModelUsage {
   otherOrgWorkflows: number;
 }
 
-/** A platform agent whose binding the platform picks: see {@link ModelAgentRef.followsPlatform}. */
-function followsPlatform(row: { isSystem: boolean; bindingOwner: string | null }): boolean {
-  return row.isSystem === true && row.bindingOwner === 'platform';
+/** Options for {@link providerModelUsage}. */
+export interface ProviderModelUsageOptions extends CountScope {
+  /**
+   * The provider the runtime resolves the bare `modelId` to, when known. A
+   * workflow's `modelOverride` names a model id alone, which two providers
+   * can share (`gpt-4o` under OpenAI and Azure); the registry settles it on
+   * one. When this names another provider, a pin is that provider's row's
+   * use, not this one's. `null` or absent: count every pin of the id, since
+   * nothing says which provider it runs on.
+   */
+  bareIdProvider?: string | null;
 }
 
 /**
@@ -197,8 +206,10 @@ function followsPlatform(row: { isSystem: boolean; bindingOwner: string | null }
 export function providerModelUsage(
   providerSlug: string,
   modelId: string,
-  options: CountScope = {}
+  options: ProviderModelUsageOptions = {}
 ): Promise<ProviderModelUsage> {
+  const countsBareIdPins =
+    options.bareIdProvider == null || options.bareIdProvider === providerSlug;
   const isCallers = callersRows();
   // A prefilter, not the check: JSON containment (`@>`) narrows the read to
   // definitions with SOME step pinning `modelId`, so every org's workflow
@@ -235,11 +246,13 @@ export function providerModelUsage(
         orderBy: { name: 'asc' },
       }),
     ]);
-    const pinning = workflowRows.filter(
-      (w) =>
-        definitionPinsModel(w.draftDefinition, modelId) ||
-        definitionPinsModel(w.publishedVersion?.snapshot, modelId)
-    );
+    const pinning = countsBareIdPins
+      ? workflowRows.filter(
+          (w) =>
+            definitionPinsModel(w.draftDefinition, modelId) ||
+            definitionPinsModel(w.publishedVersion?.snapshot, modelId)
+        )
+      : [];
     const agents = named(agentRows, isCallers);
     const workflows = named(pinning, isCallers);
     const ownAgents = agentRows.filter((r) => isCallers(r.orgId));
@@ -248,12 +261,12 @@ export function providerModelUsage(
         id: r.id,
         name: r.name,
         slug: r.slug,
-        followsPlatform: followsPlatform(r),
+        followsPlatform: bindingFollowsPlatform(r),
       })),
       workflows: workflows.own,
       otherOrgAgents: agents.elsewhere,
       otherOrgAgentsFollowingPlatform: agentRows.filter(
-        (r) => !isCallers(r.orgId) && followsPlatform(r)
+        (r) => !isCallers(r.orgId) && bindingFollowsPlatform(r)
       ).length,
       otherOrgWorkflows: workflows.elsewhere,
     };

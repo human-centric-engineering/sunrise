@@ -26,16 +26,22 @@ release process.
   defaults marked saved or suggested, the confidential-message model, the
   active embedding model; the embedding pins marked as left to §132).
   `modelUses()` (`lib/orchestration/model-lifecycle/uses.ts`) and
-  `settingsPinsFor()` (`settings-pins.ts`) compute them. The edit page shows
+  `settingsPinsFor()` (`settings-pins.ts`) compute them; a bare model id two
+  providers share counts only for the provider the registry resolves it to.
+  `DELETE /provider-models/:id` now also refuses (409, `details.settings`)
+  while a saved setting names the model, and each list row gains
+  `lifecycleState`. The edit page shows
   them, the models matrix badges a retiring or retired model, and config
   health gains `retired_model_in_use` (critical) and `retiring_model_in_use`
   (warning). `providerModelUsage()` takes an optional `{ acrossOrgs }` scope,
   marks each agent `followsPlatform`, and counts
   `otherOrgAgentsFollowingPlatform`.
-  _Fork impact:_ the cleanup agent's platform-owned binding now ranks a model
-  with a retirement date after every model without one, so marking a model
-  retiring moves that binding at the next maintenance pass (a new agent
-  version). A test that builds a full `ProviderModelUsage` needs the new
+  _Fork impact:_ the cleanup agent's platform-owned binding now ranks a
+  retiring model after every model without a retirement date and never picks
+  one past its day, so marking a model retiring moves that binding at the next
+  maintenance pass (a new agent version). `followsPlatform` uses
+  `bindingFollowsPlatform`, so it is true only for a definition that still
+  picks its own binding. A test that builds a full `ProviderModelUsage` needs the new
   count.
 
 - **Catalogue models record a vendor's retirement (§136, t-1064).**
