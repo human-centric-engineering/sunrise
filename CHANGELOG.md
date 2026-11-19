@@ -127,23 +127,28 @@ release process.
 
 - **An org's AI key is tested with a call the vendor checks (§137, t-1056).**
   Saving or testing a key on `/api/v1/orgs/[id]/provider-keys` now runs the
-  provider's new `testKey()` instead of its connection check. Anthropic's model
-  list replaces a billed one-token message on a fixed model, so a key whose
-  workspace cannot use that model is no longer refused; a gateway with no model
-  list still gets the message. Voyage embeds one word: it has no model list, so
-  until now no Voyage key could be saved, and the platform's own provider test
-  failed every Voyage row (it now makes the same call). An OpenAI-compatible
-  host's model list is trusted only where the host fails a known-wrong key there
-  too (with any 4xx: Gemini and xAI answer 400); where the list is open to
-  anyone (OpenRouter) or missing (Perplexity), a chat request no host runs is
-  sent with each key, so a mistyped key is refused instead of being saved and
-  failing on the org's first call. Each of those calls is held to 15 seconds. A
-  host that checks keys on neither call fails the test. `LlmProvider` gains the
-  optional `testKey()`, used by `testProviderKey()`, which falls back to
-  `testConnection()` without it. See
+  provider's new `testKey()` instead of its connection check. Each one sends a
+  known-wrong key beside the real one and trusts a call only where the host
+  fails the wrong key there. Anthropic's model list replaces a billed one-token
+  message on a fixed model, so a key whose workspace cannot use that model is no
+  longer refused; where the list proves nothing (a gateway behind
+  `ANTHROPIC_BASE_URL`), the message is still sent. Voyage embeds one word: it
+  has no model list, so until now no Voyage key could be saved, and the
+  platform's own provider test failed every Voyage row (it now makes the same
+  call, a token or two). An OpenAI-compatible host's model list is trusted where
+  it fails the wrong key with any 4xx (Gemini and xAI answer 400); otherwise
+  (OpenRouter's open list, Perplexity's missing one, a key that may only lack
+  the scope to read models) a chat request no host runs is sent with each key,
+  so a mistyped key is refused instead of being saved and failing on the org's
+  first call. Every call is held to 15 seconds. A host that checks keys on
+  neither call fails the test. `LlmProvider` gains the optional `testKey()`,
+  used by `testProviderKey()`, which falls back to `testConnection()` without
+  it; `KEY_TEST_TIMEOUT_MS`, `KNOWN_WRONG_KEY`, `refusesKey()`,
+  `refusedForTheKey()` and `probeCall()` in `lib/orchestration/llm/provider.ts`
+  are what the three use. See
   [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#the-orgs-page-and-api-137-t-1045).
   _Fork impact:_ none required. `testKey()` is optional; a fork's own provider
-  class may implement it to be tested the same way.
+  class may implement it with the same helpers.
 
 - **Meters and limits: how much an org may have (§135 t-1035).** An app
   registers a meter in the same `initAppEntitlements()` seam with
