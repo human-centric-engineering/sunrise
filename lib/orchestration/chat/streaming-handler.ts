@@ -727,40 +727,33 @@ export class StreamingChatHandler {
         hold.agentCapReached = budget.agentCapExceeded === true;
       }
 
-      // Whether a reached cap ends the turn, asked of the providers the turn
-      // may use once it is routed (§137 t-1057): the one it is bound for and
-      // each fallback, which provider selection tries in turn, passing over a
-      // paid one the caps refuse. The turn is answered if one of them is local,
-      // or on the org's own key with the agent's cap not reached: neither the
-      // org's cap nor the global one holds a call the vendor bills to the org.
-      // Otherwise it is refused here, before anything is saved or sent.
+      // Whether a reached cap ends the turn, asked once the turn is routed
+      // (§137 t-1057) of the provider it is bound for: the agent's, or the
+      // model for confidential messages it was moved to. The provider gate's
+      // own answer, under the hold set above: a local provider is never
+      // refused, and one on the org's own key only by the agent's cap, since
+      // the vendor bills the org. Otherwise the turn is refused here, before
+      // anything is saved or sent.
+      //
+      // Fallbacks are not asked. Chat sends whichever provider serves the turn
+      // the bound model's id, which a local model or another vendor does not
+      // serve: a turn let in on one would fail after its message was saved,
+      // where the refusal says what happened.
+      //
       // Yields the 80% warning for a turn that goes on; returns true when the
       // turn has ended.
       const capsEndTurn = async function* (binding: {
         providerSlug: string;
-        fallbacks: readonly string[];
       }): AsyncGenerator<ChatEvent, boolean> {
         const agentCapReached = budget.agentCapExceeded === true;
         if (!budget.withinBudget) {
-          let answered = false;
-          let ownKeyCandidate = false;
-          for (const slug of [binding.providerSlug, ...binding.fallbacks]) {
-            if (await isLocalProvider(slug)) {
-              answered = true;
-              break;
-            }
-            if (await providerUsesOrgOwnKey(slug)) {
-              ownKeyCandidate = true;
-              if (!agentCapReached) {
-                answered = true;
-                break;
-              }
-            }
-          }
-          if (!answered) {
-            // With a candidate on the org's own key, only the agent's cap
-            // refused it, so that is the cap the refusal names.
-            const refusal = budgetRefusal(budget, { ownKey: ownKeyCandidate });
+          const slug = binding.providerSlug;
+          const isLocal = await isLocalProvider(slug);
+          const ownKey = !isLocal && (await providerUsesOrgOwnKey(slug));
+          if (await spendCapRefusal(slug, isLocal, { ownKey })) {
+            // On the org's own key only the agent's cap refuses it, so that is
+            // the cap the refusal names.
+            const refusal = budgetRefusal(budget, { ownKey });
             yield errorEvent(refusal.code, refusal.message);
             notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
             return true;

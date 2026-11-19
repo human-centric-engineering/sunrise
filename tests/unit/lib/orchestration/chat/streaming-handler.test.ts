@@ -283,7 +283,7 @@ const { readAgentConsistently } = await import('@/lib/orchestration/agents/agent
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { ProviderError } = await import('@/lib/orchestration/llm/provider');
-const { SpendCapExceededError, assertWithinSpendCaps, spendCapRefusal } =
+const { SpendCapExceededError, assertWithinSpendCaps } =
   await import('@/lib/orchestration/llm/spend-caps');
 const { ProviderCallRefusedError } = await import('@/lib/orchestration/llm/provider-eligibility');
 const { PrivacyRefusedError } = await import('@/lib/orchestration/llm/privacy-stage');
@@ -724,8 +724,8 @@ describe('StreamingChatHandler', () => {
     );
   });
 
-  // 2e' — the start of the turn asks every provider it may use (§137 t-1057) --
-  describe('with a cap reached, a turn whose primary is on the platform’s key', () => {
+  // 2e' — a reached cap is asked of the provider the turn is bound for (§137 t-1057)
+  describe('with a cap reached, a turn bound for the platform’s key', () => {
     const ORG_AND_GLOBAL = {
       withinBudget: false,
       spent: 3,
@@ -735,13 +735,6 @@ describe('StreamingChatHandler', () => {
       globalCapExceeded: true,
       org: { limit: 40, spent: 41 },
     };
-    const answered = () =>
-      mockProvider([
-        [
-          { type: 'text', content: 'Hello' },
-          { type: 'done', usage: { inputTokens: 1, outputTokens: 1 } },
-        ],
-      ]);
 
     beforeEach(() => {
       (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -749,54 +742,7 @@ describe('StreamingChatHandler', () => {
       );
     });
 
-    it.each([
-      ['on the org’s own key', 'own-key'],
-      ['local', 'local'],
-    ])('is answered when a fallback is %s', async (_label, kind) => {
-      (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue(ORG_AND_GLOBAL);
-      if (kind === 'own-key') {
-        vi.mocked(providerUsesOrgOwnKey).mockImplementation(async (slug) => slug === 'openai');
-      } else {
-        vi.mocked(isLocalProvider).mockImplementation(async (slug) => slug === 'openai');
-      }
-      // Provider selection passes over the refused primary to the fallback.
-      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
-        provider: answered(),
-        usedSlug: 'openai',
-      });
-
-      const events = await collect(streamChat(baseRequest));
-
-      expect(events.find((e) => (e as { type: string }).type === 'error')).toBeUndefined();
-      expect(events).toContainEqual({ type: 'content', delta: 'Hello' });
-      expect(getProviderWithFallbacks).toHaveBeenCalledWith(
-        'anthropic',
-        ['openai'],
-        expect.anything()
-      );
-      expect(dispatchWebhookEvent).not.toHaveBeenCalledWith('budget_exceeded', expect.anything());
-    });
-
-    it('holds its paid calls while it goes on, so the refused primary is passed over', async () => {
-      (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue(ORG_AND_GLOBAL);
-      vi.mocked(providerUsesOrgOwnKey).mockImplementation(async (slug) => slug === 'openai');
-      // The real gate under the turn's hold: the platform's key is refused for
-      // the global cap, the org's own key is not.
-      let primary: unknown = 'not asked';
-      let fallback: unknown = 'not asked';
-      vi.mocked(getProviderWithFallbacks).mockImplementation((async () => {
-        primary = await spendCapRefusal('anthropic', false);
-        fallback = await spendCapRefusal('openai', false, { ownKey: true });
-        return { provider: answered(), usedSlug: 'openai' };
-      }) as never);
-
-      await collect(streamChat(baseRequest));
-
-      expect(primary).toMatchObject({ cap: 'global' });
-      expect(fallback).toBeNull();
-    });
-
-    it('is refused with the cap’s code before anything is saved or sent when no provider it may use is', async () => {
+    it('is refused with the cap’s code before anything is saved or sent', async () => {
       (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue(ORG_AND_GLOBAL);
 
       const events = await collect(streamChat(baseRequest));
@@ -808,9 +754,7 @@ describe('StreamingChatHandler', () => {
       // A new conversation is not created, and nothing is saved.
       expect(prisma.aiConversation.create).not.toHaveBeenCalled();
       expect(prisma.aiMessage.create).not.toHaveBeenCalled();
-      // Both were asked.
       expect(providerUsesOrgOwnKey).toHaveBeenCalledWith('anthropic');
-      expect(providerUsesOrgOwnKey).toHaveBeenCalledWith('openai');
       await vi.waitFor(() =>
         expect(dispatchWebhookEvent).toHaveBeenCalledWith(
           'budget_exceeded',
@@ -819,25 +763,37 @@ describe('StreamingChatHandler', () => {
       );
     });
 
-    it('is refused for its agent’s cap when only a fallback on the org’s own key could answer it', async () => {
+    // Chat sends the provider serving the turn the bound model's id, which a
+    // local model or another vendor does not serve: let in on a fallback, the
+    // turn would fail after its message was saved.
+    it.each([
+      ['on the org’s own key', 'own-key', {}],
+      ['local', 'local', {}],
+      [
+        'on the org’s own key, with the agent’s cap reached too',
+        'own-key',
+        { agentCapExceeded: true },
+      ],
+    ] as const)('is refused the same way when a fallback is %s', async (_label, kind, agentCap) => {
       (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...ORG_AND_GLOBAL,
-        spent: 11,
-        remaining: -1,
-        agentCapExceeded: true,
+        ...agentCap,
       });
-      vi.mocked(providerUsesOrgOwnKey).mockImplementation(async (slug) => slug === 'openai');
+      if (kind === 'own-key') {
+        vi.mocked(providerUsesOrgOwnKey).mockImplementation(async (slug) => slug === 'openai');
+      } else {
+        vi.mocked(isLocalProvider).mockImplementation(async (slug) => slug === 'openai');
+      }
 
       const events = await collect(streamChat(baseRequest));
 
-      expect(events).toEqual([expect.objectContaining({ type: 'error', code: 'budget_exceeded' })]);
+      // The widest cap that refused the provider it is bound for.
+      expect(events).toEqual([
+        expect.objectContaining({ type: 'error', code: 'global_budget_exceeded' }),
+      ]);
       expect(getProviderWithFallbacks).not.toHaveBeenCalled();
-      await vi.waitFor(() =>
-        expect(dispatchWebhookEvent).toHaveBeenCalledWith(
-          'budget_exceeded',
-          expect.objectContaining({ cap: 'agent' })
-        )
-      );
+      expect(prisma.aiMessage.create).not.toHaveBeenCalled();
+      expect(providerUsesOrgOwnKey).not.toHaveBeenCalledWith('openai');
     });
   });
 
