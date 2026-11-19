@@ -277,7 +277,11 @@ export const DELETE = withAdminAuth<{ id: string }>(
     const usage = await modelUses(current);
     const agentCount = usage.agents.length + usage.otherOrgAgents;
     const workflowCount = usage.workflows.length + usage.otherOrgWorkflows;
-    const savedSettings = usage.settings.filter((pin) => pin.source === 'saved');
+    // A saved default naming the model by id alone keeps working when another
+    // active row offers the id, so it does not block the delete then.
+    const savedSettings = usage.settings.filter(
+      (pin) => pin.source === 'saved' && !(pin.byIdOnly && usage.sharedWith.length > 0)
+    );
 
     if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0) {
       log.info('Provider model delete refused — model in use', {
@@ -352,20 +356,16 @@ function buildInUseMessage(
 ): string {
   const agents = usage.agents.length + usage.otherOrgAgents;
   const workflows = usage.workflows.length + usage.otherOrgWorkflows;
+  const elsewhere = usage.otherOrgAgents + usage.otherOrgWorkflows;
   const parts: string[] = [];
-  if (agents > 0) {
-    parts.push(`${agents} active agent${agents === 1 ? '' : 's'}`);
-  }
-  if (workflows > 0) {
-    parts.push(`${workflows} active workflow${workflows === 1 ? '' : 's'}`);
-  }
+  if (agents > 0) parts.push(`${agents} active agent${agents === 1 ? '' : 's'}`);
+  if (workflows > 0) parts.push(`${workflows} active workflow${workflows === 1 ? '' : 's'}`);
+  // Other organisations hold agents and workflows; settings are the install's.
+  if (elsewhere > 0) parts[parts.length - 1] += ` (${elsewhere} of them in other organisations)`;
   if (savedSettings > 0) {
     parts.push(`${savedSettings} saved setting${savedSettings === 1 ? '' : 's'}`);
   }
-  const elsewhere = usage.otherOrgAgents + usage.otherOrgWorkflows;
-  return `Cannot delete model "${modelName}" — ${parts.join(' and ')} still reference${
-    agents + workflows + savedSettings === 1 ? 's' : ''
-  } it${
-    elsewhere > 0 ? ` (${elsewhere} of them in other organisations)` : ''
-  }. Re-point them to a different model first.`;
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
+  const one = agents + workflows + savedSettings === 1;
+  return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.`;
 }

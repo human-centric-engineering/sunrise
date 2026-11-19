@@ -950,7 +950,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
     }>(response);
     expect(body.error.code).toBe('MODEL_IN_USE');
     expect(body.error.message).toBe(
-      'Cannot delete model "GPT-4o mini" — 1 active agent and 2 active workflows still reference it (3 of them in other organisations). Re-point them to a different model first.'
+      'Cannot delete model "GPT-4o mini" — 1 active agent and 2 active workflows (3 of them in other organisations) still reference it. Re-point them to a different model first.'
     );
     expect(body.error.details).toEqual({
       agents: [],
@@ -1430,7 +1430,50 @@ describe('DELETE refuses while a saved setting names the model (§136 t-1065)', 
     expect(body.error.details.settings).toEqual(['chat', 'active_embedding']);
   });
 
-  it("allows it when only the system's suggestion names it, which moves on its own", async () => {
+  it('lists three kinds of use with commas, and keeps settings out of the other-org count', async () => {
+    settingsNaming({ confidentialModel: { providerSlug: 'anthropic', model: 'claude-opus-4' } });
+    vi.mocked(providerModelUsage).mockResolvedValueOnce({
+      agents: [],
+      workflows: [],
+      otherOrgAgents: 2,
+      otherOrgAgentsFollowingPlatform: 0,
+      otherOrgWorkflows: 1,
+    });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+    const body = await parseJson<{ error: { message: string } }>(response);
+
+    expect(body.error.message).toBe(
+      'Cannot delete model "Claude Opus 4" — 2 active agents, 1 active workflow (3 of them in other organisations) and 1 saved setting still reference it. Re-point them to a different model first.'
+    );
+  });
+
+  it('allows it when a saved default names the id alone and another active row offers it', async () => {
+    settingsNaming({
+      defaultModels: {
+        routing: '',
+        chat: 'claude-opus-4',
+        reasoning: '',
+        embeddings: '',
+        audio: '',
+      },
+      defaultModelsStored: { chat: 'claude-opus-4' },
+    });
+    // Another provider's active row with the same id keeps the default working.
+    vi.mocked(prisma.aiProviderModel.findMany).mockImplementation(((args: {
+      where: { modelId?: string };
+    }) =>
+      Promise.resolve(
+        args.where.modelId === 'claude-opus-4' ? [{ providerSlug: 'bedrock', retiresAt: null }] : []
+      )) as never);
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(200);
+  });
+
+  it("allows it when only the system's suggestion names it: nobody chose it", async () => {
     settingsNaming({
       defaultModels: {
         routing: '',

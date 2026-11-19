@@ -107,9 +107,11 @@ const CLEANUP_CAPABILITY_SLUGS = [
  * job shares across one run's orgs (t-816); only the filters above are asked
  * per org.
  *
- * Preference order: worker tier before thinking tier (a whole-document rewrite
- * on a thinking-tier model is expensive and no better at choosing a regex),
- * then deepest reasoning, then model id, then provider slug — a total order,
+ * A model past its retirement day is no candidate (§136 t-1065). Preference
+ * order: a model with no retirement date before a retiring one, then worker
+ * tier before thinking tier (a whole-document rewrite on a thinking-tier
+ * model is expensive and no better at choosing a regex), then deepest
+ * reasoning, then model id, then provider slug — a total order,
  * so two providers offering the same model never trade places between
  * passes and move the agent back and forth (t-798). Returns null
  * when nothing qualifies, in which case the agent is left on (or put back to)

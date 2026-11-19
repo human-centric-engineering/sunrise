@@ -13,10 +13,12 @@
  * When another provider offers the same id (`gpt-4o` under OpenAI and
  * Azure), such a pin cannot say which row it runs on. It is not guessed
  * (owner ruling): it counts as a use of every row with the id, and
- * `sharedWith` names the other providers so the page can say so. For config
- * health that is narrowed the safe way: a by-id-only use raises a model's
- * alert only when every row with the id is dated, since then it runs on a
- * dated model whichever row it is. t-1068 makes every pin name its provider.
+ * `sharedWith` names the other providers so the page can say so. Only active
+ * rows count as somewhere it might run: the registry loads no other. For
+ * config health that is narrowed the safe way: a by-id-only use raises an
+ * alert only when every row with the id is dated, and at the least severe of
+ * their states, since it runs on one of them and that is the best case.
+ * t-1068 makes every pin name its provider.
  *
  * Platform-agnostic: no Next.js imports.
  */
@@ -46,22 +48,14 @@ export interface ModelUses extends ProviderModelUsage {
   sharedWith: string[];
 }
 
-/** Whether anything at all uses the model. */
-export function isInUse(uses: ModelUses): boolean {
-  return (
-    uses.agents.length +
-      uses.otherOrgAgents +
-      uses.workflows.length +
-      uses.otherOrgWorkflows +
-      uses.settings.length >
-    0
-  );
-}
-
-/** The other catalogue rows with `model`'s id, on other providers. */
+/**
+ * The other active catalogue rows with `model`'s id, on other providers: the
+ * rows a by-id-only pin might run on instead. A turned-off row is left out,
+ * since the model registry loads only active rows.
+ */
 function siblings(model: PinnedModelRef) {
   return prisma.aiProviderModel.findMany({
-    where: { modelId: model.modelId, providerSlug: { not: model.providerSlug } },
+    where: { modelId: model.modelId, providerSlug: { not: model.providerSlug }, isActive: true },
     select: { providerSlug: true, retiresAt: true },
     orderBy: { providerSlug: 'asc' },
   });
@@ -114,12 +108,19 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
     // Agents and provider-naming settings are this model's own uses.
     const exact =
       usage.agents.length + usage.otherOrgAgents + pins.filter((p) => !p.byIdOnly).length;
-    // Workflow pins and by-id-only settings may be another provider's row's,
-    // unless every row with the id is dated: then it is a dated model either way.
+    if (exact > 0) {
+      counts[state]++;
+      continue;
+    }
+    // Workflow pins and by-id-only settings may run on another row with the
+    // id. They alert only when every such row is dated, and at the least
+    // severe of their states: retired only when all of them are.
     const byIdOnly =
       usage.workflows.length + usage.otherOrgWorkflows + pins.filter((p) => p.byIdOnly).length;
-    const allRowsDated = others.every((o) => o.retiresAt != null);
-    if (exact > 0 || (byIdOnly > 0 && allRowsDated)) counts[state]++;
+    if (byIdOnly === 0) continue;
+    const states = [state, ...others.map((o) => modelLifecycleState(o, now))];
+    if (states.includes('current')) continue;
+    counts[states.includes('retiring') ? 'retiring' : 'retired']++;
   }
   return counts;
 }

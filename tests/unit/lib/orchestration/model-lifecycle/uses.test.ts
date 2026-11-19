@@ -22,7 +22,7 @@ vi.mock('@/lib/orchestration/settings', () => ({ getOrchestrationSettings: vi.fn
 import { prisma } from '@/lib/db/client';
 import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { isInUse, modelUses, retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
+import { modelUses, retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
 
 const NOW = new Date('2027-03-01T12:00:00.000Z');
 const FUTURE = new Date('2027-06-01T00:00:00.000Z');
@@ -48,6 +48,7 @@ interface Row {
   providerSlug: string;
   modelId: string;
   retiresAt: Date | null;
+  isActive?: boolean;
 }
 
 /**
@@ -57,12 +58,20 @@ interface Row {
  */
 function catalogue(rows: Row[]) {
   vi.mocked(prisma.aiProviderModel.findMany).mockImplementation(((args: {
-    where: { retiresAt?: unknown; modelId?: string; providerSlug?: { not: string } };
+    where: {
+      retiresAt?: unknown;
+      modelId?: string;
+      providerSlug?: { not: string };
+      isActive?: boolean;
+    };
   }) => {
     if (args.where.retiresAt) return Promise.resolve(rows.filter((r) => r.retiresAt !== null));
     return Promise.resolve(
       rows.filter(
-        (r) => r.modelId === args.where.modelId && r.providerSlug !== args.where.providerSlug?.not
+        (r) =>
+          r.modelId === args.where.modelId &&
+          r.providerSlug !== args.where.providerSlug?.not &&
+          (args.where.isActive === undefined || (r.isActive ?? true) === args.where.isActive)
       )
     );
   }) as never);
@@ -110,22 +119,6 @@ describe('modelUses', () => {
 
     expect(uses.sharedWith).toEqual(['openai']);
     expect(uses.settings).toEqual([{ slot: 'chat', source: 'suggested', byIdOnly: true }]);
-  });
-});
-
-describe('isInUse', () => {
-  it.each([
-    ['an own agent', { agents: [{ id: 'a', name: 'A', slug: 'a', followsPlatform: false }] }],
-    ["another org's agent", { otherOrgAgents: 1 }],
-    ['an own workflow', { workflows: [{ id: 'w', name: 'W', slug: 'w' }] }],
-    ["another org's workflow", { otherOrgWorkflows: 1 }],
-    ['a setting', { settings: [{ slot: 'chat' as const, source: 'saved' as const }] }],
-  ])('is true for %s', (_label, part) => {
-    expect(isInUse({ ...UNUSED, settings: [], sharedWith: [], ...part })).toBe(true);
-  });
-
-  it('is false for nothing', () => {
-    expect(isInUse({ ...UNUSED, settings: [], sharedWith: [] })).toBe(false);
   });
 });
 
@@ -178,15 +171,38 @@ describe('retiringModelsInUse', () => {
     expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 0 });
   });
 
-  it('alerts on a by-id-only use when every row with the id is dated', async () => {
+  it('alerts on a by-id-only use at the least severe state of the rows with the id', async () => {
+    // One retired, one still retiring: the pin may run on the retiring one,
+    // which works, so it is a warning, not a critical.
     catalogue([
       { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: PAST },
       { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: FUTURE },
     ]);
     vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgWorkflows: 1 });
 
-    // Both rows carry the workflow pin, so each alerts by its own state.
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 1, retired: 1 });
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 2, retired: 0 });
+  });
+
+  it('is critical for a by-id-only use only when every row with the id is retired', async () => {
+    catalogue([
+      { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: PAST },
+      { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: PAST },
+    ]);
+    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgWorkflows: 1 });
+
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 2 });
+  });
+
+  it('ignores a turned-off row with the id, which the runtime cannot reach (the Azure row the seed ships)', async () => {
+    // Azure's gpt-4o ships turned off; OpenAI's is retired. The pin runs on
+    // OpenAI's, so it must alert.
+    catalogue([
+      { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: PAST },
+      { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: null, isActive: false },
+    ]);
+    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgWorkflows: 1 });
+
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
   });
 
   it('still alerts on an agent, which names provider and model, whatever shares the id', async () => {

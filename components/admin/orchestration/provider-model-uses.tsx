@@ -164,7 +164,7 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
                     <Badge
                       variant="outline"
                       className="text-[10px] font-normal"
-                      title="Sunrise picks this agent's model, and moves it off a retiring model on its own."
+                      title="Sunrise picks this agent's model, and moves it off a retiring model on its own when another one it can use is available."
                     >
                       follows the platform
                     </Badge>
