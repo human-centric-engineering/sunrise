@@ -205,8 +205,11 @@ registerEntitlementSwitch({
 - **`whenLacking: 'lock'`**: the item is shown with a lock. Choosing it opens
   the message and a **How to get Lead generation** link, not the page. The
   page shows **Lead generation is not available** with the same message and
-  link in place of its content. Nothing opens: the page renders no content and
-  its routes refuse, as before.
+  link in place of its content. Nothing opens: the page's content is not shown
+  and its routes refuse, as before. The lock is the reader's, like
+  `AdminTierGate` on in-app navigation, not the security boundary: the page
+  still renders on the server, so it must read its rows through its routes
+  (`serverFetch`), as every admin page does, never straight from the database.
 - **`refusalMessage`**: replaces the platform's sentence on the 403, the
   locked item and the locked page. At most 300 characters
   (`MAX_SWITCH_REFUSAL_MESSAGE`).
@@ -219,11 +222,14 @@ give a refusal message and an upgrade link on its 403. A value that is not one
 of these (a `whenLacking` of `'show'`, a `javascript:` or `//` link, an empty
 message) throws at registration, which rolls back the init like any other.
 
-A surface is locked only when the switch is the one thing missing. One the
-viewer's tier does not admit is hidden as before, and so is one whose org's
-switches could not be read: the route says it could not check, and nobody is
-told to buy what their org may have. A platform admin sees every surface
-unlocked.
+A surface is locked only when the viewer's tier admits them and their org's
+switches were read and the switch is off. One the viewer's tier does not admit
+is hidden as before, and so is one whose org's switches could not be read: the
+route says it could not check, and nobody is told to buy what their org may
+have. A policy that also refuses that tier-and-switch for a reason of its own
+(a role, say) cannot be told apart from the missing switch, so the surface is
+shown locked while the org lacks it; once the org has it, the policy's own
+refusal applies. A platform admin sees every surface unlocked.
 
 ## Switches an org sets
 

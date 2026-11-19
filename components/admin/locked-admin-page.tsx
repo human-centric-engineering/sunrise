@@ -4,8 +4,10 @@
  *
  * Rendered by `AdminTierGate` in the page's place when the app registered the
  * switch `whenLacking: 'lock'`: it names what is closed, says what the app
- * registered as the refusal, and links to where the org can get it. It never
- * renders the page, and the page's routes still refuse.
+ * registered as the refusal, and links to where the org can get it. The page
+ * is not shown, and its routes still refuse. It is the reader's lock, not the
+ * boundary: the page still renders on the server, so it reads its rows
+ * through its routes, never straight from the database.
  */
 
 import { Lock } from 'lucide-react';

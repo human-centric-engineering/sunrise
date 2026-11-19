@@ -146,9 +146,11 @@ export const requestAdminReach = cache(async (): Promise<AdminReach> => {
  * read there.
  *
  * Only a switch the org's switches were read for and found off is here. One
- * the policy refused for another reason (it reads on), or whose read failed,
+ * the org has (the policy refused for another reason), or whose read failed,
  * is left out, so its surfaces stay hidden as before rather than tell an
- * admin to buy something their org may have. One read of the org's switches,
+ * admin to buy something their org may have. A policy that would also refuse
+ * once the org has it cannot be told apart from here; its refusal applies
+ * then. One read of the org's switches,
  * once per request, whatever number are locked.
  */
 export const requestLockedSwitches = cache(async (): Promise<readonly LockedAdminSwitch[]> => {
