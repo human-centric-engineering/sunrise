@@ -497,7 +497,9 @@ has the numbers.
   count them. `runAsCredentialLookup` is the same bypass for one credential
   read, logged at `debug`, and `runAsCrossOrgCount` the same for a read-only
   global-config usage count, also at `debug` and confined to one module
-  (§107 t-752). Nothing else should run inside any of them.
+  (§107 t-752). `runAsLivenessProbe` is the same for the database health
+  probe's `SELECT 1`, at `debug` and confined to `lib/db/utils.ts` (#1262).
+  Nothing else should run inside any of them.
 - **Nested creates are stamped; raw inserts are not.** The injection walks
   every write and stamps create-shaped nodes at any depth. A raw `INSERT`
   stamps itself from the parent row (above). An update payload is never

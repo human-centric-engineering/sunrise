@@ -18,6 +18,13 @@ release process.
 
 ### Added
 
+- **`runAsLivenessProbe(fn)` in `lib/tenancy/context.ts` (#1262).** A
+  debug-logged null-org system scope for the database liveness probe, beside
+  `runAsCredentialLookup` and `runAsCrossOrgCount`. It is confined to
+  `lib/db/utils.ts` by an always-run site test
+  (`tests/unit/lib/tenancy/liveness-probe-sites.test.ts`); a fork that needs a
+  system scope elsewhere uses `runAsSystem`.
+
 - **Organisations can send their AI calls on their own vendor keys (§137,
   t-1044).** A new tenant-owned model, `AiOrgProviderKey`, holds one sealed key
   per org per provider row (sealed with `sealSecret()` for the purpose
@@ -348,6 +355,12 @@ release process.
   A column that is not a JSON object is still replaced, as before.
 
 ### Fixed
+
+- **`/api/health` no longer reports a database outage at
+  `TENANCY_MODE=multi` (#1262).** `getDatabaseHealth()` ran its `SELECT 1`
+  probe with no tenant context, which the data layer refuses at `multi`, so
+  the route returned 503 on every call. The probe now runs in
+  `runAsLivenessProbe`.
 
 - **Phone photos are stored upright (#1152, t-1002).** `processImage`
   (`lib/storage/image.ts`) ignored the EXIF Orientation tag and dropped it on

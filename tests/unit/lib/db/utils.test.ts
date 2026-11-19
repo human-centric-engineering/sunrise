@@ -343,6 +343,11 @@ describe('getDatabaseHealth at TENANCY_MODE=multi', () => {
     await getDatabaseHealth();
 
     expect(probeContext).toMatchObject({ orgId: null, source: 'system' });
+    // Polled every few seconds: the entry logs at debug, not runAsSystem's info.
+    expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+      'Entering system tenant scope for the database liveness probe'
+    );
+    expect(vi.mocked(logger.info)).toHaveBeenCalledTimes(0);
   });
 
   it('still reports disconnected when the database itself fails', async () => {

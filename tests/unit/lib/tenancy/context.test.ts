@@ -33,6 +33,7 @@ import {
   requireOrgId,
   runAsCredentialLookup,
   runAsCrossOrgCount,
+  runAsLivenessProbe,
   runAsOrg,
   runAsSystem,
   runDetached,
@@ -221,6 +222,19 @@ describe('runAsCrossOrgCount — a read-only usage count across orgs (§107 t-75
     expect(mockLogger.debug).toHaveBeenCalledWith(
       'Entering system tenant scope for a cross-org usage count',
       { reason: 'in-use check' }
+    );
+    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(getTenantContext()).toBeNull();
+  });
+});
+
+describe('runAsLivenessProbe — the database health probe (#1262)', () => {
+  it('is the same null-org system scope, logged at debug rather than info', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const seen = await runAsLivenessProbe(async () => getTenantContext());
+    expect(seen).toEqual({ orgId: null, source: 'system' });
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Entering system tenant scope for the database liveness probe'
     );
     expect(mockLogger.info).not.toHaveBeenCalled();
     expect(getTenantContext()).toBeNull();

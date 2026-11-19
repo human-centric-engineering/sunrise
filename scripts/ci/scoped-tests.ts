@@ -217,6 +217,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'usage module. A new caller is a file no import chain connects to this test (§107 t-752).',
   },
   {
+    path: 'tests/unit/lib/tenancy/liveness-probe-sites.test.ts',
+    reason:
+      'scans every non-test source file in the checkout, root files included, with the ' +
+      'TypeScript scanner for code that names `runAsLivenessProbe` (the debug-logged system ' +
+      'bypass for the database health probe) or star-re-exports its module, and fails naming ' +
+      'any but `lib/db/utils.ts`. A new caller is a file no import chain connects to this test (#1262).',
+  },
+  {
     path: 'tests/unit/scripts/ci/shared-settings-writes.test.ts',
     reason:
       'parses every route and module under app/ and lib/ and fails naming any route ' +

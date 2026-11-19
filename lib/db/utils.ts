@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { runAsSystem } from '@/lib/tenancy/context';
+import { runAsLivenessProbe } from '@/lib/tenancy/context';
 
 /**
  * Database utility functions
@@ -32,10 +32,11 @@ export async function disconnectDatabase(): Promise<void> {
  * Get database health status
  * Useful for health check endpoints
  *
- * The probe runs in the system scope because its callers (the unauthenticated
- * `/api/health` route among them) have entered no org, and at
- * `TENANCY_MODE=multi` the data layer refuses raw SQL with no tenant context
- * (#1262). `SELECT 1` reads no rows, so the bypass reaches nothing.
+ * The probe runs in the system scope (`runAsLivenessProbe`, logged at debug)
+ * because its callers (the unauthenticated `/api/health` route among them)
+ * have entered no org, and at `TENANCY_MODE=multi` the data layer refuses raw
+ * SQL with no tenant context (#1262). `SELECT 1` reads no rows, so the bypass
+ * reaches nothing. Run nothing else inside it.
  */
 export async function getDatabaseHealth(): Promise<{
   connected: boolean;
@@ -44,7 +45,7 @@ export async function getDatabaseHealth(): Promise<{
   const start = Date.now();
 
   try {
-    await runAsSystem('health check: database liveness probe', async () => {
+    await runAsLivenessProbe(async () => {
       await prisma.$queryRaw`SELECT 1`;
     });
     const latency = Date.now() - start;
