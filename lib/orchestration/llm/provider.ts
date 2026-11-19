@@ -46,6 +46,52 @@ import type {
 export const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
+ * How long each call of a provider's `testKey()` may take, the response body
+ * included (§137 t-1056). Short: an org's save waits on it, and a host slow to
+ * answer a probe is not one to wait two minutes on.
+ */
+export const KEY_TEST_TIMEOUT_MS = 15_000;
+
+/**
+ * A key no vendor issues, sent by `testKey()` beside the real one to learn
+ * whether a call checks keys at all (§137 t-1056). Not a secret.
+ */
+export const KNOWN_WRONG_KEY = 'sunrise-key-check-not-a-real-key';
+
+/** A vendor's answer that the key itself was refused: 401 or 403. */
+export function refusesKey(status: number | undefined): boolean {
+  return status === 401 || status === 403;
+}
+
+/**
+ * A call that fails {@link KNOWN_WRONG_KEY} with this status checks keys: any
+ * 4xx but a rate limit or a timeout. Not only 401 and 403: Gemini's and xAI's
+ * OpenAI-compatible APIs refuse a wrong key with 400.
+ */
+export function refusedForTheKey(status: number | undefined): boolean {
+  return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
+/**
+ * Run a vendor call for its answer alone, for a key test: the HTTP status it
+ * failed with (absent when it succeeded, or got no answer), and its message.
+ */
+export async function probeCall(
+  call: () => Promise<unknown>
+): Promise<{ status?: number; error?: string }> {
+  try {
+    await call();
+    return {};
+  } catch (err) {
+    const failure = toProviderError(err, 'Key test call failed');
+    return {
+      ...(failure.status !== undefined ? { status: failure.status } : {}),
+      error: failure.message,
+    };
+  }
+}
+
+/**
  * Timeout for local providers (Ollama, vLLM, llama.cpp).
  *
  * Local models on prosumer hardware are NOT instant — a 7B model

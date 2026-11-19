@@ -60,6 +60,10 @@ import {
   DEFAULT_TIMEOUT_MS,
   ProviderError,
   buildRequestOptions,
+  KEY_TEST_TIMEOUT_MS,
+  KNOWN_WRONG_KEY,
+  probeCall,
+  refusedForTheKey,
   toProviderError,
   toProviderErrorWithUsage,
   withRetry,
@@ -152,6 +156,8 @@ export class AnthropicProvider implements LlmProvider {
   public readonly isLocal: boolean;
 
   private readonly client: Anthropic;
+  /** The key, for the clients `testKey()` builds. */
+  private readonly apiKey: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
 
@@ -166,9 +172,15 @@ export class AnthropicProvider implements LlmProvider {
     this.isLocal = config.isLocal;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
-    this.client = new Anthropic({
-      apiKey: config.apiKey,
-      timeout: this.timeoutMs,
+    this.apiKey = config.apiKey;
+    this.client = this.buildClient(config.apiKey);
+  }
+
+  /** A vendor client on this provider's timeout and redirect policy. */
+  private buildClient(apiKey: string, timeoutMs: number = this.timeoutMs): Anthropic {
+    return new Anthropic({
+      apiKey,
+      timeout: timeoutMs,
       maxRetries: 0,
       // Refuse redirects (#635), for the same reason as `openai-compatible.ts`
       // and with a sharper edge. This constructor passes no `baseURL`, which
@@ -695,8 +707,13 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async testConnection(): Promise<ProviderTestResult> {
+    return this.ping(this.client);
+  }
+
+  /** A one-token message on the ping model, with `client`. */
+  private async ping(client: Anthropic): Promise<ProviderTestResult> {
     try {
-      await this.client.messages.create({
+      await client.messages.create({
         model: PING_MODEL,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'ping' }],
@@ -709,24 +726,29 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   /**
-   * The key alone (§137 t-1056): Anthropic's model list, which it
-   * authenticates and does not bill. Unlike `testConnection()` it sends no
-   * message, so it does not depend on the key's workspace being able to use
-   * the ping model. A host with no model list (404 or 405: a gateway behind
-   * `ANTHROPIC_BASE_URL` that serves only messages) falls back to
-   * `testConnection()`, the one-token message, so a key such a gateway
-   * passed before still passes.
+   * The key alone (§137 t-1056): Anthropic's model list, with this key and
+   * with a known-wrong one at once. It proves the key where it answers this
+   * key and fails the wrong one with a 4xx, as Anthropic does (401): nothing
+   * billed, and no fixed model the key's workspace must be able to use.
+   *
+   * Anything else falls back to the one-token message `testConnection()`
+   * sends, which the key must pass: a gateway behind `ANTHROPIC_BASE_URL`
+   * with no model list, whatever it answers for the route (404, 403, 501), or
+   * one whose list is open to any key. So does a key the list refuses, which
+   * the message then refuses too. Each call is held to
+   * {@link KEY_TEST_TIMEOUT_MS}.
    */
   async testKey(): Promise<ProviderTestResult> {
-    try {
-      await this.client.models.list({ limit: 1 });
+    const mine = this.buildClient(this.apiKey, KEY_TEST_TIMEOUT_MS);
+    const wrong = this.buildClient(KNOWN_WRONG_KEY, KEY_TEST_TIMEOUT_MS);
+    const [myList, theirList] = await Promise.all([
+      probeCall(() => mine.models.list({ limit: 1 })),
+      probeCall(() => wrong.models.list({ limit: 1 })),
+    ]);
+    if (myList.error === undefined && refusedForTheKey(theirList.status)) {
       return { ok: true, models: CLAUDE_MODELS.map((m) => m.id) };
-    } catch (err) {
-      const status = toProviderError(err, 'Anthropic key test failed').status;
-      if (status === 404 || status === 405) return this.testConnection();
-      const error = err instanceof Error ? err.message : String(err);
-      return { ok: false, models: [], error };
     }
+    return this.ping(mine);
   }
 
   // --- internal helpers ---

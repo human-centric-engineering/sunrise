@@ -752,6 +752,36 @@ describe('VoyageProvider.testKey', () => {
     expect(result.error).toBe(`Voyage key test failed (502): ${'x'.repeat(500)}`);
   });
 
+  it('holds the call to the key test’s short timeout, not the provider’s', async () => {
+    mockFetchWithTimeout.mockResolvedValue(makeEmbeddingResponse());
+
+    await new VoyageProvider({ ...VALID_CONFIG, timeoutMs: 120_000 }).testKey();
+
+    expect(mockFetchWithTimeout.mock.calls[0][2]).toBe(15_000);
+  });
+
+  it('stops waiting for a body the host stalls, and cancels it', async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn(() => Promise.resolve());
+      const stalled = {
+        ok: true,
+        status: 200,
+        text: () => new Promise<string>(() => {}),
+        body: { cancel },
+      } as unknown as Response;
+      mockFetchWithTimeout.mockResolvedValue(stalled);
+
+      const pending = new VoyageProvider(VALID_CONFIG).testKey();
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await expect(pending).resolves.toMatchObject({ ok: false });
+      expect(cancel).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('fails with the status alone when the body cannot be read', async () => {
     const response = makeMockResponse({ ok: false, status: 403 });
     vi.mocked(response.text).mockRejectedValue(new Error('body gone'));

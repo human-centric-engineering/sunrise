@@ -55,9 +55,14 @@ import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
   embeddingTimeoutMs,
+  KEY_TEST_TIMEOUT_MS,
+  KNOWN_WRONG_KEY,
   LOCAL_TIMEOUT_MS,
   ProviderError,
   buildRequestOptions,
+  probeCall,
+  refusedForTheKey,
+  refusesKey,
   toProviderError,
   toProviderErrorWithUsage,
   withRetry,
@@ -115,52 +120,9 @@ const embeddingsResponseSchema = z.object({
 /** Sentinel API key for local servers that require *something* in the header. */
 const LOCAL_API_KEY_SENTINEL = 'not-needed';
 
-/**
- * A key no host issues, sent by `testKey()` to learn whether a call checks
- * keys at all (§137 t-1056). Not a secret.
- */
-const KNOWN_WRONG_KEY = 'sunrise-key-check-not-a-real-key';
-
-/**
- * How long each of `testKey()`'s calls may take. Short: a save waits on them,
- * and a host that is slow to answer a probe is not one to wait two minutes on.
- */
-const KEY_TEST_TIMEOUT_MS = 15_000;
-
-/** A vendor's answer that the key itself was refused. */
-function refusesKey(status: number | undefined): boolean {
-  return status === 401 || status === 403;
-}
-
-/**
- * A model list that fails a known-wrong key with this status checks keys:
- * any 4xx but a rate limit or a timeout. Not only 401 and 403: Gemini's and
- * xAI's OpenAI-compatible APIs refuse a wrong key with 400.
- */
-function refusedForTheKey(status: number | undefined): boolean {
-  return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429;
-}
-
 /** A failed key test, with the reason the caller logs (never shows). */
 function failed(error: string | undefined): ProviderTestResult {
   return { ok: false, models: [], error: error ?? 'The provider refused this key' };
-}
-
-/**
- * Run a vendor call for its answer alone: the HTTP status it failed with
- * (undefined when it succeeded, or failed before any answer), and its error.
- */
-async function probe(call: () => Promise<unknown>): Promise<{ status?: number; error?: string }> {
-  try {
-    await call();
-    return {};
-  } catch (err) {
-    const failure = toProviderError(err, 'OpenAI-compatible key test call failed');
-    return {
-      ...(failure.status !== undefined ? { status: failure.status } : {}),
-      error: failure.message,
-    };
-  }
 }
 
 /**
@@ -780,19 +742,20 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    * The key alone (§137 t-1056), on a host Sunrise knows nothing else about.
    *
    * First the model list, with this key and with a known-wrong one at once.
-   * It proves the key where the host fails the wrong key there (OpenAI with
-   * 401, Groq with 403, Gemini and xAI with 400) and lets this one through.
-   * A 401 or 403 for this key is a refused key.
+   * It proves the key only where it answers this key and fails the wrong one
+   * with a 4xx (OpenAI and Mistral 401, Groq 403, Gemini and xAI 400).
    *
-   * Otherwise (the list is open to anyone, as OpenRouter's is, or the host
-   * has none, as Perplexity has not) a chat request no host will run (no
-   * model, no messages) is sent with each key: 401 or 403 for this key is a
-   * refused key, and any other answer to it, where the wrong key was refused,
+   * Anything else goes on to a chat request no host will run (no model, no
+   * messages), sent with each key: a list open to anyone (OpenRouter), none
+   * at all (Perplexity), one that answers with something that is not a list,
+   * and a list that refuses this key, which may only lack the scope to read
+   * models (an OpenAI project key). 401 or 403 for this key on chat is a
+   * refused key; any other answer to it, where the wrong key was refused,
    * means the host accepted it before rejecting the request. Nothing is
-   * billed. A host that checks keys on neither call fails the test, since it
-   * cannot say whether the key works; so does one that does not answer.
+   * billed. A host that does not answer fails the test, and so does one that
+   * checks keys on neither call, since it cannot say whether the key works.
    *
-   * Each call is held to {@link KEY_TEST_TIMEOUT_MS}, and each pair is sent
+   * Each call is held to {@link KEY_TEST_TIMEOUT_MS}; each pair is sent
    * together.
    */
   async testKey(): Promise<ProviderTestResult> {
@@ -801,22 +764,20 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
     let models: string[] = [];
     const [myList, theirList] = await Promise.all([
-      probe(async () => {
+      probeCall(async () => {
         const page = await mine.models.list();
         models = page.data.map((entry) => entry.id);
       }),
-      probe(() => wrong.models.list()),
+      probeCall(() => wrong.models.list()),
     ]);
-    if (refusesKey(myList.status)) return failed(myList.error);
-    if (myList.status === undefined && myList.error !== undefined) return failed(myList.error);
     if (myList.error === undefined && refusedForTheKey(theirList.status)) {
       return { ok: true, models };
     }
 
     const request = () => ({ model: '', messages: [], max_tokens: 1 });
     const [myChat, theirChat] = await Promise.all([
-      probe(() => mine.chat.completions.create(request())),
-      probe(() => wrong.chat.completions.create(request())),
+      probeCall(() => mine.chat.completions.create(request())),
+      probeCall(() => wrong.chat.completions.create(request())),
     ]);
     if (refusesKey(myChat.status)) return failed(myChat.error);
     if (myChat.status === undefined && myChat.error !== undefined) return failed(myChat.error);
@@ -824,9 +785,15 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       return failed(theirChat.error);
     }
     if (refusesKey(theirChat.status)) return { ok: true, models };
+
+    // Neither call told the keys apart. Where the list failed this key as it
+    // failed the wrong one (a mistyped Gemini key: 400 for both), it was
+    // refused like a wrong key; otherwise the host checks keys nowhere.
+    if (refusedForTheKey(myList.status) && myList.status === theirList.status) {
+      return failed(`The provider answered this key as it answers a wrong one: ${myList.error}`);
+    }
     return failed(
-      'This host checks keys on neither its model list nor its chat endpoint, so the key cannot be tested' +
-        (myList.error !== undefined ? ` (model list: ${myList.error})` : '')
+      'This host checks keys on neither its model list nor its chat endpoint, so the key cannot be tested'
     );
   }
 

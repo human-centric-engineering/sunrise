@@ -17,7 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** How the host answers one key: per call, a status to fail with, or success. */
 interface HostAnswers {
-  list: number | 'ok' | Error;
+  /** `'not-a-list'`: a 200 whose body is not a model list. */
+  list: number | 'ok' | 'not-a-list' | Error;
   chat: number | 'ok' | Error;
 }
 
@@ -40,6 +41,7 @@ vi.mock('openai', () => {
     const outcome = a?.[call] ?? 'ok';
     if (outcome instanceof Error) throw outcome;
     if (typeof outcome === 'number') throw new StatusError(outcome);
+    if (outcome === 'not-a-list') return {};
     return call === 'list' ? { data: [{ id: 'model-a' }] } : { choices: [] };
   };
   class MockOpenAI {
@@ -129,13 +131,27 @@ describe('OpenAiCompatibleProvider.testKey', () => {
     await expect(provider().testKey()).resolves.toMatchObject({ ok: false });
   });
 
-  it('fails a key a host refuses with 400 everywhere, with the model list’s reason (Gemini)', async () => {
+  it('fails a key a host refuses as it refuses a wrong one, and says so (a mistyped Gemini key)', async () => {
     host({ list: 400, chat: 400 }, { list: 400, chat: 400 });
 
     const result = await provider().testKey();
 
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/model list: 400/);
+    expect(result.error).toMatch(/^The provider answered this key as it answers a wrong one: 400/);
+  });
+
+  it('passes a key the model list refuses but chat accepts (an OpenAI project key without model read)', async () => {
+    host({ list: 403, chat: 400 }, { list: 401, chat: 401 });
+
+    const result = await provider().testKey();
+
+    expect(result).toEqual({ ok: true, models: [] });
+  });
+
+  it('goes on to chat when the model list answers with something that is not a list', async () => {
+    host({ list: 'not-a-list', chat: 400 }, { list: 'not-a-list', chat: 401 });
+
+    await expect(provider().testKey()).resolves.toMatchObject({ ok: true });
   });
 
   it('holds every call to a short timeout, not the provider’s two minutes', async () => {
@@ -207,12 +223,12 @@ describe('OpenAiCompatibleProvider.testKey', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/ECONNREFUSED/) });
   });
 
-  it('fails when the model list cannot be reached', async () => {
-    host({ list: new Error('getaddrinfo ENOTFOUND'), chat: 'ok' }, { list: 401, chat: 401 });
+  it('fails when the host cannot be reached', async () => {
+    const down = new Error('getaddrinfo ENOTFOUND');
+    host({ list: down, chat: down }, { list: down, chat: down });
 
     const result = await provider().testKey();
 
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/ENOTFOUND/) });
-    expect(made()).toEqual([`list:${KEY}`, `list:${WRONG}`]);
   });
 });

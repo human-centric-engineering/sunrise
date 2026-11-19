@@ -25,6 +25,7 @@ import {
   embeddingTimeoutMs,
   ProviderError,
   fetchWithTimeout,
+  KEY_TEST_TIMEOUT_MS,
   withRetry,
   type LlmProvider,
   type ProviderTestResult,
@@ -227,10 +228,7 @@ export class VoyageProvider implements LlmProvider {
         );
 
         if (!response.ok) {
-          const errorText = await response.text();
-          let message = errorText;
-          const parsed = z.object({ detail: z.string() }).safeParse(safeJsonParse(errorText));
-          if (parsed.success) message = parsed.data.detail;
+          const message = voyageErrorDetail(await response.text());
           throw new ProviderError(`Voyage embed failed (${response.status}): ${message}`, {
             code: `http_${response.status}`,
             status: response.status,
@@ -282,7 +280,8 @@ export class VoyageProvider implements LlmProvider {
    * and its embeddings call refuses a wrong key with 401. Billed, a token or
    * two. One attempt: a key test is not retried. Passes only on a 2xx whose
    * body is an embeddings answer, so a proxy that answers anything with 200
-   * does not pass a key.
+   * does not pass a key. The call and the reading of its body are each held
+   * to {@link KEY_TEST_TIMEOUT_MS}.
    */
   async testKey(): Promise<ProviderTestResult> {
     try {
@@ -300,9 +299,9 @@ export class VoyageProvider implements LlmProvider {
             input_type: 'query',
           }),
         },
-        this.timeoutMs
+        KEY_TEST_TIMEOUT_MS
       );
-      const text = await response.text().catch(() => '');
+      const text = await textWithin(response, KEY_TEST_TIMEOUT_MS);
       if (response.ok) {
         if (voyageEmbeddingsResponseSchema.safeParse(safeJsonParse(text)).success) {
           return { ok: true, models: [this.embeddingModel] };
@@ -313,8 +312,7 @@ export class VoyageProvider implements LlmProvider {
           error: `Voyage key test got an answer that is not an embeddings response (${response.status})`,
         };
       }
-      const detail = z.object({ detail: z.string() }).safeParse(safeJsonParse(text));
-      const reason = (detail.success ? detail.data.detail : text).slice(0, KEY_TEST_DETAIL_LIMIT);
+      const reason = voyageErrorDetail(text).slice(0, KEY_TEST_DETAIL_LIMIT);
       return {
         ok: false,
         models: [],
@@ -324,6 +322,35 @@ export class VoyageProvider implements LlmProvider {
       const error = err instanceof Error ? err.message : String(err);
       return { ok: false, models: [], error };
     }
+  }
+}
+
+/** Voyage's own reason from an error body: its `detail`, else the body as sent. */
+function voyageErrorDetail(text: string): string {
+  const parsed = z.object({ detail: z.string() }).safeParse(safeJsonParse(text));
+  return parsed.success ? parsed.data.detail : text;
+}
+
+/**
+ * A response body, read within `ms`. `fetchWithTimeout` stops timing once the
+ * headers arrive, so a host that sends them and then stalls the body would
+ * otherwise hold a key test open. Past `ms`, or if the read fails, the body
+ * is cancelled and the answer is empty.
+ */
+async function textWithin(response: Response, ms: number): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  try {
+    const text = await Promise.race([response.text().catch(() => ''), timedOut]);
+    if (text === null) {
+      void response.body?.cancel().catch(() => undefined);
+      return '';
+    }
+    return text;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

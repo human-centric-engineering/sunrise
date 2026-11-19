@@ -80,12 +80,19 @@ interface MockClient {
 const clients = vi.hoisted((): MockClient[] => []);
 /** An error the next vendor call throws, once. */
 const sdkFailure = vi.hoisted((): { next: Error | null } => ({ next: null }));
+/** Keys the vendor refuses on every call, as a real one refuses a wrong key. */
+const refusedKeys = vi.hoisted((): { keys: Set<unknown> } => ({
+  keys: new Set(['sunrise-key-check-not-a-real-key']),
+}));
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages: { create: ReturnType<typeof vi.fn> };
     public models: { list: ReturnType<typeof vi.fn> };
     constructor(opts: { apiKey?: unknown }) {
+      const refused = () =>
+        Object.assign(new Error(`401 invalid x-api-key ${String(opts.apiKey)}`), { status: 401 });
       const create = vi.fn(async () => {
+        if (refusedKeys.keys.has(opts.apiKey)) throw refused();
         const failure = sdkFailure.next;
         sdkFailure.next = null;
         if (failure) throw failure;
@@ -98,6 +105,7 @@ vi.mock('@anthropic-ai/sdk', () => {
       });
       // The key test's call (t-1056): the model list, failing as `create` does.
       const list = vi.fn(async () => {
+        if (refusedKeys.keys.has(opts.apiKey)) throw refused();
         const failure = sdkFailure.next;
         sdkFailure.next = null;
         if (failure) throw failure;
@@ -183,6 +191,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   clients.length = 0;
   sdkFailure.next = null;
+  refusedKeys.keys = new Set(['sunrise-key-check-not-a-real-key']);
   clearCache();
   resetAllBreakers();
   __resetInFlightCountersForTests();
@@ -414,27 +423,32 @@ describe('at single', () => {
 });
 
 describe('testing a key before it is saved (t-1045)', () => {
-  it('asks the vendor once on the submitted key, on a client the manager never caches', async () => {
+  it('asks the vendor on the submitted key, on clients the manager never caches', async () => {
     const result = await testProviderKey(ROW as never, KEY_B);
 
     expect(result.ok).toBe(true);
-    expect(clients.map((c) => c.apiKey)).toEqual([KEY_B]);
+    // The row's client, then the test's two: the key, and a known-wrong one.
+    expect(clients.map((c) => c.apiKey)).toEqual([
+      KEY_B,
+      KEY_B,
+      'sunrise-key-check-not-a-real-key',
+    ]);
     // The key test (t-1056): Anthropic's model list, which it authenticates,
     // and no message: nothing billed, no fixed model the key must reach.
-    expect(clients[0].list).toHaveBeenCalledTimes(1);
-    expect(clients[0].create).not.toHaveBeenCalled();
+    expect(clients[1].list).toHaveBeenCalledTimes(1);
+    expect(clients.every((c) => c.create.mock.calls.length === 0)).toBe(true);
 
     // The org's next call is built afresh on its own key, never on the tested one.
+    const built = clients.length;
     await save(ORG_A, KEY_A);
     await chat(ORG_A);
-    expect(clients.map((c) => c.apiKey)).toEqual([KEY_B, KEY_A]);
-    expect(clients[0].create).not.toHaveBeenCalled();
-    expect(clients[1].create).toHaveBeenCalledTimes(1);
+    expect(clients.slice(built).map((c) => c.apiKey)).toEqual([KEY_A]);
+    expect(clients[built].create).toHaveBeenCalledTimes(1);
   });
 
   it('answers a refused key as a failed test, with the vendor’s message for the caller to scrub', async () => {
     vi.mocked(prisma.aiProviderConfig.findFirst).mockClear();
-    sdkFailure.next = new Error(`401 invalid x-api-key ${KEY_B}`);
+    refusedKeys.keys.add(KEY_B);
 
     const result = await testProviderKey(ROW as never, KEY_B);
 
