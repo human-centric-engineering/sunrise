@@ -46,7 +46,11 @@ import {
   writeOrgEntitlements,
   type OrgEntitlementsRead,
 } from '@/lib/tenancy/org-settings';
-import { ENTITLEMENT_KEY_PATTERN, MAX_ORG_ENTITLEMENT_SWITCHES } from '@/lib/validations/tenancy';
+import {
+  ENTITLEMENT_KEY_PATTERN,
+  MAX_METERS,
+  MAX_ORG_ENTITLEMENT_SWITCHES,
+} from '@/lib/validations/tenancy';
 
 /** A switch as an app registers it. */
 export interface EntitlementSwitch {
@@ -133,15 +137,131 @@ export function registerEntitlementSwitch(definition: EntitlementSwitch): void {
   );
 }
 
+/**
+ * The window a meter counts within (§135 t-1035): `from` inclusive, `to`
+ * exclusive. Both `null` for a standing count, which is how many there are
+ * now.
+ */
+export interface MeterWindow {
+  from: Date | null;
+  to: Date | null;
+}
+
+/**
+ * Which window a meter counts within:
+ *
+ * - `'month'`: the current UTC calendar month, as §110's AI budget is.
+ * - `'standing'`: no window; how many there are now (questionnaires, seats).
+ * - a function: the app's own window for this org at `now`, such as a billing
+ *   cycle anchored on the org's subscription date or a rolling 30 days. It
+ *   returns `from` and `to` as dates, `from` before `to`. It may be async, so
+ *   it can read the org's own record.
+ */
+export type MeterPeriod =
+  | 'month'
+  | 'standing'
+  | ((input: { orgId: string; now: Date }) => MeterWindow | Promise<MeterWindow>);
+
+/** A meter as an app registers it. */
+export interface MeterDefinition {
+  /**
+   * What an org's limit is stored under: the same spelling as a switch key.
+   * Do not rename one orgs hold a limit for; register a new key instead.
+   * Registering `seats` replaces the platform's own seats count with yours,
+   * which must count an open invitation as the member it becomes and leave
+   * platform staff out, as the platform's refusals assume
+   * (`lib/tenancy/meters.ts`).
+   */
+  key: string;
+  /** What platform staff, and a refusal, call it, in plain words. */
+  label: string;
+  /** One line saying what is counted, shown with the label. */
+  description?: string;
+  /** The window it counts within. */
+  period: MeterPeriod;
+  /**
+   * How many the org has within the window. The app decides what counts:
+   * Sunrise only compares the answer with the org's limit. A throw, or an
+   * answer that is not a whole number of zero or more, reads as allowed and is
+   * logged, so a broken count never stops an org working.
+   */
+  count: (input: { orgId: string; from: Date | null; to: Date | null }) => number | Promise<number>;
+}
+
+/** A registered meter. */
+export type RegisteredMeter = Readonly<
+  Required<Pick<MeterDefinition, 'key' | 'label' | 'description' | 'period' | 'count'>>
+>;
+
+const meters = new Map<string, RegisteredMeter>();
+
+/**
+ * Register a meter. Call from `initAppEntitlements()` in
+ * `lib/app/entitlements.ts`, beside the switches. Re-registering a key
+ * replaces it. A key that is not a key, a missing label, a period that is not
+ * `'month'`, `'standing'` or a function, a `count` that is not a function, or
+ * a meter past the {@link MAX_METERS}th throws, which rolls back every switch
+ * and meter the init registered and logs why.
+ */
+export function registerMeter(definition: MeterDefinition): void {
+  if (typeof definition.key !== 'string' || !ENTITLEMENT_KEY_PATTERN.test(definition.key)) {
+    throw new Error(
+      `Meter key "${String(definition.key)}" must be lower-case letters, digits and underscores, starting with a letter, at most 48 characters`
+    );
+  }
+  // Checked rather than trusted: an init written in JavaScript can pass anything.
+  const label = typeof definition.label === 'string' ? definition.label.trim() : '';
+  if (label.length === 0) throw new Error(`Meter "${definition.key}" needs a label`);
+  const period: unknown = definition.period;
+  if (period !== 'month' && period !== 'standing' && typeof period !== 'function') {
+    throw new Error(
+      `Meter "${definition.key}" has period ${JSON.stringify(period)}; it must be 'month', 'standing' or a function returning the window`
+    );
+  }
+  if (typeof definition.count !== 'function') {
+    throw new Error(`Meter "${definition.key}" needs a count function`);
+  }
+  if (!meters.has(definition.key) && meters.size >= MAX_METERS) {
+    throw new Error(
+      `At most ${MAX_METERS} meters can be registered; "${definition.key}" is one too many`
+    );
+  }
+  const description =
+    typeof definition.description === 'string' ? definition.description.trim() : '';
+  meters.set(
+    definition.key,
+    Object.freeze({
+      key: definition.key,
+      label,
+      description,
+      period: definition.period,
+      count: definition.count,
+    })
+  );
+}
+
 const appInit = createAppInitGate({
   label: 'entitlements: initAppEntitlements',
   // Half an app's switches registered would give some orgs some of what they
-  // bought, which is harder to notice than none.
-  subject: 'app entitlement switches',
+  // bought, which is harder to notice than none. Its meters go with them.
+  subject: 'app entitlement switches and meters',
   init: initAppEntitlements,
-  snapshot: () => new Map(switches),
-  restore: (before) => restoreMap(switches, before),
+  snapshot: () => ({ switches: new Map(switches), meters: new Map(meters) }),
+  restore: (before) => {
+    restoreMap(switches, before.switches);
+    restoreMap(meters, before.meters);
+  },
 });
+
+/**
+ * Every meter the app registers, in registration order. Empty on vanilla
+ * Sunrise; the platform's own seats meter is not in it (see
+ * `lib/tenancy/meters.ts`, which answers for every meter).
+ */
+export function registeredMeters(): readonly RegisteredMeter[] {
+  appInit.ensure();
+  return [...meters.values()];
+}
 
 /** Every registered switch, in registration order. Empty on vanilla Sunrise. */
 export function registeredEntitlementSwitches(): readonly RegisteredEntitlementSwitch[] {
@@ -352,5 +472,6 @@ export async function orgSwitchState(
 /** Test-only: clear the registry and re-arm the one-shot app init. */
 export function __resetEntitlementRegistryForTests(): void {
   switches.clear();
+  meters.clear();
   appInit.reset();
 }

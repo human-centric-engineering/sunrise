@@ -119,7 +119,11 @@ Three things about the shape are decisions, not defaults:
   `quotas` (§110 t-788, t-789) holds the org's own caps, `monthlyBudgetUsd`
   and `requestsPerMinute`, written through `PATCH /api/v1/admin/orgs/[id]`
   from the install org only, or by a fork's billing code through
-  `writeOrgQuotas()`. An unreadable cap is dropped, leaving the org with no
+  `writeOrgQuotas()`. Beside them, `quotas.meters` (§135 t-1035) holds the
+  org's limit for each meter, written one key at a time through
+  `PATCH /api/v1/admin/orgs/[id]/meters` or `writeOrgMeterLimits()`; the caps
+  writers keep it ([Entitlements](./entitlements.md#meters-and-limits)).
+  An unreadable cap is dropped, leaving the org with no
   cap of its own (see
   [Costs](../admin/orchestration-costs.md#per-org-monthly-budget-cap) and
   [Rate limiting](../security/rate-limiting.md#per-org-request-cap)).

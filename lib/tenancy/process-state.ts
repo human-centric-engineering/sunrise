@@ -884,9 +884,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/tenancy/entitlements.ts',
-    holders: ['switches', 'appInit'],
+    holders: ['switches', 'meters', 'appInit'],
     posture: 'no-tenant-data',
-    why: 'The entitlement switches an app registers from code (§135 t-1033), the same for every org. Which switches an org has is read from its row on every call and never held here.',
+    why: 'The entitlement switches and meters an app registers from code (§135 t-1033, t-1035), the same for every org. Which switches an org has, its meter limits and its counts are read on every call and never held here.',
   },
   {
     file: 'lib/tenancy/resolver.ts',

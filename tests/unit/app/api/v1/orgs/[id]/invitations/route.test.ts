@@ -23,9 +23,10 @@ vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Header
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
-    user: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findMany: vi.fn() },
     org: { findUnique: vi.fn() },
-    orgMembership: { findUnique: vi.fn(), findMany: vi.fn() },
+    orgMembership: { findUnique: vi.fn(), findMany: vi.fn(), count: vi.fn() },
+    verification: { findMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
   },
 }));
@@ -66,6 +67,7 @@ import {
 import { sendEmail } from '@/lib/email/send';
 import { resolveEmailTemplate } from '@/lib/email/registry';
 import { inviteLimiter } from '@/lib/security/rate-limit';
+import { METER_LIMIT_REASON } from '@/lib/tenancy/meters';
 import { createMockAuthSession } from '@/tests/helpers/auth';
 
 const ORG = 'cmorg000000000000000other';
@@ -357,7 +359,12 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
 
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: 'jane@example.com' },
-      select: { id: true, orgMemberships: { where: { orgId: ORG }, select: { id: true } } },
+      select: {
+        id: true,
+        role: true,
+        accountType: true,
+        orgMemberships: { where: { orgId: ORG }, select: { id: true } },
+      },
     });
   });
 
@@ -565,5 +572,116 @@ describe('POST /api/v1/orgs/[id]/invitations — limits and delivery', () => {
     const res = await post(bad);
     expect(res.status).toBe(400);
     expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', () => {
+  /** The org's seats limit, and what it already holds: members, then open invitations. */
+  function seats(limit: number, members: number, invitations: number) {
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      id: ORG,
+      name: 'Acme Org',
+      status: 'ACTIVE',
+      settings: { quotas: { meters: { seats: limit } } },
+    } as never);
+    vi.mocked(prisma.orgMembership.count).mockResolvedValue(members);
+    vi.mocked(prisma.verification.findMany).mockResolvedValue(
+      Array.from({ length: invitations }, (_, i) => ({
+        ...pendingRow({ orgId: ORG }),
+        identifier: `invitation:p${i}@example.com`,
+      })) as never
+    );
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
+  }
+
+  it("refuses an org's own admin a new invitation at the limit, delivering nothing", async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+    // 2 members + 1 open invitation fill 3 seats.
+    seats(3, 2, 1);
+
+    const res = await post(invitee);
+    const body = await json(res);
+
+    expect(res.status).toBe(403);
+    expect(body.error.code).toBe('FORBIDDEN');
+    expect(body.error.details).toMatchObject({
+      reason: METER_LIMIT_REASON,
+      meter: 'seats',
+      used: 3,
+      limit: 3,
+    });
+    // The count is of this org's invitations, not every org's.
+    expect(prisma.verification.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ metadata: { path: ['orgId'], equals: ORG } }),
+      })
+    );
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('lets an org admin invite while a seat is free, counting members and invitations together', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+    seats(4, 2, 1);
+
+    const res = await post(invitee);
+
+    expect(res.status).toBe(201);
+    expect(generateInvitationToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refuse a resend of an invitation that already holds a seat, and does not count', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+    seats(1, 0, 1); // full: the pending invitation is the one seat
+    pending({ orgId: ORG });
+
+    const res = await post(invitee, ORG, '?resend=true');
+
+    expect(res.status).toBe(201);
+    expect(updateInvitationToken).toHaveBeenCalledTimes(1);
+    expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a resend takes no new seat, so seats are not counted
+    expect(prisma.verification.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a resend takes no new seat, so seats are not counted
+  });
+
+  it('does not refuse an invitation to an account that is already platform staff', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+    seats(1, 1, 0);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'cmuser000000000000000stf1',
+      role: PLATFORM_ADMIN_ROLE,
+      accountType: 'HUMAN',
+      orgMemberships: [],
+    } as never);
+
+    const res = await post(invitee);
+
+    expect(res.status).toBe(201);
+    expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — staff take no seat, so nothing is counted
+  });
+
+  it('does not refuse a platform admin at the limit', async () => {
+    mockGetSession.mockResolvedValue(session(PLATFORM_ADMIN_ROLE, null));
+    seats(1, 1, 0);
+
+    const res = await post(invitee);
+
+    expect(res.status).toBe(201);
+    expect(generateInvitationToken).toHaveBeenCalledTimes(1);
+    expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — platform staff are never counted against the limit
+  });
+
+  it('counts nothing and refuses nothing for an org with no seats limit', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+
+    const res = await post(invitee);
+
+    expect(res.status).toBe(201);
+    expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — no limit set, so nothing is counted
   });
 });
