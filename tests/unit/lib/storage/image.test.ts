@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Create a shared mock instance that will be reused for all calls
 const mockSharpInstance = {
   metadata: vi.fn().mockResolvedValue({ width: 1000, height: 1000 }),
+  rotate: vi.fn().mockReturnThis(),
   resize: vi.fn().mockReturnThis(),
   jpeg: vi.fn().mockReturnThis(),
   png: vi.fn().mockReturnThis(),

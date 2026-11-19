@@ -264,9 +264,10 @@ DELETE /api/v1/users/me/avatar
 Images are automatically processed before upload:
 
 1. **Validation**: Magic bytes check (not just MIME type)
-2. **Resize**: Max 500x500 pixels (configurable)
-3. **Optimize**: Quality compression for web (default JPEG quality: 85)
-4. **Format**: Avatars always output JPEG regardless of input format. When using `processImage` directly without specifying a format, the original format is preserved.
+2. **Orient**: The EXIF orientation tag is applied to the pixels before anything else, so a phone photo taken turned is stored upright with upright dimensions. The tag is not kept (the output is untagged), and an untagged or already-upright image is left as it is.
+3. **Resize**: Max 500x500 pixels (configurable)
+4. **Optimize**: Quality compression for web (default JPEG quality: 85)
+5. **Format**: Avatars always output JPEG regardless of input format. When using `processImage` directly without specifying a format, the original format is preserved.
 
 Supported formats: JPEG, PNG, WebP, GIF
 
