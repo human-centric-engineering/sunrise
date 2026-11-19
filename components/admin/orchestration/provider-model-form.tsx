@@ -499,6 +499,9 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
         await apiClient.patch(API.ADMIN.ORCHESTRATION.providerModelById(model.id), {
           body: payload,
         });
+        // The page's "Retirement and uses" panel is drawn on the server from
+        // the saved row; re-render it so it shows what was just saved.
+        router.refresh();
         setSaved(true);
         schedule(() => setSaved(false), 2000);
       } else {

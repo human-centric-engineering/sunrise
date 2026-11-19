@@ -107,9 +107,11 @@ const CLEANUP_CAPABILITY_SLUGS = [
  * job shares across one run's orgs (t-816); only the filters above are asked
  * per org.
  *
- * Preference order: worker tier before thinking tier (a whole-document rewrite
- * on a thinking-tier model is expensive and no better at choosing a regex),
- * then deepest reasoning, then model id, then provider slug — a total order,
+ * A model past its retirement day is no candidate (§136 t-1065). Preference
+ * order: a model with no retirement date before a retiring one, then worker
+ * tier before thinking tier (a whole-document rewrite on a thinking-tier
+ * model is expensive and no better at choosing a regex), then deepest
+ * reasoning, then model id, then provider slug — a total order,
  * so two providers offering the same model never trade places between
  * passes and move the agent back and forth (t-798). Returns null
  * when nothing qualifies, in which case the agent is left on (or put back to)
@@ -151,15 +153,29 @@ export async function pickCleanupBinding(
   const candidates = new Set([...credentials.reachable.map((p) => p.slug), ...unavailable.keys()]);
   if (candidates.size === 0) return null;
 
+  // A model past its retirement day (§136) is no candidate even while it is
+  // still on: every call to it fails at the vendor, so no binding (the agent
+  // then inherits the defaults) is better. Read against the clock, so two
+  // instances can disagree only for the moment the day turns.
+  const now = Date.now();
   const models = (await catalogue.activeModels(db)).filter(
     (m) =>
-      candidates.has(m.providerSlug) && m.toolUse === 'strong' && m.capabilities.includes('chat')
+      candidates.has(m.providerSlug) &&
+      m.toolUse === 'strong' &&
+      m.capabilities.includes('chat') &&
+      !(m.retiresAt != null && m.retiresAt.getTime() <= now)
   );
   if (models.length === 0) return null;
 
   const TIER_RANK: Record<string, number> = { worker: 0, thinking: 1, control_plane: 2 };
   const REASONING_RANK: Record<string, number> = { very_high: 0, high: 1, medium: 2, none: 3 };
   const ranked = [...models].sort((a, b) => {
+    // A retiring model (§136: a day still to come; past days were filtered
+    // out above) ranks after every model without one, so a platform-owned
+    // binding moves off it before the day. It is still picked when it is all
+    // the org can reach: it works until then.
+    const retiring = Number(a.retiresAt != null) - Number(b.retiresAt != null);
+    if (retiring !== 0) return retiring;
     const tier = (TIER_RANK[a.tierRole] ?? 9) - (TIER_RANK[b.tierRole] ?? 9);
     if (tier !== 0) return tier;
     const reasoning =

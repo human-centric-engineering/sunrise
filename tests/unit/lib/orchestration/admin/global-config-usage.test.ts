@@ -139,15 +139,45 @@ describe('providerModelUsage', () => {
     const usage = await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
 
     expect(usage).toEqual({
-      agents: [{ id: 'a1', name: 'Agent a1', slug: 'agent-a1' }],
+      agents: [{ id: 'a1', name: 'Agent a1', slug: 'agent-a1', followsPlatform: false }],
       workflows: [{ id: 'wa', name: 'Workflow wa', slug: 'wf-wa' }],
       otherOrgAgents: 2,
+      otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 1,
     });
     expect(scopes.seen).toEqual(['system', 'system']);
     expect(db.aiAgent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { isActive: true, provider: 'openai', model: 'gpt-x' } })
     );
+  });
+
+  it('marks the agents whose model the platform picks, own named and other orgs counted (§136 t-1065)', async () => {
+    const platform = { isSystem: true, bindingOwner: 'platform' };
+    db.aiAgent.findMany.mockImplementation(
+      answering([
+        { ...agent('a1', ORG_A), slug: 'cleanup-agent', ...platform },
+        // A platform agent the org has taken over is the org's to move.
+        { ...agent('a2', ORG_A), isSystem: true, bindingOwner: 'org' },
+        { ...agent('b1', ORG_B), slug: 'cleanup-agent', ...platform },
+        { ...agent('b2', ORG_B), isSystem: false, bindingOwner: null },
+      ])
+    );
+
+    const usage = await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
+
+    expect(usage.agents.map((a) => [a.id, a.followsPlatform])).toEqual([
+      ['a1', true],
+      ['a2', false],
+    ]);
+    expect(usage.otherOrgAgents).toBe(2);
+    expect(usage.otherOrgAgentsFollowingPlatform).toBe(1);
+  });
+
+  it('counts in the entered org only with acrossOrgs: false, never entering the system scope', async () => {
+    await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x', { acrossOrgs: false }));
+
+    expect(scopes.seen).not.toContain('system');
+    expect(scopes.seen.length).toBeGreaterThan(0);
   });
 
   it('names nothing with no org entered (an admin API key), and counts it all', async () => {

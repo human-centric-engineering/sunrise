@@ -32,6 +32,7 @@
 import { prisma } from '@/lib/db/client';
 import type { CapabilityAgentRef } from '@/types/orchestration';
 import { getTenantContext, isMultiTenant, runAsCrossOrgCount } from '@/lib/tenancy/context';
+import { bindingFollowsPlatform } from '@/lib/orchestration/agents/platform-agent-guard';
 
 const REASON = 'in-use check on global config (counted across orgs)';
 
@@ -158,25 +159,41 @@ function definitionPinsModel(definition: unknown, modelId: string): boolean {
   return false;
 }
 
+/** An agent bound to a model, as {@link providerModelUsage} names it. */
+export interface ModelAgentRef extends NamedRef {
+  /**
+   * Whether the agent's provider and model follow the platform's pick
+   * (`bindingFollowsPlatform`, the reconcile's own rule, §116 t-798): the
+   * reconcile re-picks it off a turned-off or retired model and ranks a
+   * retiring one last, so it moves on its own (§136 t-1065). Any other agent
+   * stays where it is until someone moves it.
+   */
+  followsPlatform: boolean;
+}
+
 export interface ProviderModelUsage {
   /** The caller's active agents bound to the model, by name. */
-  agents: NamedRef[];
+  agents: ModelAgentRef[];
   /** The caller's active workflows pinning it (draft or published), by name. */
   workflows: NamedRef[];
   /** Active agents in other orgs bound to it. */
   otherOrgAgents: number;
+  /** How many of {@link otherOrgAgents} follow the platform's pick. */
+  otherOrgAgentsFollowingPlatform: number;
   /** Active workflows in other orgs pinning it. */
   otherOrgWorkflows: number;
 }
 
 /**
  * Active agents bound to `(providerSlug, modelId)` and active workflows
- * pinning `modelId` in a step's `modelOverride`, in every org. The caller's
- * are named, other orgs' are counted.
+ * pinning `modelId` in a step's `modelOverride`, in every org by default. The
+ * caller's are named, other orgs' are counted. `acrossOrgs: false` counts in
+ * the caller's org only, for a customer org's admin (§111 t-811).
  */
 export function providerModelUsage(
   providerSlug: string,
-  modelId: string
+  modelId: string,
+  options: CountScope = {}
 ): Promise<ProviderModelUsage> {
   const isCallers = callersRows();
   // A prefilter, not the check: JSON containment (`@>`) narrows the read to
@@ -184,11 +201,18 @@ export function providerModelUsage(
   // JSON no longer crosses the wire; `definitionPinsModel` below still
   // decides, by step type (§107 t-752).
   const pins = { path: ['steps'], array_contains: [{ config: { modelOverride: modelId } }] };
-  return acrossOrgs(async () => {
+  return scoped(options, async () => {
     const [agentRows, workflowRows] = await Promise.all([
       prisma.aiAgent.findMany({
         where: { isActive: true, provider: providerSlug, model: modelId },
-        select: { id: true, name: true, slug: true, orgId: true },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          orgId: true,
+          isSystem: true,
+          bindingOwner: true,
+        },
         orderBy: { name: 'asc' },
       }),
       prisma.aiWorkflow.findMany({
@@ -214,10 +238,19 @@ export function providerModelUsage(
     );
     const agents = named(agentRows, isCallers);
     const workflows = named(pinning, isCallers);
+    const ownAgents = agentRows.filter((r) => isCallers(r.orgId));
     return {
-      agents: agents.own,
+      agents: ownAgents.map((r) => ({
+        id: r.id,
+        name: r.name,
+        slug: r.slug,
+        followsPlatform: bindingFollowsPlatform(r),
+      })),
       workflows: workflows.own,
       otherOrgAgents: agents.elsewhere,
+      otherOrgAgentsFollowingPlatform: agentRows.filter(
+        (r) => !isCallers(r.orgId) && bindingFollowsPlatform(r)
+      ).length,
       otherOrgWorkflows: workflows.elsewhere,
     };
   });

@@ -36,6 +36,9 @@ vi.mock('@/lib/orchestration/settings', () => ({ getOrchestrationSettings: vi.fn
 vi.mock('@/lib/orchestration/llm/confidential-route', () => ({
   confidentialModelProblem: vi.fn(),
 }));
+// The retiring-model checks (§136 t-1065): what is in use is faked; the
+// finder has its own tests (tests/unit/lib/orchestration/model-lifecycle/).
+vi.mock('@/lib/orchestration/model-lifecycle/uses', () => ({ retiringModelsInUse: vi.fn() }));
 
 /** An active provider row as the check reads it. */
 function providerRow(overrides: { isLocal?: boolean; apiKeyEnvVar?: string | null } = {}) {
@@ -74,6 +77,7 @@ import { prisma } from '@/lib/db/client';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
 import type { EvaluatedConfigCheck } from '@/lib/config-health/types';
 
 type Mock = ReturnType<typeof vi.fn>;
@@ -98,6 +102,7 @@ beforeEach(() => {
   } as never);
   (prisma.aiAgent.findFirst as Mock).mockResolvedValue(null);
   vi.mocked(confidentialModelProblem).mockResolvedValue(null);
+  vi.mocked(retiringModelsInUse).mockResolvedValue({ retiring: 0, retired: 0 });
   vi.stubEnv('TEST_PROVIDER_KEY', 'sk-test-not-a-real-key');
   // Healthy defaults; individual tests unset what they exercise.
   vi.stubEnv('CRON_SECRET', 'x'.repeat(40));
@@ -117,6 +122,8 @@ describe('runConfigHealthChecks', () => {
       'llm_provider',
       'confidential_model',
       'org_provider_keys_master_key',
+      'retired_model_in_use',
+      'retiring_model_in_use',
       'email',
       'db_pooler',
     ]);
@@ -128,6 +135,8 @@ describe('runConfigHealthChecks', () => {
       'llm_provider',
       'confidential_model',
       'org_provider_keys_master_key',
+      'retired_model_in_use',
+      'retiring_model_in_use',
       'email',
       'db_pooler',
       'CRON_SECRET',
@@ -408,5 +417,45 @@ describe("organisations' own AI keys need a master key (§137 t-1044)", () => {
       applicable: false,
       present: true,
     });
+  });
+});
+
+describe('retiring and retired models still in use (§136 t-1065)', () => {
+  it('flags neither when no dated model is in use', async () => {
+    const report = await runConfigHealthChecks();
+    expect(check(report.checks, 'retired_model_in_use').present).toBe(true);
+    expect(check(report.checks, 'retiring_model_in_use').present).toBe(true);
+  });
+
+  it('flags a retired model in use as critical, and only that check', async () => {
+    vi.mocked(retiringModelsInUse).mockResolvedValue({ retiring: 0, retired: 1 });
+
+    const report = await runConfigHealthChecks();
+
+    const retired = check(report.checks, 'retired_model_in_use');
+    expect(retired).toMatchObject({ present: false, severity: 'critical' });
+    expect(check(report.checks, 'retiring_model_in_use').present).toBe(true);
+    expect(report.summary.critical).toBe(1);
+  });
+
+  it('flags a retiring model in use as a warning', async () => {
+    vi.mocked(retiringModelsInUse).mockResolvedValue({ retiring: 2, retired: 0 });
+
+    const report = await runConfigHealthChecks();
+
+    expect(check(report.checks, 'retiring_model_in_use')).toMatchObject({
+      present: false,
+      severity: 'warning',
+    });
+    expect(check(report.checks, 'retired_model_in_use').present).toBe(true);
+  });
+
+  it('reports the checks as failed, not as missing, when the lookup throws', async () => {
+    vi.mocked(retiringModelsInUse).mockRejectedValue(new Error('db down'));
+
+    const report = await runConfigHealthChecks();
+
+    expect(check(report.checks, 'retired_model_in_use').failed).toBe(true);
+    expect(report.summary.critical).toBe(0);
   });
 });

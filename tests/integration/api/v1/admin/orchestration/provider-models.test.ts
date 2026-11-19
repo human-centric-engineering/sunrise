@@ -64,6 +64,9 @@ vi.mock('@/lib/orchestration/settings', () => ({
   getOrchestrationSettings: vi.fn(() =>
     Promise.resolve({
       defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
+      defaultModelsStored: {},
+      confidentialModel: null,
+      activeEmbeddingModelId: null,
     })
   ),
 }));
@@ -247,6 +250,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       // override is saved — must be ignored so the matrix doesn't
       // claim every row is the embeddings default.
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: {
           routing: 'gpt-4o-mini',
           chat: 'gpt-4o',
@@ -267,6 +273,32 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       expect(byId.get('text-embedding-3-small')).toEqual(['embeddings']);
     });
 
+    it('gives a bare id two providers share to both rows, not a guess (§136 t-1065)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        makeModel({ id: 'm-openai', providerSlug: 'openai', modelId: 'gpt-4o' }),
+        makeModel({ id: 'm-azure', providerSlug: 'microsoft', modelId: 'gpt-4o' }),
+      ] as never);
+      vi.mocked(prisma.aiProviderModel.count).mockResolvedValue(2);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+      vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: { chat: 'gpt-4o' },
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
+        defaultModels: { routing: '', chat: 'gpt-4o', reasoning: '', embeddings: '' },
+      } as never);
+
+      const response = await GET(makeGetRequest());
+      const body = await parseJson<{
+        data: Array<{ id: string; defaultFor: string[]; lifecycleState: string }>;
+      }>(response);
+
+      const byId = new Map(body.data.map((r) => [r.id, r.defaultFor]));
+      expect(byId.get('m-openai')).toEqual(['chat']);
+      expect(byId.get('m-azure')).toEqual(['chat']);
+      expect(body.data[0].lifecycleState).toBe('current');
+    });
+
     it('returns empty defaultFor when no default slot points at the row', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
@@ -278,6 +310,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
       // suite, but stated explicitly here so the empty case is read-
       // able alongside the populated case above.
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '' },
       } as never);
 
@@ -303,6 +338,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
         { slug: 'groq', isActive: true },
       ] as never);
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: {
           routing: '',
           chat: '',
@@ -342,6 +380,9 @@ describe('GET /api/v1/admin/orchestration/provider-models', () => {
         { slug: 'openai', isActive: true },
       ] as never);
       vi.mocked(getOrchestrationSettings).mockResolvedValue({
+        defaultModelsStored: {},
+        confidentialModel: null,
+        activeEmbeddingModelId: null,
         defaultModels: {
           routing: '',
           chat: '',

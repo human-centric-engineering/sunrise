@@ -65,6 +65,19 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
   invalidateModelCache: vi.fn(),
 }));
 
+// The install settings the model's uses read (§136 t-1065): nothing pinned
+// unless a test says so.
+vi.mock('@/lib/orchestration/settings', () => ({
+  getOrchestrationSettings: vi.fn(() =>
+    Promise.resolve({
+      defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '', audio: '' },
+      defaultModelsStored: {},
+      confidentialModel: null,
+      activeEmbeddingModelId: null,
+    })
+  ),
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 // The real in-use check runs (against the mocked client, at single); a test
@@ -79,6 +92,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
+import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -200,6 +214,149 @@ describe('GET /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(data.data.configured).toBe(true);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.data.configuredActive).toBe(true);
+  });
+});
+
+describe('GET /provider-models/:id — lifecycle and uses (§136 t-1065)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+  });
+
+  type Body = {
+    data: {
+      replacement?: unknown;
+      lifecycle: { state: string; replacement: { id: string; name: string } | null };
+      uses: {
+        agents: Array<{ name: string; followsPlatform: boolean }>;
+        workflows: Array<{ name: string }>;
+        settings: Array<{ slot: string; source: string; movedBy?: string }>;
+      };
+    };
+  };
+
+  it('reports a retiring model and its successor, without the raw relation', async () => {
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue({
+      ...makeModel({ retiresAt: new Date('2099-03-01T00:00:00Z'), replacementId: 'cm_b' }),
+      replacement: {
+        id: 'cm_b',
+        name: 'Claude Opus 5',
+        modelId: 'claude-opus-5',
+        isActive: true,
+        retiresAt: null,
+      },
+    } as never);
+
+    const body = await parseJson<Body>(await GET(makeGetRequest(MODEL_ID), routeContext(MODEL_ID)));
+
+    expect(body.data.lifecycle).toEqual({
+      state: 'retiring',
+      replacement: {
+        id: 'cm_b',
+        name: 'Claude Opus 5',
+        modelId: 'claude-opus-5',
+        isActive: true,
+        retiresAt: null,
+      },
+    });
+    expect(body.data).not.toHaveProperty('replacement');
+  });
+
+  it('lists agents, marking those whose model follows the platform, and workflows', async () => {
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue({
+      ...makeModel(),
+      replacement: null,
+    } as never);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValueOnce([
+      {
+        id: 'a1',
+        name: 'Cleanup',
+        slug: 'cleanup-agent',
+        orgId: null,
+        isSystem: true,
+        bindingOwner: 'platform',
+      },
+      {
+        id: 'a2',
+        name: 'Support',
+        slug: 'support',
+        orgId: null,
+        isSystem: false,
+        bindingOwner: null,
+      },
+      // A platform agent the org has taken over stays where it is.
+      {
+        id: 'a3',
+        name: 'Advisor',
+        slug: 'advisor',
+        orgId: null,
+        isSystem: true,
+        bindingOwner: 'org',
+      },
+    ] as never);
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValueOnce([
+      {
+        id: 'w1',
+        name: 'Triage',
+        slug: 'triage',
+        orgId: null,
+        draftDefinition: {
+          steps: [{ type: 'llm_call', config: { modelOverride: 'claude-opus-4' } }],
+        },
+        publishedVersion: null,
+      },
+    ] as never);
+
+    const body = await parseJson<Body>(await GET(makeGetRequest(MODEL_ID), routeContext(MODEL_ID)));
+
+    expect(body.data.uses.agents).toEqual([
+      { id: 'a1', name: 'Cleanup', slug: 'cleanup-agent', followsPlatform: true },
+      { id: 'a2', name: 'Support', slug: 'support', followsPlatform: false },
+      { id: 'a3', name: 'Advisor', slug: 'advisor', followsPlatform: false },
+    ]);
+    expect(body.data.uses.workflows.map((w) => w.name)).toEqual(['Triage']);
+  });
+
+  it('lists the settings that name it, saved or suggested, with embedding pins left to §132', async () => {
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue({
+      ...makeModel(),
+      replacement: null,
+    } as never);
+    vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+      defaultModels: {
+        routing: 'claude-haiku',
+        chat: 'claude-opus-4',
+        reasoning: 'claude-opus-4',
+        embeddings: 'claude-opus-4',
+        audio: '',
+      },
+      defaultModelsStored: { chat: 'claude-opus-4' },
+      confidentialModel: { providerSlug: 'anthropic', model: 'claude-opus-4' },
+      activeEmbeddingModelId: MODEL_ID,
+    } as never);
+
+    const body = await parseJson<Body>(await GET(makeGetRequest(MODEL_ID), routeContext(MODEL_ID)));
+
+    expect(body.data.uses.settings).toEqual([
+      { slot: 'chat', source: 'saved', byIdOnly: true },
+      { slot: 'reasoning', source: 'suggested', byIdOnly: true },
+      { slot: 'embeddings', source: 'suggested', movedBy: 'embedding_switch', byIdOnly: true },
+      { slot: 'confidential', source: 'saved' },
+      { slot: 'active_embedding', source: 'saved', movedBy: 'embedding_switch' },
+    ]);
+  });
+
+  it('reports nothing for a model nothing uses', async () => {
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue({
+      ...makeModel(),
+      replacement: null,
+    } as never);
+
+    const body = await parseJson<Body>(await GET(makeGetRequest(MODEL_ID), routeContext(MODEL_ID)));
+
+    expect(body.data.lifecycle).toEqual({ state: 'current', replacement: null });
+    expect(body.data.uses).toMatchObject({ agents: [], workflows: [], settings: [] });
   });
 });
 
@@ -689,9 +846,13 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
   it('names, in the delete row, the models whose replacement the delete clears', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
-    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValueOnce([
-      { id: 'cm_a', name: 'Claude 3 Opus' },
-    ] as never);
+    // Answer the replacement lookup; the same-id lookup finds nothing.
+    vi.mocked(prisma.aiProviderModel.findMany).mockImplementation(((args: {
+      where: { replacementId?: string };
+    }) =>
+      Promise.resolve(
+        args.where.replacementId === MODEL_ID ? [{ id: 'cm_a', name: 'Claude 3 Opus' }] : []
+      )) as never);
     vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
 
     await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
@@ -714,6 +875,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
       agents: [],
       workflows: [],
       otherOrgAgents: 1,
+      otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 0,
     });
 
@@ -774,24 +936,26 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
       agents: [],
       workflows: [],
       otherOrgAgents: 1,
+      otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 2,
     });
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
 
     expect(response.status).toBe(409);
-    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'gpt-4o-mini');
+    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'gpt-4o-mini', {});
     expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
     const body = await parseJson<{
       error: { code: string; message: string; details: Record<string, unknown> };
     }>(response);
     expect(body.error.code).toBe('MODEL_IN_USE');
     expect(body.error.message).toBe(
-      'Cannot delete model "GPT-4o mini" — 1 active agent and 2 active workflows still reference it (3 of them in other organisations). Re-point them to a different model first.'
+      'Cannot delete model "GPT-4o mini" — 1 active agent and 2 active workflows (3 of them in other organisations) still reference it. Re-point them to a different model first.'
     );
     expect(body.error.details).toEqual({
       agents: [],
       workflows: [],
+      settings: [],
       otherOrgAgentCount: 1,
       otherOrgWorkflowCount: 2,
     });
@@ -1212,5 +1376,118 @@ describe('PATCH capabilities (t-1064)', () => {
       'vision',
       'documents',
     ]);
+  });
+});
+
+describe('DELETE refuses while a saved setting names the model (§136 t-1065)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
+  });
+
+  function settingsNaming(overrides: Record<string, unknown>) {
+    vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
+      defaultModels: { routing: '', chat: '', reasoning: '', embeddings: '', audio: '' },
+      defaultModelsStored: {},
+      confidentialModel: null,
+      activeEmbeddingModelId: null,
+      ...overrides,
+    } as never);
+  }
+
+  it('refuses for the confidential-message model, naming the setting', async () => {
+    settingsNaming({ confidentialModel: { providerSlug: 'anthropic', model: 'claude-opus-4' } });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ error: { message: string; details: { settings: string[] } } }>(
+      response
+    );
+    expect(body.error.details.settings).toEqual(['confidential']);
+    expect(body.error.message).toContain('1 saved setting still references it');
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('refuses for a saved default and the active embedding model', async () => {
+    settingsNaming({
+      defaultModels: {
+        routing: '',
+        chat: 'claude-opus-4',
+        reasoning: '',
+        embeddings: '',
+        audio: '',
+      },
+      defaultModelsStored: { chat: 'claude-opus-4' },
+      activeEmbeddingModelId: MODEL_ID,
+    });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ error: { details: { settings: string[] } } }>(response);
+    expect(body.error.details.settings).toEqual(['chat', 'active_embedding']);
+  });
+
+  it('lists three kinds of use with commas, and keeps settings out of the other-org count', async () => {
+    settingsNaming({ confidentialModel: { providerSlug: 'anthropic', model: 'claude-opus-4' } });
+    vi.mocked(providerModelUsage).mockResolvedValueOnce({
+      agents: [],
+      workflows: [],
+      otherOrgAgents: 2,
+      otherOrgAgentsFollowingPlatform: 0,
+      otherOrgWorkflows: 1,
+    });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+    const body = await parseJson<{ error: { message: string } }>(response);
+
+    expect(body.error.message).toBe(
+      'Cannot delete model "Claude Opus 4" — 2 active agents, 1 active workflow (3 of them in other organisations) and 1 saved setting still reference it. Re-point them to a different model first.'
+    );
+  });
+
+  it('allows it when a saved default names the id alone and another active row offers it', async () => {
+    settingsNaming({
+      defaultModels: {
+        routing: '',
+        chat: 'claude-opus-4',
+        reasoning: '',
+        embeddings: '',
+        audio: '',
+      },
+      defaultModelsStored: { chat: 'claude-opus-4' },
+    });
+    // Another provider's active row with the same id keeps the default working.
+    vi.mocked(prisma.aiProviderModel.findMany).mockImplementation(((args: {
+      where: { modelId?: string };
+    }) =>
+      Promise.resolve(
+        args.where.modelId === 'claude-opus-4' ? [{ providerSlug: 'bedrock', retiresAt: null }] : []
+      )) as never);
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(200);
+  });
+
+  it("allows it when only the system's suggestion names it: nobody chose it", async () => {
+    settingsNaming({
+      defaultModels: {
+        routing: '',
+        chat: 'claude-opus-4',
+        reasoning: '',
+        embeddings: '',
+        audio: '',
+      },
+    });
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.delete).toHaveBeenCalled();
   });
 });

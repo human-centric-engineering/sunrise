@@ -19,6 +19,7 @@ import { prisma } from '@/lib/db/client';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
 import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import type { ConfigHealthCheck } from '@/lib/config-health/types';
@@ -137,6 +138,35 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
       const settings = await getOrchestrationSettings();
       return !settings.orgProviderKeysEnabled || isSealedSecretKeyConfigured();
     },
+  },
+  {
+    key: 'retired_model_in_use',
+    label: 'Retired AI model still in use',
+    severity: 'critical',
+    description:
+      'A model its provider has retired is still used by an agent, a workflow or a default ' +
+      'setting, so calls to it fail.',
+    remediation:
+      'Under Admin → Orchestration → Providers → Models, open each model marked Retired: it lists ' +
+      'what still uses it. Move those to its replacement, or to another model. A default shown as ' +
+      "the system's suggestion is fixed by saving a default under Settings.",
+    docsPath: '.context/orchestration/llm-providers.md',
+    // §136 t-1065. Counts every org's agents and workflows: the catalogue is
+    // shared, so a retired model one org still uses is the operator's to see.
+    detect: async (): Promise<boolean> => (await retiringModelsInUse()).retired === 0,
+  },
+  {
+    key: 'retiring_model_in_use',
+    label: 'Retiring AI model in use',
+    severity: 'warning',
+    description:
+      'A model its provider is about to retire is still used by an agent, a workflow or a default ' +
+      'setting. It works until its retirement day, then calls to it fail.',
+    remediation:
+      'Under Admin → Orchestration → Providers → Models, open each model marked Retiring: it lists ' +
+      'what uses it and its replacement. Move those before the day.',
+    docsPath: '.context/orchestration/llm-providers.md',
+    detect: async (): Promise<boolean> => (await retiringModelsInUse()).retiring === 0,
   },
   {
     key: 'email',

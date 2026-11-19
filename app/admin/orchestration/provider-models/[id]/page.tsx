@@ -9,6 +9,17 @@ import {
 import { API } from '@/lib/api/endpoints';
 import { requireAllServerData, requireServerData } from '@/lib/api/server-load';
 import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
+import {
+  ProviderModelUses,
+  type ProviderModelLifecycleData,
+  type ProviderModelUsesData,
+} from '@/components/admin/orchestration/provider-model-uses';
+
+/** The model route's answer: the row, plus its lifecycle and uses (§136 t-1065). */
+type EditModelData = ProviderModelData & {
+  lifecycle: ProviderModelLifecycleData;
+  uses: ProviderModelUsesData;
+};
 
 export const metadata: Metadata = {
   title: 'Edit Provider Model · AI Orchestration',
@@ -25,7 +36,7 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
   const query = await searchParams;
   const justCreated = query.created === '1';
   // A 404 is a missing model; any other failure reaches the error boundary.
-  const { data: model } = await requireServerData<ProviderModelData>(
+  const { data: model } = await requireServerData<EditModelData>(
     API.ADMIN.ORCHESTRATION.providerModelById(id),
     { notFound: true }
   );
@@ -64,6 +75,12 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
       </header>
 
       <SharedSettingsReadOnlyNotice />
+
+      <ProviderModelUses
+        retiresAt={model.retiresAt ?? null}
+        lifecycle={model.lifecycle}
+        uses={model.uses}
+      />
 
       <ProviderModelForm model={model} replacementOptions={replacementOptions} />
     </div>

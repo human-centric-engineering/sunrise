@@ -22,10 +22,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
-import {
-  providerModelUsage,
-  type ProviderModelUsage,
-} from '@/lib/orchestration/admin/global-config-usage';
+import type { ProviderModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { updateProviderModelSchema } from '@/lib/validations/orchestration';
 import {
   isHalfPrice,
@@ -35,7 +32,9 @@ import {
 import { cuidSchema } from '@/lib/validations/common';
 import { getClientIP } from '@/lib/security/ip';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { checkReplacement } from '@/lib/orchestration/model-lifecycle/state';
+import { checkReplacement, modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
+import { modelUses } from '@/lib/orchestration/model-lifecycle/uses';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { findReplacementById } from '@/lib/orchestration/model-lifecycle/replacement';
 
 /** The database CHECK that holds the price pair (A10, t-774). */
@@ -47,25 +46,41 @@ function pricePairError(input: number | null | undefined): ValidationError {
   });
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
+export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;
   const id = validatePathParam(rawId, cuidSchema, { label: 'provider model id' });
 
-  const model = await prisma.aiProviderModel.findUnique({ where: { id } });
+  const model = await prisma.aiProviderModel.findUnique({
+    where: { id },
+    include: {
+      replacement: {
+        select: { id: true, name: true, modelId: true, isActive: true, retiresAt: true },
+      },
+    },
+  });
   if (!model) throw new NotFoundError(`Provider model ${id} not found`);
 
-  // Enrich with configured provider info
-  const config = await prisma.aiProviderConfig.findFirst({
-    where: { slug: model.providerSlug },
-    select: { slug: true, isActive: true },
-  });
+  // Other orgs' uses are counted for a platform admin; a customer org's admin
+  // would see only their own (§111 t-811), as on the models list.
+  const platform = await administersPlatform(session.principal);
+  const [config, uses] = await Promise.all([
+    prisma.aiProviderConfig.findFirst({
+      where: { slug: model.providerSlug },
+      select: { slug: true, isActive: true },
+    }),
+    modelUses(model, { acrossOrgs: platform }),
+  ]);
 
+  const { replacement, ...row } = model;
   log.info('Provider model fetched', { modelId: id });
   return successResponse({
-    ...model,
+    ...row,
     configured: !!config,
     configuredActive: config?.isActive ?? false,
+    // §136 t-1064 / t-1065: where it is in its retirement, and what uses it.
+    lifecycle: { state: modelLifecycleState(model), replacement },
+    uses,
   });
 });
 
@@ -251,11 +266,24 @@ export const DELETE = withAdminAuth<{ id: string }>(
     // In every org (t-731): the model is global config, so another org's
     // agents and workflows refuse the delete too. Only the caller's own are
     // named; another org's are a count.
-    const usage = await providerModelUsage(current.providerSlug, current.modelId);
+    //
+    // And while a saved install setting names it (§136 t-1065): a saved task
+    // default or the confidential-message model would name a row that no
+    // longer exists, and the active embedding model would be cleared under
+    // every org's vectors. A default the system only suggests does not block
+    // it: nobody chose it, and the suggestion is recomputed from the registry.
+    // (The registry may still list a deleted model's id, so the suggestion is
+    // not guaranteed to move; config health's retired check names that case.)
+    const usage = await modelUses(current);
     const agentCount = usage.agents.length + usage.otherOrgAgents;
     const workflowCount = usage.workflows.length + usage.otherOrgWorkflows;
+    // A saved default naming the model by id alone keeps working when another
+    // active row offers the id, so it does not block the delete then.
+    const savedSettings = usage.settings.filter(
+      (pin) => pin.source === 'saved' && !(pin.byIdOnly && usage.sharedWith.length > 0)
+    );
 
-    if (agentCount > 0 || workflowCount > 0) {
+    if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0) {
       log.info('Provider model delete refused — model in use', {
         modelId: id,
         slug: current.slug,
@@ -263,8 +291,9 @@ export const DELETE = withAdminAuth<{ id: string }>(
         workflowCount,
         otherOrgAgentCount: usage.otherOrgAgents,
         otherOrgWorkflowCount: usage.otherOrgWorkflows,
+        savedSettings: savedSettings.map((pin) => pin.slot),
       });
-      return errorResponse(buildInUseMessage(current.name, usage), {
+      return errorResponse(buildInUseMessage(current.name, usage, savedSettings.length), {
         code: 'MODEL_IN_USE',
         status: 409,
         details: {
@@ -272,6 +301,7 @@ export const DELETE = withAdminAuth<{ id: string }>(
           workflows: usage.workflows,
           otherOrgAgentCount: usage.otherOrgAgents,
           otherOrgWorkflowCount: usage.otherOrgWorkflows,
+          settings: savedSettings.map((pin) => pin.slot),
         },
       });
     }
@@ -319,20 +349,23 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
   return left.size === right.size && [...left].every((c) => right.has(c));
 }
 
-function buildInUseMessage(modelName: string, usage: ProviderModelUsage): string {
+function buildInUseMessage(
+  modelName: string,
+  usage: ProviderModelUsage,
+  savedSettings: number
+): string {
   const agents = usage.agents.length + usage.otherOrgAgents;
   const workflows = usage.workflows.length + usage.otherOrgWorkflows;
-  const parts: string[] = [];
-  if (agents > 0) {
-    parts.push(`${agents} active agent${agents === 1 ? '' : 's'}`);
-  }
-  if (workflows > 0) {
-    parts.push(`${workflows} active workflow${workflows === 1 ? '' : 's'}`);
-  }
   const elsewhere = usage.otherOrgAgents + usage.otherOrgWorkflows;
-  return `Cannot delete model "${modelName}" — ${parts.join(' and ')} still reference${
-    agents + workflows === 1 ? 's' : ''
-  } it${
-    elsewhere > 0 ? ` (${elsewhere} of them in other organisations)` : ''
-  }. Re-point them to a different model first.`;
+  const parts: string[] = [];
+  if (agents > 0) parts.push(`${agents} active agent${agents === 1 ? '' : 's'}`);
+  if (workflows > 0) parts.push(`${workflows} active workflow${workflows === 1 ? '' : 's'}`);
+  // Other organisations hold agents and workflows; settings are the install's.
+  if (elsewhere > 0) parts[parts.length - 1] += ` (${elsewhere} of them in other organisations)`;
+  if (savedSettings > 0) {
+    parts.push(`${savedSettings} saved setting${savedSettings === 1 ? '' : 's'}`);
+  }
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
+  const one = agents + workflows + savedSettings === 1;
+  return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.`;
 }

@@ -66,7 +66,12 @@ Every agent field declares its side (see
   touched again. A definition may give a starting value (the auditor starts
   with a $25 monthly budget), and `cleanup-agent` pins the strongest
   tool-using model the org can reach, among providers the org may use
-  (§120 t-746). That pin is the one exception to "set once" (t-798). Who
+  (§120 t-746). A retiring model ranks after every model without a
+  retirement date (§136 t-1065), so the pin moves off it before its day; it is
+  still picked when it is all the org can reach. A model past its retirement
+  day is no candidate, even while still on, and nor is a turned-off one: with
+  nothing else to pick the pin is cleared and the agent inherits the
+  defaults. That pin is the one exception to "set once" (t-798). Who
   decides provider and model is stored on the row, in `AiAgent.bindingOwner`
   (`lib/orchestration/agents/binding-owner.ts`):
   - **`'platform'`**: every reconcile moves them to the current pick, onto a
