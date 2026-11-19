@@ -186,6 +186,55 @@ describe('AdminTierGate on a page that requires a switch (t-1034)', () => {
     expect(nav.replace).toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
   });
 
+  it("shows a page whose switch the app locks as locked, with the app's words, and never the page (t-1053)", () => {
+    nav.pathname = '/admin/leads/l1';
+    render(
+      <AdminTierGate
+        reach={ORG_REACH}
+        orgTierPages={LEADS}
+        pageRequirements={REQUIRED}
+        lockedSwitches={[
+          {
+            requires: 'lead_gen',
+            label: 'Lead generation',
+            message: 'Lead generation comes with the Growth plan.',
+            upgradeUrl: 'https://example.com/plans',
+          },
+        ]}
+      >
+        {page}
+      </AdminTierGate>
+    );
+    expect(screen.queryByTestId('page')).not.toBeInTheDocument();
+    expect(nav.replace).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a locked page stays put to say why;
+    expect(
+      screen.getByRole('heading', { name: 'Lead generation is not available' })
+    ).toBeInTheDocument();
+    expect(screen.getByText('Lead generation comes with the Growth plan.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'How to get Lead generation' })).toHaveAttribute(
+      'href',
+      'https://example.com/plans'
+    );
+  });
+
+  it('does not lock a page closed for a reason other than its switch', () => {
+    nav.pathname = '/admin/leads/l1';
+    render(
+      <AdminTierGate
+        reach={{ tiers: [], landing: null }}
+        orgTierPages={LEADS}
+        pageRequirements={REQUIRED}
+        lockedSwitches={[
+          { requires: 'lead_gen', label: 'Lead generation', message: 'x', upgradeUrl: null },
+        ]}
+      >
+        {page}
+      </AdminTierGate>
+    );
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
+    expect(nav.replace).toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
+  });
+
   it('lets a platform viewer through', () => {
     nav.pathname = '/admin/leads/l1';
     render(

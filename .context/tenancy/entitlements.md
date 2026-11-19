@@ -12,30 +12,32 @@ needs to know. When billing arrives it becomes a second writer of the same
 slice, and nothing that reads a switch changes.
 
 This page covers switches (t-1033), requiring one on a page, route or menu
-item (t-1034), and **meters**: counting what an org has and limiting it
+item (t-1034) and how a surface looks to an org without it (t-1053), and
+**meters**: counting what an org has and limiting it
 (t-1035, [Meters and limits](#meters-and-limits)).
 
 ## Quick Reference
 
-| Need                             | Where                                                                                                       |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Register your switches           | `initAppEntitlements()` in `lib/app/entitlements.ts` → `registerEntitlementSwitch()`                        |
-| Does this org have a switch?     | `orgHasSwitch(orgId, key)`, `lib/tenancy/entitlements.ts`                                                   |
-| Every switch an org has          | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, atDefault, unregistered }`                        |
-| Resolve a row you already hold   | `resolveOrgSwitches(readOrgEntitlements(org.settings))`                                                     |
-| What is stored                   | `Org.settings.entitlements` = `{ on: string[], off: string[] }`, `lib/tenancy/org-settings.ts`              |
-| Set switches from your own code  | `setOrgSwitches(orgId, { on, off })`, or `null` for every switch back to its default                        |
-| Who may write it                 | `mayChangeOrgCommercialSettings()`, `lib/tenancy/shared-settings.ts`, after an admin check                  |
-| Read / set over HTTP             | `GET` / `PATCH` / `DELETE /api/v1/admin/orgs/[id]/entitlements` (platform admins; set from the install org) |
-| Set it by hand                   | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered                     |
-| Did the app's registration fail? | `entitlementSwitchesFailed()`; the org page says so                                                         |
-| The audit row                    | `org.entitlements.update`, with what it replaced                                                            |
-| Require one on a surface         | `requires` beside `tier`: page, `withAdminAuth`, nav item; see [Requiring a switch](#requiring-a-switch)    |
-| Key format                       | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`                       |
-| Register a meter                 | `registerMeter({ key, label, period, count })` in the same `initAppEntitlements()`                          |
-| May this org add one more?       | `checkMeterQuota(orgId, key)`, `lib/tenancy/meters.ts` → `{ allowed, used, limit, label, window }`          |
-| Set limits from your own code    | `writeOrgMeterLimits(orgId, { key: n \| null })`, `lib/tenancy/org-settings.ts`                             |
-| Read / set limits over HTTP      | `GET` / `PATCH /api/v1/admin/orgs/[id]/meters`; the **Limits** section on `/admin/orgs/[id]`                |
+| Need                               | Where                                                                                                          |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Register your switches             | `initAppEntitlements()` in `lib/app/entitlements.ts` → `registerEntitlementSwitch()`                           |
+| Does this org have a switch?       | `orgHasSwitch(orgId, key)`, `lib/tenancy/entitlements.ts`                                                      |
+| Every switch an org has            | `loadOrgSwitches(orgId)` → `{ nothingSet, unreadable, on, atDefault, unregistered }`                           |
+| Resolve a row you already hold     | `resolveOrgSwitches(readOrgEntitlements(org.settings))`                                                        |
+| What is stored                     | `Org.settings.entitlements` = `{ on: string[], off: string[] }`, `lib/tenancy/org-settings.ts`                 |
+| Set switches from your own code    | `setOrgSwitches(orgId, { on, off })`, or `null` for every switch back to its default                           |
+| Who may write it                   | `mayChangeOrgCommercialSettings()`, `lib/tenancy/shared-settings.ts`, after an admin check                     |
+| Read / set over HTTP               | `GET` / `PATCH` / `DELETE /api/v1/admin/orgs/[id]/entitlements` (platform admins; set from the install org)    |
+| Set it by hand                     | the **Entitlements** section on `/admin/orgs/[id]`, shown when any switch is registered                        |
+| Did the app's registration fail?   | `entitlementSwitchesFailed()`; the org page says so                                                            |
+| The audit row                      | `org.entitlements.update`, with what it replaced                                                               |
+| Require one on a surface           | `requires` beside `tier`: page, `withAdminAuth`, nav item; see [Requiring a switch](#requiring-a-switch)       |
+| Show it locked, say your own words | `whenLacking: 'lock'`, `refusalMessage`, `upgradeUrl` on the switch; see [Hidden or locked](#hidden-or-locked) |
+| Key format                         | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`                          |
+| Register a meter                   | `registerMeter({ key, label, period, count })` in the same `initAppEntitlements()`                             |
+| May this org add one more?         | `checkMeterQuota(orgId, key)`, `lib/tenancy/meters.ts` → `{ allowed, used, limit, label, window }`             |
+| Set limits from your own code      | `writeOrgMeterLimits(orgId, { key: n \| null })`, `lib/tenancy/org-settings.ts`                                |
+| Read / set limits over HTTP        | `GET` / `PATCH /api/v1/admin/orgs/[id]/meters`; the **Limits** section on `/admin/orgs/[id]`                   |
 
 ### Anti-patterns
 
@@ -174,6 +176,47 @@ How the three places stay in step, and what the roster test checks, is in
 
 Use the same key on the page, its routes and its item. The item and the page
 are what the reader sees; the routes are the boundary.
+
+### Hidden or locked
+
+By default a surface whose switch the org lacks is hidden: the item is not in
+the sidebar, the page sends the viewer to their landing, and a route's 403
+says the sentence above. An app that would rather show what an org could have
+says so on the switch (t-1053):
+
+```ts
+registerEntitlementSwitch({
+  key: 'lead_gen',
+  label: 'Lead generation',
+  description: 'Funnels, leads and lead briefs.',
+  whenLacking: 'lock', // show it locked rather than hide it
+  refusalMessage: 'Lead generation comes with the Growth plan.',
+  upgradeUrl: '/pricing', // or https://…
+});
+```
+
+- **`whenLacking: 'lock'`**: the item is shown with a lock. Choosing it opens
+  the message and a **How to get Lead generation** link, not the page. The
+  page shows **Lead generation is not available** with the same message and
+  link in place of its content. Nothing opens: the page renders no content and
+  its routes refuse, as before.
+- **`refusalMessage`**: replaces the platform's sentence on the 403, the
+  locked item and the locked page. At most 300 characters
+  (`MAX_SWITCH_REFUSAL_MESSAGE`).
+- **`upgradeUrl`**: a path on this site starting `/`, or an `https://`
+  address. The 403 carries it as `details.upgradeUrl`
+  (`switchUpgradeUrl(key)` reads it), and the locked item and page link to it.
+
+Each is optional and works without the others: a switch that hides can still
+give a refusal message and an upgrade link on its 403. A value that is not one
+of these (a `whenLacking` of `'show'`, a `javascript:` or `//` link, an empty
+message) throws at registration, which rolls back the init like any other.
+
+A surface is locked only when the switch is the one thing missing. One the
+viewer's tier does not admit is hidden as before, and so is one whose org's
+switches could not be read: the route says it could not check, and nobody is
+told to buy what their org may have. A platform admin sees every surface
+unlocked.
 
 ## What is stored, and how it fails
 

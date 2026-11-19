@@ -125,6 +125,24 @@ release process.
   `mockResolvedValueOnce` should answer by slug instead: confidential routing
   asks `isLocalProvider` first.
 
+- **Show a surface an org lacks locked, with your own words (§135
+  t-1053).** `registerEntitlementSwitch()` takes three new optional fields.
+  `whenLacking: 'lock'` shows a nav item whose switch the org lacks with a
+  lock (opening the app's message and an upgrade link, not the page) and shows
+  its page locked in place of its content, rather than hiding the item and
+  redirecting; nothing opens, and the routes still refuse. `refusalMessage`
+  replaces the platform's sentence on the 403 and on the locked item and page.
+  `upgradeUrl` (a site path or an `https://` address, checked at
+  registration) is carried on the 403 as `details.upgradeUrl`. All three are
+  optional and the defaults are as t-1034 shipped: hidden, the platform's
+  sentence, no link. **`RegisteredEntitlementSwitch` is now its own interface**
+  rather than `Readonly<Required<EntitlementSwitch>>`, with `refusalMessage`
+  and `upgradeUrl` as `string | null`; code reading the four earlier fields
+  is unaffected. New: `switchUpgradeUrl()`, `MAX_SWITCH_REFUSAL_MESSAGE`,
+  `LockedAdminSwitch`, `lockedSwitchFor()`, `lockedAdminPageOf()`,
+  `requestLockedSwitches()`, and a `lockedSwitches` prop on `AdminSidebar` and
+  `AdminTierGate`. A switch is locked only when the org's switches were read
+  and it is off; a failed read keeps it hidden.
 - **Meters and limits: how much an org may have (§135 t-1035).** An app
   registers a meter in the same `initAppEntitlements()` seam with
   `registerMeter({ key, label, description, period, count })`

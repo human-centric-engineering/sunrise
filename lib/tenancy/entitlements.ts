@@ -69,10 +69,84 @@ export interface EntitlementSwitch {
    * so a new area opens only where someone switches it on.
    */
   whenNothingSet?: boolean;
+  /**
+   * How a page or menu item that requires this switch looks to an org admin
+   * or tier holder whose org lacks it (t-1053). `'hide'` (the default): the
+   * item is not shown and the page sends them to their landing. `'lock'`: the
+   * item is shown with a lock and the page shows why it is closed, each with
+   * {@link refusalMessage} and {@link upgradeUrl}. Either way nothing opens:
+   * a locked page renders no content, and its routes still refuse.
+   */
+  whenLacking?: 'hide' | 'lock';
+  /**
+   * What a refusal for this switch says, in place of the platform's sentence
+   * ("Your organisation does not have …"): on the 403 a route answers, and on
+   * a locked item and page. Plain words, at most
+   * {@link MAX_SWITCH_REFUSAL_MESSAGE} characters. It is not used when the
+   * org's switches could not be read, since it may say the org lacks it.
+   */
+  refusalMessage?: string;
+  /**
+   * Where an org that lacks this switch can get it, such as your plans page:
+   * a path on this site (`/pricing`) or an `https://` address. Carried on the
+   * 403 as `details.upgradeUrl`, and linked from a locked item and page.
+   */
+  upgradeUrl?: string;
+  /**
+   * Who may set it on an org (t-1054). `'platform'` (the default): platform
+   * staff, from the install organisation, as for anything an org buys.
+   * `'org'`: also the org's own admins, for their own org, from
+   * `/admin/org-switches` or `PATCH /api/v1/orgs/[id]/entitlements`: a beta
+   * opt-in, a free add-on, a feature an org may turn off for its own users.
+   * The authorization policy decides which of an org's people may (resource
+   * kind {@link ORG_SWITCHES_RESOURCE_KIND}), so an app can narrow it.
+   */
+  setBy?: 'platform' | 'org';
 }
 
-/** A registered switch, with `whenNothingSet` filled in. */
-export type RegisteredEntitlementSwitch = Readonly<Required<EntitlementSwitch>>;
+/** A registered switch, with every optional field filled in. */
+export interface RegisteredEntitlementSwitch {
+  readonly key: string;
+  readonly label: string;
+  readonly description: string;
+  readonly whenNothingSet: boolean;
+  readonly whenLacking: 'hide' | 'lock';
+  /** `null` when the app gave none, so a refusal says the platform's sentence. */
+  readonly refusalMessage: string | null;
+  /** `null` when the app gave none. */
+  readonly upgradeUrl: string | null;
+  readonly setBy: 'platform' | 'org';
+}
+
+/** The longest {@link EntitlementSwitch.refusalMessage} an app may register. */
+export const MAX_SWITCH_REFUSAL_MESSAGE = 300;
+
+/** The longest {@link EntitlementSwitch.upgradeUrl} an app may register. */
+const MAX_SWITCH_UPGRADE_URL = 2048;
+
+/**
+ * The resource kind the authorization policy is asked about when an org's own
+ * admin reads or sets the switches it may set (t-1054): `{ kind, id: orgId,
+ * orgId }`. The default policy admits the org's OWNER and ADMIN while acting
+ * in it, as for its other org resources; a fork's policy can narrow it.
+ */
+export const ORG_SWITCHES_RESOURCE_KIND = 'org.switches';
+
+/**
+ * Whether an upgrade link is one a refusal may carry: a path on this site, or
+ * an `https://` address. Anything else (`javascript:`, `//elsewhere`, a bare
+ * word) would be a link the app did not mean or a script, so it is refused at
+ * registration rather than sanitised at every render.
+ */
+function isUpgradeUrl(value: string): boolean {
+  if (value.length > MAX_SWITCH_UPGRADE_URL || /[\s\\]/.test(value)) return false;
+  if (value.startsWith('/')) return !value.startsWith('//');
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * One org's switches as an app reads them.
@@ -129,11 +203,51 @@ export function registerEntitlementSwitch(definition: EntitlementSwitch): void {
       `At most ${MAX_ORG_ENTITLEMENT_SWITCHES} entitlement switches can be registered; "${definition.key}" is one too many`
     );
   }
+  const whenLacking: unknown = definition.whenLacking ?? 'hide';
+  if (whenLacking !== 'hide' && whenLacking !== 'lock') {
+    throw new Error(
+      `Entitlement switch "${definition.key}" has whenLacking ${JSON.stringify(whenLacking)}; it must be 'hide' or 'lock'`
+    );
+  }
+  const setBy: unknown = definition.setBy ?? 'platform';
+  if (setBy !== 'platform' && setBy !== 'org') {
+    // Read loosely, a typo could let an org's admins grant themselves
+    // something it bought.
+    throw new Error(
+      `Entitlement switch "${definition.key}" has setBy ${JSON.stringify(setBy)}; it must be 'platform' or 'org'`
+    );
+  }
+  const rawMessage: unknown = definition.refusalMessage;
+  let refusalMessage: string | null = null;
+  if (rawMessage !== undefined) {
+    const trimmed = typeof rawMessage === 'string' ? rawMessage.trim() : '';
+    if (trimmed.length === 0 || trimmed.length > MAX_SWITCH_REFUSAL_MESSAGE) {
+      throw new Error(
+        `Entitlement switch "${definition.key}" has a refusalMessage that is empty or longer than ${MAX_SWITCH_REFUSAL_MESSAGE} characters`
+      );
+    }
+    refusalMessage = trimmed;
+  }
+  const rawUrl: unknown = definition.upgradeUrl;
+  if (rawUrl !== undefined && (typeof rawUrl !== 'string' || !isUpgradeUrl(rawUrl))) {
+    throw new Error(
+      `Entitlement switch "${definition.key}" has upgradeUrl ${JSON.stringify(rawUrl)}; it must be a path on this site starting "/" or an https:// address`
+    );
+  }
   const description =
     typeof definition.description === 'string' ? definition.description.trim() : '';
   switches.set(
     definition.key,
-    Object.freeze({ key: definition.key, label, description, whenNothingSet })
+    Object.freeze({
+      key: definition.key,
+      label,
+      description,
+      whenNothingSet,
+      whenLacking,
+      refusalMessage,
+      upgradeUrl: typeof rawUrl === 'string' ? rawUrl : null,
+      setBy,
+    })
   );
 }
 
@@ -415,12 +529,23 @@ export async function setOrgSwitches(
 export const SWITCH_REQUIRED_REASON = 'entitlement_required';
 
 /**
- * What a refusal for a missing switch says: the switch by its label, and who
+ * What a refusal for a missing switch says: the app's `refusalMessage` for it
+ * when it registered one (t-1053), otherwise the switch by its label, and who
  * can change it (`HB10`). A key no app registers is named as itself, since it
  * has no label; no org has it, so the refusal is still true.
  */
 export function switchRequiredMessage(key: string): string {
-  return `Your organisation does not have ${labelOf(key) ?? key}. Ask whoever manages your organisation's account to switch it on.`;
+  const registered = switchOf(key);
+  if (registered?.refusalMessage) return registered.refusalMessage;
+  return `Your organisation does not have ${registered?.label ?? key}. Ask whoever manages your organisation's account to switch it on.`;
+}
+
+/**
+ * Where an org lacking this switch can get it, as the app registered it
+ * (t-1053), or `null`. A route's 403 carries it as `details.upgradeUrl`.
+ */
+export function switchUpgradeUrl(key: string): string | null {
+  return switchOf(key)?.upgradeUrl ?? null;
 }
 
 /**
@@ -439,7 +564,13 @@ export function switchUnverifiedMessage(key: string): string {
 
 /** A registered switch's label, or `undefined` for a key nothing registers. */
 function labelOf(key: string): string | undefined {
-  return registeredEntitlementSwitches().find((s) => s.key === key)?.label;
+  return switchOf(key)?.label;
+}
+
+/** A registered switch, or `undefined` for a key nothing registers. */
+function switchOf(key: string): RegisteredEntitlementSwitch | undefined {
+  appInit.ensure();
+  return switches.get(key);
 }
 
 /**

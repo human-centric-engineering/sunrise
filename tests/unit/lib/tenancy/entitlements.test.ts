@@ -100,12 +100,22 @@ describe('the registry', () => {
         label: 'Reports',
         description: 'Build and share reports.',
         whenNothingSet: false,
+        // What a switch registered before t-1053 / t-1054 gets: hidden when
+        // lacking, the platform's refusal, set by platform staff alone.
+        whenLacking: 'hide',
+        refusalMessage: null,
+        upgradeUrl: null,
+        setBy: 'platform',
       },
       {
         key: 'leads',
         label: 'Lead generation',
         description: 'Funnels and leads.',
         whenNothingSet: true,
+        whenLacking: 'hide',
+        refusalMessage: null,
+        upgradeUrl: null,
+        setBy: 'platform',
       },
     ]);
   });
@@ -127,7 +137,16 @@ describe('the registry', () => {
     });
 
     expect(registeredEntitlementSwitches()).toEqual([
-      { key: 'reports', label: 'Reports', description: 'New', whenNothingSet: false },
+      {
+        key: 'reports',
+        label: 'Reports',
+        description: 'New',
+        whenNothingSet: false,
+        whenLacking: 'hide',
+        refusalMessage: null,
+        upgradeUrl: null,
+        setBy: 'platform',
+      },
     ]);
   });
 
@@ -235,7 +254,16 @@ describe('the registry', () => {
     });
 
     expect(registeredEntitlementSwitches()).toEqual([
-      { key: 'reports', label: 'Reports', description: '', whenNothingSet: false },
+      {
+        key: 'reports',
+        label: 'Reports',
+        description: '',
+        whenNothingSet: false,
+        whenLacking: 'hide',
+        refusalMessage: null,
+        upgradeUrl: null,
+        setBy: 'platform',
+      },
     ]);
   });
 });

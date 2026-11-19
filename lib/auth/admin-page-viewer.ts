@@ -33,12 +33,19 @@ import type {
   AdminSwitchGrant,
   AdminViewerTier,
   DeclaredAdminTier,
+  LockedAdminSwitch,
 } from '@/lib/auth/admin-tier';
 import { reachesTier } from '@/lib/auth/admin-tier';
 import { adminPageRequirements, namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
 import { heldTierLanding } from '@/lib/auth/admin-landing';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
+import {
+  loadOrgSwitches,
+  registeredEntitlementSwitches,
+  switchRequiredMessage,
+} from '@/lib/tenancy/entitlements';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
@@ -128,6 +135,57 @@ export const requestAdminReach = cache(async (): Promise<AdminReach> => {
   // With no switch to ask about, the reach is exactly what it was before them.
   if (asked.length === 0) return { tiers, landing };
   return { tiers, landing, switchesMet };
+});
+
+/**
+ * The switches this request's viewer's org lacks that the app shows locked
+ * rather than hidden (§135 t-1053), for the sidebar to show their items
+ * locked and the layout and gate to show their pages locked. Empty for a
+ * platform viewer, whom switches do not limit, and on an install where no
+ * page requires a switch registered `whenLacking: 'lock'`, so nothing more is
+ * read there.
+ *
+ * Only a switch the org's switches were read for and found off is here. One
+ * the policy refused for another reason (it reads on), or whose read failed,
+ * is left out, so its surfaces stay hidden as before rather than tell an
+ * admin to buy something their org may have. One read of the org's switches,
+ * once per request, whatever number are locked.
+ */
+export const requestLockedSwitches = cache(async (): Promise<readonly LockedAdminSwitch[]> => {
+  const reach = await requestAdminReach();
+  if (reach === 'platform' || reach.tiers.length === 0) return [];
+  const required = new Set(adminPageRequirements().map((r) => r.requires));
+  const candidates = registeredEntitlementSwitches().filter(
+    (s) =>
+      s.whenLacking === 'lock' &&
+      required.has(s.key) &&
+      reach.tiers.some((tier) => !reachesTier(reach, tier, s.key))
+  );
+  if (candidates.length === 0) return [];
+  const orgId = (await requestPrincipal())?.principal.orgId;
+  if (!orgId) return [];
+  let org: Awaited<ReturnType<typeof loadOrgSwitches>>;
+  try {
+    org = await loadOrgSwitches(orgId);
+  } catch (error) {
+    logger.error("admin: could not read the org's switches to show locked items; hiding them", {
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+  if (!org || org.unreadable) return [];
+  const on = new Set(org.on);
+  return candidates
+    .filter((s) => !on.has(s.key))
+    .map((s) =>
+      Object.freeze({
+        requires: s.key,
+        label: s.label,
+        message: switchRequiredMessage(s.key),
+        upgradeUrl: s.upgradeUrl,
+      })
+    );
 });
 
 /**
