@@ -224,15 +224,11 @@ export async function processImage(
   const detectedType = validation.detectedType;
   logger.debug('Processing image', { detectedType, originalSize: buffer.length });
 
-  // Create Sharp instance. `.rotate()` with no angle applies the EXIF
-  // Orientation tag to the pixels, so phone photos are stored upright. It must
-  // come before the metadata read and the resize: `metadata()` still reports
-  // the stored (sensor-order) width/height, not the upright ones. That is safe
-  // here because the `cover` size below is min(width, height), which does not
-  // depend on which side is which. The tag itself is dropped on
-  // re-encode, so a sideways result could never be corrected later. An untagged
-  // (or orientation 1) input is left as it is, so a caller that pre-rotates is
-  // not turned twice.
+  // `.rotate()` with no angle applies the EXIF Orientation tag to the pixels, so
+  // phone photos are stored upright. It must be in place before the resize. The
+  // tag is dropped on re-encode, so it cannot be applied later. `metadata()`
+  // reports the stored (sensor-order) size either way, which the square `cover`
+  // size below does not mind. An untagged input is left as it is.
   let image = sharp(buffer).rotate();
   const metadata = await image.metadata();
 
