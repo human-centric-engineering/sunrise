@@ -22,7 +22,7 @@ vi.mock('@/lib/logging', () => ({
 
 /** One org row's settings column, and its OWNER memberships, as the double holds them. */
 const store = vi.hoisted(() => ({
-  orgs: new Map<string, { slug: string; name: string; settings: unknown }>(),
+  orgs: new Map<string, { slug: string; name: string; settings: unknown; createdAt: Date }>(),
   owners: new Map<string, string[]>(),
 }));
 
@@ -59,6 +59,8 @@ import {
   runOrgCreatedHooks,
   orgCreatedHookKeys,
   ORG_CREATED_HOOK_TIMEOUT_MS,
+  ORG_CREATED_RETRY_AFTER_MS,
+  ORG_CREATED_RUN_BUDGET_MS,
   __resetOrgCreatedHooksForTests,
   type OrgCreatedContext,
 } from '@/lib/tenancy/org-created-hooks';
@@ -66,11 +68,13 @@ import { orgCreatedSettings, readOrgCreatedOwed } from '@/lib/tenancy/org-settin
 import { getTenantContext } from '@/lib/tenancy/context';
 
 const ORG = 'org-new';
+/** Old enough that the retry job no longer leaves it to its create. */
+const LONG_AGO = new Date('2026-01-01T00:00:00Z');
 
 /** An org as `createOrg()` leaves it: created with the hooks it is owed. */
 function seedOrg(owed: string[], extra: Record<string, unknown> = {}, owners: string[] = []) {
   const settings = { ...extra, ...(orgCreatedSettings(owed, 'admin') ?? {}) };
-  store.orgs.set(ORG, { slug: 'new', name: 'New Org', settings });
+  store.orgs.set(ORG, { slug: 'new', name: 'New Org', settings, createdAt: LONG_AGO });
   store.owners.set(ORG, owners);
 }
 
@@ -221,7 +225,12 @@ describe('runOrgCreatedHooks', () => {
   it('never runs a hook for an org that is not owed it (created before the hook existed)', async () => {
     const provider = vi.fn();
     register({ 'app:provider': provider });
-    store.orgs.set(ORG, { slug: 'old', name: 'Old Org', settings: { forkKey: 'kept' } });
+    store.orgs.set(ORG, {
+      slug: 'old',
+      name: 'Old Org',
+      settings: { forkKey: 'kept' },
+      createdAt: LONG_AGO,
+    });
 
     const result = await runOrgCreatedHooks(ORG);
 
@@ -241,6 +250,47 @@ describe('runOrgCreatedHooks', () => {
     expect(owedNow()).toEqual(['app:only-on-new-version']);
   });
 
+  it('leaves a brand-new org to its create on a retry, and runs it once it is old enough', async () => {
+    const provider = vi.fn();
+    register({ 'app:provider': provider });
+    seedOrg(['app:provider']);
+    const org = store.orgs.get(ORG);
+    if (org) org.createdAt = new Date(Date.now() - ORG_CREATED_RETRY_AFTER_MS + 60_000);
+
+    expect((await runOrgCreatedHooks(ORG)).succeeded).toBe(0);
+    expect(provider).not.toHaveBeenCalled();
+
+    if (org) org.createdAt = new Date(Date.now() - ORG_CREATED_RETRY_AFTER_MS - 1);
+    expect((await runOrgCreatedHooks(ORG)).succeeded).toBe(1);
+    // The create's own run is never held back by the age check.
+  });
+
+  it('cuts the last hook to what is left of the run budget, leaving the rest owed', async () => {
+    vi.useFakeTimers();
+    try {
+      // Four hooks use all but 4 ms of the budget; the fifth gets only those
+      // 4 ms (not its own 10 s), times out, and the sixth is never started.
+      const step = ORG_CREATED_RUN_BUDGET_MS / 4 - 1;
+      const hook = () => new Promise<void>((resolve) => setTimeout(resolve, step));
+      const keys = ['app:h0', 'app:h1', 'app:h2', 'app:h3', 'app:h4', 'app:h5'];
+      register(Object.fromEntries(keys.map((key) => [key, hook])));
+      seedOrg(keys);
+
+      const run = runOrgCreatedHooks(ORG, { ownerUserId: null });
+      await vi.advanceTimersByTimeAsync(ORG_CREATED_RUN_BUDGET_MS);
+      const result = await run;
+
+      expect(result).toEqual({ succeeded: 4, failed: 2, unregistered: 0 });
+      expect(owedNow()).toEqual(['app:h4', 'app:h5']);
+      expect(loggerError).toHaveBeenCalledWith(
+        expect.stringMatching(/org-created hook failed/),
+        expect.objectContaining({ hook: 'app:h4', error: expect.stringMatching(/after 4 ms/) })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('runs hooks one at a time, in registration order, not owed-list order', async () => {
     const events: string[] = [];
     const slow = (name: string) => async () => {
@@ -256,7 +306,7 @@ describe('runOrgCreatedHooks', () => {
     expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
   });
 
-  it('gives up on a hook past its time limit, leaves it owed, aborts its signal, and runs the next', async () => {
+  it('gives up on a hook past its time limit, aborts its signal, and leaves it and the rest owed', async () => {
     vi.useFakeTimers();
     try {
       let seenSignal: AbortSignal | undefined;
@@ -274,10 +324,11 @@ describe('runOrgCreatedHooks', () => {
       await vi.advanceTimersByTimeAsync(ORG_CREATED_HOOK_TIMEOUT_MS);
       const result = await run;
 
-      expect(result).toEqual({ succeeded: 1, failed: 1, unregistered: 0 });
+      // The hung hook may still be running, so the next is not started beside it.
+      expect(result).toEqual({ succeeded: 0, failed: 2, unregistered: 0 });
       expect(seenSignal?.aborted).toBe(true);
-      expect(next).toHaveBeenCalled();
-      expect(owedNow()).toEqual(['app:hangs']);
+      expect(next).not.toHaveBeenCalled();
+      expect(owedNow()).toEqual(['app:hangs', 'app:next']);
       expect(loggerError).toHaveBeenCalledWith(
         expect.stringMatching(/org-created hook failed/),
         expect.objectContaining({ hook: 'app:hangs', error: expect.stringMatching(/timed out/) })

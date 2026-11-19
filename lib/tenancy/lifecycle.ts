@@ -306,7 +306,13 @@ export async function createOrg(
   // hooks left, so a caller is not told setup is pending when it is not.
   const current = await db.org
     .findUnique({ where: { id: org.id }, select: orgSelect })
-    .catch(() => null);
+    .catch((err: unknown) => {
+      logger.warn('Org created, but could not be re-read after its hooks; answering as inserted', {
+        orgId: org.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    });
   return current ?? org;
 }
 

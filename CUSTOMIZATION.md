@@ -618,9 +618,14 @@ fill the empty `initAppOrgCreatedHooks()`:
 // lib/app/org-created.ts — yours to edit
 import { registerOrgCreatedHook } from '@/lib/tenancy/org-created-hooks';
 import { setOrgSwitches } from '@/lib/tenancy/entitlements';
+import { loadOrgEntitlements } from '@/lib/tenancy/org-settings';
 
 export function initAppOrgCreatedHooks(): void {
+  // A retry must not undo switches staff have set since: fill only an empty set.
   registerOrgCreatedHook('app:starting-package', async ({ orgId }) => {
+    const current = await loadOrgEntitlements(orgId);
+    if (!current || current.unreadable) throw new Error('switches unreadable');
+    if (current.on.length + current.off.length > 0) return;
     await setOrgSwitches(orgId, { on: ['free-tier'], off: [] });
   });
 }
@@ -637,9 +642,15 @@ their bindings are picked from.
 
 Hooks run **one at a time, in the order you register them**, so a later hook
 can rely on an earlier one's setup, and two writes to the org's settings never
-collide. Each has 10 seconds (`ORG_CREATED_HOOK_TIMEOUT_MS`): the create waits
-for them, so a hung vendor call must not hold it open. Past that the run moves
-on, the hook stays owed, and `signal` aborts; pass it to your vendor call.
+collide. Each has 10 seconds (`ORG_CREATED_HOOK_TIMEOUT_MS`), and all of them
+together 30 (`ORG_CREATED_RUN_BUDGET_MS`): the create waits for them, so a hung
+vendor call must not hold it open. A hook past its time stays owed, its `signal`
+aborts (pass it to your vendor call), and the run stops there, since the hook
+may still be running; the hooks after it stay owed too. The retry job leaves an
+org alone for its first 5 minutes, so it never runs a hook beside the create's
+own run of it. A hook that keeps failing is retried, and logged, every 15
+minutes until it succeeds: there is no give-up, because an org without the
+app's setup is the failure this seam exists to prevent.
 
 Hooks run **after** the org is created, so one **cannot refuse an org**. A throw
 is logged and the hook stays owed: the org records which hooks it is owed in

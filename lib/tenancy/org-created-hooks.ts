@@ -137,7 +137,7 @@ export function orgCreatedHookKeys(): string[] {
 export interface OrgCreatedRunResult {
   /** Hooks that ran and succeeded, and are no longer owed. */
   succeeded: number;
-  /** Hooks that threw or timed out, and stay owed. */
+  /** Hooks that threw, timed out or were not reached, and stay owed. */
   failed: number;
   /**
    * Owed keys this process has no hook for. Left owed, not run: during a
@@ -156,6 +156,20 @@ const NOTHING_RAN: OrgCreatedRunResult = { succeeded: 0, failed: 0, unregistered
 export const ORG_CREATED_HOOK_TIMEOUT_MS = 10_000;
 
 /**
+ * How long one run may spend on all of an org's hooks together. Past it the
+ * hooks not yet started stay owed for the maintenance job, so a create waits
+ * at most this long however many hooks an app registers.
+ */
+export const ORG_CREATED_RUN_BUDGET_MS = 30_000;
+
+/**
+ * How old an org must be before the maintenance job runs its owed hooks. The
+ * create runs them itself, for up to {@link ORG_CREATED_RUN_BUDGET_MS}; a job
+ * that also picked up a brand-new org would run the same hook beside it.
+ */
+export const ORG_CREATED_RETRY_AFTER_MS = 5 * 60 * 1000;
+
+/**
  * Run every hook an org is still owed, one at a time in the order they were
  * registered, and take the ones that succeeded off its list.
  *
@@ -163,6 +177,20 @@ export const ORG_CREATED_HOOK_TIMEOUT_MS = 10_000;
  * provider grant) does so in a SERIALIZABLE transaction on the org row: two
  * at once would make one of them fail. Registration order also lets an app
  * rely on one hook's setup being there for the next.
+ *
+ * **A timeout ends the run.** The run stops waiting for a hook past
+ * {@link ORG_CREATED_HOOK_TIMEOUT_MS}, but a hook that ignores `signal` is
+ * still running, so starting the next would put two beside each other. The
+ * rest stay owed for the job, as do any not started within
+ * {@link ORG_CREATED_RUN_BUDGET_MS}.
+ *
+ * **A retry leaves a new org to its create.** Without `known`, an org younger
+ * than {@link ORG_CREATED_RETRY_AFTER_MS} is skipped, so the job never runs a
+ * hook beside the create's own run of it.
+ *
+ * Reads and writes through the application client, as the platform-agent
+ * reconcile after it does: `createOrg()`'s `db` exists for its own tests, and
+ * every production caller passes nothing.
  *
  * Never throws: a hook's throw or timeout is logged at `error` and leaves it
  * owed, and a failure to read the org or to record the successes is logged
@@ -183,10 +211,13 @@ export async function runOrgCreatedHooks(
   try {
     const org = await prisma.org.findUnique({
       where: { id: orgId },
-      select: { slug: true, name: true, settings: true },
+      select: { slug: true, name: true, settings: true, createdAt: true },
     });
     const owed = org ? readOrgCreatedOwed(org.settings) : null;
     if (!org || !owed) return NOTHING_RAN;
+    if (!known && Date.now() - org.createdAt.getTime() < ORG_CREATED_RETRY_AFTER_MS) {
+      return NOTHING_RAN;
+    }
 
     const ownerUserId = known ? known.ownerUserId : await foundingOwnerOf(orgId);
     const base = {
@@ -210,13 +241,28 @@ export async function runOrgCreatedHooks(
       });
     }
 
+    const deadline = Date.now() + ORG_CREATED_RUN_BUDGET_MS;
     const succeeded = await runAsOrg(orgId, async () => {
       const done: string[] = [];
       for (const [key, hook] of runnable) {
+        // Each hook's limit is cut to what is left of the budget, so a spent
+        // budget ends the run as a timeout does; this only catches a hook
+        // that finished on the deadline itself.
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const limit = Math.min(ORG_CREATED_HOOK_TIMEOUT_MS, remaining);
+        let timedOut = false;
         try {
-          await withTimeout(ORG_CREATED_HOOK_TIMEOUT_MS, `org-created hook ${key}`, (signal) =>
-            Promise.resolve(hook({ ...base, signal }))
-          );
+          await withTimeout(limit, `org-created hook ${key}`, (signal) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                timedOut = true;
+              },
+              { once: true }
+            );
+            return Promise.resolve(hook({ ...base, signal }));
+          });
           done.push(key);
         } catch (err) {
           logger.error('org-created hook failed; the maintenance job retries it', {
@@ -225,6 +271,8 @@ export async function runOrgCreatedHooks(
             retry: base.retry,
             error: err instanceof Error ? err.message : String(err),
           });
+          // It may still be running; the next must not start beside it.
+          if (timedOut) break;
         }
       }
       return done;

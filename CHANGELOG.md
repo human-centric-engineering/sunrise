@@ -51,7 +51,8 @@ release process.
   `source` (`'admin' | 'signup' | 'app'`, default `'app'`; `'signup'` is
   reserved for self-serve signup, which does not create orgs yet). Hooks run
   after the create commits, one at a time in registration order, each bounded
-  by `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s), in the new org's scope and before
+  by `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) and the run by
+  `ORG_CREATED_RUN_BUDGET_MS` (30 s), in the new org's scope and before
   its platform agents; one that throws or times out stays owed in
   `Org.settings.orgCreated` and a new `orgCreatedHooks`
   maintenance job (appended to `backgroundTasks`) retries it every 15 minutes

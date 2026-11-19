@@ -14,10 +14,15 @@
  *
  *   import { registerOrgCreatedHook } from '@/lib/tenancy/org-created-hooks';
  *   import { setOrgSwitches } from '@/lib/tenancy/entitlements';
+ *   import { loadOrgEntitlements } from '@/lib/tenancy/org-settings';
  *
  *   export function initAppOrgCreatedHooks(): void {
- *     // Setting the same switches twice changes nothing, so a retry is safe.
+ *     // A retry must not undo switches staff have set since: fill only an
+ *     // empty set.
  *     registerOrgCreatedHook('app:starting-package', async ({ orgId }) => {
+ *       const current = await loadOrgEntitlements(orgId);
+ *       if (!current || current.unreadable) throw new Error('switches unreadable');
+ *       if (current.on.length + current.off.length > 0) return;
  *       await setOrgSwitches(orgId, { on: ['free-tier'], off: [] });
  *     });
  *   }

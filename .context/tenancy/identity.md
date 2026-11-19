@@ -648,11 +648,17 @@ self-serve signup (§134 t-1062), which does not create orgs yet.
   one-off script. An owed key no hook is registered under in this process is
   left owed, not dropped: during a rolling deploy the next run may be on an
   instance that has it.
-- **One at a time, each bounded.** Hooks run in registration order, so two
-  that write `Org.settings` never clash in its serializable transaction, and
-  each has `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) before the run moves on and
-  leaves it owed; the hook's `signal` aborts then. The create waits for them,
-  so this is what keeps a hung vendor call from holding it open.
+- **One at a time, and bounded.** Hooks run in registration order, so two
+  that write `Org.settings` never clash in its serializable transaction. Each
+  has `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) and the run `ORG_CREATED_RUN_BUDGET_MS`
+  (30 s); the create waits for them, so this is what keeps a hung vendor call
+  from holding it open. A timeout aborts the hook's `signal` and ends the run,
+  since a hook that ignores the signal is still running; it and the hooks
+  after it stay owed.
+- **Never two runs at once.** The retry job skips an org younger than
+  `ORG_CREATED_RETRY_AFTER_MS` (5 min), longer than a create's own run can
+  take. A hook that keeps failing is retried every 15 minutes with no give-up:
+  an org without the app's setup is what the seam exists to prevent.
 - **Active orgs only, on retry.** The job is per-org over ACTIVE orgs, so an
   org suspended while it owes hooks gets them once it is reinstated.
 - **Before the platform agents.** The app's hooks run first, so a provider an
