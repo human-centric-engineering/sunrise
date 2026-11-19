@@ -322,9 +322,10 @@ describe('CostTrendChart — spend on orgs’ own keys (§137 t-1058)', () => {
   });
 
   it('says how much it leaves out, and only when there is any', () => {
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const { unmount } = render(
       <CostTrendChart
-        trend={[withOwnKey(today, 60, 50), withOwnKey('2026-01-01', 5, 2.5)]}
+        trend={[withOwnKey(today, 60, 50), withOwnKey(fiveDaysAgo, 5, 2.5)]}
         perModel={[]}
         models={[]}
       />
@@ -336,6 +337,27 @@ describe('CostTrendChart — spend on orgs’ own keys (§137 t-1058)', () => {
 
     render(<CostTrendChart trend={[withOwnKey(today, 60, 0)]} perModel={[]} models={[]} />);
     expect(screen.queryByTestId('trend-own-key-spend')).not.toBeInTheDocument();
+  });
+
+  it('with `days`, plots and sums only those days, however few points the trend has', () => {
+    // A sparse trend: its last seven points reach back ten days.
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    render(
+      <CostTrendChart
+        trend={[withOwnKey(tenDaysAgo, 40, 40), withOwnKey(today, 15, 5)]}
+        perModel={[]}
+        models={[]}
+        days={7}
+      />
+    );
+
+    const rows = plotRows();
+    expect(rows).toHaveLength(7);
+    expect(rows.find((r) => r.date === tenDaysAgo)).toBeUndefined();
+    expect(rows.find((r) => r.date === today)?.total).toBeCloseTo(10, 6);
+    expect(screen.getByTestId('trend-own-key-spend')).toHaveTextContent(
+      "Leaves out $5.00 on organisations' own keys in this period"
+    );
   });
 
   it('does not say "no spend" when all of it was on own keys', () => {

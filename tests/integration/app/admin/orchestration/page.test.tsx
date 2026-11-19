@@ -61,8 +61,22 @@ vi.mock('@/lib/logging', () => ({
 // on what the dashboard *page* is responsible for: composing children,
 // computing the setup-banner gate, and surviving fetch failure.
 vi.mock('@/components/admin/orchestration/costs/cost-trend-chart', () => ({
-  CostTrendChart: ({ title }: { title?: string }) => (
-    <div data-testid="cost-trend-chart">{title ?? ''}</div>
+  CostTrendChart: ({
+    title,
+    trend,
+    days,
+  }: {
+    title?: string;
+    trend?: Array<{ date: string }> | null;
+    days?: number;
+  }) => (
+    <div
+      data-testid="cost-trend-chart"
+      data-days={days ?? ''}
+      data-dates={(trend ?? []).map((p) => p.date).join(',')}
+    >
+      {title ?? ''}
+    </div>
   ),
 }));
 
@@ -330,9 +344,10 @@ describe('OrchestrationDashboardPage (server component)', () => {
       ]);
     });
 
-    it('passes the recent week of trend data into the chart', async () => {
-      // The page slices `trend.slice(-7)` to render the 7-day chart —
-      // this exercises the success branch of getCostSummary.
+    it('passes the trend into the chart with a 7-day window', async () => {
+      // The chart takes the window by date: `trend` omits days with no spend,
+      // so its last seven points can reach back further than a week.
+      // This exercises the success branch of getCostSummary.
       await setupHappyPathMocks(ALL_CONFIGURED);
 
       await renderPage();
@@ -342,6 +357,11 @@ describe('OrchestrationDashboardPage (server component)', () => {
       // value, so seeing it confirms the page actually rendered the
       // chart with its happy-path props.
       expect(screen.getByTestId('cost-trend-chart')).toHaveTextContent('7-day spend trend');
+      expect(screen.getByTestId('cost-trend-chart')).toHaveAttribute('data-days', '7');
+      expect(screen.getByTestId('cost-trend-chart')).toHaveAttribute(
+        'data-dates',
+        '2026-04-01,2026-04-02'
+      );
     });
 
     it('shows a notice only for the panel whose fetch failed', async () => {

@@ -345,17 +345,7 @@ export async function getCostBreakdown(opts: CostBreakdownOptions): Promise<Cost
     rows.sort((a, b) => b.totalCostUsd - a.totalCostUsd);
   }
 
-  const totals = rows.reduce<CostBreakdownTotals>(
-    (acc, r) => {
-      acc.totalCostUsd += r.totalCostUsd;
-      acc.ownKeyCostUsd += r.ownKeyCostUsd;
-      acc.inputTokens += r.inputTokens;
-      acc.outputTokens += r.outputTokens;
-      acc.count += r.count;
-      return acc;
-    },
-    { totalCostUsd: 0, ownKeyCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 }
-  );
+  const totals: CostBreakdownTotals = rows.reduce(addTotals, emptyTotals());
 
   return { groupBy: opts.groupBy, rows, totals };
 }
@@ -724,22 +714,10 @@ export async function getOrgUsage(opts: OrgUsageOptions): Promise<OrgUsageReport
     ? await runAsSystem('org usage rollup (every org spend for one month)', read)
     : await read();
 
-  const byOrg = new Map<string | null, UsageTotals>();
-  for (const g of grouped) {
-    const spend = g._sum.totalCostUsd ?? 0;
-    let totals = byOrg.get(g.orgId);
-    if (!totals) {
-      totals = emptyTotals();
-      byOrg.set(g.orgId, totals);
-    }
-    addTotals(totals, {
-      totalCostUsd: spend,
-      ownKeyCostUsd: g.ownKey ? spend : 0,
-      inputTokens: g._sum.inputTokens ?? 0,
-      outputTokens: g._sum.outputTokens ?? 0,
-      count: g._count._all,
-    });
-  }
+  // Split by `ownKey` too, folded back to one entry per org.
+  const byOrg = new Map<string | null, UsageTotals>(
+    foldOwnKeyGroups(grouped, (g) => g.orgId).map((g) => [g.orgId, g.sums])
+  );
 
   let detached: UsageTotals | null = null;
   if (multi) {

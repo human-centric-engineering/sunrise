@@ -38,7 +38,10 @@ import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { BudgetAlertsList } from '@/components/admin/orchestration/costs/budget-alerts-list';
 import { CostMethodology } from '@/components/admin/orchestration/costs/cost-methodology';
 import { CostSummaryCards } from '@/components/admin/orchestration/costs/cost-summary-cards';
-import { CostTrendChart } from '@/components/admin/orchestration/costs/cost-trend-chart';
+import {
+  CostTrendChart,
+  type PerModelRow,
+} from '@/components/admin/orchestration/costs/cost-trend-chart';
 import { LocalVsCloudPanel } from '@/components/admin/orchestration/costs/local-vs-cloud-panel';
 import { PerAgentCostTable } from '@/components/admin/orchestration/costs/per-agent-cost-table';
 import { PerModelBreakdownTable } from '@/components/admin/orchestration/costs/per-model-breakdown-table';
@@ -55,13 +58,6 @@ import type {
 } from '@/lib/orchestration/llm/cost-reports';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
-interface PerModelDaily {
-  key: string;
-  totalCostUsd: number;
-  /** The part of `totalCostUsd` on orgs' own keys (§137). */
-  ownKeyCostUsd: number;
-}
-
 export interface CostsViewProps {
   summary: CostSummary | null;
   /**
@@ -71,7 +67,7 @@ export interface CostsViewProps {
   alerts: BudgetAlert[] | null;
   /** The global cap's state, from the same load as `alerts`. */
   globalCap: GlobalCapStatus | null;
-  perModel: PerModelDaily[] | null;
+  perModel: PerModelRow[] | null;
   models: ModelInfo[] | null;
   /** Epoch ms when OpenRouter pricing was last fetched. null/0 = static fallback. */
   registryFetchedAt?: number | null;
