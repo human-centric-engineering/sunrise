@@ -41,6 +41,18 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const mockRefuseSeats = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/tenancy/meters', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tenancy/meters')>()),
+  refuseOverSeatsLimit: mockRefuseSeats,
+}));
+
+const mockPendingFor = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/utils/invitation-token', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/utils/invitation-token')>()),
+  pendingInvitationsFor: mockPendingFor,
+}));
+
 const mockReconcile = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgents: mockReconcile,
@@ -82,6 +94,7 @@ const AS_ADMIN = { platformAdmin: false, orgRole: ORG_ADMIN_ROLE } as const;
 
 const human = (id: string, role: string = DEFAULT_USER_ROLE) => ({
   id,
+  email: `${id}@example.com`,
   role,
   accountType: 'HUMAN',
 });
@@ -98,6 +111,8 @@ async function refusal(fn: () => Promise<unknown>): Promise<OrgLifecycleError> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRefuseSeats.mockReset().mockResolvedValue(undefined);
+  mockPendingFor.mockReset().mockResolvedValue({ readable: [], unreadable: 0 });
   mockReconcile.mockReset().mockResolvedValue({});
   // The transaction client IS the double, so writes inside are visible.
   db.$transaction.mockImplementation((fn: (tx: typeof db) => Promise<unknown>) => fn(db));
@@ -501,6 +516,151 @@ describe('addMember', () => {
       // The count arm is not consulted: the install org's rule is the platform role.
       expect(db.orgMembership.count).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('addMember — the seats limit (§135 t-1035)', () => {
+  const seatsRefusal = () =>
+    new APIError('Your organisation has reached its limit of 3 for Seats.', 'FORBIDDEN', 403, {
+      reason: 'meter_limit_reached',
+    });
+  /** An open invitation for OTHER into `orgId`, as pendingInvitationsFor reads it. */
+  const invitedInto = (orgId: string | undefined) =>
+    mockPendingFor.mockResolvedValue({
+      readable: [
+        {
+          id: 'inv-1',
+          email: `${OTHER}@example.com`,
+          metadata: { name: 'O', role: DEFAULT_USER_ROLE, invitedBy: OWNER, invitedAt: 'x', orgId },
+          expiresAt: new Date(),
+          createdAt: new Date(),
+        },
+      ],
+      unreadable: 0,
+    });
+
+  beforeEach(() => {
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.user.findUnique.mockResolvedValue(human(OTHER));
+    db.orgMembership.findUnique.mockResolvedValue(null);
+    db.orgMembership.create.mockImplementation(({ data }: { data: object }) =>
+      Promise.resolve({ id: 'm1', createdAt: new Date(), updatedAt: new Date(), ...data })
+    );
+  });
+
+  it('refuses an org admin at the limit, and adds nobody', async () => {
+    mockRefuseSeats.mockRejectedValue(seatsRefusal());
+
+    const error = await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN).catch((e) => e);
+
+    expect(error).toBeInstanceOf(APIError);
+    expect(error.status).toBe(403);
+    expect(mockRefuseSeats).toHaveBeenCalledWith(ORG, AS_ADMIN, {
+      alreadyHeld: expect.any(Function),
+    });
+    expect(db.orgMembership.create).not.toHaveBeenCalled();
+  });
+
+  it('answers a request wrong for another reason with that reason, not the limit', async () => {
+    mockRefuseSeats.mockRejectedValue(seatsRefusal());
+    db.orgMembership.findUnique.mockResolvedValue({ id: 'existing' });
+
+    expect((await refusal(() => addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN))).code).toBe(
+      'ALREADY_MEMBER'
+    );
+
+    db.user.findUnique.mockResolvedValue(null);
+    expect((await refusal(() => addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN))).code).toBe(
+      'USER_NOT_FOUND'
+    );
+    expect(mockRefuseSeats).not.toHaveBeenCalled();
+  });
+
+  /** What addMember answers when the seats check asks whether the seat is held. */
+  async function heldAnswer(): Promise<boolean> {
+    let answer: boolean | undefined;
+    mockRefuseSeats.mockImplementation(
+      async (_orgId: string, _actor: unknown, options: { alreadyHeld: () => Promise<boolean> }) => {
+        answer = await options.alreadyHeld();
+      }
+    );
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+    if (answer === undefined) throw new Error('alreadyHeld was not asked');
+    return answer;
+  }
+
+  it('says the seat is held for a user whose invitation into the org takes one', async () => {
+    invitedInto(ORG);
+
+    expect(await heldAnswer()).toBe(true);
+    expect(mockPendingFor).toHaveBeenCalledWith(`${OTHER}@example.com`);
+  });
+
+  it('does not for an invitation into another org, or one that makes staff', async () => {
+    invitedInto('cmorg000000000000000elsew');
+    expect(await heldAnswer()).toBe(false);
+
+    mockPendingFor.mockResolvedValue({
+      readable: [
+        {
+          id: 'inv-2',
+          email: `${OTHER}@example.com`,
+          metadata: {
+            name: 'O',
+            role: PLATFORM_ADMIN_ROLE,
+            invitedBy: OWNER,
+            invitedAt: 'x',
+            orgId: ORG,
+          },
+          expiresAt: new Date(),
+          createdAt: new Date(),
+        },
+      ],
+      unreadable: 0,
+    });
+    expect(await heldAnswer()).toBe(false);
+  });
+
+  it('reads a failed invitation lookup as a held seat, and logs it', async () => {
+    mockPendingFor.mockRejectedValue(new Error('db down'));
+
+    expect(await heldAnswer()).toBe(true);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('seats check'),
+      expect.objectContaining({ orgId: ORG, error: 'db down' })
+    );
+  });
+
+  it('reads no invitations unless the seats check asks', async () => {
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+
+    expect(mockPendingFor).not.toHaveBeenCalled(); // test-review:accept no_arg_called — lazy: asked only at the limit
+  });
+
+  it('takes no seat for a user who is platform staff', async () => {
+    db.user.findUnique.mockResolvedValue(human(OTHER, PLATFORM_ADMIN_ROLE));
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+
+    expect(mockRefuseSeats).not.toHaveBeenCalled(); // test-review:accept no_arg_called — staff take no seat, so nothing is checked
+    expect(db.orgMembership.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes an accepted invitation's held seat to the seats check, which decides", async () => {
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER, undefined, { seatHeld: true });
+
+    expect(mockRefuseSeats).toHaveBeenCalledWith(
+      ORG,
+      AS_OWNER,
+      expect.objectContaining({ seatHeld: true })
+    );
+    expect(db.orgMembership.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the actor to the seats check, which never refuses platform staff', async () => {
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_PLATFORM);
+
+    expect(mockRefuseSeats).toHaveBeenCalledWith(ORG, AS_PLATFORM, expect.anything());
   });
 });
 

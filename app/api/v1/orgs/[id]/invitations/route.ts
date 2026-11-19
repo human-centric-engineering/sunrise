@@ -40,6 +40,11 @@
  * reaches the invitee by email only. If email is not configured, the
  * invitation is stored, and a platform admin re-sends it from Users.
  *
+ * **Seats** (§135 t-1035): a pending invitation holds one of the org's seats,
+ * so a new one from the org's own admin is refused at its seats limit (403,
+ * `details.reason: 'meter_limit_reached'`). A resend is not, and a platform
+ * admin never is.
+ *
  * A browser session only, as the members routes require: the roster's shape
  * is not something a key's scopes cover.
  */
@@ -64,6 +69,8 @@ import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { getRouteLogger } from '@/lib/api/context';
+import { refuseOverSeatsLimit } from '@/lib/tenancy/meters';
+import { isPlatformStaff } from '@/lib/tenancy/membership';
 
 const RESOURCE = {
   resource: async (_request: unknown, context?: { params: Promise<{ id: string }> }) =>
@@ -105,7 +112,12 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   // on the caller's roster, so saying so discloses nothing.
   const existingUser = await prisma.user.findUnique({
     where: { email: body.email },
-    select: { id: true, orgMemberships: { where: { orgId: id }, select: { id: true } } },
+    select: {
+      id: true,
+      role: true,
+      accountType: true,
+      orgMemberships: { where: { orgId: id }, select: { id: true } },
+    },
   });
   if (existingUser && existingUser.orgMemberships.length > 0) {
     throw new OrgLifecycleError('ALREADY_MEMBER', 'That person is already a member');
@@ -145,6 +157,14 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
       },
       emailStatus: 'pending' as const,
     });
+  }
+
+  // A new invitation takes a seat as soon as it is pending, so an org's own
+  // admin is refused one at the seats limit (§135 t-1035). A resend replaces
+  // one that already holds its seat, platform staff are not refused, and an
+  // invitee who is already staff will take none.
+  if (!existingInvitation && !(existingUser && isPlatformStaff(existingUser))) {
+    await refuseOverSeatsLimit(id, actor);
   }
 
   // A resend re-issues the pending invitation, so it keeps the pending role

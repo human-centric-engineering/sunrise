@@ -76,6 +76,44 @@ release process.
   that should let another org role manage keys answers `org.providerKeys` in
   `canRead`'s `unattributed` arm.
 
+- **Meters and limits: how much an org may have (§135 t-1035).** An app
+  registers a meter in the same `initAppEntitlements()` seam with
+  `registerMeter({ key, label, description, period, count })`
+  (`lib/tenancy/entitlements.ts`): `count({ orgId, from, to })` is the app's
+  own count, and `period` is `'month'` (UTC calendar month), `'standing'`
+  (how many now) or a function `({ orgId, now }) => ({ from, to })` for a
+  window of its own, such as a billing cycle. A failed init rolls back
+  switches and meters together. `checkMeterQuota(orgId, key, { adding, now })`
+  in the new `lib/tenancy/meters.ts` answers `{ allowed, used, limit, label,
+  window }` and changes nothing; it counts nothing when no limit is set, and
+  fails open (a count, window or limit that cannot be read answers allowed,
+  and is logged). `meterLimitMessage()` and `METER_LIMIT_REASON`
+  (`'meter_limit_reached'`) let an app's refusals read alike. **Seats are a
+  platform meter**: members who are not platform staff plus open invitations
+  that do not grant the platform `ADMIN` role, each person once
+  (`countSeats()`, `invitationTakesSeat()`); an app may
+  register `seats` to count them its own way. A meter's count runs as the org
+  counted and across its owners, whoever asks. With a seats limit set, an
+  org's own admin is refused a new invitation
+  (`POST /api/v1/orgs/[id]/invitations`) and adding a member at the limit with
+  a 403 carrying `details.reason: 'meter_limit_reached'`; a platform admin is
+  not (`refuseOverSeatsLimit()`). Accepting an invitation, or adding someone
+  who holds one, takes up the seat it held and is not refused. An app's own
+  `seats` count must keep the two rules these rest on: an open invitation
+  counts as the member it becomes, and platform staff take no seat. **`addMember()` now makes the member check
+  itself**, after its own, so a fork's route calling it gets the limit too;
+  it takes a new optional `options.seatHeld`, which invitation acceptance
+  passes. Limits are stored per org at
+  `Org.settings.quotas.meters` and written one key at a time with
+  `writeOrgMeterLimits()` (`readOrgMeterLimits()`, `loadOrgMeterLimits()` in
+  `lib/tenancy/org-settings.ts`); `writeOrgQuotas()` and the org `PATCH`'s
+  `settings.quotas` now keep them rather than replacing the whole slice.
+  Platform staff set them through the new platform-only
+  `GET`/`PATCH /api/v1/admin/orgs/[id]/meters` (install org only at `multi`,
+  audited as `org.meters.update`) and a new **Limits** section on
+  `/admin/orgs/[id]` showing each meter's usage against its limit.
+  **`quotas.meters` is now platform-owned:** a fork storing its own
+  `settings.quotas.meters` must move it first.
 - **A page, route or menu item can require an entitlement switch (§135,
   t-1034).** A `requires` option beside `tier` in the three places a surface
   declares its tier: `registerOrgTierAdminPage(pattern, { tier, requires })`,

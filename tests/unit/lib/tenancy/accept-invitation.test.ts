@@ -161,11 +161,13 @@ describe('acceptInvitationAsExistingUser', () => {
     const membership = await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
 
     expect(addMember).toHaveBeenCalledTimes(1);
-    const [orgId, userId, role, actor] = addMember.mock.calls[0];
+    const [orgId, userId, role, actor, , options] = addMember.mock.calls[0];
     expect([orgId, userId, role]).toEqual([ORG_A, 'user-1', ORG_ADMIN_ROLE]);
     // Issue-time standing: an OWNER role (bootstrap or invitation) must not
     // be refused by `addMember` for want of the invitee's own standing.
     expect(actor).toEqual({ platformAdmin: false, orgRole: ORG_OWNER_ROLE });
+    // The invitation's seat was counted when it was issued (§135 t-1035).
+    expect(options).toEqual({ seatHeld: true });
     expect(membership).toMatchObject({ orgId: ORG_A, role: ORG_ADMIN_ROLE });
 
     // The other org's invitation is untouched and still redeemable.
@@ -175,7 +177,9 @@ describe('acceptInvitationAsExistingUser', () => {
       ORG_B,
       'user-1',
       DEFAULT_ORG_ROLE,
-      expect.anything()
+      expect.anything(),
+      undefined,
+      { seatHeld: true }
     );
     expect(store.rows).toHaveLength(0);
   });
@@ -186,7 +190,16 @@ describe('acceptInvitationAsExistingUser', () => {
 
     await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
 
-    expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', ORG_OWNER_ROLE, expect.anything());
+    expect(addMember).toHaveBeenCalledWith(
+      ORG_A,
+      'user-1',
+      ORG_OWNER_ROLE,
+      expect.anything(),
+      undefined,
+      {
+        seatHeld: true,
+      }
+    );
   });
 
   // Security review of #1178: an org ADMIN could invite a second account of
@@ -199,7 +212,16 @@ describe('acceptInvitationAsExistingUser', () => {
 
     await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
 
-    expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', DEFAULT_ORG_ROLE, expect.anything());
+    expect(addMember).toHaveBeenCalledWith(
+      ORG_A,
+      'user-1',
+      DEFAULT_ORG_ROLE,
+      expect.anything(),
+      undefined,
+      {
+        seatHeld: true,
+      }
+    );
   });
 
   // #1235: an OWNER invitation outlives the issue-time standing check. Its
@@ -210,7 +232,16 @@ describe('acceptInvitationAsExistingUser', () => {
 
     const membership = await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
 
-    expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', DEFAULT_ORG_ROLE, expect.anything());
+    expect(addMember).toHaveBeenCalledWith(
+      ORG_A,
+      'user-1',
+      DEFAULT_ORG_ROLE,
+      expect.anything(),
+      undefined,
+      {
+        seatHeld: true,
+      }
+    );
     expect(membership.role).toBe(DEFAULT_ORG_ROLE);
     expect(store.rows).toHaveLength(0);
   });
@@ -221,7 +252,16 @@ describe('acceptInvitationAsExistingUser', () => {
 
     await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
 
-    expect(addMember).toHaveBeenCalledWith(ORG_A, 'user-1', ORG_OWNER_ROLE, expect.anything());
+    expect(addMember).toHaveBeenCalledWith(
+      ORG_A,
+      'user-1',
+      ORG_OWNER_ROLE,
+      expect.anything(),
+      undefined,
+      {
+        seatHeld: true,
+      }
+    );
   });
 
   it('matches the address case-insensitively', async () => {

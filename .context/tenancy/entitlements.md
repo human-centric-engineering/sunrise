@@ -11,9 +11,9 @@ in code. Platform staff set them on each org. The app reads them wherever it
 needs to know. When billing arrives it becomes a second writer of the same
 slice, and nothing that reads a switch changes.
 
-This page covers switches (t-1033) and requiring one on a page, route or menu
-item (t-1034). Quotas on app meters (t-1035) are the next task of the same
-feature.
+This page covers switches (t-1033), requiring one on a page, route or menu
+item (t-1034), and **meters**: counting what an org has and limiting it
+(t-1035, [Meters and limits](#meters-and-limits)).
 
 ## Quick Reference
 
@@ -32,6 +32,10 @@ feature.
 | The audit row                    | `org.entitlements.update`, with what it replaced                                                            |
 | Require one on a surface         | `requires` beside `tier`: page, `withAdminAuth`, nav item; see [Requiring a switch](#requiring-a-switch)    |
 | Key format                       | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`                       |
+| Register a meter                 | `registerMeter({ key, label, period, count })` in the same `initAppEntitlements()`                          |
+| May this org add one more?       | `checkMeterQuota(orgId, key)`, `lib/tenancy/meters.ts` → `{ allowed, used, limit, label, window }`          |
+| Set limits from your own code    | `writeOrgMeterLimits(orgId, { key: n \| null })`, `lib/tenancy/org-settings.ts`                             |
+| Read / set limits over HTTP      | `GET` / `PATCH /api/v1/admin/orgs/[id]/meters`; the **Limits** section on `/admin/orgs/[id]`                |
 
 ### Anti-patterns
 
@@ -256,6 +260,150 @@ that org grant it switches. Such an admin can still read them; a save answers
 saying to switch to the install organisation. An unbound admin API key acts as
 the install org and may write.
 
+## Meters and limits
+
+§110 could cap an org's AI spend and nothing else. A **meter** counts
+something an org has, and an org's **limit** for it is the most it may have.
+The platform owns the mechanism; the app owns every interpretation:
+
+- **What counts** is the app's `count({ orgId, from, to })`.
+- **Over which window** is the app's `period`: `'month'` (the UTC calendar
+  month, as the AI budget is), `'standing'` (how many there are now: seats,
+  questionnaires), or a function `({ orgId, now }) => ({ from, to })` for a
+  window of its own, such as a billing cycle anchored on the org's
+  subscription date. `from` is inclusive, `to` exclusive.
+- **The limit** is per org, set by platform staff or the app's own billing
+  code.
+- **What a refusal does** is the app's call. `checkMeterQuota()` answers and
+  changes nothing.
+
+```ts
+// lib/app/entitlements.ts
+export function initAppEntitlements(): void {
+  registerMeter({
+    key: 'completed_conversations',
+    label: 'Completed conversations',
+    description: 'Conversations finished this month.',
+    period: 'month',
+    count: ({ orgId, from, to }) =>
+      prisma.conversation.count({
+        where: { orgId, completedAt: { gte: from ?? undefined, lt: to ?? undefined } },
+      }),
+  });
+}
+
+// where the app adds one
+const check = await checkMeterQuota(orgId, 'completed_conversations');
+if (!check.allowed) {
+  throw new APIError(meterLimitMessage(check), ErrorCodes.FORBIDDEN, 403, {
+    reason: METER_LIMIT_REASON,
+  });
+}
+```
+
+`checkMeterQuota(orgId, key, { adding, now })` asks whether the org may add
+`adding` more (default 1) without passing its limit; `adding: 0` asks whether
+it is within it now. Zero is a valid limit and refuses the first one. The
+check and the add are not one transaction, so two adds at the same moment can
+both pass at the last free place; a hard limit that must never be passed by
+one needs the app's own lock.
+
+A meter's `count` and `period` run **as the org being counted**
+(`runAsOrg`) and **across its owners** (`runAcrossOwners`), whoever asks.
+Platform staff reading the admin page are in their own org, and a member's
+request is narrowed to that member's own rows, so without both the count above
+would read another org's conversations through the wrong org, or count only
+the asker's. A meter is an org-wide total that returns a number.
+
+### Seats
+
+Seats are the platform's own meter, because the platform owns the ways a
+person joins an org: members who are not platform staff, plus unexpired
+invitations into it. An invitation that grants the platform `ADMIN` role makes
+staff, so it takes no seat, and nor does one whose metadata cannot be read
+(`invitationTakesSeat()`). Nor does one for an address that is already a
+member of the org, or already platform staff: each person is counted once.
+An invitation takes a seat as soon as it is pending, so accepting one is not
+checked again, even if the limit was lowered since.
+
+With a seats limit set, an org's own admin is refused at the limit: a 403 with
+`details.reason: 'meter_limit_reached'` (`METER_LIMIT_REASON`), `meter`,
+`used` and `limit`. Two places refuse:
+
+- **A new invitation**, in `POST /api/v1/orgs/[id]/invitations`, after its
+  own checks. A resend is not refused, nor an invitation to an account that is
+  already platform staff.
+- **Adding a member**, in `addMember()` (`lib/tenancy/lifecycle.ts`), after
+  its own checks, so a user who is already a member or does not exist is told
+  that instead. Every caller gets it, `POST /api/v1/orgs/[id]/members` and a
+  fork's own route alike. A user who is platform staff takes no seat and is
+  not checked. A user with an open invitation into the org already holds a
+  seat, so adding them does not raise the count and is not refused, even
+  past a lowered limit; that invitation is looked up only when the add would
+  otherwise be refused (`refuseOverSeatsLimit()`'s `alreadyHeld`). Accepting an invitation passes `seatHeld`.
+
+**A platform admin is never refused**, and the platform's own invite route
+does not check: the vendor setting an org up must not be stopped by the limit
+it sold. Lowering a limit below what an org already has removes nobody; it
+cannot add more until it is back under.
+
+An app that reads a seat differently (one role only, say) registers `seats`
+with its own `count`, which replaces the platform's everywhere, its refusals
+included. The platform refuses a seat where one is made, when an invitation
+is issued and when a member is added directly, and lets in whoever takes up a
+seat already counted. So an app's count keeps two rules:
+
+- **An open invitation counts as the member it becomes.** Accepting it,
+  whether by signing up or with an existing account, is never checked, so it
+  must not change the count. A count that left invitations out would let any
+  number of accepted invitations past the limit; one that counted a role
+  counts the invitations for that role (`invitationTakesSeat()` is the
+  platform's test of which invitations take a seat).
+- **Platform staff take no seat.** Staff are never refused, and an
+  invitation to a staff account is not checked, so a count that included
+  them could pass the limit with no refusal.
+
+### What is stored, and how it fails
+
+Limits live at `Org.settings.quotas.meters = { [key]: number }`, beside the
+AI caps in the same slice. They are written one key at a time
+(`writeOrgMeterLimits(orgId, { key: limit | null })`, `null` clears), so a
+writer never clears a limit it did not know about. The caps writers
+(`writeOrgQuotas()`, and `PATCH /api/v1/admin/orgs/[id]` with
+`settings.quotas`) replace the caps and keep the limits. Limits stored for
+keys nothing registers any more are kept and limit nothing; the admin page
+lists them and can clear them.
+
+**Meters fail open**, unlike switches. A limit that cannot be read is dropped
+with a warning; a count that throws or answers something that is not a whole
+number of zero or more, a window function that throws or answers something
+that is not a window, and a key nothing registers all answer allowed and are
+logged. A broken meter must not stop an org working, and the AI budget still
+bounds what it can spend. With no limit set nothing is counted at all.
+
+### The admin surface
+
+`GET /api/v1/admin/orgs/[id]/meters` returns every meter, seats first: its
+label, period (`'custom'` for a function), whether it is the platform's own,
+the org's limit, how many it has within the window (counted whether or not a
+limit is set), and `countFailed` when it could not be counted; plus
+`unregistered`, `mayChange` and `registrationFailed`. `PATCH` takes
+`{ limits: { [key]: number | null } }` and changes only the keys it names. A
+key nothing registers is a 400, unless its value is `null` (clearing a kept
+limit). While the app's registration has failed, any key nothing registers is a
+409, whether set or cleared: it may be one of the app's meters, and clearing
+it would lose a limit the app reads again once it registers. The admin page
+then offers no clear for the limits it lists as stored. The same refusals as the switches apply: platform admins only, writes
+from the install org or an unbound admin API key (`mayChangeOrgCommercialSettings`),
+refused before the body is read. A write that changes something is audited as
+`org.meters.update` with the limits before, as stored, and after. A write
+that only drops an entry the read could not use is a change, so the row shows
+what went. One that changes nothing writes nothing. A settings write clash is a 409.
+
+`/admin/orgs/[id]` always shows a **Limits** section, since seats is always a
+meter: each meter's usage against its limit, marked at or over its limit, with
+a box per limit (empty for none).
+
 ## Privacy
 
 The slice is part of the org row, so the org export and org erasure already
@@ -264,8 +412,8 @@ names, not personal data.
 
 ## Not here
 
-- **Counting and limiting.** Quotas on meters an app registers (sessions,
-  questionnaires) and a core seats meter are §135 t-1035.
+- **Metering what was used.** A meter counts on demand from the app's own
+  tables; nothing records usage events, and nothing resets at a period's end.
 - **A new org's starting switches.** No hook runs when an org is created yet;
   that is §134's org-created seam.
 - **Billing.** Plans that write these switches, and payment, are §139.

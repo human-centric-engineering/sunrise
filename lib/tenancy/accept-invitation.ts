@@ -145,7 +145,10 @@ export async function acceptInvitationAsExistingUser(
 
   let membership: MembershipRecord;
   try {
-    membership = await addMember(orgId, accepter.id, role, ISSUED_INVITATION_ACTOR);
+    // The invitation's seat was counted when it was issued.
+    membership = await addMember(orgId, accepter.id, role, ISSUED_INVITATION_ACTOR, undefined, {
+      seatHeld: true,
+    });
   } catch (error) {
     // Already a member: the invitation has nothing left to grant.
     if (error instanceof APIError && error.code === 'ALREADY_MEMBER') {

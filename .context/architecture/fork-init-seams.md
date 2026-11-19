@@ -58,7 +58,7 @@ Three properties come with it:
 | `capabilities.ts`                  | `initAppCapabilities`                | `lib/orchestration/capabilities/registry.ts`                | roll back, log, **re-raise**   |
 | `context-contributors.ts`          | `initAppContextContributors`         | `lib/orchestration/chat/context-builder.ts`                 | roll back, log, degrade        |
 | `data-export.ts`                   | `initAppSubjectSources`              | `lib/privacy/subject-source-registry.ts`                    | roll back, log, **remembered** |
-| `entitlements.ts`                  | `initAppEntitlements`                | `lib/tenancy/entitlements.ts`                               | roll back, log, degrade        |
+| `entitlements.ts`                  | `initAppEntitlements`                | `lib/tenancy/entitlements.ts` (switches and meters)         | roll back, log, degrade        |
 | `erasure.ts`                       | `initAppErasureHooks`                | `lib/privacy/erasure-hooks.ts`                              | roll back, log, degrade        |
 | `evaluations.ts`                   | `initAppGraders`                     | `lib/orchestration/evaluations/graders/registry.ts`         | roll back, log, degrade        |
 | `evaluations.ts`                   | `initAppEvalCaseHooks`               | `lib/orchestration/evaluations/case-hooks.ts`               | roll back, log, **refuse**     |
