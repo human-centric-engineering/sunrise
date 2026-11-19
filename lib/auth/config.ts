@@ -28,7 +28,7 @@ import {
 } from '@/lib/tenancy/membership';
 import { ORG_ROLES } from '@/lib/tenancy/roles';
 import { asksSignupOrg, signupOrgMemberships } from '@/lib/tenancy/signup-org';
-import { completeSignupOrg, completeVerifiedSignupOrgs } from '@/lib/tenancy/lifecycle';
+import { completeSignupOrg, completeFoundedSignupOrgs } from '@/lib/tenancy/lifecycle';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { requiresEmailVerification } from '@/lib/auth/verification-status';
 import { isMultiTenant } from '@/lib/tenancy/context';
@@ -863,7 +863,7 @@ export async function afterEmailVerificationHook(
   // an app's hooks; never throws.
   if (isMultiTenant()) {
     keepRunningAfterResponse(
-      () => completeVerifiedSignupOrgs(user.id),
+      () => completeFoundedSignupOrgs(user.id),
       'Setting up a verified founder’s signup org',
       { userId: user.id }
     );
@@ -1116,13 +1116,22 @@ export async function sessionCreateBeforeHook(
     }
 
     const { orgId, healed, founded } = await activeOrgForSession(session.userId);
-    // A signup org the heal just gave its founder (§134 t-1062): its setup
-    // waited for them. After the response, as on the signup itself.
+    // A signup org whose setup waited for its founder (§134 t-1062): one the
+    // heal just gave them, and any they own still marked, which a session
+    // proves they can now act in (an accepted invitation, an OAuth address the
+    // provider did not verify). After the response, as on the signup itself.
     if (founded) {
       keepRunningAfterResponse(
         () => completeSignupOrg(founded, session.userId),
         'Setting up a healed signup org',
         { orgId: founded, userId: session.userId }
+      );
+    }
+    if (isMultiTenant()) {
+      keepRunningAfterResponse(
+        () => completeFoundedSignupOrgs(session.userId, { signingIn: true }),
+        'Setting up a signing-in founder’s signup org',
+        { userId: session.userId }
       );
     }
     if (orgId === null) {

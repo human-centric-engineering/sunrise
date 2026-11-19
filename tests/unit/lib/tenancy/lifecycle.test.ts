@@ -76,7 +76,7 @@ import {
   changeMemberRole,
   checkInvitationInto,
   completeSignupOrg,
-  completeVerifiedSignupOrgs,
+  completeFoundedSignupOrgs,
   createOrg,
   createSignupOrg,
   OrgLifecycleError,
@@ -418,22 +418,22 @@ describe('createSignupOrg (§134 t-1062)', () => {
     expect(order).toEqual(['hooks', 'agents']);
   });
 
-  it('completeVerifiedSignupOrgs sets up each org the release hands back, with its owner', async () => {
+  it('completeFoundedSignupOrgs sets up each org the release hands back, with its owner', async () => {
     mockRunHooks.mockResolvedValue({ succeeded: 1, failed: 0, unregistered: 0 });
     mockReconcile.mockResolvedValue({});
     db.$queryRaw.mockResolvedValue([{ orgId: ORG, ownerUserId: OWNER }]);
 
-    await completeVerifiedSignupOrgs(OWNER);
+    await completeFoundedSignupOrgs(OWNER);
 
     expect(db.$queryRaw).toHaveBeenCalledTimes(1);
     expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: OWNER });
     expect(mockReconcile).toHaveBeenCalledWith(ORG);
   });
 
-  it('completeVerifiedSignupOrgs logs a failed release and sets nothing up, without throwing', async () => {
+  it('completeFoundedSignupOrgs logs a failed release and sets nothing up, without throwing', async () => {
     db.$queryRaw.mockRejectedValue(new Error('connection reset'));
 
-    await expect(completeVerifiedSignupOrgs(OWNER)).resolves.toBeUndefined();
+    await expect(completeFoundedSignupOrgs(OWNER)).resolves.toBeUndefined();
 
     expect(mockRunHooks).not.toHaveBeenCalled();
     expect(vi.mocked(logger.error)).toHaveBeenCalledWith(

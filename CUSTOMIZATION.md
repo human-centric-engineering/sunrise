@@ -709,8 +709,8 @@ the membership, the record on the row and the first session all agree; asking
 from `lib/app/user-created.ts` instead would leave a window, and a failure, in
 which the person stays in your org. A fault never refuses a signup: a resolver
 that throws, runs past 5 seconds (`SIGNUP_ORG_RESOLVER_TIMEOUT_MS`), answers
-nothing usable, or names an org that does not exist, is suspended or is
-another signup's still awaiting its founder, puts the person in the install
+nothing usable, or names an org that does not exist, is suspended, is at its
+seats limit, or is another signup's still awaiting its founder, puts the person in the install
 org, logged at `error`. On an email signup the address is not proven yet
 (`emailVerified: false`), so matching on it is safe only where sign-in requires
 verification (`REQUIRE_EMAIL_VERIFICATION`, the production default). An OAuth
@@ -718,7 +718,7 @@ signup's flag is the provider's, and can be false too.
 
 An org of their own is set up (your org-created hooks, the platform agents)
 after the signup responds, and only once its founder can act there: where
-verification is required, when they verify their address. So a form submitted
+verification is required, when they verify their address or sign in. So a form submitted
 with an address nobody proves runs none of your hooks.
 
 Never asked: an invited signup (an org's own waitlist invitation names that

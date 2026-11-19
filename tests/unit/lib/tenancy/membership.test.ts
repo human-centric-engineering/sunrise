@@ -959,10 +959,11 @@ describe('the signup record (t-838)', () => {
     );
 
     const [, , , , canAct] = mocks.$executeRaw.mock.calls[0] as unknown as unknown[];
+    // Verified, or has had a session (OAuth, an accepted invitation).
     expect(sqlText(canAct)).toMatch(
-      /EXISTS \(SELECT 1 FROM "user" fu WHERE fu\.id = \? AND fu\."emailVerified"\)/
+      /^\(EXISTS \(SELECT 1 FROM "user" fu WHERE fu\.id = \? AND fu\."emailVerified"\) OR EXISTS \(SELECT 1 FROM session fs WHERE fs\."userId" = \?\)\)$/
     );
-    expect(sqlValues(canAct)).toEqual([USER_ID]);
+    expect(sqlValues(canAct)).toEqual([USER_ID, USER_ID]);
   });
 
   it('reports no founded org when the membership’s org carries no mark', async () => {
@@ -1134,14 +1135,23 @@ describe('releaseFoundedSignupOrgs (§134 t-1062)', () => {
     expect(await releaseFoundedSignupOrgs({ userId: USER_ID }, db)).toEqual(released);
 
     const { text, values } = statement();
-    expect(text).toMatch(/JOIN org_membership m ON m\."orgId" = o\.id AND m\.role = 'OWNER'/);
+    expect(text).toMatch(/JOIN org_membership m ON m\."orgId" = o\.id AND m\.role = \?::"OrgRole"/);
     expect(text).toMatch(/WHERE o\.settings \? \?/);
     expect(text).toMatch(/UPDATE org SET settings = org\.settings - \?::text/);
     // Re-tested on the row updated, so two callers cannot both release it.
     expect(text).toMatch(/WHERE org\.id = founded\."orgId" AND org\.settings \? \? RETURNING/);
-    expect(sqlText(values[1])).toBe('AND m."userId" = ?');
-    expect(sqlValues(values[1])).toEqual([USER_ID]);
-    expect(sqlText(values[2])).toBe('TRUE');
+    expect(values[0]).toBe(ORG_OWNER_ROLE);
+    expect(sqlText(values[2])).toBe('AND m."userId" = ?');
+    expect(sqlValues(values[2])).toEqual([USER_ID]);
+    expect(sqlText(values[3])).toBe('TRUE');
+  });
+
+  it('signing in: releases their orgs whatever the verification rule, since a session is being minted', async () => {
+    mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
+
+    await releaseFoundedSignupOrgs({ userId: USER_ID, signingIn: true }, db);
+
+    expect(sqlText(statement().values[3])).toBe('TRUE');
   });
 
   it('for the job: only orgs created before the cutoff, and only a verified owner where verification is required', async () => {
@@ -1151,9 +1161,10 @@ describe('releaseFoundedSignupOrgs (§134 t-1062)', () => {
     await releaseFoundedSignupOrgs({ createdBefore: cutoff }, db);
 
     const { values } = statement();
-    expect(sqlText(values[1])).toBe('AND o."createdAt" < ?');
-    expect(sqlValues(values[1])).toEqual([cutoff]);
-    // Each owner's own row, not a bound value.
-    expect(sqlText(values[2])).toMatch(/fu\.id = m\."userId" AND fu\."emailVerified"/);
+    expect(sqlText(values[2])).toBe('AND o."createdAt" < ?');
+    expect(sqlValues(values[2])).toEqual([cutoff]);
+    // Each owner's own rows, not a bound value.
+    expect(sqlText(values[3])).toMatch(/fu\.id = m\."userId" AND fu\."emailVerified"/);
+    expect(sqlText(values[3])).toMatch(/fs\."userId" = m\."userId"/);
   });
 });

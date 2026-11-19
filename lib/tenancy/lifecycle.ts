@@ -308,9 +308,9 @@ export async function createOrg(
  * is verified, or the install does not require it. That is the transaction
  * that writes the founder's membership (`writeNewUserMemberships`,
  * `healSignupRecord`) when it already holds, else the founder's verification
- * ({@link completeVerifiedSignupOrgs}); then {@link completeSignupOrg} runs
+ * ({@link completeFoundedSignupOrgs}); then {@link completeSignupOrg} runs
  * both. So an email signup whose address is never proven gets an org row and
- * nothing set up in it. The org-created retry job skips a marked org, and
+ * none of the app's setup (the `platformAgents` job may still place agents). The org-created retry job skips a marked org, and
  * releases the mark itself for a founder who can act but whose release was
  * missed.
  *
@@ -342,7 +342,7 @@ export async function createSignupOrg(
  * exists: the app's org-created hooks, told the founder as owner, then the
  * platform agents. Called once the org's awaiting-founder mark is removed: by
  * the signup's after hook and the sign-in heal when their membership write
- * removed it, and by {@link completeVerifiedSignupOrgs}. Callers on a request
+ * removed it, and by {@link completeFoundedSignupOrgs}. Callers on a request
  * run it after the response, since a hook may take seconds. Never throws:
  * whatever fails is caught up by the `orgCreatedHooks` and `platformAgents`
  * maintenance jobs.
@@ -353,16 +353,21 @@ export async function completeSignupOrg(orgId: string, ownerUserId: string): Pro
 }
 
 /**
- * Set up the signup orgs `userId` founded whose setup waited for their address
- * to be proven (§134 t-1062): release each one's awaiting-founder mark
+ * Set up the signup orgs `userId` founded whose setup waited for them to be
+ * able to act there (§134 t-1062): release each one's awaiting-founder mark
  * (`releaseFoundedSignupOrgs`) and run {@link completeSignupOrg}. Called when
- * they verify their address. Never throws: a release that fails is logged,
- * and the `orgCreatedHooks` job's backstop releases the org later.
+ * they verify their address, and at every sign-in with `signingIn` (a session
+ * is being minted, so they can act). With nothing marked it is one query that
+ * changes nothing. Never throws: a release that fails is logged, and the
+ * `orgCreatedHooks` job's backstop releases the org later.
  */
-export async function completeVerifiedSignupOrgs(userId: string): Promise<void> {
+export async function completeFoundedSignupOrgs(
+  userId: string,
+  options: { signingIn?: boolean } = {}
+): Promise<void> {
   let founded: Array<{ orgId: string; ownerUserId: string }>;
   try {
-    founded = await releaseFoundedSignupOrgs({ userId });
+    founded = await releaseFoundedSignupOrgs({ userId, signingIn: options.signingIn });
   } catch (error) {
     logger.error('Failed to release a verified founder’s signup org', error, { userId });
     return;

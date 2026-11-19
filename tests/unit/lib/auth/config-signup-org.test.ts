@@ -102,12 +102,12 @@ vi.mock('@/lib/logging', () => ({
 
 const mockCreateSignupOrg = vi.hoisted(() => vi.fn());
 const mockCompleteSignupOrg = vi.hoisted(() => vi.fn());
-const mockCompleteVerifiedSignupOrgs = vi.hoisted(() => vi.fn());
+const mockCompleteFoundedSignupOrgs = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/tenancy/lifecycle', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/tenancy/lifecycle')>()),
   createSignupOrg: mockCreateSignupOrg,
   completeSignupOrg: mockCompleteSignupOrg,
-  completeVerifiedSignupOrgs: mockCompleteVerifiedSignupOrgs,
+  completeFoundedSignupOrgs: mockCompleteFoundedSignupOrgs,
 }));
 
 import {
@@ -193,7 +193,7 @@ beforeEach(() => {
   db.$executeRaw.mockResolvedValue(0);
   mockCreateSignupOrg.mockResolvedValue({ id: NEW_ORG, slug: 'ada-1', name: 'x' });
   mockCompleteSignupOrg.mockResolvedValue(undefined);
-  mockCompleteVerifiedSignupOrgs.mockResolvedValue(undefined);
+  mockCompleteFoundedSignupOrgs.mockResolvedValue(undefined);
 });
 
 describe('at multi, a self-serve signup founds an org of their own (#1232)', () => {
@@ -422,18 +422,34 @@ describe('a signup org’s deferred setup, off the request (t-1062)', () => {
     await vi.waitFor(() => expect(mockCompleteSignupOrg).toHaveBeenCalledWith(NEW_ORG, userId));
   });
 
+  it('every sign-in at multi releases the signup orgs the user founded, as able to act', async () => {
+    const userId = 'cmuser00000000000000signin';
+    db.orgMembership.findMany.mockResolvedValue([
+      { orgId: NEW_ORG, createdAt: new Date(), org: { status: 'ACTIVE' } },
+    ]);
+
+    await sessionCreateBeforeHook(session(userId), EMAIL_PATH);
+    await vi.waitFor(() =>
+      expect(mockCompleteFoundedSignupOrgs).toHaveBeenCalledWith(userId, { signingIn: true })
+    );
+
+    mockCompleteFoundedSignupOrgs.mockClear();
+    mockEnv.TENANCY_MODE = 'single';
+    await sessionCreateBeforeHook(session(userId), EMAIL_PATH);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockCompleteFoundedSignupOrgs).not.toHaveBeenCalled();
+  });
+
   it('verifying an address sets up the signup orgs that waited for it, at multi only', async () => {
     const verified = { id: 'cmuser0000000000000signup', email: 'ada@example.com', name: 'Ada' };
 
     await afterEmailVerificationHook(verified);
-    await vi.waitFor(() =>
-      expect(mockCompleteVerifiedSignupOrgs).toHaveBeenCalledWith(verified.id)
-    );
+    await vi.waitFor(() => expect(mockCompleteFoundedSignupOrgs).toHaveBeenCalledWith(verified.id));
 
-    mockCompleteVerifiedSignupOrgs.mockClear();
+    mockCompleteFoundedSignupOrgs.mockClear();
     mockEnv.TENANCY_MODE = 'single';
     await afterEmailVerificationHook(verified);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(mockCompleteVerifiedSignupOrgs).not.toHaveBeenCalled();
+    expect(mockCompleteFoundedSignupOrgs).not.toHaveBeenCalled();
   });
 });

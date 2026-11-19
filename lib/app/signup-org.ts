@@ -16,11 +16,14 @@
  * its OWNER, and starts there. Register a resolver to choose otherwise:
  *
  *   import { prisma } from '@/lib/db/client';
+ *   import { requiresEmailVerification } from '@/lib/auth/verification-status';
  *   import { registerSignupOrgResolver } from '@/lib/tenancy/signup-org';
  *
  *   export function initAppSignupOrgResolver(): void {
- *     // People from a customer's domain join that customer's org.
- *     registerSignupOrgResolver(async ({ email }) => {
+ *     // People from a customer's domain join that customer's org, but only
+ *     // on an address that is, or must be, proven.
+ *     registerSignupOrgResolver(async ({ email, emailVerified }) => {
+ *       if (!emailVerified && !requiresEmailVerification()) return { kind: 'own' };
  *       const domain = email.split('@')[1]?.toLowerCase();
  *       const org = domain
  *         ? await prisma.org.findFirst({ where: { slug: ORG_SLUG_BY_DOMAIN[domain] } })
@@ -43,8 +46,8 @@
  * An OAuth signup's flag is the provider's, and can be false too.
  *
  * A resolver that throws, runs past 5 seconds, answers nothing, or names an
- * org that does not exist, is suspended, or is another signup's still awaiting
- * its founder, puts the signup in the install org, logged at
+ * org that does not exist, is suspended, is at its seats limit, or is another
+ * signup's still awaiting its founder, puts the signup in the install org, logged at
  * `error`: a fault here never refuses a signup. Empty = an org of their own
  * for every self-serve signup at `multi`.
  *

@@ -619,14 +619,17 @@ function clearAwaitingFounder(
 
 /**
  * Whether the user `userId` (an SQL expression) can act in an org they
- * founded: their address is verified, or the install does not require it
- * (`requiresEmailVerification()`). Until then a signup org's setup (the app's
- * org-created hooks, which may provision paid resources) waits, so a form
- * submitted with an address nobody proves sets nothing up.
+ * founded: the install does not require a verified address
+ * (`requiresEmailVerification()`), or theirs is verified, or they have had a
+ * session (an OAuth sign-in is not held for verification, and an accepted
+ * invitation proves the address and signs them in). Until then a signup org's
+ * app setup (the org-created hooks, which may provision paid resources) waits,
+ * so a form submitted with an address nobody proves runs none of it.
  */
 function founderCanAct(userId: Prisma.Sql): Prisma.Sql {
   if (!requiresEmailVerification()) return Prisma.sql`TRUE`;
-  return Prisma.sql`EXISTS (SELECT 1 FROM "user" fu WHERE fu.id = ${userId} AND fu."emailVerified")`;
+  return Prisma.sql`(EXISTS (SELECT 1 FROM "user" fu WHERE fu.id = ${userId} AND fu."emailVerified")
+         OR EXISTS (SELECT 1 FROM session fs WHERE fs."userId" = ${userId}))`;
 }
 
 /**
@@ -635,7 +638,8 @@ function founderCanAct(userId: Prisma.Sql): Prisma.Sql {
  * owner: the orgs whose deferred setup is now due (`completeSignupOrg()`).
  *
  * - `userId`: only the orgs this user owns. Called when they verify their
- *   address, the moment an email signup's org stops waiting.
+ *   address, and at every sign-in with `signingIn` (better-auth is minting
+ *   them a session, so they can act whatever the row says yet).
  * - `createdBefore`: only orgs created before it. The `orgCreatedHooks` job's
  *   backstop, for a founder whose mark the moment above missed (a heal that
  *   wrote their membership outside the signup, a verification whose release
@@ -645,21 +649,25 @@ function founderCanAct(userId: Prisma.Sql): Prisma.Sql {
  * same org. System-scoped: `org` has no row policy.
  */
 export async function releaseFoundedSignupOrgs(
-  filter: { userId: string } | { createdBefore: Date },
+  filter: { userId: string; signingIn?: boolean } | { createdBefore: Date },
   db: Pick<PrismaClient, '$queryRaw'> = prisma
 ): Promise<Array<{ orgId: string; ownerUserId: string }>> {
   const scope =
     'userId' in filter
       ? Prisma.sql`AND m."userId" = ${filter.userId}`
       : Prisma.sql`AND o."createdAt" < ${filter.createdBefore}`;
+  const canAct =
+    'userId' in filter && filter.signingIn
+      ? Prisma.sql`TRUE`
+      : founderCanAct(Prisma.sql`m."userId"`);
   return db.$queryRaw<Array<{ orgId: string; ownerUserId: string }>>`
     WITH founded AS (
       SELECT DISTINCT ON (o.id) o.id AS "orgId", m."userId" AS "ownerUserId"
         FROM org o
-        JOIN org_membership m ON m."orgId" = o.id AND m.role = 'OWNER'
+        JOIN org_membership m ON m."orgId" = o.id AND m.role = ${ORG_OWNER_ROLE}::"OrgRole"
        WHERE o.settings ? ${ORG_AWAITING_FOUNDER_KEY}
          ${scope}
-         AND ${founderCanAct(Prisma.sql`m."userId"`)}
+         AND ${canAct}
        ORDER BY o.id, m."createdAt"
     )
     UPDATE org

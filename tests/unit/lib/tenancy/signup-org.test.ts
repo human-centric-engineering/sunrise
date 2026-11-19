@@ -33,6 +33,9 @@ vi.mock('@/lib/db/client', () => ({ prisma: db }));
 
 const mockCreateSignupOrg = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/tenancy/lifecycle', () => ({ createSignupOrg: mockCreateSignupOrg }));
+// The seats guard's own rules are meters.test.ts; here, that a join asks it.
+const mockRefuseSeats = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('@/lib/tenancy/meters', () => ({ refuseOverSeatsLimit: mockRefuseSeats }));
 
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -209,6 +212,8 @@ describe('signupOrgMemberships — an app’s resolver', () => {
 
     expect(result).toEqual({ membership: { orgId: CUSTOMER_ORG, role: DEFAULT_ORG_ROLE } });
     expect(mockCreateSignupOrg).not.toHaveBeenCalled();
+    // The seat is counted as addMember() counts one.
+    expect(mockRefuseSeats).toHaveBeenCalledWith(CUSTOMER_ORG, { platformAdmin: false });
   });
 
   it('`join` with a role gives that role', async () => {
@@ -258,6 +263,19 @@ describe('signupOrgMemberships — an app’s resolver', () => {
       expect(await signupOrgMemberships(person, EMAIL)).toBeNull();
       expect(logger.error).toHaveBeenCalledWith(
         `Signup-org resolver named an org that ${why}; using the install org`,
+        expect.objectContaining({ orgId: CUSTOMER_ORG })
+      );
+    });
+
+    it('when it names an org at its seats limit', async () => {
+      registerSignupOrgResolver(() => ({ kind: 'join', orgId: CUSTOMER_ORG }));
+      db.org.findUnique.mockResolvedValue({ id: CUSTOMER_ORG, status: 'ACTIVE', settings: {} });
+      mockRefuseSeats.mockRejectedValueOnce(new Error('limit of 5 for seats'));
+
+      expect(await signupOrgMemberships(person, EMAIL)).toBeNull();
+      expect(logger.error).toHaveBeenCalledWith(
+        'Signup-org resolver named an org at its seats limit; using the install org',
+        expect.any(Error),
         expect.objectContaining({ orgId: CUSTOMER_ORG })
       );
     });

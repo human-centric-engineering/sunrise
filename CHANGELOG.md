@@ -85,12 +85,13 @@ release process.
   org-created hooks (`source: 'signup'`) and platform agents run through
   `completeSignupOrg()`, after the response, once its founder is a member
   and can act there: where `REQUIRE_EMAIL_VERIFICATION` holds, when they
-  verify (`completeVerifiedSignupOrgs()`, `releaseFoundedSignupOrgs()`), with
+  verify or sign in (`completeFoundedSignupOrgs()`,
+  `releaseFoundedSignupOrgs()`), with
   the `orgCreatedHooks` job releasing a missed one after
   `ORG_CREATED_FOUNDER_GRACE_MS` (15 min). `requiresEmailVerification()`
   (`lib/auth/verification-status.ts`) is the one statement of that rule. A
-  resolver naming a suspended org, or another signup's still awaiting its
-  founder, falls back like a missing one. A new
+  resolver naming a suspended org, one at its seats limit, or another
+  signup's still awaiting its founder, falls back like a missing one. A new
   system-scoped `abandonedSignupOrgs` maintenance job (appended to
   `backgroundTasks`, hourly) deletes a marked org with no member that no
   user's signup record names, after `SIGNUP_ORG_ABANDONED_AFTER_MS` (1 h).

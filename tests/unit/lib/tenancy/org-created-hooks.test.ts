@@ -41,6 +41,13 @@ const mockRelease = vi.hoisted(() =>
 );
 vi.mock('@/lib/tenancy/membership', () => ({ releaseFoundedSignupOrgs: mockRelease }));
 
+// The backstop runs only at `multi`; everything else here is mode-blind.
+const tenancy = vi.hoisted(() => ({ multi: false }));
+vi.mock('@/lib/tenancy/context', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tenancy/context')>()),
+  isMultiTenant: () => tenancy.multi,
+}));
+
 /** One org row's settings column, and its OWNER memberships, as the double holds them. */
 const store = vi.hoisted(() => ({
   orgs: new Map<
@@ -178,6 +185,7 @@ function register(entries: Record<string, (ctx: OrgCreatedContext) => unknown>) 
 }
 
 beforeEach(() => {
+  tenancy.multi = false;
   __resetOrgCreatedHooksForTests();
   initAppOrgCreatedHooks.mockReset().mockImplementation(() => {});
   store.orgs.clear();
@@ -631,6 +639,17 @@ describe('retryOwedOrgCreatedHooks', () => {
       failed: 0,
     });
     expect(db.$queryRaw).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled(); // `single`: no signup orgs
+  });
+
+  it('at multi, releases founded signup orgs even with no hook registered (t-1062)', async () => {
+    tenancy.multi = true;
+
+    await retryOwedOrgCreatedHooks();
+
+    // The mark also keeps an org from being a resolver's `join` target.
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+    expect(db.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('runs the owed hooks of each ACTIVE org that owes some, each in its own scope', async () => {
@@ -688,6 +707,7 @@ describe('retryOwedOrgCreatedHooks', () => {
   });
 
   it('releases a signup org whose founder can act once it is past the grace period, and runs its hooks in the same tick (t-1062)', async () => {
+    tenancy.multi = true;
     const seen: string[] = [];
     register({
       'app:provider': (ctx) => {
@@ -726,6 +746,7 @@ describe('retryOwedOrgCreatedHooks', () => {
   });
 
   it('still runs the owed hooks when the release fails, and logs it', async () => {
+    tenancy.multi = true;
     const seen: string[] = [];
     register({ 'app:provider': (ctx) => void seen.push(ctx.orgId) });
     seedOrg(['app:provider']);

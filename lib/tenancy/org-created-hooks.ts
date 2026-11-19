@@ -48,7 +48,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppOrgCreatedHooks } from '@/lib/app/org-created';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
 import { withTimeout } from '@/lib/utils/with-timeout';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { releaseFoundedSignupOrgs } from '@/lib/tenancy/membership';
@@ -404,15 +404,19 @@ export interface OrgCreatedRetryResult {
 export async function retryOwedOrgCreatedHooks(): Promise<OrgCreatedRetryResult> {
   const result: OrgCreatedRetryResult = { orgs: 0, succeeded: 0, failed: 0 };
   appInit.ensure();
-  if (hooks.size === 0) return result;
 
-  // The backstop for signup orgs whose founder can act (t-1062); a failure
-  // only delays them to the next tick.
-  await releaseFoundedSignupOrgs({
-    createdBefore: new Date(Date.now() - ORG_CREATED_FOUNDER_GRACE_MS),
-  }).catch((error: unknown) => {
-    logger.error('Failed to release founded signup orgs; their hooks wait a tick', error);
-  });
+  // The backstop for signup orgs whose founder can act (t-1062), with or
+  // without hooks: the mark also keeps an org from being a resolver's `join`
+  // target. A failure only delays them to the next tick. At `single` no
+  // signup org is made, so it makes no query.
+  if (isMultiTenant()) {
+    await releaseFoundedSignupOrgs({
+      createdBefore: new Date(Date.now() - ORG_CREATED_FOUNDER_GRACE_MS),
+    }).catch((error: unknown) => {
+      logger.error('Failed to release founded signup orgs; their hooks wait a tick', error);
+    });
+  }
+  if (hooks.size === 0) return result;
 
   // Only orgs owing a key this process can run: one owing only a key no
   // version registers any more would otherwise take a batch slot every tick.

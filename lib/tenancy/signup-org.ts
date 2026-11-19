@@ -40,11 +40,12 @@
  *
  * **Its setup waits for a founder who can act.** The app's org-created hooks
  * (which may provision paid resources) and the platform agents run once the
- * founder is a member and their address is verified, or the install does not
- * require it (`REQUIRE_EMAIL_VERIFICATION`). Until then the org keeps its mark,
- * so an email signup with an address nobody proves leaves an org row and
- * nothing set up in it. That setup runs after the response, never on the
- * signup request.
+ * founder is a member and can act there: the install does not require a
+ * verified address (`REQUIRE_EMAIL_VERIFICATION`), or theirs is verified, or
+ * they have signed in. Until then the org keeps its mark, so an email signup
+ * with an address nobody proves runs none of the app's setup (the
+ * `platformAgents` job may still place agents). That setup runs after the
+ * response, never on the signup request.
  *
  * @see lib/app/signup-org.ts — the fork-owned registration seam
  * @see lib/tenancy/lifecycle.ts — `createSignupOrg()`, `completeSignupOrg()`
@@ -61,6 +62,7 @@ import { withTimeout } from '@/lib/utils/with-timeout';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { createSignupOrg } from '@/lib/tenancy/lifecycle';
+import { refuseOverSeatsLimit } from '@/lib/tenancy/meters';
 import { ORG_AWAITING_FOUNDER_KEY } from '@/lib/tenancy/org-settings';
 import {
   invitedOrgId,
@@ -256,6 +258,20 @@ export async function signupOrgMemberships(
         });
         return null;
       }
+      // The seat it takes is counted as `addMember()` counts one; a full org
+      // is a fallback like the rest, not a refusal of the signup.
+      const full = await refuseOverSeatsLimit(org.id, { platformAdmin: false }).then(
+        () => false,
+        (error: unknown) => {
+          logger.error(
+            'Signup-org resolver named an org at its seats limit; using the install org',
+            error,
+            { ...log, orgId: org.id }
+          );
+          return true;
+        }
+      );
+      if (full) return null;
       return { membership: { orgId: org.id, role: answer.role ?? DEFAULT_ORG_ROLE } };
     }
 
