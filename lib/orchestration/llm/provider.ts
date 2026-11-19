@@ -172,6 +172,16 @@ export interface LlmProvider {
   testConnection(): Promise<ProviderTestResult>;
 
   /**
+   * Check the client's key alone, with a call the vendor authenticates
+   * (§137 t-1056): `ok: false` when the vendor refuses the key. Used before an
+   * org's own key is saved (`testProviderKey`), where a check a host answers
+   * for any key would store a key that then fails on the org's first call.
+   * Never throws. Optional: a provider without it is tested with
+   * `testConnection()`. `models` may be empty when the check lists none.
+   */
+  testKey?(): Promise<ProviderTestResult>;
+
+  /**
    * Transcribe audio bytes to text. Optional — providers without an
    * audio surface (e.g. Anthropic, plain Ollama) simply omit it. The
    * routing layer (`getAudioProvider` in `provider-manager.ts`) filters

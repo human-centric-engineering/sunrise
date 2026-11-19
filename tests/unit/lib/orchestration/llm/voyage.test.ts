@@ -671,3 +671,96 @@ describe('VoyageProvider.embedMany()', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// testKey (§137 t-1056)
+// ---------------------------------------------------------------------------
+
+describe('VoyageProvider.testKey', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('embeds one word with the key, once, and passes when Voyage answers', async () => {
+    mockFetchWithTimeout.mockResolvedValue(makeEmbeddingResponse());
+
+    const result = await new VoyageProvider(VALID_CONFIG).testKey();
+
+    expect(result).toEqual({ ok: true, models: ['voyage-3'] });
+    expect(mockFetchWithTimeout).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetchWithTimeout.mock.calls[0] as [string, RequestInit];
+    // Voyage has no model list: the embeddings call is the one it authenticates.
+    expect(url).toBe('https://api.voyageai.com/v1/embeddings');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer test-voyage-api-key' });
+    expect(typeof init.body).toBe('string');
+    expect(JSON.parse(init.body as string)).toEqual({
+      model: 'voyage-3',
+      input: ['ping'],
+      input_type: 'query',
+    });
+  });
+
+  it('asks the row’s own host when it has one', async () => {
+    mockFetchWithTimeout.mockResolvedValue(makeEmbeddingResponse());
+
+    await new VoyageProvider({
+      ...VALID_CONFIG,
+      baseUrl: 'https://voyage-proxy.example.com/v1/',
+    }).testKey();
+
+    expect(mockFetchWithTimeout.mock.calls[0][0]).toBe(
+      'https://voyage-proxy.example.com/v1/embeddings'
+    );
+  });
+
+  it('fails a key Voyage refuses, with the status and its message', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      makeMockResponse({
+        ok: false,
+        status: 401,
+        text: '{"detail":"Provided API key is invalid."}',
+      })
+    );
+
+    const result = await new VoyageProvider(VALID_CONFIG).testKey();
+
+    expect(result).toEqual({
+      ok: false,
+      models: [],
+      error: 'Voyage key test failed (401): {"detail":"Provided API key is invalid."}',
+    });
+    // A key test is not retried.
+    expect(mockFetchWithTimeout).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails with the status alone when the body cannot be read', async () => {
+    const response = makeMockResponse({ ok: false, status: 403 });
+    vi.mocked(response.text).mockRejectedValue(new Error('body gone'));
+    mockFetchWithTimeout.mockResolvedValue(response);
+
+    await expect(new VoyageProvider(VALID_CONFIG).testKey()).resolves.toEqual({
+      ok: false,
+      models: [],
+      error: 'Voyage key test failed (403)',
+    });
+  });
+
+  it('fails when Voyage cannot be reached', async () => {
+    mockFetchWithTimeout.mockRejectedValue(new Error('timed out'));
+
+    await expect(new VoyageProvider(VALID_CONFIG).testKey()).resolves.toEqual({
+      ok: false,
+      models: [],
+      error: 'timed out',
+    });
+  });
+
+  it('stringifies a non-Error rejection', async () => {
+    mockFetchWithTimeout.mockRejectedValue('offline');
+
+    await expect(new VoyageProvider(VALID_CONFIG).testKey()).resolves.toMatchObject({
+      ok: false,
+      error: 'offline',
+    });
+  });
+});

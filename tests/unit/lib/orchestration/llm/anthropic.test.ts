@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const createMock = vi.fn();
+const modelsListMock = vi.fn();
 
 /** Options the SDK client was constructed with, so the wiring can be asserted. */
 const anthropicConstructorArgs: Record<string, unknown>[] = [];
@@ -15,6 +16,7 @@ const anthropicConstructorArgs: Record<string, unknown>[] = [];
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages = { create: createMock };
+    public models = { list: modelsListMock };
     constructor(opts: unknown) {
       anthropicConstructorArgs.push((opts ?? {}) as Record<string, unknown>);
     }
@@ -32,6 +34,7 @@ import type { LlmReasoningBlock, StreamChunk } from '@/lib/orchestration/llm/typ
 
 beforeEach(() => {
   createMock.mockReset();
+  modelsListMock.mockReset();
 });
 
 /**
@@ -1194,6 +1197,38 @@ describe('AnthropicProvider.chatStream', () => {
 
     const done = chunks[chunks.length - 1] as { type: string };
     expect(done.type).toBe('done');
+  });
+});
+
+describe('AnthropicProvider.testKey (§137 t-1056)', () => {
+  it('asks for the model list, which Anthropic authenticates, and sends no message', async () => {
+    modelsListMock.mockResolvedValue({ data: [{ id: 'claude-haiku-4-5' }] });
+
+    const result = await makeProvider().testKey();
+
+    expect(result.ok).toBe(true);
+    expect(result.models).toContain('claude-sonnet-4-6');
+    expect(modelsListMock).toHaveBeenCalledWith({ limit: 1 });
+    // Not billed, and no fixed model the key's workspace must be able to use.
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('fails a key Anthropic refuses, with its message', async () => {
+    modelsListMock.mockRejectedValue(new Error('401 invalid x-api-key'));
+
+    const result = await makeProvider().testKey();
+
+    expect(result).toEqual({ ok: false, models: [], error: '401 invalid x-api-key' });
+  });
+
+  it('stringifies a non-Error rejection', async () => {
+    modelsListMock.mockRejectedValue('down');
+
+    await expect(makeProvider().testKey()).resolves.toEqual({
+      ok: false,
+      models: [],
+      error: 'down',
+    });
   });
 });
 

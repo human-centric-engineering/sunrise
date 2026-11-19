@@ -266,6 +266,44 @@ export class VoyageProvider implements LlmProvider {
   testConnection(): Promise<ProviderTestResult> {
     return this.inner.testConnection();
   }
+
+  /**
+   * The key alone (§137 t-1056): one embedding of one word, at the row's
+   * host. Voyage has no model list (`GET /models` answers 404 to any key,
+   * which is why `testConnection()` cannot pass one), and its embeddings call
+   * refuses a wrong key with 401. Billed, a token or two. One attempt: a
+   * key test is not retried.
+   */
+  async testKey(): Promise<ProviderTestResult> {
+    try {
+      const response = await fetchWithTimeout(
+        `${this.embedBaseUrl}/embeddings`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.embeddingModel,
+            input: ['ping'],
+            input_type: 'query',
+          }),
+        },
+        this.timeoutMs
+      );
+      if (response.ok) return { ok: true, models: [this.embeddingModel] };
+      const detail = await response.text().catch(() => '');
+      return {
+        ok: false,
+        models: [],
+        error: `Voyage key test failed (${response.status})${detail ? `: ${detail}` : ''}`,
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ok: false, models: [], error };
+    }
+  }
 }
 
 /** `JSON.parse` that answers `undefined` for a non-JSON body instead of throwing. */

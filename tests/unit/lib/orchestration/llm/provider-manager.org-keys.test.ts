@@ -70,13 +70,20 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+/** An Anthropic client the mock built: its key, and its two vendor calls. */
+interface MockClient {
+  apiKey: unknown;
+  create: ReturnType<typeof vi.fn>;
+  list: ReturnType<typeof vi.fn>;
+}
 /** Every Anthropic client constructed, with the key it was built with. */
-const clients = vi.hoisted(() => [] as { apiKey: unknown; create: ReturnType<typeof vi.fn> }[]);
+const clients = vi.hoisted((): MockClient[] => []);
 /** An error the next vendor call throws, once. */
 const sdkFailure = vi.hoisted((): { next: Error | null } => ({ next: null }));
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages: { create: ReturnType<typeof vi.fn> };
+    public models: { list: ReturnType<typeof vi.fn> };
     constructor(opts: { apiKey?: unknown }) {
       const create = vi.fn(async () => {
         const failure = sdkFailure.next;
@@ -89,8 +96,16 @@ vi.mock('@anthropic-ai/sdk', () => {
           stop_reason: 'end_turn',
         };
       });
+      // The key test's call (t-1056): the model list, failing as `create` does.
+      const list = vi.fn(async () => {
+        const failure = sdkFailure.next;
+        sdkFailure.next = null;
+        if (failure) throw failure;
+        return { data: [{ id: 'm' }] };
+      });
       this.messages = { create };
-      clients.push({ apiKey: opts.apiKey, create });
+      this.models = { list };
+      clients.push({ apiKey: opts.apiKey, create, list });
     }
   }
   return { default: MockAnthropic };
@@ -399,19 +414,22 @@ describe('at single', () => {
 });
 
 describe('testing a key before it is saved (t-1045)', () => {
-  it('pings the vendor once on the submitted key, on a client the manager never caches', async () => {
+  it('asks the vendor once on the submitted key, on a client the manager never caches', async () => {
     const result = await testProviderKey(ROW as never, KEY_B);
 
     expect(result.ok).toBe(true);
     expect(clients.map((c) => c.apiKey)).toEqual([KEY_B]);
-    expect(clients[0].create).toHaveBeenCalledTimes(1);
-    expect(clients[0].create).toHaveBeenCalledWith(expect.objectContaining({ max_tokens: 1 }));
+    // The key test (t-1056): Anthropic's model list, which it authenticates,
+    // and no message: nothing billed, no fixed model the key must reach.
+    expect(clients[0].list).toHaveBeenCalledTimes(1);
+    expect(clients[0].create).not.toHaveBeenCalled();
 
     // The org's next call is built afresh on its own key, never on the tested one.
     await save(ORG_A, KEY_A);
     await chat(ORG_A);
     expect(clients.map((c) => c.apiKey)).toEqual([KEY_B, KEY_A]);
-    expect(clients[0].create).toHaveBeenCalledTimes(1);
+    expect(clients[0].create).not.toHaveBeenCalled();
+    expect(clients[1].create).toHaveBeenCalledTimes(1);
   });
 
   it('answers a refused key as a failed test, with the vendor’s message for the caller to scrub', async () => {

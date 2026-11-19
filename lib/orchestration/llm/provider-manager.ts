@@ -462,6 +462,8 @@ const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
   transcribeStream: 'trackStream',
   listModels: 'passthrough',
   testConnection: 'passthrough',
+  // A key test sends no user content (§137 t-1056), like testConnection.
+  testKey: 'passthrough',
 };
 
 /**
@@ -481,6 +483,7 @@ const PRIVACY_COVERAGE: Record<ProviderMethodName, PrivacyCoverage> = {
   transcribeStream: 'none',
   listModels: 'none',
   testConnection: 'none',
+  testKey: 'none',
 };
 
 /**
@@ -843,17 +846,21 @@ export async function testProvider(slugOrName: string): Promise<ProviderTestResu
 
 /**
  * Test a key someone is about to save for a provider row (§137 t-1045), with
- * the row's one cheap connection check: a one-token message for Anthropic, the
- * model list for every other type.
+ * a call the vendor authenticates (t-1056): the provider's `testKey()`.
+ *
+ * - Anthropic: its model list, which it authenticates and does not bill.
+ * - Voyage: one embedding of one word (billed, a token or two). Voyage has no
+ *   model list, so the connection check could never pass a Voyage key.
+ * - OpenAI-compatible: the model list, trusted only where the host refuses a
+ *   known-wrong key there too; otherwise a chat request no host runs, sent
+ *   with each key. A host that checks keys on neither fails the test.
  *
  * The client is built for this call alone and never cached, so a key that
  * fails is never held by the manager, and a key that passes is not used for
  * anything else until it is saved. No user content is sent, so neither the
  * call-time gate nor the spend caps are asked; the caller decides whether the
- * org may use the provider at all. The Anthropic check is a billed message,
- * one token on the fixed ping model, so a key whose workspace cannot use that
- * model fails it. A host that answers its model list without checking the key
- * passes any key: the test proves the key only as far as that call does.
+ * org may use the provider at all. A provider with no `testKey()` is tested
+ * with `testConnection()`.
  *
  * The result's `error` is the vendor's own message, which can repeat part of
  * the key: never send it to the browser, and remove the key before logging it.
@@ -865,7 +872,8 @@ export async function testProviderKey(
   config: AiProviderConfig,
   apiKey: string
 ): Promise<ProviderTestResult> {
-  return buildProviderFromConfig(config, apiKey).testConnection();
+  const provider = buildProviderFromConfig(config, apiKey);
+  return provider.testKey ? provider.testKey() : provider.testConnection();
 }
 
 /**

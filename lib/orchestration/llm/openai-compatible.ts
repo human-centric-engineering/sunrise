@@ -116,6 +116,34 @@ const embeddingsResponseSchema = z.object({
 const LOCAL_API_KEY_SENTINEL = 'not-needed';
 
 /**
+ * A key no host issues, sent by `testKey()` to learn whether a call checks
+ * keys at all (§137 t-1056). Not a secret.
+ */
+const KNOWN_WRONG_KEY = 'sunrise-key-check-not-a-real-key';
+
+/** A vendor's answer that the key itself was refused. */
+function refusesKey(status: number | undefined): boolean {
+  return status === 401 || status === 403;
+}
+
+/**
+ * Run a vendor call for its answer alone: the HTTP status it failed with
+ * (undefined when it succeeded, or failed before any answer), and its error.
+ */
+async function probe(call: () => Promise<unknown>): Promise<{ status?: number; error?: string }> {
+  try {
+    await call();
+    return {};
+  } catch (err) {
+    const failure = toProviderError(err, 'OpenAI-compatible key test call failed');
+    return {
+      ...(failure.status !== undefined ? { status: failure.status } : {}),
+      error: failure.message,
+    };
+  }
+}
+
+/**
  * Default embedding model for cloud OpenAI-compatible hosts. Used only
  * as a constructor-default fallback when nobody passes `embeddingModel`
  * to the provider class. The runtime embedding pipeline resolves the
@@ -174,6 +202,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   public readonly isLocal: boolean;
 
   private readonly client: OpenAI;
+  /** `options.baseUrl`, for a client `testKey()` builds with a known-wrong key. */
+  private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly embeddingModel: string;
@@ -214,9 +244,17 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       options.embeddingModel ??
       (options.isLocal ? DEFAULT_LOCAL_EMBEDDING_MODEL : DEFAULT_CLOUD_EMBEDDING_MODEL);
 
-    this.client = new OpenAI({
-      apiKey: options.apiKey && options.apiKey.length > 0 ? options.apiKey : LOCAL_API_KEY_SENTINEL,
-      baseURL: options.baseUrl,
+    this.baseUrl = options.baseUrl;
+    this.client = this.buildClient(
+      options.apiKey && options.apiKey.length > 0 ? options.apiKey : LOCAL_API_KEY_SENTINEL
+    );
+  }
+
+  /** A vendor client on this provider's host, timeout and redirect policy. */
+  private buildClient(apiKey: string): OpenAI {
+    return new OpenAI({
+      apiKey,
+      baseURL: this.baseUrl,
       timeout: this.timeoutMs,
       maxRetries: 0,
       // Refuse redirects (#635). `baseURL` is an admin-set `AiProvider.baseUrl`
@@ -715,6 +753,50 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       const error = err instanceof Error ? err.message : String(err);
       return { ok: false, models: [], error };
     }
+  }
+
+  /**
+   * The key alone (§137 t-1056), on a host Sunrise knows nothing else about.
+   * The model list first, with this key. It proves the key only if the host
+   * refuses a known-wrong key there too: OpenAI does, OpenRouter serves its
+   * list to anyone. Where the list is open, a chat request no host will run
+   * (no model, no messages) is sent with each key: refused with 401 or 403 is
+   * a refused key, and any other answer to this key, where the wrong one was
+   * refused, means the host accepted it before rejecting the request. Nothing
+   * is billed. A host that checks keys on neither call fails the test: it
+   * cannot say whether the key works.
+   */
+  async testKey(): Promise<ProviderTestResult> {
+    let models: string[];
+    try {
+      models = (await this.listModels()).map((m) => m.id);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ok: false, models: [], error };
+    }
+    const wrong = this.buildClient(KNOWN_WRONG_KEY);
+    if (refusesKey((await probe(() => wrong.models.list())).status)) {
+      return { ok: true, models };
+    }
+
+    const request = () => ({ model: '', messages: [], max_tokens: 1 });
+    const mine = await probe(() => this.client.chat.completions.create(request()));
+    if (refusesKey(mine.status)) {
+      return { ok: false, models: [], error: mine.error ?? 'The provider refused this key' };
+    }
+    if (mine.status === undefined && mine.error !== undefined) {
+      return { ok: false, models: [], error: mine.error };
+    }
+    const theirs = await probe(() => wrong.chat.completions.create(request()));
+    if (!refusesKey(theirs.status)) {
+      return {
+        ok: false,
+        models: [],
+        error:
+          'This host checks keys on neither its model list nor its chat endpoint, so the key cannot be tested',
+      };
+    }
+    return { ok: true, models };
   }
 
   // --- internal helpers ---
