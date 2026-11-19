@@ -37,10 +37,13 @@ export interface ProviderModelLifecycleData {
 
 export interface ProviderModelUsesData {
   agents: Array<{ id: string; name: string; followsPlatform: boolean }>;
-  workflows: Array<{ id: string; name: string }>;
+  /** `byIdOnly`: every step pinning the model names its id alone (§136 t-1068). */
+  workflows: Array<{ id: string; name: string; byIdOnly: boolean }>;
   otherOrgAgents: number;
   otherOrgAgentsFollowingPlatform: number;
   otherOrgWorkflows: number;
+  /** How many of `otherOrgWorkflows` pin it by id alone. */
+  otherOrgWorkflowsByIdOnly: number;
   settings: SettingsPin[];
   /** Other providers that offer the same model id (§136 t-1065). */
   sharedWith: string[];
@@ -197,13 +200,19 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
                   >
                     {workflow.name}
                   </Link>
+                  {workflow.byIdOnly && uses.sharedWith.length > 0 && (
+                    <span title="Named by model id alone">*</span>
+                  )}
                 </li>
               ))}
             </ul>
             {uses.otherOrgWorkflows > 0 && (
               <p className="text-muted-foreground text-xs">
-                {workflowCount(uses.otherOrgWorkflows)} in other organisations. They are counted,
-                not named.
+                {workflowCount(uses.otherOrgWorkflows)} in other organisations
+                {uses.sharedWith.length > 0 && uses.otherOrgWorkflowsByIdOnly > 0
+                  ? ` (${uses.otherOrgWorkflowsByIdOnly} by model id alone)`
+                  : ''}
+                . They are counted, not named.
               </p>
             )}
           </div>
@@ -236,11 +245,11 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
 
       {!nothing &&
         uses.sharedWith.length > 0 &&
-        (uses.workflows.length > 0 ||
-          uses.otherOrgWorkflows > 0 ||
+        (uses.workflows.some((workflow) => workflow.byIdOnly) ||
+          uses.otherOrgWorkflowsByIdOnly > 0 ||
           uses.settings.some((pin) => pin.byIdOnly)) && (
           <p className="text-muted-foreground text-xs">
-            Workflows, and the settings marked *, name this model by its id alone, which{' '}
+            The uses marked * name this model by its id alone, with no provider, which{' '}
             {uses.sharedWith.join(', ')} also {uses.sharedWith.length === 1 ? 'offers' : 'offer'}.
             They may run on that provider&apos;s model instead, so they are listed here too.
           </p>

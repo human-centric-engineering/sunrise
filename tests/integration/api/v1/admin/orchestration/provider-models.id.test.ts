@@ -877,6 +877,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
       otherOrgAgents: 1,
       otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 0,
+      otherOrgWorkflowsByIdOnly: 0,
     });
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
@@ -938,6 +939,7 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
       otherOrgAgents: 1,
       otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 2,
+      otherOrgWorkflowsByIdOnly: 2,
     });
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
@@ -1438,6 +1440,7 @@ describe('DELETE refuses while a saved setting names the model (§136 t-1065)', 
       otherOrgAgents: 2,
       otherOrgAgentsFollowingPlatform: 0,
       otherOrgWorkflows: 1,
+      otherOrgWorkflowsByIdOnly: 1,
     });
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));

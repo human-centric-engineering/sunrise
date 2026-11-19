@@ -121,18 +121,18 @@ Lives in `lib/orchestration/workflows/semantic-validator.ts`. Requires Prisma + 
 
 1. **Collect references** — single pass over steps to extract unique model overrides (from `llm_call`, `route`, `reflect`, `guard`, `evaluate`, `plan`, `orchestrator` steps) and capability slugs (from `tool_call` steps).
 2. **Batch DB queries** — two parallel queries: active providers and active capabilities matching the collected slugs.
-3. **Check model overrides** — each `modelOverride` must exist in the model registry and its provider must be active.
+3. **Check model overrides** — each `modelOverride` is a model pin ([§ Step model pins](#step-model-pins)). A bare id must exist in the model registry; a pin naming its provider must name an active catalogue row of that provider (or the registry's entry for the id must be that provider's), the one extra query this needs running only when a pair is present. Either way the provider it runs on — the pin's, else the registry's — must be active, and at `multi` approved for the org.
 4. **Check capability slugs** — each `capabilitySlug` must match an active capability.
 
 ### Semantic error codes
 
-| `code`                   | `stepId` | Meaning                                                                             |
-| ------------------------ | -------- | ----------------------------------------------------------------------------------- |
-| `UNKNOWN_MODEL_OVERRIDE` | yes      | Step references a model not in the registry                                         |
-| `INACTIVE_PROVIDER`      | yes      | Step's model override belongs to an inactive provider                               |
-| `PROVIDER_NOT_APPROVED`  | yes      | At `multi`, the override's provider is not one the org is approved for (§120 t-743) |
-| `INACTIVE_CAPABILITY`    | yes      | `tool_call` step references an inactive or unknown capability                       |
-| `INACTIVE_AGENT`         | yes      | `agent_call` step references an inactive or unknown agent                           |
+| `code`                   | `stepId` | Meaning                                                                                    |
+| ------------------------ | -------- | ------------------------------------------------------------------------------------------ |
+| `UNKNOWN_MODEL_OVERRIDE` | yes      | Step references a model not in the registry, or a provider that offers no model of that id |
+| `INACTIVE_PROVIDER`      | yes      | Step's model override belongs to an inactive provider                                      |
+| `PROVIDER_NOT_APPROVED`  | yes      | At `multi`, the override's provider is not one the org is approved for (§120 t-743)        |
+| `INACTIVE_CAPABILITY`    | yes      | `tool_call` step references an inactive or unknown capability                              |
+| `INACTIVE_AGENT`         | yes      | `agent_call` step references an inactive or unknown agent                                  |
 
 The `/validate` and `/dry-run` endpoints run both structural and semantic validation. `PROVIDER_NOT_APPROVED` is checked on the save paths only — workflow create (`POST /workflows`) and save-as-template, which otherwise publish a v1 without semantic checks, plus publish, rollback and `/validate` — and not by execution or `/dry-run`, where a step the call-time gate refuses takes its own error strategy rather than failing the whole run up front. Publish and rollback re-check only providers the new version **introduces**: one the replaced published version already used is not refused, so a workflow stranded by a later policy change can still publish an unrelated edit. Unlike the other semantic checks, an unreadable provider policy fails the save (500) rather than being skipped; `/validate`, which saves nothing, skips it with a logged error instead. This check also covers `supervisor` steps' overrides, which the existence checks above do not. On create and save-as-template, which run no existence check, an override whose model the registry cannot resolve is refused too where the policy applies, since its provider cannot be checked. At `single` and for the install org none of this runs. The workflow builder UI currently runs structural checks only (semantic checks require DB access).
 
@@ -201,6 +201,16 @@ Per-attempt-index is intentionally absent — the engine's `recoveryAttempts` ca
 | `reflect`           | Per-iteration                                    | Resumes at the next iteration with the prior draft restored. See [`engine.md`](./engine.md#recovery-model).                                                                                                                                                                                                                                                                                                              |
 
 `llm_call`, `chain`, `parallel`, `route`, `guard`, `evaluate`, `judge_call`, `plan`, `rag_retrieve`, `human_approval` are not in the table because they do not have external side effects — `llm_call` and `judge_call` re-run (paying the token cost), the rest are pure dispatch logic over already-completed steps.
+
+### Step model pins
+
+A step's `config.modelOverride` (`llm_call`, `route`, `reflect`, `guard`, `evaluate`, `plan`, `orchestrator`, `supervisor`, `chat_turn`) is a **model pin**: `provider::model`, so a step pinned to Azure's `gpt-4o` runs on Azure and not on whichever provider the model registry gives `gpt-4o` (§136 t-1068; the format and its helpers are in [`llm-providers.md` § A pin names its provider](./llm-providers.md#a-pin-names-its-provider-136-t-1068)). Empty or absent means the `chat` task default, itself a pin.
+
+- **A bare model id still works, unchanged:** it runs on the provider the registry gives the id. Every workflow saved before t-1068 is one; nothing is rewritten, and a step's pin names its provider once someone picks its model again in the builder.
+- **The builder writes pairs.** Its model picker (`block-editors/model-override-field.tsx`) offers the catalogue's active chat models whose provider is set up and active (`toModelOptions`, as the default-models form scopes its options), one option per provider's model, read once per builder. A value the catalogue does not hold is kept and shown as itself (`gpt-4o (by model id, no provider)`) rather than dropped.
+- **`chat_turn`** is the one step with a provider of its own (its agent's). A bare override replaces the model on that binding; a pin naming a provider runs there, without the agent's fallbacks (even when it names the agent's own provider), and so is checked on save (it must exist, and at `multi` its provider must be approved) and counted as a use of that model. An empty override is no override.
+- **Pricing is by model id**, as an agent's turns are.
+- **For a fork's own executor**: pass `config.modelOverride` to `runLlmCall` unchanged and it is resolved. Reading it as a model id yourself (a registry lookup, a cost estimate) takes `pinModelId(...)` from `@/lib/orchestration/llm/model-pin` first.
 
 ### `chat_turn` — conversational step with auto-loaded history
 

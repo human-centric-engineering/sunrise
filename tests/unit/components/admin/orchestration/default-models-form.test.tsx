@@ -354,20 +354,15 @@ describe('DefaultModelsForm', () => {
         fireEvent.submit(form!);
       });
 
-      // Assert: patch was called with settings endpoint and payload
+      // Assert: patch was called with the settings endpoint. Nothing was
+      // changed, so no slot is re-sent: only a changed slot is validated, so
+      // one that has since stopped validating cannot refuse another's save
+      // (§136 t-1068).
       await waitFor(
         () => {
-          expect(mockedPatch).toHaveBeenCalledWith(
-            '/api/v1/admin/orchestration/settings',
-            expect.objectContaining({
-              body: expect.objectContaining({
-                defaultModels: expect.objectContaining({
-                  routing: 'claude-haiku-4-5',
-                  chat: 'claude-sonnet-4-6',
-                }),
-              }),
-            })
-          );
+          expect(mockedPatch).toHaveBeenCalledWith('/api/v1/admin/orchestration/settings', {
+            body: { defaultModels: {} },
+          });
         },
         { timeout: 3000 }
       );
@@ -428,8 +423,10 @@ describe('DefaultModelsForm', () => {
       for (const v of Object.values(sentBody.defaultModels)) {
         expect(v).not.toBe('');
       }
-      // The chat slot the operator already had stored is preserved.
-      expect(sentBody.defaultModels.chat).toBe('claude-sonnet-4-6');
+      // Only the changed routing slot is sent; chat, saved already, is kept
+      // by the server's merge rather than re-sent (§136 t-1068).
+      expect(sentBody.defaultModels).toHaveProperty('routing');
+      expect(sentBody.defaultModels).not.toHaveProperty('chat');
     });
   });
 
@@ -867,6 +864,173 @@ describe('DefaultModelsForm', () => {
       );
 
       expect(screen.getByText('Not set — pick a model')).toBeInTheDocument();
+    });
+  });
+
+  describe('model pins name their provider (§136 t-1068)', () => {
+    // gpt-4o is offered by two providers: the registry-style bare id cannot
+    // say which one a saved default means.
+    const gpt4o = (provider: string): ModelInfo => ({
+      id: 'gpt-4o',
+      name: 'GPT-4o',
+      provider,
+      tier: 'frontier',
+      inputCostPerMillion: 2.5,
+      outputCostPerMillion: 10,
+      maxContext: 128_000,
+      supportsTools: true,
+    });
+    const SHARED_MODELS: ModelInfo[] = [...MOCK_MODELS, gpt4o('openai'), gpt4o('microsoft')];
+    const SHARED_PROVIDERS = [
+      { slug: 'anthropic', name: 'Anthropic', isActive: true },
+      { slug: 'openai', name: 'OpenAI', isActive: true },
+      { slug: 'microsoft', name: 'Microsoft', isActive: true },
+    ];
+    // Every other slot saved, so the only suggestion footer is chat's.
+    const withChat = (stored: string | undefined, suggested: string): OrchestrationSettings => ({
+      ...MOCK_SETTINGS,
+      defaultModels: { ...MOCK_SETTINGS.defaultModels, chat: stored ?? suggested },
+      defaultModelsStored: {
+        routing: 'claude-haiku-4-5',
+        reasoning: 'claude-opus-4-6',
+        embeddings: 'claude-haiku-4-5',
+        ...(stored === undefined ? {} : { chat: stored }),
+      },
+    });
+
+    function renderForm(settings: OrchestrationSettings) {
+      return render(
+        <DefaultModelsForm
+          settings={settings}
+          models={SHARED_MODELS}
+          providers={SHARED_PROVIDERS}
+          embeddingModels={MOCK_EMBEDDING_MODELS}
+        />
+      );
+    }
+
+    async function submit() {
+      const form = screen.getByTestId('default-models-form').closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+    }
+
+    function lastSavedModels(): Record<string, string> {
+      const [, options] = mockedPatch.mock.calls[mockedPatch.mock.calls.length - 1];
+      return (options.body as { defaultModels: Record<string, string> }).defaultModels;
+    }
+
+    it('offers one option per provider for a shared model id, and saves the pair picked', async () => {
+      mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
+      const user = userEvent.setup();
+      renderForm(withChat(undefined, 'claude-sonnet-4-6'));
+
+      await user.click(document.getElementById('model-chat') as HTMLElement);
+
+      // Two GPT-4o options, told apart by provider in the label.
+      const gptOptions = screen.getAllByRole('option', { name: /GPT-4o/ });
+      expect(gptOptions.map((o) => o.textContent)).toEqual([
+        'GPT-4o (openai, frontier)',
+        'GPT-4o (microsoft, frontier)',
+      ]);
+
+      await user.click(screen.getByRole('option', { name: /GPT-4o \(microsoft/ }));
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
+      expect(lastSavedModels().chat).toBe('microsoft::gpt-4o');
+    });
+
+    it('saves a non-shared model as a pair too, so every saved pick names its provider', async () => {
+      mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
+      const user = userEvent.setup();
+      renderForm(withChat(undefined, 'claude-sonnet-4-6'));
+
+      await user.click(document.getElementById('model-chat') as HTMLElement);
+      await user.click(screen.getByRole('option', { name: /Claude Haiku/ }));
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
+      expect(lastSavedModels().chat).toBe('anthropic::claude-haiku-4-5');
+    });
+
+    it('shows a stored bare id as its own option, and does not re-send it', async () => {
+      mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
+      const user = userEvent.setup();
+      renderForm(withChat('gpt-4o', 'gpt-4o'));
+
+      // The trigger shows the legacy value as itself, not as one provider's model.
+      expect(document.getElementById('model-chat')?.textContent).toBe(
+        'gpt-4o (by model id, no provider)'
+      );
+
+      await user.click(document.getElementById('model-chat') as HTMLElement);
+      const options = screen.getAllByRole('option');
+      // First option is the legacy value, ahead of the provider-named ones.
+      expect(options[0].textContent).toBe('gpt-4o (by model id, no provider)');
+
+      // Closing the list and saving must not rewrite it to a guessed provider:
+      // unchanged, it is not sent at all.
+      await user.keyboard('{Escape}');
+      await submit();
+
+      await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
+      expect(lastSavedModels()).not.toHaveProperty('chat');
+    });
+
+    it('shows a stored pair no active provider offers as its own option, and does not re-send it', async () => {
+      mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
+      const user = userEvent.setup();
+      renderForm(withChat('azure::gpt-4o', 'gpt-4o'));
+
+      expect(document.getElementById('model-chat')?.textContent).toBe(
+        'gpt-4o (azure, not offered by an active provider)'
+      );
+      await user.click(document.getElementById('model-chat') as HTMLElement);
+      expect(screen.getAllByRole('option')[0].textContent).toBe(
+        'gpt-4o (azure, not offered by an active provider)'
+      );
+
+      // Unchanged, it is not re-sent, so its failing a check now cannot
+      // refuse a change to another slot.
+      await user.keyboard('{Escape}');
+      await submit();
+
+      await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
+      expect(lastSavedModels()).not.toHaveProperty('chat');
+    });
+
+    it('does not show a legacy option when the stored value is a pair', async () => {
+      const user = userEvent.setup();
+      renderForm(withChat('openai::gpt-4o', 'gpt-4o'));
+
+      expect(document.getElementById('model-chat')?.textContent).toBe('GPT-4o (openai, frontier)');
+      await user.click(document.getElementById('model-chat') as HTMLElement);
+      expect(screen.queryByRole('option', { name: /by model id/ })).not.toBeInTheDocument();
+    });
+
+    it("offers the suggestion when exactly one option has its model id, as that provider's pair", async () => {
+      mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
+      const user = userEvent.setup();
+      renderForm(withChat(undefined, 'claude-sonnet-4-6'));
+
+      expect(screen.getByText(/Suggested:/i)).toHaveTextContent(
+        'Claude Sonnet 4.6 (anthropic, mid)'
+      );
+
+      await user.click(screen.getByRole('button', { name: /^Use suggestion$/i }));
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
+      expect(lastSavedModels().chat).toBe('anthropic::claude-sonnet-4-6');
+    });
+
+    it('offers no suggestion when two providers offer its model id', () => {
+      renderForm(withChat(undefined, 'gpt-4o'));
+
+      expect(screen.queryByText(/Suggested:/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Use suggestion$/i })).not.toBeInTheDocument();
     });
   });
 

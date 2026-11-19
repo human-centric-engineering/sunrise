@@ -40,9 +40,10 @@ process.env.OTHER_PRESENT_KEY = 'present';
 delete process.env.MISSING_KEY;
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
-  getDefaultModelForTask: vi.fn(async (task: string) => {
-    return task === 'chat' ? 'system-chat-model' : `system-${task}-model`;
-  }),
+  getDefaultModelPinForTask: vi.fn(async (task: string) => ({
+    providerSlug: null,
+    modelId: task === 'chat' ? 'system-chat-model' : `system-${task}-model`,
+  })),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -58,6 +59,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
 import {
   resolveAgentProviderAndModel,
   NoProviderConfiguredError,
@@ -750,5 +752,138 @@ describe('resolveAgentProviderAndModel — model registry hydration (#813)', () 
     await resolveAgentProviderAndModel(makeAgent({ provider: 'openai', model: DATED_ID }));
 
     expect(getModel(DATED_ID)).toMatchObject({ provider: 'openai', maxContext: 32_000 });
+  });
+});
+
+// ─── Task default naming its provider (§136 t-1068) ──────────────────────────
+
+describe('resolveAgentProviderAndModel — task default pin names a provider', () => {
+  const reachable = [
+    makeProviderRow({ slug: 'openai', createdAt: new Date('2026-04-15T00:00:00Z') }),
+    makeProviderRow({
+      slug: 'microsoft',
+      apiKeyEnvVar: 'OTHER_PRESENT_KEY',
+      createdAt: new Date('2026-04-16T00:00:00Z'),
+    }),
+  ];
+
+  function pinChatDefault(providerSlug: string | null, modelId: string): void {
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({ providerSlug, modelId });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+    // Put the file-wide default back for the suites above and below.
+    vi.mocked(getDefaultModelPinForTask).mockImplementation(async (task: string) => ({
+      providerSlug: null,
+      modelId: task === 'chat' ? 'system-chat-model' : `system-${task}-model`,
+    }));
+  });
+
+  it('chooses the second reachable provider when the pin names it, over the first', async () => {
+    setProviders(reachable);
+    pinChatDefault('microsoft', 'gpt-4o');
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.providerSlug).toBe('microsoft');
+    expect(result.model).toBe('gpt-4o');
+    // The provider not chosen is still offered as a system fallback.
+    expect(result.fallbacks).toEqual(['openai']);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('reads the pin for the task asked about', async () => {
+    setProviders(reachable);
+    pinChatDefault('microsoft', 'gpt-4o');
+
+    await resolveAgentProviderAndModel(makeAgent(), 'routing');
+
+    expect(getDefaultModelPinForTask).toHaveBeenCalledWith('routing');
+  });
+
+  it('uses the first eligible provider and warns when the pin names one that is not reachable', async () => {
+    // `microsoft` has no usable key, so it is not a candidate at all.
+    setProviders([
+      makeProviderRow({ slug: 'openai' }),
+      makeProviderRow({ slug: 'microsoft', apiKeyEnvVar: 'MISSING_KEY' }),
+    ]);
+    pinChatDefault('microsoft', 'gpt-4o');
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.providerSlug).toBe('openai');
+    // The model is still the pin's model id.
+    expect(result.model).toBe('gpt-4o');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('task default names a provider that cannot be used'),
+      expect.objectContaining({ task: 'chat', pinnedProvider: 'microsoft' })
+    );
+  });
+
+  it('uses the first eligible provider and warns when the pin names one that is not in the active list', async () => {
+    setProviders([makeProviderRow({ slug: 'openai' })]);
+    pinChatDefault('ghost', 'gpt-4o');
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.providerSlug).toBe('openai');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ pinnedProvider: 'ghost' })
+    );
+  });
+
+  it('uses the first eligible provider and warns when the eligibility rule bars the pinned one', async () => {
+    setProviders(reachable);
+    pinChatDefault('microsoft', 'gpt-4o');
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== 'microsoft'));
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.providerSlug).toBe('openai');
+    expect(result.fallbacks).not.toContain('microsoft');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ pinnedProvider: 'microsoft' })
+    );
+  });
+
+  it('keeps an explicit agent provider and takes only the pin’s model id', async () => {
+    setProviders(reachable);
+    pinChatDefault('microsoft', 'gpt-4o');
+
+    const result = await resolveAgentProviderAndModel(makeAgent({ provider: 'openai' }), 'chat');
+
+    expect(result.providerSlug).toBe('openai');
+    expect(result.model).toBe('gpt-4o');
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('does not read the pin when the agent names a model, so the provider is the first eligible', async () => {
+    setProviders(reachable);
+    pinChatDefault('microsoft', 'gpt-4o');
+
+    const result = await resolveAgentProviderAndModel(makeAgent({ model: 'claude-opus' }), 'chat');
+
+    expect(result.providerSlug).toBe('openai');
+    expect(result.model).toBe('claude-opus');
+    expect(getDefaultModelPinForTask).not.toHaveBeenCalled();
+  });
+
+  it('treats a bare pin as no preference: first eligible provider, no warning', async () => {
+    setProviders(reachable);
+    pinChatDefault(null, 'gpt-4o');
+
+    const result = await resolveAgentProviderAndModel(makeAgent(), 'chat');
+
+    expect(result.providerSlug).toBe('openai');
+    expect(result.model).toBe('gpt-4o');
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

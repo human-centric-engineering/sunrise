@@ -33,6 +33,7 @@ import {
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
 import type { AgentOption } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
+import { ModelOverrideField } from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
 
 export interface OrchestratorConfig extends Record<string, unknown> {
   plannerPrompt: string;
@@ -237,22 +238,19 @@ export function OrchestratorEditor({
       </div>
 
       {/* Model Override */}
-      <div className="space-y-1.5">
-        <Label htmlFor="orchestrator-model" className="flex items-center text-xs">
-          Model override{' '}
-          <FieldHelp title="Model override">
+      <ModelOverrideField
+        id="orchestrator-model"
+        value={config.modelOverride}
+        onChange={(modelOverride) => onChange({ modelOverride })}
+        help={
+          <>
             Override the default model for the planner LLM. Leave empty to use the system default.
             The planner model only affects the planning/reasoning calls, not the delegated agent
-            calls.
-          </FieldHelp>
-        </Label>
-        <Input
-          id="orchestrator-model"
-          value={config.modelOverride ?? ''}
-          onChange={(e) => onChange({ modelOverride: e.target.value || undefined })}
-          placeholder="e.g. gpt-4o, claude-sonnet-4-20250514"
-        />
-      </div>
+            calls. Each option is one provider&rsquo;s model, so the step runs on exactly that
+            provider.
+          </>
+        }
+      />
 
       {/* Temperature */}
       <div className="space-y-1.5">

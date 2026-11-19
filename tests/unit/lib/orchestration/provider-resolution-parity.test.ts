@@ -45,12 +45,20 @@ vi.mock('@/lib/db/client', () => ({
 process.env.PRESENT_KEY = 'present';
 delete process.env.MISSING_KEY;
 
-// The runtime resolver reads `getDefaultModelForTask`; the mirror reads the
+// The runtime resolver reads `getDefaultModelPinForTask`; the mirror reads the
 // `OrNull` variant. Same underlying setting, so both answer the same here —
-// which is precisely the parity being asserted.
+// which is precisely the parity being asserted. `pinned.value` lets a test
+// make the default name its provider (§136 t-1068).
+const pinned = vi.hoisted(() => ({ value: { providerSlug: null as string | null } }));
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
-  getDefaultModelForTask: vi.fn(async () => 'system-chat-model'),
-  getDefaultModelForTaskOrNull: vi.fn(async () => 'system-chat-model'),
+  getDefaultModelPinForTask: vi.fn(async () => ({
+    providerSlug: pinned.value.providerSlug,
+    modelId: 'system-chat-model',
+  })),
+  getDefaultModelPinForTaskOrNull: vi.fn(async () => ({
+    providerSlug: pinned.value.providerSlug,
+    modelId: 'system-chat-model',
+  })),
 }));
 
 vi.mock('@/lib/api/server-fetch', () => ({
@@ -154,6 +162,36 @@ describe('agent binding parity: runtime resolver vs the form’s preview', () =>
     expect(preview.model).toBe(runtime.model);
     expect(preview.model).toBe('system-chat-model');
     expect(preview.inheritedModel).toBe(true);
+  });
+
+  it('agrees on a default naming its provider, which is not the first reachable (§136 t-1068)', async () => {
+    const twoReachable = [
+      { ...ROWS[1], id: 'r1', slug: 'openai' },
+      { ...ROWS[1], id: 'r2', slug: 'microsoft' },
+    ];
+    pinned.value = { providerSlug: 'microsoft' };
+    try {
+      const { runtime, preview } = await bothWays({ provider: '', model: '' }, twoReachable);
+
+      expect(runtime.providerSlug).toBe('microsoft');
+      expect(preview.provider).toBe(runtime.providerSlug);
+      expect(preview.model).toBe(runtime.model);
+    } finally {
+      pinned.value = { providerSlug: null };
+    }
+  });
+
+  it('agrees on falling back to the first eligible when the pinned provider is unreachable', async () => {
+    // `ROWS`' openai has no key; the default names it.
+    pinned.value = { providerSlug: 'openai' };
+    try {
+      const { runtime, preview } = await bothWays({ provider: '', model: '' });
+
+      expect(runtime.providerSlug).toBe('anthropic');
+      expect(preview.provider).toBe(runtime.providerSlug);
+    } finally {
+      pinned.value = { providerSlug: null };
+    }
   });
 
   it('agrees when the agent leaves both empty', async () => {

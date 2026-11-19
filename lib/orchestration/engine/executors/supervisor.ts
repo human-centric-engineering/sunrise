@@ -36,7 +36,7 @@ import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
-import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
+import { JUDGE_MODEL_PIN } from '@/lib/orchestration/evaluations/judge-model';
 import { runSupervisorAssessment, type LlmCallShim } from '@/lib/orchestration/supervisor';
 import { logger } from '@/lib/logging';
 
@@ -89,8 +89,8 @@ export async function executeSupervisor(
   const modelOverride =
     config.modelOverride && config.modelOverride.length > 0
       ? config.modelOverride
-      : useJudgeModel && JUDGE_MODEL !== null
-        ? JUDGE_MODEL
+      : useJudgeModel && JUDGE_MODEL_PIN !== null
+        ? JUDGE_MODEL_PIN
         : undefined;
 
   // Engine-side LLM shim — bills cost, surfaces telemetry, forwards

@@ -44,7 +44,8 @@ import { getModel, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-r
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { isModelPriced } from '@/lib/orchestration/cost-estimation/model-pricing';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
-import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
+import { JUDGE_MODEL_PIN } from '@/lib/orchestration/evaluations/judge-model';
+import { parseModelPin, pinModelId } from '@/lib/orchestration/llm/model-pin';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition } from '@/types/orchestration';
 import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
@@ -451,7 +452,7 @@ export async function estimateWorkflowCost(
     : await loadWorkflowShape(workflowId, chatModelId);
   const supervisorActive = supervisor && shape.hasSupervisor;
   const judgeModelId = supervisorActive
-    ? (shape.supervisorModelId ?? JUDGE_MODEL ?? chatModelId)
+    ? (shape.supervisorModelId ?? (pinModelId(JUDGE_MODEL_PIN) || chatModelId))
     : null;
 
   const heuristic = predictHeuristic(shape, itemCount, supervisor, chatModelId);
@@ -886,9 +887,13 @@ export async function summariseShape(
   };
 }
 
+/**
+ * The model id a step's override names, for pricing. The override is a model
+ * pin (§136 t-1068), `provider::model` or a bare id; pricing is by model id.
+ */
 function readModelOverride(config: Record<string, unknown>): string | null {
   const val = config.modelOverride;
-  return typeof val === 'string' && val.length > 0 ? val : null;
+  return typeof val === 'string' ? parseModelPin(val)?.modelId || null : null;
 }
 
 function readAgentSlug(config: Record<string, unknown>): string | null {

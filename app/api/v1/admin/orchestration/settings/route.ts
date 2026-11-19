@@ -24,12 +24,13 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { computeETag, checkConditional } from '@/lib/api/etag';
-import { computeDefaultModelMap } from '@/lib/orchestration/llm/model-registry';
+import { computeDefaultModelMap, getModel } from '@/lib/orchestration/llm/model-registry';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import { getEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
 import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import { parseModelPin } from '@/lib/orchestration/llm/model-pin';
 import {
   costLogsOutliveExecutions,
   updateOrchestrationSettingsSchema,
@@ -181,6 +182,44 @@ export const PATCH = withAdminAuth(
             value: body.defaultModels.embeddings,
           },
         });
+      }
+    }
+
+    // A chat, routing or reasoning default that names its provider (§136
+    // t-1068) must name a model that provider offers. The schema's check
+    // asks the registry, which holds one entry per model id and so cannot
+    // say whether Azure offers `gpt-4o` while OpenAI's entry holds the id;
+    // the catalogue can. A bare id is left to that check, as before.
+    for (const task of ['routing', 'chat', 'reasoning'] as const) {
+      const pin = parseModelPin(body.defaultModels?.[task]);
+      if (pin === null || pin.providerSlug === null) continue;
+      const [row, providerRow] = await Promise.all([
+        prisma.aiProviderModel.findFirst({
+          where: { providerSlug: pin.providerSlug, modelId: pin.modelId, isActive: true },
+          select: { id: true },
+        }),
+        prisma.aiProviderConfig.findFirst({
+          where: { slug: pin.providerSlug, isActive: true },
+          select: { id: true },
+        }),
+      ]);
+      // A provider that is not set up cannot serve it, whatever it offers.
+      if (!providerRow) {
+        return errorResponse(`Unknown provider — "${pin.providerSlug}" is not an active provider`, {
+          code: 'VALIDATION_ERROR',
+          status: 400,
+          details: { task, value: body.defaultModels?.[task] },
+        });
+      }
+      if (!row && getModel(pin.modelId)?.provider !== pin.providerSlug) {
+        return errorResponse(
+          `Unknown model — provider "${pin.providerSlug}" has no active model "${pin.modelId}" in the model matrix`,
+          {
+            code: 'VALIDATION_ERROR',
+            status: 400,
+            details: { task, value: body.defaultModels?.[task] },
+          }
+        );
       }
     }
 

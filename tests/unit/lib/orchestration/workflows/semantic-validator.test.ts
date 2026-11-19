@@ -30,6 +30,7 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderConfig: { findMany: vi.fn() },
     aiCapability: { findMany: vi.fn() },
     aiAgent: { findMany: vi.fn() },
+    aiProviderModel: { findMany: vi.fn() },
   },
 }));
 
@@ -532,5 +533,221 @@ describe('org approval of a modelOverride provider (§120 t-743)', () => {
 
     expect(await findUnapprovedModelOverrides(makeDef([llmStep('s1', 'nope')]))).toEqual([]);
     expect(mockUnapprovedProviders).toHaveBeenCalledWith([]);
+  });
+});
+
+describe('a modelOverride that names its provider (§136 t-1068)', () => {
+  // The shared-id fixture: the registry holds ONE entry for `gpt-4o`, OpenAI's.
+  // A pin naming Microsoft can only be told apart by the catalogue.
+  const openaiGpt4o = {
+    id: 'gpt-4o',
+    provider: 'openai',
+    name: 'GPT-4o',
+    maxContext: 128000,
+    inputCostPerMillion: 2.5,
+    outputCostPerMillion: 10,
+    tier: 'frontier',
+    supportsTools: true,
+    available: true,
+  } as const;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPolicyScope.mockReturnValue('enforced');
+    mockUnapprovedProviders.mockImplementation(async () => []);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      { slug: 'openai' },
+      { slug: 'microsoft' },
+    ] as never);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([]);
+    vi.mocked(modelRegistry.getModel).mockImplementation((id: string) =>
+      id === 'gpt-4o' ? openaiGpt4o : undefined
+    );
+  });
+
+  it("knows a pair through the catalogue's row while the registry's entry is another provider's", async () => {
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      { providerSlug: 'microsoft', modelId: 'gpt-4o' },
+    ] as never);
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'microsoft::gpt-4o')]));
+
+    expect(result.errors).toEqual([]);
+    expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith({
+      where: { isActive: true, OR: [{ providerSlug: 'microsoft', modelId: 'gpt-4o' }] },
+      select: { providerSlug: true, modelId: true },
+    });
+  });
+
+  it('refuses a pair with no active row when the registry gives the id to another provider', async () => {
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'microsoft::gpt-4o')]));
+
+    expect(result.ok).toBe(false);
+    expect(result.errors).toEqual([
+      {
+        code: 'UNKNOWN_MODEL_OVERRIDE',
+        message:
+          'Step "s1" references model "gpt-4o" on provider "microsoft", which has no active model of that id',
+        stepId: 's1',
+      },
+    ]);
+  });
+
+  it("knows a pair with no row when the registry's own entry is that provider's", async () => {
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'openai::gpt-4o')]));
+
+    expect(result.errors).toEqual([]);
+  });
+
+  it('refuses a pair whose model id the registry does not know, even with a catalogue row', async () => {
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      { providerSlug: 'microsoft', modelId: 'gpt-9' },
+    ] as never);
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'microsoft::gpt-9')]));
+
+    expect(result.errors.map((e) => [e.code, e.message])).toEqual([
+      ['UNKNOWN_MODEL_OVERRIDE', 'Step "s1" references unknown model "gpt-9"'],
+    ]);
+  });
+
+  it("names the pin's provider, not the registry's, when that provider is inactive", async () => {
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      { providerSlug: 'microsoft', modelId: 'gpt-4o' },
+    ] as never);
+    // Registry's provider (openai) is active; the pin's (microsoft) is not.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([{ slug: 'openai' }] as never);
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'microsoft::gpt-4o')]));
+
+    expect(result.errors).toEqual([
+      {
+        code: 'INACTIVE_PROVIDER',
+        message: 'Step "s1" references model "gpt-4o" whose provider "microsoft" is inactive',
+        stepId: 's1',
+      },
+    ]);
+  });
+
+  it('asks the catalogue once for every distinct pair, and not for a bare id', async () => {
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      { providerSlug: 'microsoft', modelId: 'gpt-4o' },
+    ] as never);
+
+    await semanticValidateWorkflow(
+      makeDef([
+        llmStep('s1', 'microsoft::gpt-4o'),
+        llmStep('s2', 'microsoft::gpt-4o'),
+        llmStep('s3', 'gpt-4o'),
+      ])
+    );
+
+    expect(prisma.aiProviderModel.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isActive: true, OR: [{ providerSlug: 'microsoft', modelId: 'gpt-4o' }] },
+      })
+    );
+  });
+
+  it('does not query the catalogue when every override is a bare id', async () => {
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'gpt-4o')]));
+
+    expect(result.errors).toEqual([]);
+    expect(prisma.aiProviderModel.findMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses on the pin's provider when the registry's provider is approved", async () => {
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      { providerSlug: 'microsoft', modelId: 'gpt-4o' },
+    ] as never);
+    mockUnapprovedProviders.mockImplementation(async (slugs) =>
+      slugs.filter((slug) => slug === 'microsoft')
+    );
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'microsoft::gpt-4o')]), {
+      approval: {},
+    });
+
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['microsoft']);
+    expect(result.errors.map((e) => [e.code, e.stepId])).toEqual([['PROVIDER_NOT_APPROVED', 's1']]);
+  });
+
+  it("asks the policy about the pin's provider on create, not the registry's", async () => {
+    mockUnapprovedProviders.mockImplementation(async (slugs) =>
+      slugs.filter((slug) => slug === 'microsoft')
+    );
+
+    await expect(
+      assertWorkflowProvidersApproved(makeDef([llmStep('s1', 'microsoft::gpt-4o')]))
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { definition: [expect.stringContaining('Step "s1"')] },
+    });
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['microsoft']);
+  });
+
+  it('finds an unapproved pair through findUnapprovedModelOverrides', async () => {
+    mockUnapprovedProviders.mockImplementation(async (slugs) =>
+      slugs.filter((slug) => slug === 'microsoft')
+    );
+
+    const found = await findUnapprovedModelOverrides(
+      makeDef([llmStep('s1', 'microsoft::gpt-4o'), llmStep('s2', 'openai::gpt-4o')])
+    );
+
+    expect(found.map((e) => [e.code, e.stepId])).toEqual([['PROVIDER_NOT_APPROVED', 's1']]);
+  });
+
+  it('checks a chat_turn override naming its provider, which runs there, against the org approvals', async () => {
+    mockUnapprovedProviders.mockImplementation(async (slugs) =>
+      slugs.filter((slug) => slug === 'microsoft')
+    );
+    const chatTurn = (id: string, modelOverride: string) => ({
+      id,
+      name: id,
+      type: 'chat_turn',
+      config: { agentSlug: 'a', conversationId: 'c', message: 'm', modelOverride },
+      nextSteps: [],
+    });
+
+    const found = await findUnapprovedModelOverrides(
+      // A bare id stays on the agent's own provider, so it names none to check.
+      makeDef([chatTurn('t1', 'microsoft::gpt-4o'), chatTurn('t2', 'gpt-4o')])
+    );
+
+    expect(found.map((e) => [e.code, e.stepId])).toEqual([['PROVIDER_NOT_APPROVED', 't1']]);
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['microsoft']);
+  });
+});
+
+describe('chat_turn pins that name their provider are checked to exist (§136 t-1068)', () => {
+  const chatTurn = (id: string, modelOverride: string) => ({
+    id,
+    name: id,
+    type: 'chat_turn',
+    config: { agentSlug: 'a', conversationId: 'c', message: 'm', modelOverride },
+    nextSteps: [],
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPolicyScope.mockReturnValue('open');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([{ slug: 'openai' }] as never);
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+  });
+
+  it('refuses a pair naming a provider with no such model, and leaves a bare id to the agent', async () => {
+    vi.mocked(modelRegistry.getModel).mockReturnValue(undefined);
+
+    const result = await semanticValidateWorkflow(
+      makeDef([chatTurn('t1', 'azur::gpt-4o'), chatTurn('t2', 'not-a-model')])
+    );
+
+    expect(result.errors.map((e) => [e.code, e.stepId])).toEqual([
+      ['UNKNOWN_MODEL_OVERRIDE', 't1'],
+    ]);
   });
 });

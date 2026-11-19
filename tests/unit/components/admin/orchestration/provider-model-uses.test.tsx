@@ -23,6 +23,7 @@ const NONE: ProviderModelUsesData = {
   otherOrgAgents: 0,
   otherOrgAgentsFollowingPlatform: 0,
   otherOrgWorkflows: 0,
+  otherOrgWorkflowsByIdOnly: 0,
   settings: [],
   sharedWith: [],
 };
@@ -47,7 +48,7 @@ function column(region: HTMLElement, name: string): HTMLElement {
 
 describe('ProviderModelUses', () => {
   it('says None in each empty column beside one that has a use', () => {
-    const region = panel({ workflows: [{ id: 'w1', name: 'Triage' }] });
+    const region = panel({ workflows: [{ id: 'w1', name: 'Triage', byIdOnly: false }] });
 
     expect(column(region, 'Agents')).toHaveTextContent('None');
     expect(column(region, 'Settings')).toHaveTextContent('None');
@@ -138,20 +139,44 @@ describe('ProviderModelUses', () => {
 
   it('says when a use names the model by id alone and another provider offers the id', () => {
     const region = panel({
-      workflows: [{ id: 'w1', name: 'Triage' }],
+      workflows: [
+        { id: 'w1', name: 'Triage', byIdOnly: true },
+        { id: 'w2', name: 'Intake', byIdOnly: false },
+      ],
+      otherOrgWorkflows: 3,
+      otherOrgWorkflowsByIdOnly: 2,
       settings: [{ slot: 'chat', source: 'saved', byIdOnly: true }],
       sharedWith: ['microsoft'],
     });
 
     expect(region).toHaveTextContent('Default model for chat*');
-    expect(region).toHaveTextContent(
-      "name this model by its id alone, which microsoft also offers. They may run on that provider's model instead"
+    // Only the workflow pinning the id alone is marked.
+    expect(column(region, 'Workflows')).toHaveTextContent('Triage*');
+    expect(column(region, 'Workflows')).not.toHaveTextContent('Intake*');
+    expect(column(region, 'Workflows')).toHaveTextContent(
+      '3 workflows in other organisations (2 by model id alone). They are counted, not named.'
     );
+    expect(region).toHaveTextContent(
+      "The uses marked * name this model by its id alone, with no provider, which microsoft also offers. They may run on that provider's model instead"
+    );
+  });
+
+  it('says nothing about shared ids when every use names the provider (§136 t-1068)', () => {
+    const region = panel({
+      workflows: [{ id: 'w1', name: 'Triage', byIdOnly: false }],
+      otherOrgWorkflows: 1,
+      settings: [{ slot: 'chat', source: 'saved' }],
+      sharedWith: ['microsoft'],
+    });
+
+    expect(region).not.toHaveTextContent('by its id alone');
+    expect(region).not.toHaveTextContent('*');
+    expect(column(region, 'Workflows')).not.toHaveTextContent('by model id alone');
   });
 
   it("says nothing about shared ids when the id is the model's alone", () => {
     const region = panel({
-      workflows: [{ id: 'w1', name: 'Triage' }],
+      workflows: [{ id: 'w1', name: 'Triage', byIdOnly: true }],
       settings: [{ slot: 'chat', source: 'saved', byIdOnly: true }],
     });
 

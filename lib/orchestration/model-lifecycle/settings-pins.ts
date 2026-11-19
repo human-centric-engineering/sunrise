@@ -11,18 +11,17 @@
  * One matching rule per slot, shared by the provider-models list (its
  * `defaultFor` badge) and the model's uses, so the two cannot disagree:
  *
- * - **Task defaults** (`routing`, `chat`, `reasoning`, `embeddings`) store a
- *   bare model id, so they match on `modelId` alone and are marked
+ * - **Task defaults** are model pins (`model-pin.ts`, §136 t-1068):
+ *   `${providerSlug}::${modelId}`, which matches when both agree. A bare
+ *   model id (saved before t-1068, the system's suggestion for an unsaved
+ *   slot, and always the `embeddings` slot, whose provider the embedding
+ *   fallback chain chooses) matches on the id alone and is marked
  *   `byIdOnly`: when two providers offer the id (`gpt-4o` under OpenAI and
  *   Azure), the pin cannot say which it runs on, and every row with the id is
- *   given it rather than a guess (owner ruling; t-1068 makes every pin name
- *   its provider). The effective map is used,
+ *   given it rather than a guess (owner ruling). The effective map is used,
  *   saved values and the system's suggestions for unsaved slots alike,
  *   because both are what an agent without a model inherits; `source` says
  *   which.
- * - **`audio`** stores `${providerSlug}::${modelId}` (`audio-default.ts`), so
- *   both must agree; a legacy bare model id still matches on the id, and is
- *   `byIdOnly`.
  * - **The confidential model** (§130) stores provider and model apart; both
  *   must agree.
  * - **The active embedding model** is a row id.
@@ -34,7 +33,7 @@
  * Pure: no database, no Next.js imports.
  */
 
-import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import { pinNames } from '@/lib/orchestration/llm/model-pin';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 /** A settings slot that can name a model. */
@@ -72,24 +71,12 @@ export interface ModelPinSettings {
   activeEmbeddingModelId: string | null;
 }
 
-/**
- * How the task default `value` for `task` names `model`: `'pair'` by provider
- * and model, `'id'` by model id alone, or `null` when it does not.
- */
-function defaultNames(task: TaskType, value: string, model: PinnedModelRef): 'pair' | 'id' | null {
-  if (task !== 'audio') return value === model.modelId ? 'id' : null;
-  const parsed = parseAudioDefault(value);
-  if (parsed === null || parsed.modelId !== model.modelId) return null;
-  if (parsed.providerSlug === null) return 'id';
-  return parsed.providerSlug === model.providerSlug ? 'pair' : null;
-}
-
 /** Every settings slot that names `model`, task defaults first in `TASK_TYPES` order. */
 export function settingsPinsFor(model: PinnedModelRef, settings: ModelPinSettings): SettingsPin[] {
   const pins: SettingsPin[] = [];
   for (const task of TASK_TYPES) {
     const value = settings.defaultModels[task];
-    const how = value ? defaultNames(task, value, model) : null;
+    const how = value ? pinNames(value, model) : null;
     if (how === null) continue;
     pins.push({
       slot: task,

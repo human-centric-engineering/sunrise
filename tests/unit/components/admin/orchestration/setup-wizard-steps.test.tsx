@@ -217,9 +217,10 @@ describe('SetupWizard — step content', () => {
         expect(patchCall).toBeDefined();
         const body = JSON.parse((patchCall![1] as RequestInit).body as string);
         expect(body.defaultModels).toMatchObject({
-          chat: 'claude-sonnet-4-6',
-          routing: 'claude-haiku-4-5',
-          reasoning: 'claude-opus-4-6',
+          // Model pins naming the detected provider (§136 t-1068).
+          chat: 'anthropic::claude-sonnet-4-6',
+          routing: 'anthropic::claude-haiku-4-5',
+          reasoning: 'anthropic::claude-opus-4-6',
         });
       });
     });
@@ -580,6 +581,42 @@ describe('SetupWizard — step content', () => {
       // Latency badge appears on success.
       await waitFor(() => {
         expect(screen.getByText(/42ms round-trip/i)).toBeInTheDocument();
+      });
+    });
+
+    it('asks /test-model for the model id of a chat default that names its provider (§136 t-1068)', async () => {
+      const fetchMock = makeFetchMock({
+        providerTotal: 1,
+        providers: [
+          {
+            id: 'prov-1',
+            slug: 'anthropic',
+            name: 'Anthropic',
+            apiKeyPresent: true,
+            isLocal: false,
+          },
+        ],
+        defaultModels: { chat: 'anthropic::claude-sonnet-4-6' },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const user = userEvent.setup();
+
+      seedStorage(2);
+      render(<SetupWizard open={true} onOpenChange={() => {}} />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /run test/i })).toBeInTheDocument()
+      );
+      await user.click(screen.getByRole('button', { name: /run test/i }));
+
+      await waitFor(() => {
+        const modelCall = fetchMock.mock.calls.find(
+          (call) => typeof call[0] === 'string' && call[0].includes('/test-model')
+        );
+        expect(modelCall).toBeDefined();
+        const body = JSON.parse((modelCall![1] as RequestInit).body as string);
+        // The vendor is asked for its own id, not the stored pin.
+        expect(body).toEqual({ model: 'claude-sonnet-4-6' });
       });
     });
 

@@ -24,6 +24,7 @@ import type { ReflectConfig } from '@/components/admin/orchestration/workflow-bu
 
 import { PlanEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/plan-editor';
 import type { PlanConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/plan-editor';
+import { pickModel, pickedModel, withModels } from '@/tests/helpers/model-options';
 
 // ─── ReflectEditor ────────────────────────────────────────────────────────────
 
@@ -90,43 +91,31 @@ describe('ReflectEditor', () => {
     expect(document.getElementById('reflect-model-override')).toBeInTheDocument();
   });
 
-  it('shows the provided modelOverride value', () => {
-    const config: ReflectConfig = { critiquePrompt: '', modelOverride: 'claude-haiku-4-5' };
-    render(<ReflectEditor config={config} onChange={vi.fn()} />);
-    const input = document.getElementById('reflect-model-override') as HTMLInputElement;
-    expect(input.value).toBe('claude-haiku-4-5');
+  it('shows the provided modelOverride as its provider and model', () => {
+    const config: ReflectConfig = { critiquePrompt: '', modelOverride: 'microsoft::gpt-4o' };
+    render(withModels(<ReflectEditor config={config} onChange={vi.fn()} />));
+    expect(pickedModel('reflect-model-override')).toBe('GPT-4o (microsoft)');
   });
 
-  it('calls onChange with { modelOverride: string } when the model override field is filled', async () => {
-    // Arrange
+  it('calls onChange with the provider and model picked (§136 t-1068)', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<ReflectEditor config={emptyConfig} onChange={onChange} />);
+    render(withModels(<ReflectEditor config={emptyConfig} onChange={onChange} />));
 
-    // Act — type a single character so the controlled component emits one onChange call
-    await user.type(document.getElementById('reflect-model-override')!, 'x');
+    await pickModel(user, 'reflect-model-override', 'GPT-4o (openai)');
 
-    // Assert — onChange was called with the exact typed character as modelOverride
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ modelOverride: 'x' }));
+    expect(onChange).toHaveBeenCalledWith({ modelOverride: 'openai::gpt-4o' });
   });
 
-  it('calls onChange with { modelOverride: undefined } when the model override field is cleared', async () => {
-    // Arrange — start with a non-empty override so clearing it has effect
+  it('calls onChange with { modelOverride: undefined } when the default model is picked', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    const config: ReflectConfig = { critiquePrompt: '', modelOverride: 'abc' };
-    render(<ReflectEditor config={config} onChange={onChange} />);
+    const config: ReflectConfig = { critiquePrompt: '', modelOverride: 'openai::gpt-4o' };
+    render(withModels(<ReflectEditor config={config} onChange={onChange} />));
 
-    // Act — clear the field (e.target.value becomes '', so onChange fires with `undefined`)
-    await user.clear(document.getElementById('reflect-model-override')!);
+    await pickModel(user, 'reflect-model-override', 'The default chat model');
 
-    // Assert — the handler maps empty string to undefined
-    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
-      string,
-      unknown
-    >;
-    expect(lastArg).toHaveProperty('modelOverride');
-    expect(lastArg.modelOverride).toBeUndefined();
+    expect(onChange).toHaveBeenCalledWith({ modelOverride: undefined });
   });
 
   // ── Temperature field ────────────────────────────────────────────────────
@@ -235,43 +224,31 @@ describe('PlanEditor', () => {
     expect(document.getElementById('plan-model-override')).toBeInTheDocument();
   });
 
-  it('shows the provided modelOverride value', () => {
-    const config: PlanConfig = { objective: '', modelOverride: 'claude-haiku-4-5' };
-    render(<PlanEditor config={config} onChange={vi.fn()} />);
-    const input = document.getElementById('plan-model-override') as HTMLInputElement;
-    expect(input.value).toBe('claude-haiku-4-5');
+  it('shows the provided modelOverride as its provider and model', () => {
+    const config: PlanConfig = { objective: '', modelOverride: 'microsoft::gpt-4o' };
+    render(withModels(<PlanEditor config={config} onChange={vi.fn()} />));
+    expect(pickedModel('plan-model-override')).toBe('GPT-4o (microsoft)');
   });
 
-  it('calls onChange with { modelOverride: string } when user types in the model override field', async () => {
-    // Arrange
+  it('calls onChange with the provider and model picked (§136 t-1068)', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<PlanEditor config={emptyConfig} onChange={onChange} />);
+    render(withModels(<PlanEditor config={emptyConfig} onChange={onChange} />));
 
-    // Act — type a single character; controlled component emits one onChange call
-    await user.type(document.getElementById('plan-model-override')!, 'x');
+    await pickModel(user, 'plan-model-override', 'GPT-4o (openai)');
 
-    // Assert — onChange was called with the exact typed character as modelOverride
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ modelOverride: 'x' }));
+    expect(onChange).toHaveBeenCalledWith({ modelOverride: 'openai::gpt-4o' });
   });
 
-  it('calls onChange with { modelOverride: undefined } when the model override field is cleared', async () => {
-    // Arrange
+  it('calls onChange with { modelOverride: undefined } when the default model is picked', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    const config: PlanConfig = { objective: '', modelOverride: 'abc' };
-    render(<PlanEditor config={config} onChange={onChange} />);
+    const config: PlanConfig = { objective: '', modelOverride: 'openai::gpt-4o' };
+    render(withModels(<PlanEditor config={config} onChange={onChange} />));
 
-    // Act — clearing the field sends empty string; handler maps '' to undefined
-    await user.clear(document.getElementById('plan-model-override')!);
+    await pickModel(user, 'plan-model-override', 'The default chat model');
 
-    // Assert
-    const lastArg = onChange.mock.calls[onChange.mock.calls.length - 1][0] as Record<
-      string,
-      unknown
-    >;
-    expect(lastArg).toHaveProperty('modelOverride');
-    expect(lastArg.modelOverride).toBeUndefined();
+    expect(onChange).toHaveBeenCalledWith({ modelOverride: undefined });
   });
 
   // ── Temperature field ────────────────────────────────────────────────────

@@ -54,6 +54,8 @@ import {
   __resetSettingsResolverForTests,
   getDefaultModelForTask,
   getDefaultModelForTaskOrNull,
+  getDefaultModelPinForTask,
+  getDefaultModelPinForTaskOrNull,
   invalidateSettingsCache,
 } from '@/lib/orchestration/llm/settings-resolver';
 
@@ -273,6 +275,99 @@ describe('getDefaultModelForTask (strict)', () => {
         expect.stringContaining('getDefaultModelForTask'),
         expect.objectContaining({ error: 'DB timeout' })
       );
+    });
+  });
+});
+
+describe('model pins (§136 t-1068)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSettingsResolverForTests();
+  });
+
+  afterEach(() => {
+    __resetSettingsResolverForTests();
+  });
+
+  it('getDefaultModelPinForTask reads a provider::model value as a pair', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: 'microsoft::gpt-4o' }) as never
+    );
+
+    expect(await getDefaultModelPinForTask('chat')).toEqual({
+      providerSlug: 'microsoft',
+      modelId: 'gpt-4o',
+    });
+  });
+
+  it('getDefaultModelPinForTask reads a bare id with no provider', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: 'gpt-4o' }) as never
+    );
+
+    expect(await getDefaultModelPinForTask('chat')).toEqual({
+      providerSlug: null,
+      modelId: 'gpt-4o',
+    });
+  });
+
+  it('getDefaultModelForTask returns only the model id of a stored pair', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: 'microsoft::gpt-4o' }) as never
+    );
+
+    expect(await getDefaultModelForTask('chat')).toBe('gpt-4o');
+  });
+
+  it('getDefaultModelForTaskOrNull returns only the model id of a stored pair', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ routing: 'groq::llama-3.3-70b' }) as never
+    );
+
+    expect(await getDefaultModelForTaskOrNull('routing')).toBe('llama-3.3-70b');
+  });
+
+  it('getDefaultModelPinForTask throws NoDefaultModelConfiguredError when the slot is unset', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: 'openai::gpt-4o' }) as never
+    );
+
+    await expect(getDefaultModelPinForTask('routing')).rejects.toMatchObject({
+      name: 'NoDefaultModelConfiguredError',
+      task: 'routing',
+    });
+    await expect(getDefaultModelPinForTask('routing')).rejects.toBeInstanceOf(
+      NoDefaultModelConfiguredError
+    );
+  });
+
+  it('getDefaultModelForTask throws NoDefaultModelConfiguredError for an unset slot', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({}) as never
+    );
+
+    await expect(getDefaultModelForTask('reasoning')).rejects.toBeInstanceOf(
+      NoDefaultModelConfiguredError
+    );
+  });
+
+  it('getDefaultModelPinForTaskOrNull returns null for an unset or empty slot', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: '' }) as never
+    );
+
+    expect(await getDefaultModelPinForTaskOrNull('chat')).toBeNull();
+    expect(await getDefaultModelPinForTaskOrNull('routing')).toBeNull();
+  });
+
+  it('getDefaultModelPinForTaskOrNull returns the pair when set', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettingsRow({ chat: 'microsoft::gpt-4o' }) as never
+    );
+
+    expect(await getDefaultModelPinForTaskOrNull('chat')).toEqual({
+      providerSlug: 'microsoft',
+      modelId: 'gpt-4o',
     });
   });
 });

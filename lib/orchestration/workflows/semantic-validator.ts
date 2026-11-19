@@ -18,6 +18,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { formatModelPin, parseModelPin } from '@/lib/orchestration/llm/model-pin';
 import { modelRegistry } from '@/lib/orchestration/llm';
 import { logger } from '@/lib/logging';
 import { ValidationError } from '@/lib/api/errors';
@@ -65,16 +66,30 @@ const LLM_STEP_TYPES = new Set([
 /**
  * Step types whose `modelOverride` chooses a provider, for the org-approval
  * check (§120 t-743): the above plus `supervisor`, which passes its override
- * to `runLlmCall` too. Kept apart so adding it here does not also subject
- * supervisor steps to the existence checks above, at execution, unasked.
- * (`chat_turn` takes an override too, but only of the model on the agent's
- * own provider binding, so it names no provider.)
+ * to `runLlmCall` too, and `chat_turn`. Kept apart so adding them here does
+ * not also subject them to the existence checks above, at execution, unasked.
+ * A `chat_turn` override by bare id replaces the model on the agent's own
+ * binding and names no provider; one naming its provider (§136 t-1068) runs
+ * there, so only those are collected for it.
  */
-const PROVIDER_CHOOSING_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'supervisor']);
+const PROVIDER_CHOOSING_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'supervisor', 'chat_turn']);
+
+/**
+ * Step types whose override is checked to exist: the LLM steps, and a
+ * `chat_turn` override naming its provider (a bare one is the agent's own
+ * provider's model, and was never checked). Like the LLM steps' overrides,
+ * these are checked wherever the semantic validation runs, execution
+ * included: a run whose pinned model has left the catalogue is refused up
+ * front rather than at that step.
+ */
+const EXISTENCE_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'chat_turn']);
 
 // ── Org approval ───────────────────────────────────────────────────────────
 
-/** Model id → the steps of `types` that override to it. */
+/**
+ * Each override → the steps of `types` that override to it. Keyed by the
+ * stored value, a model pin (§136 t-1068): `provider::model`, or a bare id.
+ */
 function collectModelOverrides(
   def: WorkflowDefinition,
   types: ReadonlySet<string> = LLM_STEP_TYPES
@@ -83,19 +98,31 @@ function collectModelOverrides(
   for (const step of def.steps) {
     if (!types.has(step.type)) continue;
     const override = step.config?.modelOverride;
-    if (typeof override === 'string' && override.length > 0) {
-      modelSteps.set(override, [...(modelSteps.get(override) ?? []), step.id]);
-    }
+    if (typeof override !== 'string' || override.length === 0) continue;
+    if (step.type === 'chat_turn' && parseModelPin(override)?.providerSlug == null) continue;
+    modelSteps.set(override, [...(modelSteps.get(override) ?? []), step.id]);
   }
   return modelSteps;
 }
 
-/** Each override's provider, from the registry; an unknown model has none. */
+/**
+ * The provider an override runs on: the one its pin names, else the one the
+ * registry gives its model id. `undefined` for a bare id the registry does not
+ * know.
+ */
+function providerOf(override: string): string | undefined {
+  const pin = parseModelPin(override);
+  if (pin === null) return undefined;
+  if (pin.providerSlug !== null) return pin.providerSlug;
+  return modelRegistry.getModel(pin.modelId)?.provider;
+}
+
+/** Each override's provider ({@link providerOf}); one with none is left out. */
 function providersOf(modelSteps: Map<string, string[]>): Map<string, string> {
   const providerByModel = new Map<string, string>();
-  for (const modelId of modelSteps.keys()) {
-    const model = modelRegistry.getModel(modelId);
-    if (model) providerByModel.set(modelId, model.provider);
+  for (const override of modelSteps.keys()) {
+    const provider = providerOf(override);
+    if (provider !== undefined) providerByModel.set(override, provider);
   }
   return providerByModel;
 }
@@ -206,7 +233,7 @@ export async function assertWorkflowProvidersApproved(def: WorkflowDefinition): 
     // asked about. Where the policy is enforced, that is refused: the save
     // cannot be shown to be approved.
     for (const [modelId, stepIds] of collectModelOverrides(def, PROVIDER_CHOOSING_STEP_TYPES)) {
-      if (modelRegistry.getModel(modelId)) continue;
+      if (providerOf(modelId) !== undefined) continue;
       for (const stepId of stepIds) {
         errors.push({
           code: 'UNKNOWN_MODEL_OVERRIDE',
@@ -246,8 +273,11 @@ export async function semanticValidateWorkflow(
 
   // ── Collect unique references ──────────────────────────────────────────
 
-  /** Map model id → step ids that reference it */
-  const modelSteps = collectModelOverrides(def);
+  /**
+   * Map model id → step ids that reference it. `chat_turn` pins naming their
+   * provider (§136 t-1068) run there, so their model must exist too.
+   */
+  const modelSteps = collectModelOverrides(def, EXISTENCE_STEP_TYPES);
   /** Map capability slug → step ids that reference it */
   const capabilitySteps = new Map<string, string[]>();
   /** Map agent slug → step ids that reference it */
@@ -301,9 +331,20 @@ export async function semanticValidateWorkflow(
   let activeProviders: Array<{ slug: string }> = [];
   let activeCapabilities: Array<{ slug: string }> = [];
   let activeAgents: Array<{ slug: string }> = [];
+  let pinnedRows: Array<{ providerSlug: string; modelId: string }> = [];
+
+  // Overrides naming their provider (§136 t-1068). The registry holds one
+  // entry per model id, so it cannot say whether Azure offers `gpt-4o` when
+  // OpenAI's entry holds the id; the catalogue can.
+  const pairs = [...modelSteps.keys()].flatMap((override) => {
+    const pin = parseModelPin(override);
+    return pin?.providerSlug != null
+      ? [{ providerSlug: pin.providerSlug, modelId: pin.modelId }]
+      : [];
+  });
 
   try {
-    [activeProviders, activeCapabilities, activeAgents] = await Promise.all([
+    [activeProviders, activeCapabilities, activeAgents, pinnedRows] = await Promise.all([
       modelSteps.size > 0
         ? prisma.aiProviderConfig.findMany({
             where: { isActive: true },
@@ -330,6 +371,12 @@ export async function semanticValidateWorkflow(
             select: { slug: true },
           })
         : Promise.resolve([]),
+      pairs.length > 0
+        ? prisma.aiProviderModel.findMany({
+            where: { isActive: true, OR: pairs },
+            select: { providerSlug: true, modelId: true },
+          })
+        : Promise.resolve([]),
     ]);
   } catch (err) {
     logger.error('Semantic validator: DB query failed, skipping semantic checks', { error: err });
@@ -340,25 +387,42 @@ export async function semanticValidateWorkflow(
   // ── Check model overrides ──────────────────────────────────────────────
 
   const activeProviderSlugs = new Set(activeProviders.map((p) => p.slug));
+  const pinnedKnown = new Set(pinnedRows.map((r) => formatModelPin(r.providerSlug, r.modelId)));
 
-  for (const [modelId, stepIds] of modelSteps) {
+  for (const [override, stepIds] of modelSteps) {
+    const pin = parseModelPin(override);
+    const modelId = pin?.modelId ?? override;
     const model = modelRegistry.getModel(modelId);
-    if (!model) {
+    // A bare id is known when the registry knows it, and runs on the
+    // provider the registry gives it. A pin naming its provider is known when
+    // that provider's catalogue row is active, or the registry's own entry
+    // for the id is that provider's; the runtime calls the model's registry
+    // entry either way (`runLlmCall`), so it must know the id too.
+    const provider = pin?.providerSlug ?? model?.provider;
+    const known =
+      model !== undefined &&
+      (pin?.providerSlug == null ||
+        pinnedKnown.has(override) ||
+        model.provider === pin.providerSlug);
+    if (!known || provider === undefined) {
       for (const stepId of stepIds) {
         errors.push({
           code: 'UNKNOWN_MODEL_OVERRIDE',
-          message: `Step "${stepId}" references unknown model "${modelId}"`,
+          message:
+            pin?.providerSlug != null && model !== undefined
+              ? `Step "${stepId}" references model "${modelId}" on provider "${pin.providerSlug}", which has no active model of that id`
+              : `Step "${stepId}" references unknown model "${modelId}"`,
           stepId,
         });
       }
       continue;
     }
 
-    if (!activeProviderSlugs.has(model.provider)) {
+    if (!activeProviderSlugs.has(provider)) {
       for (const stepId of stepIds) {
         errors.push({
           code: 'INACTIVE_PROVIDER',
-          message: `Step "${stepId}" references model "${modelId}" whose provider "${model.provider}" is inactive`,
+          message: `Step "${stepId}" references model "${modelId}" whose provider "${provider}" is inactive`,
           stepId,
         });
       }

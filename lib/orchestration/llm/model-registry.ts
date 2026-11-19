@@ -33,6 +33,7 @@ import {
   type LlmProvider,
 } from '@/lib/orchestration/llm/provider';
 import type { ModelInfo, ModelTier } from '@/lib/orchestration/llm/types';
+import { parseModelPin } from '@/lib/orchestration/llm/model-pin';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
@@ -496,14 +497,29 @@ export function validateTaskDefaults(
       errors.push({ task, message: 'Model id must be a non-empty string' });
       continue;
     }
-    if (task === 'embeddings') continue;
+    // A value is a model pin (§136 t-1068): `provider::model`, or a bare id.
+    const pin = parseModelPin(id);
+    if (task === 'embeddings') {
+      // The embedding fallback chain chooses its own provider, so a provider
+      // here would be ignored. The active embedding model names both.
+      if (pin?.providerSlug != null) {
+        errors.push({
+          task,
+          message:
+            'The embeddings default names a model id only. To choose the provider too, pick the active embedding model',
+        });
+      }
+      continue;
+    }
     // Audio support is matrix-driven (rows with capabilities:['audio'])
     // not registry-driven, so we can't validate it via getModel here.
     // The settings PATCH handler runs the matrix-existence check
     // instead, which is the authoritative source for what's wired up.
     if (task === 'audio') continue;
-    if (!getModel(id)) {
-      errors.push({ task, message: `Unknown model id: ${id}` });
+    // A pair's provider is checked against the catalogue by the settings
+    // PATCH handler: this runs sync, and the registry holds one entry per id.
+    if (!getModel(pin?.modelId ?? id)) {
+      errors.push({ task, message: `Unknown model id: ${pin?.modelId ?? id}` });
     }
   }
   return errors;

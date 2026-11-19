@@ -12,7 +12,8 @@ import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
-import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
+import type { ModelPin } from '@/lib/orchestration/llm/model-pin';
 import { prisma } from '@/lib/db/client';
 import type { AiProviderConfig } from '@/types/prisma';
 
@@ -89,6 +90,21 @@ export async function getEffectiveAgentDefaults(agent: {
   let provider = agent.provider;
   let model = agent.model;
 
+  // The chat default is a model pin (§136 t-1068). Read first: when it names
+  // its provider, the runtime runs it there while that provider is eligible,
+  // and the preview has to show the same provider.
+  let pin: ModelPin | null = null;
+  if (!modelSet) {
+    try {
+      pin = await getDefaultModelPinForTaskOrNull('chat');
+      if (pin) model = pin.modelId;
+    } catch (err) {
+      logger.warn('prefetch: effective model lookup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   if (!providerSet) {
     try {
       const rows = await prisma.aiProviderConfig.findMany({
@@ -106,7 +122,10 @@ export async function getEffectiveAgentDefaults(agent: {
         reachable.map((r) => r.slug),
         { task: 'chat', source: 'primary', primarySlug: null }
       );
-      const candidate = reachable.find((r) => permitted.includes(r.slug));
+      const eligible = reachable.filter((r) => permitted.includes(r.slug));
+      const candidate =
+        eligible.find((r) => pin?.providerSlug != null && r.slug === pin.providerSlug) ??
+        eligible[0];
       // Deliberate divergence when the rule permits NOTHING: the runtime
       // refuses with `NoEligibleProviderError`, but this must never throw — it
       // is a form preview — so the field stays empty and inherited, which is
@@ -125,17 +144,6 @@ export async function getEffectiveAgentDefaults(agent: {
       if (candidate) provider = candidate.slug;
     } catch (err) {
       logger.warn('prefetch: effective provider lookup failed', {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  if (!modelSet) {
-    try {
-      const defaultModel = await getDefaultModelForTaskOrNull('chat');
-      if (defaultModel) model = defaultModel;
-    } catch (err) {
-      logger.warn('prefetch: effective model lookup failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }

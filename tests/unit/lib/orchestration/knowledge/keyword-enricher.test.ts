@@ -30,7 +30,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
-  getDefaultModelForTask: vi.fn(),
+  getDefaultModelPinForTask: vi.fn(),
   NoDefaultModelConfiguredError: class NoDefaultModelConfiguredError extends Error {},
 }));
 
@@ -54,7 +54,7 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
@@ -88,7 +88,7 @@ function makeChatResponse(text: string, inputTokens = 80, outputTokens = 20) {
 }
 
 function setupProvider(chatImpl: (...args: never[]) => Promise<unknown>) {
-  vi.mocked(getDefaultModelForTask).mockResolvedValue(MODEL_ID);
+  vi.mocked(getDefaultModelPinForTask).mockResolvedValue({ providerSlug: null, modelId: MODEL_ID });
   vi.mocked(getModel).mockReturnValue({
     id: MODEL_ID,
     provider: PROVIDER_NAME,
@@ -374,5 +374,60 @@ describe('enrichDocumentKeywords — provider eligibility', () => {
     });
 
     await expect(enrichDocumentKeywords('doc-1')).rejects.toBeInstanceOf(ProviderNotPermittedError);
+  });
+
+  describe('a chat default pin naming a provider (§136 t-1068)', () => {
+    // The registry says `openai` for the id; the pin says `microsoft`.
+    const PINNED = 'microsoft';
+
+    function pinDefault(): void {
+      vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+        providerSlug: PINNED,
+        modelId: MODEL_ID,
+      });
+    }
+
+    it('asks the rule about the pinned provider, calls it, and logs cost against it', async () => {
+      const chatMock = vi.fn().mockResolvedValue(makeChatResponse('alpha, beta'));
+      setupProvider(chatMock as never);
+      pinDefault();
+      seedChunks();
+      const asked: Array<readonly string[]> = [];
+      registerProviderEligibility((candidates) => {
+        asked.push(candidates);
+        return candidates;
+      });
+
+      await enrichDocumentKeywords('doc-1');
+
+      expect(asked).toEqual([[PINNED]]);
+      expect(vi.mocked(getProvider)).toHaveBeenCalledWith(
+        PINNED,
+        expect.objectContaining({ source: 'primary' })
+      );
+      expect(vi.mocked(logCost)).toHaveBeenCalledWith(
+        expect.objectContaining({ model: MODEL_ID, provider: PINNED })
+      );
+      expect(vi.mocked(logCost)).not.toHaveBeenCalledWith(
+        expect.objectContaining({ provider: PROVIDER_NAME })
+      );
+    });
+
+    it('refuses when the rule bars the pinned provider, naming it on the error', async () => {
+      const chatMock = vi.fn().mockResolvedValue(makeChatResponse('alpha'));
+      setupProvider(chatMock as never);
+      pinDefault();
+      seedChunks();
+      // The registry's provider is allowed; only the pinned one is barred.
+      registerProviderEligibility((candidates) => candidates.filter((s) => s !== PINNED));
+
+      await expect(enrichDocumentKeywords('doc-1')).rejects.toMatchObject({
+        name: 'ProviderNotPermittedError',
+        providerSlug: PINNED,
+        modelId: MODEL_ID,
+      });
+      expect(vi.mocked(getProvider)).not.toHaveBeenCalled();
+      expect(chatMock).not.toHaveBeenCalled();
+    });
   });
 });

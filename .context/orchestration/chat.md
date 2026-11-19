@@ -646,7 +646,7 @@ Because the boundary moves every turn, staying reusable means summarising **past
 
 **Extension keeps the cost proportional to what was added**, not to the length of the conversation — and it is what lets the summary outlive the rows: the stored text is folded forward, never re-derived or discarded.
 
-**Budget:** the `routing` task-type model (budget tier, e.g. Haiku) via `getDefaultModelForTask('routing')`, capped at `maxTokens: 500`.
+**Budget:** the `routing` task-type model (budget tier, e.g. Haiku) via `getDefaultModelPinForTask('routing')` (on the conversation's provider; one naming another gives way to the conversation's model, §136 t-1068), capped at `maxTokens: 500`.
 
 <a id="cost-attribution"></a>**Cost attribution:** logged as a `CHAT` operation against the **real** `agent.id` and `conversation.id`, with `metadata.kind = 'conversation_summary'` so analytics can separate summarisation from turns a user asked for. `operation` stays `CHAT` because it is a chat completion billed to that agent. Until #654 this row carried the literals `'system'` and `'summary'` — both columns are foreign keys, so every insert was rejected with P2003, swallowed by `logCost`, and the spend appeared only on the provider invoice.
 
@@ -727,7 +727,7 @@ Three internal modules under `lib/orchestration/chat/` are not exported from the
 - Primary export: `summarizeMessages(messages, providerSlug, fallbackSlugs, options?)` returning a `SummarizeResult`.
 - `options.previousSummary` switches it from _summarise_ to **extend**: the prior text and the delta go to the model together, under a prompt that requires the earlier content to be carried forward rather than replaced. `options.agentId` / `options.conversationId` attribute the cost row.
 - Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once the rows after the stored summary's pin exceed the cap (`agent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`), and by the catch-up passes when more than `HISTORY_LOAD_LIMIT` rows follow the pin.
-- Runs on the **`routing` task-type model** (budget tier, e.g. Haiku) resolved via `getDefaultModelForTask('routing')` in the LLM settings resolver. Capped at `maxTokens: 500`.
+- Runs on the **`routing` task-type model** (budget tier, e.g. Haiku) resolved via `getDefaultModelPinForTask('routing')` in the LLM settings resolver, and always on the conversation's provider and fallbacks: when that default names another provider (`provider::model`, §136 t-1068), the summary is made with the conversation's own model instead, so a conversation's history never goes somewhere its agent does not send it. Capped at `maxTokens: 500`.
 - Logs cost as a `CostOperation.CHAT` row against the caller's real agent and conversation, tagged `metadata.kind = 'conversation_summary'`. Both columns are foreign keys — pass a real row id or pass nothing; a placeholder is rejected and swallowed (#654).
 - **Never throws.** Any failure (provider down, LLM error, empty response) returns `fellBack: true` with `previousSummary` if there is one, and `FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]'` otherwise, so the chat turn keeps moving and a good summary is never destroyed by a bad call.
 - Prompt is a fixed system message telling the model to produce a third-person summary covering the original problem, key decisions, facts/constraints, and current state.

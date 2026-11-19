@@ -555,12 +555,15 @@ describe('WorkflowBuilder', () => {
       render(<WorkflowBuilder mode="create" />);
 
       await waitFor(() => {
-        // capabilities + agents fetches
-        expect(apiClient.get).toHaveBeenCalledTimes(2);
+        // capabilities + agents + the model picker's catalogue (§136 t-1068)
+        expect(apiClient.get).toHaveBeenCalledTimes(3);
       });
 
       const urls = vi.mocked(apiClient.get).mock.calls.map(([url]) => url);
       expect(urls.some((u) => u.includes('capabilities'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+      expect(apiClient.get).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.PROVIDER_MODELS, {
+        params: { capability: 'chat', isActive: true, limit: 100 },
+      });
     });
 
     it('runs the inline `setAgents(result.map(...))` and `setCapabilities(result)` callbacks when fetches resolve', async () => {

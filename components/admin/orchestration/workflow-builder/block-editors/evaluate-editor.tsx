@@ -16,6 +16,7 @@ import {
 
 import type { EditorProps } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
 import type { ReasoningEffort } from '@/lib/orchestration/llm/types';
+import { ModelOverrideField } from '@/components/admin/orchestration/workflow-builder/block-editors/model-override-field';
 
 export interface EvaluateConfig extends Record<string, unknown> {
   rubric: string;
@@ -106,22 +107,18 @@ export function EvaluateEditor({ config, onChange }: EditorProps<EvaluateConfig>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="evaluate-model-override" className="flex items-center text-xs">
-            Model override{' '}
-            <FieldHelp title="Model override">
+        <ModelOverrideField
+          id="evaluate-model-override"
+          value={config.modelOverride}
+          onChange={(modelOverride) => onChange({ modelOverride })}
+          help={
+            <>
               Optional. Overrides the workflow&rsquo;s default model for just this evaluate step —
-              useful for using a cheaper model for simple rubric checks.
-            </FieldHelp>
-          </Label>
-          <Input
-            id="evaluate-model-override"
-            value={config.modelOverride ?? ''}
-            onChange={(e) => onChange({ modelOverride: e.target.value })}
-            placeholder="claude-haiku-4-5"
-            className="font-mono text-xs"
-          />
-        </div>
+              useful for using a cheaper model for simple rubric checks. Each option is one
+              provider&rsquo;s model, so the step runs on exactly that provider.
+            </>
+          }
+        />
 
         <div className="space-y-1.5">
           <Label htmlFor="evaluate-temperature" className="flex items-center text-xs">

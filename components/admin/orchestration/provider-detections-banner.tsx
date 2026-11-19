@@ -32,6 +32,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
+import { formatModelPin } from '@/lib/orchestration/llm/model-pin';
 
 interface DetectionRow {
   slug: string;
@@ -125,14 +126,16 @@ export function ProviderDetectionsBanner({
       };
       const stored = body.success ? (body.data?.defaultModelsStored ?? {}) : {};
       const patch: Record<string, string> = {};
+      // Model pins (§136 t-1068): each suggestion is this provider's model, so
+      // the saved default names the provider. Embeddings name the id alone.
       if (row.suggestedDefaultChatModel && !stored.chat) {
-        patch.chat = row.suggestedDefaultChatModel;
+        patch.chat = formatModelPin(row.slug, row.suggestedDefaultChatModel);
       }
       if (row.suggestedRoutingModel && !stored.routing) {
-        patch.routing = row.suggestedRoutingModel;
+        patch.routing = formatModelPin(row.slug, row.suggestedRoutingModel);
       }
       if (row.suggestedReasoningModel && !stored.reasoning) {
-        patch.reasoning = row.suggestedReasoningModel;
+        patch.reasoning = formatModelPin(row.slug, row.suggestedReasoningModel);
       }
       if (row.suggestedEmbeddingModel && !stored.embeddings) {
         patch.embeddings = row.suggestedEmbeddingModel;

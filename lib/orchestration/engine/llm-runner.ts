@@ -26,7 +26,8 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { parseModelPin, pinProvider } from '@/lib/orchestration/llm/model-pin';
 import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
@@ -57,6 +58,11 @@ import {
 export interface LlmRunParams {
   stepId: string;
   prompt: string;
+  /**
+   * The step's model pin: `provider::model` (§136 t-1068), or a bare model id,
+   * whose provider is the one the model registry gives it. Empty or absent
+   * means the `chat` task default.
+   */
   modelOverride?: string;
   temperature?: number;
   maxTokens?: number;
@@ -121,9 +127,11 @@ export async function runLlmCall(
 
       // Held rather than folded into `modelId`, because the eligibility check
       // below turns on WHERE the model came from, not on what it is.
-      const override =
-        params.modelOverride && params.modelOverride.length > 0 ? params.modelOverride : null;
-      const modelId = override ?? (await getDefaultModelForTask('chat'));
+      // Both are model pins (§136 t-1068): `provider::model`, or a bare id
+      // saved before pins named their provider.
+      const override = parseModelPin(params.modelOverride);
+      const pin = override ?? (await getDefaultModelPinForTask('chat'));
+      const modelId = pin.modelId;
 
       // A matrix-only model is unknown until hydrated, and this runs from
       // scheduled and triggered executions too, not only the admin route.
@@ -136,10 +144,15 @@ export async function runLlmCall(
           `Model "${modelId}" is not in the model registry`
         );
       }
+      // The provider the pin names, else the one the registry gives the id.
+      // The registry holds one entry per id, so for `gpt-4o` under OpenAI and
+      // Azure it names one of them: a pin naming the other must not be sent
+      // there.
+      const providerSlug = pinProvider(pin, modelInfo.provider);
 
       setSpanAttributes(span, {
         [GEN_AI_REQUEST_MODEL]: modelId,
-        [GEN_AI_SYSTEM]: modelInfo.provider,
+        [GEN_AI_SYSTEM]: providerSlug,
       });
 
       // The second provider-eligibility chokepoint (t-658). Nothing here goes
@@ -154,7 +167,7 @@ export async function runLlmCall(
       // override, Sunrise picked the task default and then inherited whatever
       // provider that model happens to name — nobody's intent to override.
       if (override === null) {
-        const permitted = await isProviderEligible(modelInfo.provider, {
+        const permitted = await isProviderEligible(providerSlug, {
           task: 'chat',
           source: 'primary',
           primarySlug: null,
@@ -167,7 +180,7 @@ export async function runLlmCall(
             stepId: params.stepId,
             executionId: ctx.executionId,
             modelId,
-            providerSlug: modelInfo.provider,
+            providerSlug,
             fix: 'This provider is not permitted: at TENANCY_MODE=multi, by the org’s approved providers (GET /api/v1/admin/orgs/[id]/providers); or by the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts — by policy, or because it threw (a rule that cannot be evaluated denies). Either point the chat task default at a permitted model, give the step an explicit modelOverride, or widen the rule.',
           });
           // NOT retriable. A policy denial is deterministic, so a `retry`
@@ -187,7 +200,7 @@ export async function runLlmCall(
       try {
         // The gate (§120 t-741) is told the same thing the check above turned
         // on: an override is the operator's choice, the task default is ours.
-        provider = await getProvider(modelInfo.provider, {
+        provider = await getProvider(providerSlug, {
           task: 'chat',
           source: override === null ? 'primary' : 'explicit',
           primarySlug: null,
@@ -196,7 +209,7 @@ export async function runLlmCall(
         throw new ExecutorError(
           params.stepId,
           'provider_unavailable',
-          `Provider "${modelInfo.provider}" unavailable`,
+          `Provider "${providerSlug}" unavailable`,
           err
         );
       }
@@ -253,7 +266,7 @@ export async function runLlmCall(
       Object.assign(requestParams, params.modelParams);
       ctx.stepTelemetry?.push({
         model: modelId,
-        provider: modelInfo.provider,
+        provider: providerSlug,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
         durationMs: callDurationMs,
@@ -283,7 +296,7 @@ export async function runLlmCall(
         workflowExecutionId: ctx.executionId,
         userId: ctx.userId,
         model: modelId,
-        provider: modelInfo.provider,
+        provider: providerSlug,
         ownKey: usesOrgOwnKey(provider),
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,

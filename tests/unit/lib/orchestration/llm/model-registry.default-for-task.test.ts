@@ -197,4 +197,34 @@ describe('validateTaskDefaults', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].message).toMatch(/non-empty/i);
   });
+
+  describe('model pins (§136 t-1068)', () => {
+    it('passes a chat pair whose model id is known, whatever provider it names', () => {
+      // The registry holds one entry per id; the provider is checked against
+      // the catalogue by the settings PATCH, so only the id is asked here.
+      expect(registry.validateTaskDefaults({ chat: 'microsoft::claude-sonnet-4-6' })).toEqual([]);
+    });
+
+    it('fails a chat pair whose model id is unknown, naming the model id and not the pair', () => {
+      const errors = registry.validateTaskDefaults({ reasoning: 'microsoft::not-a-real-model' });
+
+      expect(errors).toEqual([
+        { task: 'reasoning', message: 'Unknown model id: not-a-real-model' },
+      ]);
+    });
+
+    it('refuses a provider on the embeddings default', () => {
+      const errors = registry.validateTaskDefaults({
+        embeddings: 'openai::text-embedding-3-small',
+      });
+
+      expect(errors).toHaveLength(1);
+      expect(errors[0].task).toBe('embeddings');
+      expect(errors[0].message).toMatch(/model id only/);
+    });
+
+    it('accepts a bare id on the embeddings default', () => {
+      expect(registry.validateTaskDefaults({ embeddings: 'text-embedding-3-small' })).toEqual([]);
+    });
+  });
 });

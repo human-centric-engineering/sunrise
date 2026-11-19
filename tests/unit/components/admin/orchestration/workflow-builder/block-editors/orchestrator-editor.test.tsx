@@ -22,6 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { OrchestratorEditor } from '@/components/admin/orchestration/workflow-builder/block-editors/orchestrator-editor';
 import type { OrchestratorConfig } from '@/components/admin/orchestration/workflow-builder/block-editors/orchestrator-editor';
 import type { AgentOption } from '@/components/admin/orchestration/workflow-builder/block-editors/index';
+import { pickModel, withModels } from '@/tests/helpers/model-options';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -211,10 +212,13 @@ describe('OrchestratorEditor', () => {
         ...defaultConfig,
         modelOverride: 'gpt-4o',
       };
-      render(<OrchestratorEditor config={configWithModel} onChange={onChange} agents={AGENTS} />);
+      render(
+        withModels(
+          <OrchestratorEditor config={configWithModel} onChange={onChange} agents={AGENTS} />
+        )
+      );
 
-      const input = document.getElementById('orchestrator-model') as HTMLInputElement;
-      await user.clear(input);
+      await pickModel(user, 'orchestrator-model', 'The default chat model');
 
       const calls = onChange.mock.calls.filter(
         (c) => 'modelOverride' in (c[0] as Record<string, unknown>)

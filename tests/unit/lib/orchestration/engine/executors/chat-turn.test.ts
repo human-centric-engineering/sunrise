@@ -1005,3 +1005,112 @@ describe('chat_turn — the model for confidential messages (§130 t-1038)', () 
     expect(getProviderWithFallbacks).toHaveBeenCalledWith('openai', [], undefined);
   });
 });
+
+describe('chat_turn — a step model pin naming its provider (§136 t-1068)', () => {
+  const BINDING = {
+    providerSlug: 'openai',
+    model: 'gpt-4o-mini',
+    fallbacks: ['anthropic'],
+    provenance: {
+      task: 'chat' as const,
+      primary: 'primary' as const,
+      fallbacks: 'system' as const,
+    },
+  };
+
+  function arrange() {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+      messages: [],
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
+    vi.mocked(resolveAgentProviderAndModel).mockResolvedValue(BINDING);
+    const chat = vi.fn(async (_messages: unknown, _options: unknown) => mockChatResponse);
+    return chat;
+  }
+
+  it('calls a pair naming another provider there alone, with explicit provenance and the pin’s model id', async () => {
+    const chat = arrange();
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat } as never,
+      usedSlug: 'microsoft',
+    });
+
+    await executeChatTurn(makeStep({ modelOverride: 'microsoft::gpt-4o' }), makeCtx());
+
+    // Not the binding's openai or its anthropic fallback.
+    expect(getProviderWithFallbacks).toHaveBeenCalledTimes(1);
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('microsoft', [], {
+      task: 'chat',
+      primary: 'explicit',
+      fallbacks: 'explicit',
+    });
+    // The model on the wire is the bare id, never the composite.
+    expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
+    expect(logCost).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'microsoft', model: 'gpt-4o' })
+    );
+  });
+
+  it('drops the binding’s fallbacks even when the pair names the binding’s own provider', async () => {
+    // A fallback would be sent `gpt-4o` and run another provider's model of
+    // that id, which the pin rules out.
+    const chat = arrange();
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat } as never,
+      usedSlug: 'openai',
+    });
+
+    await executeChatTurn(makeStep({ modelOverride: 'openai::gpt-4o' }), makeCtx());
+
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('openai', [], {
+      task: 'chat',
+      primary: 'explicit',
+      fallbacks: 'explicit',
+    });
+    expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
+  });
+
+  it('keeps the binding’s provider and fallbacks for a bare override, replacing only the model', async () => {
+    const chat = arrange();
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat } as never,
+      usedSlug: 'openai',
+    });
+
+    await executeChatTurn(makeStep({ modelOverride: 'gpt-4o' }), makeCtx());
+
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith(
+      'openai',
+      ['anthropic'],
+      BINDING.provenance
+    );
+    expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
+  });
+
+  it('uses the binding’s model when no override is set', async () => {
+    const chat = arrange();
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat } as never,
+      usedSlug: 'openai',
+    });
+
+    await executeChatTurn(makeStep(), makeCtx());
+
+    expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o-mini' });
+  });
+
+  it('treats an empty override as none: the binding’s model, and the turn is routed for confidential content', async () => {
+    const chat = arrange();
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat } as never,
+      usedSlug: 'openai',
+    });
+
+    await executeChatTurn(makeStep({ modelOverride: '' }), makeCtx());
+
+    expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o-mini' });
+    expect(routeConfidentialTurn).toHaveBeenCalled();
+  });
+});

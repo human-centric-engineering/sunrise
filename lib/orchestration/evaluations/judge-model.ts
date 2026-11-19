@@ -25,6 +25,8 @@
  * Platform-agnostic: no Next.js imports.
  */
 
+import { formatModelPin, parseModelPin } from '@/lib/orchestration/llm/model-pin';
+
 const env = (key: string): string | null => {
   const value = process.env[key];
   return typeof value === 'string' && value.length > 0 ? value : null;
@@ -36,3 +38,31 @@ export const EVALUATION_DEFAULT_MODEL: string | null = env('EVALUATION_DEFAULT_M
 export const JUDGE_PROVIDER: string | null =
   env('EVALUATION_JUDGE_PROVIDER') ?? EVALUATION_DEFAULT_PROVIDER;
 export const JUDGE_MODEL: string | null = env('EVALUATION_JUDGE_MODEL') ?? EVALUATION_DEFAULT_MODEL;
+
+/**
+ * A model and a provider from the same level, as a pin: `provider::model`
+ * when both are set (and the model does not already name one), else the
+ * model alone, `null` when there is none.
+ */
+function levelPin(provider: string | null, model: string | null): string | null {
+  if (model === null) return null;
+  if (provider === null || parseModelPin(model)?.providerSlug !== null) return model;
+  return formatModelPin(provider, model);
+}
+
+/**
+ * The judge as a model pin (§136 t-1068), for a caller that hands it to
+ * `runLlmCall` or resolves it as a step override would: `provider::model`
+ * when a provider is configured with the model AT THE SAME LEVEL, so the
+ * judge runs on that provider and not on whichever one the model registry
+ * gives the id. `EVALUATION_JUDGE_MODEL` pairs only with
+ * `EVALUATION_JUDGE_PROVIDER`, and the eval defaults only with each other:
+ * `JUDGE_PROVIDER` falls back on its own, so pairing it with `JUDGE_MODEL`
+ * could join a judge model to the default's provider (`openai::claude-…`).
+ * A model with no provider at its level stays bare and resolves as before.
+ * `null` when no judge model is configured.
+ */
+export const JUDGE_MODEL_PIN: string | null =
+  env('EVALUATION_JUDGE_MODEL') !== null
+    ? levelPin(env('EVALUATION_JUDGE_PROVIDER'), env('EVALUATION_JUDGE_MODEL'))
+    : levelPin(EVALUATION_DEFAULT_PROVIDER, EVALUATION_DEFAULT_MODEL);

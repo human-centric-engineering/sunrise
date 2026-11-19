@@ -259,9 +259,12 @@ export const DELETE = withAdminAuth<{ id: string }>(
     // In-use guard: refuse to delete when any active agent or active
     // workflow (published version or in-progress draft) still references
     // the (providerSlug, modelId) pair. AiAgent stores both as plain
-    // strings; workflows pin via `step.config.modelOverride` (just the
-    // bare modelId — provider context is resolved from the model registry
-    // at runtime).
+    // strings; workflows pin via `step.config.modelOverride`, a model pin
+    // (§136 t-1068): `provider::model`, or a bare id resolved from the model
+    // registry at runtime. A workflow pinning by bare id blocks the delete
+    // even when another provider offers the id, unlike a saved setting: the
+    // registry holds one entry per id and keeps a deleted row's until the
+    // process restarts, so the id may still resolve to this row's provider.
     //
     // In every org (t-731): the model is global config, so another org's
     // agents and workflows refuse the delete too. Only the caller's own are

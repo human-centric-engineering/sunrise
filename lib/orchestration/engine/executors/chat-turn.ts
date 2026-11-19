@@ -41,6 +41,7 @@ import { logger } from '@/lib/logging';
 import { CostOperation, type StepResult, type WorkflowStep } from '@/types/orchestration';
 import type { LlmMessage, ReasoningEffort } from '@/lib/orchestration/llm/types';
 import { getProviderWithFallbacks, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
+import { parseModelPin } from '@/lib/orchestration/llm/model-pin';
 import {
   resolveAgentProviderAndModel,
   type ResolvedAgentBinding,
@@ -239,7 +240,8 @@ export async function executeChatTurn(
   // t-1038), decided in the agent's privacy scope, as the call is. A step's
   // `modelOverride` is the operator's recorded choice: left to the privacy
   // stage, which refuses it, rather than rerouted.
-  if (config.modelOverride === undefined) {
+  // An empty override is no override (`parseModelPin` reads it as none).
+  if (parseModelPin(config.modelOverride) === null) {
     const route = await runInPrivacyScope(agentPrivacyScope(agent.id), () =>
       routeConfidentialTurn({
         binding: resolvedBinding,
@@ -251,12 +253,27 @@ export async function executeChatTurn(
     await keepFlaggedGroups({ id: conversation.id }, route.found);
     resolvedBinding = route.binding;
   }
-  const model = config.modelOverride ?? resolvedBinding.model;
-  const { provider, usedSlug: providerSlug } = await getProviderWithFallbacks(
-    resolvedBinding.providerSlug,
-    resolvedBinding.fallbacks,
-    resolvedBinding.provenance
-  );
+  // The override is a model pin (§136 t-1068). A bare id replaces the model on
+  // the agent's own binding, as it always has. A pin naming its provider is
+  // called there and nowhere else: the binding's fallbacks were chosen for
+  // the agent's model, not for this one.
+  const overridePin = parseModelPin(config.modelOverride);
+  const model = overridePin?.modelId ?? resolvedBinding.model;
+  // Even the agent's own provider: its fallbacks would send this model id to
+  // another provider's model of the same id, which the pin rules out.
+  const pinnedProvider = overridePin?.providerSlug ?? null;
+  const { provider, usedSlug: providerSlug } =
+    pinnedProvider === null
+      ? await getProviderWithFallbacks(
+          resolvedBinding.providerSlug,
+          resolvedBinding.fallbacks,
+          resolvedBinding.provenance
+        )
+      : await getProviderWithFallbacks(pinnedProvider, [], {
+          task: 'chat',
+          primary: 'explicit',
+          fallbacks: 'explicit',
+        });
 
   // 7. Resolve reasoning effort (step config beats agent default).
   const stepEffort = narrowReasoningEffort(config.reasoningEffort ?? undefined);

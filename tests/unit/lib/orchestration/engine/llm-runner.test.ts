@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
-  getDefaultModelForTask: vi.fn(),
+  getDefaultModelPinForTask: vi.fn(),
 }));
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModel: vi.fn(),
@@ -40,7 +40,7 @@ vi.mock('@/lib/logging', () => ({
 // ─── Imports (after mocks) ───────────────────────────────────────────────────
 
 import { runLlmCall, interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
-import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getDefaultModelPinForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
@@ -141,7 +141,10 @@ describe('runLlmCall', () => {
   });
 
   it('falls back to default model when modelOverride is empty string', async () => {
-    vi.mocked(getDefaultModelForTask).mockResolvedValue('claude-3');
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'claude-3',
+    });
     vi.mocked(getModel).mockReturnValue({ provider: 'anthropic' } as any);
     vi.mocked(getProvider).mockResolvedValue({
       chat: vi.fn().mockResolvedValue({
@@ -158,12 +161,15 @@ describe('runLlmCall', () => {
     const ctx = makeCtx();
     await runLlmCall(ctx, { stepId: 's1', prompt: 'test', modelOverride: '' });
 
-    expect(getDefaultModelForTask).toHaveBeenCalledWith('chat');
+    expect(getDefaultModelPinForTask).toHaveBeenCalledWith('chat');
     expect(getModel).toHaveBeenCalledWith('claude-3');
   });
 
   it('falls back to default model when modelOverride is undefined', async () => {
-    vi.mocked(getDefaultModelForTask).mockResolvedValue('claude-3');
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'claude-3',
+    });
     vi.mocked(getModel).mockReturnValue({ provider: 'anthropic' } as any);
     vi.mocked(getProvider).mockResolvedValue({
       chat: vi.fn().mockResolvedValue({
@@ -180,7 +186,7 @@ describe('runLlmCall', () => {
     const ctx = makeCtx();
     await runLlmCall(ctx, { stepId: 's1', prompt: 'test' });
 
-    expect(getDefaultModelForTask).toHaveBeenCalledWith('chat');
+    expect(getDefaultModelPinForTask).toHaveBeenCalledWith('chat');
   });
 
   it('throws ExecutorError with code "unknown_model" when model is not in registry', async () => {
@@ -808,7 +814,10 @@ describe('runLlmCall — provider eligibility', () => {
       content: 'answer',
       usage: { inputTokens: 10, outputTokens: 5 },
     });
-    vi.mocked(getDefaultModelForTask).mockResolvedValue('default-chat-model');
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'default-chat-model',
+    });
     vi.mocked(getModel).mockReturnValue({ provider: BARRED } as never);
     vi.mocked(getProvider).mockResolvedValue({ chat: chatMock } as never);
     vi.mocked(calculateCost).mockReturnValue({
@@ -858,7 +867,7 @@ describe('runLlmCall — provider eligibility', () => {
     expect(chatMock).toHaveBeenCalledTimes(1);
     // And the task default was never consulted, which is what makes this the
     // override path rather than a coincidence.
-    expect(vi.mocked(getDefaultModelForTask)).not.toHaveBeenCalled();
+    expect(vi.mocked(getDefaultModelPinForTask)).not.toHaveBeenCalled();
   });
 
   it('runs normally when the rule permits the provider', async () => {
@@ -886,5 +895,147 @@ describe('runLlmCall — provider eligibility', () => {
       code: 'provider_not_permitted',
     });
     expect(chatMock).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Model pins naming their provider (§136 t-1068) ──────────────────────────
+
+describe('runLlmCall — model pins', () => {
+  // The registry holds ONE entry per bare id, so for `gpt-4o` offered by both
+  // OpenAI and Azure it says `openai`. A pin naming `microsoft` must not be
+  // sent there.
+  const REGISTRY_PROVIDER = 'openai';
+  const PINNED_PROVIDER = 'microsoft';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetProviderEligibility();
+  });
+
+  afterEach(() => {
+    resetProviderEligibility();
+  });
+
+  function setupStack() {
+    const chatMock = vi.fn().mockResolvedValue({
+      content: 'answer',
+      usage: { inputTokens: 10, outputTokens: 5 },
+    });
+    vi.mocked(getModel).mockReturnValue({ provider: REGISTRY_PROVIDER } as never);
+    vi.mocked(getProvider).mockResolvedValue({ chat: chatMock } as never);
+    vi.mocked(calculateCost).mockReturnValue({
+      totalCostUsd: 0.001,
+      isLocal: false,
+      inputCostUsd: 0.0006,
+      outputCostUsd: 0.0004,
+    });
+    vi.mocked(logCost).mockResolvedValue(null);
+    return chatMock;
+  }
+
+  it('runs an override pin on the provider it names, not the registry’s, and records that provider', async () => {
+    const chatMock = setupStack();
+    const telemetry: import('@/types/orchestration').LlmTelemetryEntry[] = [];
+
+    const result = await runLlmCall(makeCtx({ stepTelemetry: telemetry }), {
+      stepId: 's1',
+      prompt: 'hello',
+      modelOverride: `${PINNED_PROVIDER}::gpt-4o`,
+    });
+
+    // Looked up by the bare model id, never the composite.
+    expect(vi.mocked(getModel)).toHaveBeenCalledWith('gpt-4o');
+    expect(vi.mocked(getProvider)).toHaveBeenCalledWith(
+      PINNED_PROVIDER,
+      expect.objectContaining({ source: 'explicit' })
+    );
+    expect(chatMock.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
+    expect(result.model).toBe('gpt-4o');
+    expect(telemetry[0]).toMatchObject({ model: 'gpt-4o', provider: PINNED_PROVIDER });
+    expect(vi.mocked(logCost)).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gpt-4o', provider: PINNED_PROVIDER })
+    );
+  });
+
+  it('does not consult the eligibility rule for an override pin (the operator’s choice)', async () => {
+    setupStack();
+    const rule = vi.fn(() => [] as string[]);
+    registerProviderEligibility(rule);
+
+    await runLlmCall(makeCtx(), {
+      stepId: 's1',
+      prompt: 'hello',
+      modelOverride: `${PINNED_PROVIDER}::gpt-4o`,
+    });
+
+    expect(rule).not.toHaveBeenCalled();
+    expect(vi.mocked(getProvider)).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the eligibility rule about the provider a chat default pin names, as primary', async () => {
+    const chatMock = setupStack();
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: PINNED_PROVIDER,
+      modelId: 'gpt-4o',
+    });
+    const asked: Array<readonly string[]> = [];
+    registerProviderEligibility((candidates) => {
+      asked.push(candidates);
+      return candidates;
+    });
+
+    await runLlmCall(makeCtx(), { stepId: 's1', prompt: 'hello' });
+
+    expect(asked).toEqual([[PINNED_PROVIDER]]);
+    expect(vi.mocked(getProvider)).toHaveBeenCalledWith(
+      PINNED_PROVIDER,
+      expect.objectContaining({ source: 'primary' })
+    );
+    expect(chatMock.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
+  });
+
+  it('refuses a chat default pin whose NAMED provider the rule bars, even if the registry’s is allowed', async () => {
+    const chatMock = setupStack();
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: PINNED_PROVIDER,
+      modelId: 'gpt-4o',
+    });
+    registerProviderEligibility((candidates) => candidates.filter((s) => s !== PINNED_PROVIDER));
+
+    await expect(runLlmCall(makeCtx(), { stepId: 's1', prompt: 'hello' })).rejects.toMatchObject({
+      code: 'provider_not_permitted',
+    });
+    expect(vi.mocked(getProvider)).not.toHaveBeenCalled();
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('still uses the registry’s provider for a bare override (regression guard)', async () => {
+    const chatMock = setupStack();
+    const telemetry: import('@/types/orchestration').LlmTelemetryEntry[] = [];
+
+    await runLlmCall(makeCtx({ stepTelemetry: telemetry }), {
+      stepId: 's1',
+      prompt: 'hello',
+      modelOverride: 'gpt-4o',
+    });
+
+    expect(vi.mocked(getProvider)).toHaveBeenCalledWith(REGISTRY_PROVIDER, expect.anything());
+    expect(chatMock.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
+    expect(telemetry[0].provider).toBe(REGISTRY_PROVIDER);
+  });
+
+  it('uses the registry’s provider for a bare chat default pin', async () => {
+    setupStack();
+    vi.mocked(getDefaultModelPinForTask).mockResolvedValue({
+      providerSlug: null,
+      modelId: 'gpt-4o',
+    });
+
+    await runLlmCall(makeCtx(), { stepId: 's1', prompt: 'hello' });
+
+    expect(vi.mocked(getProvider)).toHaveBeenCalledWith(
+      REGISTRY_PROVIDER,
+      expect.objectContaining({ source: 'primary' })
+    );
   });
 });

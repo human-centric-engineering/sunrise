@@ -46,7 +46,7 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
 }));
 
 vi.mock('@/lib/orchestration/evaluations/judge-model', () => ({
-  JUDGE_MODEL: null as string | null,
+  JUDGE_MODEL_PIN: null as string | null,
 }));
 
 import { prisma } from '@/lib/db/client';
@@ -656,6 +656,20 @@ describe('estimateWorkflowCost — per-model pricing', () => {
     const haikuEntry = estimate.modelMix.find((m) => m.modelId === HAIKU.id);
     expect(sonnetEntry?.costUsd).toBeCloseTo(0.024, 4);
     expect(haikuEntry?.costUsd).toBeCloseTo(0.008, 4);
+    expect(estimate.midUsd).toBeCloseTo(0.032, 4);
+  });
+
+  it("prices an override naming its provider at its model id's rate (§136 t-1068)", async () => {
+    const def = makeDefinition(['llm_call', 'llm_call']);
+    def.steps[1].config = { ...def.steps[1].config, modelOverride: `anthropic::${HAIKU.id}` };
+    mockWorkflow(def);
+
+    const estimate = await estimateWorkflowCost({ workflowId: 'wf-1' });
+
+    // Priced as the bare id: the registry is keyed by model id.
+    const haikuEntry = estimate.modelMix.find((m) => m.modelId === HAIKU.id);
+    expect(haikuEntry?.costUsd).toBeCloseTo(0.008, 4);
+    expect(haikuEntry?.pricingKnown).toBe(true);
     expect(estimate.midUsd).toBeCloseTo(0.032, 4);
   });
 

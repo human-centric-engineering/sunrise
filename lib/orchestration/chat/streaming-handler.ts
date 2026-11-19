@@ -1318,6 +1318,9 @@ export class StreamingChatHandler {
             // A moved turn's summary holds what moved it: made on the model
             // for confidential messages, not the routing default (§130 t-1038).
             ...(route.kind === 'move' ? { model: resolvedModel } : {}),
+            // A summary stays on the conversation's provider: a routing default
+            // naming another gives way to this model (§136 t-1068).
+            conversationModel: resolvedModel,
             // The roster table in `.context/orchestration/capabilities.md`
             // names this boundary as carrying the caller's tags. It has to
             // actually carry them, or the doc is asserting something false

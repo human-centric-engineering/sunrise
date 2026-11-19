@@ -25,7 +25,7 @@ import { hasProviderCredential } from '@/lib/orchestration/llm/provider-credenti
 import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import { pinNames } from '@/lib/orchestration/llm/model-pin';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { modelAgentUsage, modelUsageKey } from '@/lib/orchestration/admin/global-config-usage';
@@ -93,14 +93,11 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
 
     const matrixByModelId = new Map(matrixRows.map((m) => [m.modelId, m]));
 
-    // Per-task matching rule. The `audio` slot stores a
-    // `${providerSlug}::${modelId}` composite (see
-    // `lib/orchestration/llm/audio-default.ts`) because the schema
-    // allows two providers to share a modelId. This route is already
-    // scoped to one provider (`row.slug`), so we evaluate
-    // `parsed.providerSlug === row.slug` per audio row — a
-    // composite that names a different provider must not light up
-    // here, which is the bug the matrix-wide route was tripping on.
+    // Per-task matching rule: each default is a model pin
+    // (`lib/orchestration/llm/model-pin.ts`), `provider::model` or a bare id,
+    // because the schema allows two providers to share a modelId. This route
+    // is scoped to one provider (`row.slug`), so a pin naming a different
+    // provider must not light up here.
     const enriched = liveModels.map((m) => {
       const matrix = matrixByModelId.get(m.id);
       const used = usage.get(modelUsageKey(row.slug, m.id));
@@ -112,16 +109,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       for (const task of TASK_TYPES) {
         const stored = settings.defaultModels[task];
         if (!stored) continue;
-        if (task === 'audio') {
-          const parsed = parseAudioDefault(stored);
-          if (!parsed) continue;
-          if (
-            parsed.modelId === m.id &&
-            (parsed.providerSlug === null || parsed.providerSlug === row.slug)
-          ) {
-            defaultFor.push(task);
-          }
-        } else if (stored === m.id) {
+        // A model pin (§136 t-1068): a pair names this provider's model only;
+        // a bare id may be any provider's with the id, as it always matched.
+        if (pinNames(stored, { providerSlug: row.slug, modelId: m.id }) !== null) {
           defaultFor.push(task);
         }
       }

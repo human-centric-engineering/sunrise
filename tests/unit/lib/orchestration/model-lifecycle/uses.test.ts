@@ -34,6 +34,7 @@ const UNUSED = {
   otherOrgAgents: 0,
   otherOrgAgentsFollowingPlatform: 0,
   otherOrgWorkflows: 0,
+  otherOrgWorkflowsByIdOnly: 0,
 };
 
 const SETTINGS = {
@@ -105,6 +106,24 @@ describe('modelUses', () => {
     });
   });
 
+  it("gives a default naming its provider to that provider's row alone", async () => {
+    catalogue([
+      { id: 'o', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: null },
+      { id: 'a', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: null },
+    ]);
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      ...SETTINGS,
+      defaultModels: { ...SETTINGS.defaultModels, chat: 'microsoft::gpt-4o' },
+      defaultModelsStored: { chat: 'microsoft::gpt-4o' },
+    } as never);
+
+    const azure = await modelUses({ id: 'a', providerSlug: 'microsoft', modelId: 'gpt-4o' });
+    const openai = await modelUses({ id: 'o', providerSlug: 'openai', modelId: 'gpt-4o' });
+
+    expect(azure.settings).toEqual([{ slot: 'chat', source: 'saved' }]);
+    expect(openai.settings).toEqual([]);
+  });
+
   it('names the other providers that offer the same id, giving both rows the bare-id use', async () => {
     catalogue([
       { id: 'o', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: null },
@@ -166,7 +185,11 @@ describe('retiringModelsInUse', () => {
       ...SETTINGS,
       defaultModels: { ...SETTINGS.defaultModels, chat: 'gpt-4o' },
     } as never);
-    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgWorkflows: 3 });
+    vi.mocked(providerModelUsage).mockResolvedValue({
+      ...UNUSED,
+      otherOrgWorkflows: 3,
+      otherOrgWorkflowsByIdOnly: 3,
+    });
 
     expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 0 });
   });
@@ -178,7 +201,11 @@ describe('retiringModelsInUse', () => {
       { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: PAST },
       { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: FUTURE },
     ]);
-    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgWorkflows: 1 });
+    vi.mocked(providerModelUsage).mockResolvedValue({
+      ...UNUSED,
+      otherOrgWorkflows: 1,
+      otherOrgWorkflowsByIdOnly: 1,
+    });
 
     expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 2, retired: 0 });
   });
@@ -188,7 +215,11 @@ describe('retiringModelsInUse', () => {
       { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: PAST },
       { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: PAST },
     ]);
-    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgWorkflows: 1 });
+    vi.mocked(providerModelUsage).mockResolvedValue({
+      ...UNUSED,
+      otherOrgWorkflows: 1,
+      otherOrgWorkflowsByIdOnly: 1,
+    });
 
     expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 2 });
   });
@@ -200,8 +231,39 @@ describe('retiringModelsInUse', () => {
       { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: PAST },
       { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: null, isActive: false },
     ]);
-    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgWorkflows: 1 });
+    vi.mocked(providerModelUsage).mockResolvedValue({
+      ...UNUSED,
+      otherOrgWorkflows: 1,
+      otherOrgWorkflowsByIdOnly: 1,
+    });
 
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+  });
+
+  it('alerts on a workflow pinning provider and model, whatever shares the id', async () => {
+    catalogue([
+      { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: PAST },
+      { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: null },
+    ]);
+    // Azure's row: one workflow in another org pins `microsoft::gpt-4o`.
+    vi.mocked(providerModelUsage).mockImplementation(async (provider) =>
+      provider === 'microsoft' ? { ...UNUSED, otherOrgWorkflows: 1 } : UNUSED
+    );
+
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+  });
+
+  it("alerts on the caller's own workflow pinning the pair, not on one pinning the id alone", async () => {
+    catalogue([
+      { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: PAST },
+      { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: null },
+    ]);
+    const workflow = (byIdOnly: boolean) => ({ id: 'w', name: 'W', slug: 'w', byIdOnly });
+
+    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, workflows: [workflow(true)] });
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 0 });
+
+    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, workflows: [workflow(false)] });
     expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
   });
 
