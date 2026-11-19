@@ -450,14 +450,18 @@ release process.
   `formatModelPin`, `pinModelId`, `pinNames`, `pinProvider`); `audio-default.ts`
   re-exports them under its old names. `settings-resolver.ts` adds
   `getDefaultModelPinForTask()` / `...OrNull()`, and the runner, the agent
-  resolver (for an agent with neither provider nor model), the summariser, the
-  `chat_turn` step, keyword enrichment and the retroactive review call the
-  pinned provider. The settings PATCH route and the semantic validator check a
-  pair against the model matrix. The default-models form, setup wizard,
+  resolver (for an agent with neither provider nor model), the `chat_turn`
+  step, keyword enrichment and the retroactive review call the pinned
+  provider. The conversation summariser stays on the conversation's provider:
+  a routing default naming another gives way to the conversation's own model
+  (`summarizeMessages` takes `conversationModel`). The settings PATCH route and
+  the semantic validator check a pair against the model matrix and an active
+  provider; a `chat_turn` pair is checked and counted as a use too. The default-models form, setup wizard,
   provider-detection banner, the workflow builder (its free-text model field is
   now a picker) and the built-in templates write pairs. The supervisor step and
   the retroactive review now honour `EVALUATION_JUDGE_PROVIDER` with
-  `EVALUATION_JUDGE_MODEL` (`JUDGE_MODEL_PIN`). `providerModelUsage()` matches
+  `EVALUATION_JUDGE_MODEL`, and the eval defaults' provider with their model
+  (`JUDGE_MODEL_PIN`; never one level's model with the other's provider). `providerModelUsage()` matches
   a pair exactly, marks each workflow `byIdOnly`, and counts
   `otherOrgWorkflowsByIdOnly`. The `embeddings` default stays a bare id: its
   provider is the fallback chain's, and the active embedding model is the

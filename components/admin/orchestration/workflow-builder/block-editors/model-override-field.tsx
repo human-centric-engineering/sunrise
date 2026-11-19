@@ -13,8 +13,9 @@
  * from one catalogue read, so an editor needs no prop of its own for them.
  * A value the options do not hold is kept and shown as itself rather than
  * dropped: a pin saved by id alone before t-1068 (it runs on the registry's
- * provider for the id until someone picks a model), or a model that has since
- * left the catalogue.
+ * provider for the id until someone picks a model), or a pin the options do
+ * not hold — its provider not set up, the model gone from the catalogue, or
+ * the catalogue not yet loaded.
  */
 
 import * as React from 'react';
@@ -111,7 +112,7 @@ export function ModelOverrideField({
           label:
             pin.providerSlug === null
               ? `${current} (by model id, no provider)`
-              : `${pin.modelId} (${pin.providerSlug}, not in the model matrix)`,
+              : `${pin.modelId} (${pin.providerSlug}, not offered here)`,
         }
       : null;
 

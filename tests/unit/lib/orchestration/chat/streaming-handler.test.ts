@@ -5120,19 +5120,10 @@ describe('rolling conversation summarization', () => {
     return call?.[3];
   }
 
-  it('keeps a conversation flagged confidential on its own provider and model for its summary (§136 t-1068)', async () => {
-    // Flagged on an earlier turn: routing keeps it where it judged it, so a
-    // routing default naming another provider must not take the summary there.
-    const options = await summariserOptions({ confidentialFlagged: ['personal'] });
-
-    expect(options).toMatchObject({ confidential: { model: 'claude-sonnet-4-6' } });
-  });
-
-  it('leaves the routing default to a conversation with nothing flagged', async () => {
+  it('hands the summariser the conversation’s model, so a summary stays on its provider (§136 t-1068)', async () => {
     const options = await summariserOptions(null);
 
-    expect(options).toBeDefined();
-    expect(options).not.toHaveProperty('confidential');
+    expect(options).toMatchObject({ conversationModel: 'claude-sonnet-4-6' });
   });
 
   it('generates and persists a new summary when historyRows > MAX_HISTORY_MESSAGES and no reusable summary exists', async () => {

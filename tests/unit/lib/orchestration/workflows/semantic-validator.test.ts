@@ -722,3 +722,32 @@ describe('a modelOverride that names its provider (§136 t-1068)', () => {
     expect(mockUnapprovedProviders).toHaveBeenCalledWith(['microsoft']);
   });
 });
+
+describe('chat_turn pins that name their provider are checked to exist (§136 t-1068)', () => {
+  const chatTurn = (id: string, modelOverride: string) => ({
+    id,
+    name: id,
+    type: 'chat_turn',
+    config: { agentSlug: 'a', conversationId: 'c', message: 'm', modelOverride },
+    nextSteps: [],
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPolicyScope.mockReturnValue('open');
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([{ slug: 'openai' }] as never);
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+  });
+
+  it('refuses a pair naming a provider with no such model, and leaves a bare id to the agent', async () => {
+    vi.mocked(modelRegistry.getModel).mockReturnValue(undefined);
+
+    const result = await semanticValidateWorkflow(
+      makeDef([chatTurn('t1', 'azur::gpt-4o'), chatTurn('t2', 'not-a-model')])
+    );
+
+    expect(result.errors.map((e) => [e.code, e.stepId])).toEqual([
+      ['UNKNOWN_MODEL_OVERRIDE', 't1'],
+    ]);
+  });
+});

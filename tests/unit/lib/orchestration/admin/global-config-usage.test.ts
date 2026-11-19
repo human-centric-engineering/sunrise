@@ -266,6 +266,23 @@ describe('providerModelUsage', () => {
     expect(usage.otherOrgWorkflowsByIdOnly).toBe(1);
   });
 
+  it('counts a chat_turn step only when it names this provider, since a bare id stays on its agent (§136 t-1068)', async () => {
+    const chatTurn = (modelOverride: string) => ({
+      steps: [{ id: 'c', type: 'chat_turn', config: { agentSlug: 'a', modelOverride } }],
+    });
+    db.aiWorkflow.findMany.mockImplementation(
+      answering([
+        { ...workflow('ct-pair', ORG_A, 'none'), draftDefinition: chatTurn('openai::gpt-x') },
+        { ...workflow('ct-bare', ORG_A, 'none'), draftDefinition: chatTurn('gpt-x') },
+        { ...workflow('ct-other', ORG_A, 'none'), draftDefinition: chatTurn('microsoft::gpt-x') },
+      ])
+    );
+
+    const usage = await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
+
+    expect(usage.workflows.map((w) => [w.id, w.byIdOnly])).toEqual([['ct-pair', false]]);
+  });
+
   it('ignores a step type that does not pin a model, and a malformed definition', async () => {
     db.aiWorkflow.findMany.mockImplementation(
       answering([

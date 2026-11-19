@@ -208,7 +208,7 @@ A step's `config.modelOverride` (`llm_call`, `route`, `reflect`, `guard`, `evalu
 
 - **A bare model id still works, unchanged:** it runs on the provider the registry gives the id. Every workflow saved before t-1068 is one; nothing is rewritten, and a step's pin names its provider once someone picks its model again in the builder.
 - **The builder writes pairs.** Its model picker (`block-editors/model-override-field.tsx`) offers the catalogue's active chat models whose provider is set up and active (`toModelOptions`, as the default-models form scopes its options), one option per provider's model, read once per builder. A value the catalogue does not hold is kept and shown as itself (`gpt-4o (by model id, no provider)`) rather than dropped.
-- **`chat_turn`** is the one step with a provider of its own (its agent's). A bare override replaces the model on that binding; a pin naming another provider runs there, without the agent's fallbacks.
+- **`chat_turn`** is the one step with a provider of its own (its agent's). A bare override replaces the model on that binding; a pin naming another provider runs there, without the agent's fallbacks, and so is checked on save (it must exist, and at `multi` its provider must be approved) and counted as a use of that model. An empty override is no override.
 - **Pricing is by model id**, as an agent's turns are.
 - **For a fork's own executor**: pass `config.modelOverride` to `runLlmCall` unchanged and it is resolved. Reading it as a model id yourself (a registry lookup, a cost estimate) takes `pinModelId(...)` from `@/lib/orchestration/llm/model-pin` first.
 

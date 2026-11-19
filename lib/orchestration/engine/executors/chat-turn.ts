@@ -240,7 +240,8 @@ export async function executeChatTurn(
   // t-1038), decided in the agent's privacy scope, as the call is. A step's
   // `modelOverride` is the operator's recorded choice: left to the privacy
   // stage, which refuses it, rather than rerouted.
-  if (config.modelOverride === undefined) {
+  // An empty override is no override (`parseModelPin` reads it as none).
+  if (parseModelPin(config.modelOverride) === null) {
     const route = await runInPrivacyScope(agentPrivacyScope(agent.id), () =>
       routeConfidentialTurn({
         binding: resolvedBinding,
@@ -257,7 +258,7 @@ export async function executeChatTurn(
   // called there and nowhere else: the binding's fallbacks were chosen for
   // the agent's model, not for this one.
   const overridePin = parseModelPin(config.modelOverride);
-  const model = overridePin?.modelId ?? config.modelOverride ?? resolvedBinding.model;
+  const model = overridePin?.modelId ?? resolvedBinding.model;
   const pinnedProvider =
     overridePin?.providerSlug != null && overridePin.providerSlug !== resolvedBinding.providerSlug
       ? overridePin.providerSlug

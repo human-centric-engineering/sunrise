@@ -74,6 +74,13 @@ const LLM_STEP_TYPES = new Set([
  */
 const PROVIDER_CHOOSING_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'supervisor', 'chat_turn']);
 
+/**
+ * Step types whose override is checked to exist on save: the LLM steps, and a
+ * `chat_turn` override naming its provider (a bare one is the agent's own
+ * provider's model, and was never checked).
+ */
+const EXISTENCE_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'chat_turn']);
+
 // ── Org approval ───────────────────────────────────────────────────────────
 
 /**
@@ -263,8 +270,11 @@ export async function semanticValidateWorkflow(
 
   // ── Collect unique references ──────────────────────────────────────────
 
-  /** Map model id → step ids that reference it */
-  const modelSteps = collectModelOverrides(def);
+  /**
+   * Map model id → step ids that reference it. `chat_turn` pins naming their
+   * provider (§136 t-1068) run there, so their model must exist too.
+   */
+  const modelSteps = collectModelOverrides(def, EXISTENCE_STEP_TYPES);
   /** Map capability slug → step ids that reference it */
   const capabilitySteps = new Map<string, string[]>();
   /** Map agent slug → step ids that reference it */

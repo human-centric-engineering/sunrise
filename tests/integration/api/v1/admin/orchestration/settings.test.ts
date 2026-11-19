@@ -53,6 +53,9 @@ vi.mock('@/lib/db/client', () => {
     $queryRaw: vi.fn(async () => []),
     $transaction: vi.fn(),
 
+    // A default naming its provider must name an active one (§136 t-1068).
+    // Default: every slug is an active provider; specific tests override.
+    aiProviderConfig: { findFirst: vi.fn(async () => ({ id: 'pc_001' })) },
     aiProviderModel: {
       // Registry hydration: PATCH calls hydrateFromDb() before validating.
       // These fixtures carry no DB-managed rows, so return an empty matrix —
@@ -1209,6 +1212,23 @@ describe('Admin Orchestration — /settings', () => {
         vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue({
           id: 'cm_audio_001',
         } as never);
+      });
+
+      it('refuses a pair naming a provider that is not active, whatever the catalogue holds (400)', async () => {
+        vi.mocked(prisma.aiProviderModel.findFirst).mockResolvedValue({ id: 'cm_row' } as never);
+        vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValueOnce(null);
+
+        const res = await PATCH(makePatch({ defaultModels: { chat: 'microsoft::gpt-4o' } }));
+
+        expect(res.status).toBe(400);
+        const body = await parseJson<{ error: { code: string; details: unknown } }>(res);
+        expect(body.error.code).toBe('VALIDATION_ERROR');
+        expect(body.error.details).toEqual({ task: 'chat', value: 'microsoft::gpt-4o' });
+        expect(vi.mocked(prisma.aiProviderConfig.findFirst)).toHaveBeenCalledWith({
+          where: { slug: 'microsoft', isActive: true },
+          select: { id: true },
+        });
+        expect(vi.mocked(prisma.aiOrchestrationSettings.upsert)).not.toHaveBeenCalled();
       });
 
       it('saves a pair whose catalogue row is active, though the registry gives the id to another provider', async () => {

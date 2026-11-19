@@ -115,6 +115,21 @@ describe('judge-model env resolver', () => {
       expect(mod.JUDGE_MODEL_PIN).toBe('openai::gpt-5');
     });
 
+    it('never joins a judge model to the default provider, a different level', async () => {
+      vi.stubEnv('EVALUATION_DEFAULT_PROVIDER', 'openai');
+      vi.stubEnv('EVALUATION_DEFAULT_MODEL', 'gpt-4o');
+      vi.stubEnv('EVALUATION_JUDGE_MODEL', 'claude-sonnet-4-6');
+      const mod = await import('@/lib/orchestration/evaluations/judge-model');
+      expect(mod.JUDGE_MODEL_PIN).toBe('claude-sonnet-4-6');
+    });
+
+    it('does not join a judge provider to the default model', async () => {
+      vi.stubEnv('EVALUATION_JUDGE_PROVIDER', 'anthropic');
+      vi.stubEnv('EVALUATION_DEFAULT_MODEL', 'gpt-4o');
+      const mod = await import('@/lib/orchestration/evaluations/judge-model');
+      expect(mod.JUDGE_MODEL_PIN).toBe('gpt-4o');
+    });
+
     it('is the bare model id with no provider configured, resolved as before', async () => {
       vi.stubEnv('EVALUATION_JUDGE_MODEL', 'gpt-4o');
       const mod = await import('@/lib/orchestration/evaluations/judge-model');

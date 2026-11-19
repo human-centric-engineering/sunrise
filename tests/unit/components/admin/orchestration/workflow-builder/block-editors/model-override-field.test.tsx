@@ -87,11 +87,9 @@ describe('ModelOverrideField', () => {
     const user = userEvent.setup();
     renderField('azure::gpt-4o');
 
-    expect(pickedModel('mo')).toBe('gpt-4o (azure, not in the model matrix)');
+    expect(pickedModel('mo')).toBe('gpt-4o (azure, not offered here)');
     await user.click(document.getElementById('mo') as HTMLElement);
-    expect(screen.getAllByRole('option')[1].textContent).toBe(
-      'gpt-4o (azure, not in the model matrix)'
-    );
+    expect(screen.getAllByRole('option')[1].textContent).toBe('gpt-4o (azure, not offered here)');
   });
 
   it('uses the defaultLabel for the no-override option', async () => {

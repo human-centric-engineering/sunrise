@@ -1098,4 +1098,17 @@ describe('chat_turn — a step model pin naming its provider (§136 t-1068)', ()
 
     expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o-mini' });
   });
+
+  it('treats an empty override as none: the binding’s model, and the turn is routed for confidential content', async () => {
+    const chat = arrange();
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: { chat } as never,
+      usedSlug: 'openai',
+    });
+
+    await executeChatTurn(makeStep({ modelOverride: '' }), makeCtx());
+
+    expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o-mini' });
+    expect(routeConfidentialTurn).toHaveBeenCalled();
+  });
 });

@@ -462,45 +462,34 @@ describe('summarizeMessages — routing default pin (§136 t-1068)', () => {
     vi.clearAllMocks();
   });
 
-  it('calls a pin naming another provider there alone, with no fallbacks and system provenance', async () => {
+  it('never leaves the conversation’s provider: a pin naming another gives way to the conversation’s model', async () => {
+    // An agent kept on a local provider for residency, an org approved for one
+    // provider only: the summary goes where the conversation goes.
     mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });
     const mockProvider = makeMockProvider();
-    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'microsoft' });
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'ollama-local' });
+    const provenance = { task: 'chat', primary: 'explicit', fallbacks: 'explicit' } as const;
 
-    const result = await summarizeMessages(MESSAGES, 'openai', ['anthropic'], {
-      provenance: { task: 'routing', primary: 'explicit', fallbacks: 'explicit' },
+    const result = await summarizeMessages(MESSAGES, 'ollama-local', ['openai'], {
+      provenance,
+      conversationModel: 'llama3.1:8b',
     });
 
-    // Not the conversation's provider or its fallbacks; the task comes from the
-    // conversation's provenance, the rest says Sunrise chose.
     expect(mockGetProvider).toHaveBeenCalledTimes(1);
-    expect(mockGetProvider).toHaveBeenCalledWith('microsoft', [], {
-      task: 'routing',
-      primary: 'primary',
-      fallbacks: 'system',
-    });
-    expect(mockProvider.chat.mock.calls[0][1]).toEqual({ model: 'gpt-4o', maxTokens: 500 });
-    expect(result.provider).toBe('microsoft');
-    expect(result.model).toBe('gpt-4o');
-    expect(mockLogCost).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'gpt-4o', provider: 'microsoft' })
-    );
+    expect(mockGetProvider).toHaveBeenCalledWith('ollama-local', ['openai'], provenance);
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({ model: 'llama3.1:8b', maxTokens: 500 });
+    expect(result.model).toBe('llama3.1:8b');
   });
 
-  it('defaults the task to chat when a pinned-elsewhere summary has no provenance', async () => {
+  it('sends the pin’s model id to the conversation’s provider when no conversation model is given', async () => {
     mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });
-    mockGetProvider.mockResolvedValue({
-      provider: makeMockProvider(),
-      usedSlug: 'microsoft',
-    });
+    const mockProvider = makeMockProvider();
+    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'openai' });
 
     await summarizeMessages(MESSAGES, 'openai', []);
 
-    expect(mockGetProvider).toHaveBeenCalledWith('microsoft', [], {
-      task: 'chat',
-      primary: 'primary',
-      fallbacks: 'system',
-    });
+    expect(mockGetProvider).toHaveBeenCalledWith('openai', [], undefined);
+    expect(mockProvider.chat.mock.calls[0][1]).toEqual({ model: 'gpt-4o', maxTokens: 500 });
   });
 
   it('keeps the conversation’s provider, fallbacks and provenance when the pin names the same provider', async () => {
@@ -525,34 +514,12 @@ describe('summarizeMessages — routing default pin (§136 t-1068)', () => {
     expect(mockGetProvider).toHaveBeenCalledWith('openai', ['anthropic'], undefined);
   });
 
-  it('stays on a confidential conversation’s provider, with its own model, when the pin names another', async () => {
-    mockGetModel.mockResolvedValue({ providerSlug: 'microsoft', modelId: 'gpt-4o' });
-    const mockProvider = makeMockProvider();
-    mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });
-    const provenance = { task: 'chat', primary: 'explicit', fallbacks: 'explicit' } as const;
-
-    await summarizeMessages(MESSAGES, 'anthropic', ['openai'], {
-      provenance,
-      confidential: { model: 'claude-sonnet-4-6' },
-    });
-
-    // Never the routing default's provider, which routing did not judge.
-    expect(mockGetProvider).toHaveBeenCalledTimes(1);
-    expect(mockGetProvider).toHaveBeenCalledWith('anthropic', ['openai'], provenance);
-    expect(mockProvider.chat.mock.calls[0][1]).toEqual({
-      model: 'claude-sonnet-4-6',
-      maxTokens: 500,
-    });
-  });
-
-  it('keeps the routing model for a confidential conversation when the pin names its own provider', async () => {
+  it('keeps the routing model when the pin names the conversation’s provider, given a conversation model', async () => {
     mockGetModel.mockResolvedValue({ providerSlug: 'anthropic', modelId: 'claude-haiku-4-5' });
     const mockProvider = makeMockProvider();
     mockGetProvider.mockResolvedValue({ provider: mockProvider, usedSlug: 'anthropic' });
 
-    await summarizeMessages(MESSAGES, 'anthropic', [], {
-      confidential: { model: 'claude-sonnet-4-6' },
-    });
+    await summarizeMessages(MESSAGES, 'anthropic', [], { conversationModel: 'claude-sonnet-4-6' });
 
     expect(mockProvider.chat.mock.calls[0][1]).toEqual({
       model: 'claude-haiku-4-5',
