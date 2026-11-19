@@ -32,11 +32,12 @@ export async function disconnectDatabase(): Promise<void> {
  * Get database health status
  * Useful for health check endpoints
  *
- * The probe runs in the system scope (`runAsLivenessProbe`, logged at debug)
- * because its callers (the unauthenticated `/api/health` route among them)
- * have entered no org, and at `TENANCY_MODE=multi` the data layer refuses raw
- * SQL with no tenant context (#1262). `SELECT 1` reads no rows, so the bypass
- * reaches nothing. Run nothing else inside it.
+ * The probe always enters the system scope (`runAsLivenessProbe`, logged at
+ * debug), whatever its caller has entered. The unauthenticated `/api/health`
+ * route has no org, and at `TENANCY_MODE=multi` the data layer refuses raw SQL
+ * with no tenant context (#1262); the admin stats route leaves its org for the
+ * probe. `SELECT 1` reads no rows, so the bypass reaches nothing. Run nothing
+ * else inside it.
  */
 export async function getDatabaseHealth(): Promise<{
   connected: boolean;

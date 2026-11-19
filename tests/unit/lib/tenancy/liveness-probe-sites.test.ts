@@ -82,12 +82,12 @@ describe('runAsLivenessProbe', () => {
 
   it.each([
     ['a named import', "import { runAsLivenessProbe } from '@/lib/tenancy/context';"],
-    ['an aliased import', "import { runAsLivenessProbe as count } from '@/lib/tenancy/context';"],
-    ['a call', "await runAsLivenessProbe('r', fn);"],
+    ['an aliased import', "import { runAsLivenessProbe as probe } from '@/lib/tenancy/context';"],
+    ['a call', 'await runAsLivenessProbe(fn);'],
     ['a re-export', "export { runAsLivenessProbe } from '@/lib/tenancy/context';"],
     [
       'a destructured dynamic import',
-      "const { runAsLivenessProbe: count } = await import('@/lib/tenancy/context');",
+      "const { runAsLivenessProbe: probe } = await import('@/lib/tenancy/context');",
     ],
     ['a stored reference', 'const enter = context.runAsLivenessProbe;'],
     ['a star re-export of the context module', "export * from '@/lib/tenancy/context';"],
