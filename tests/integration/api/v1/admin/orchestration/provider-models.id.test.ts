@@ -1069,3 +1069,28 @@ describe('PATCH vendor retirement (§136 t-1064)', () => {
     expect(body.error.message).toMatch(/same provider \(openai\)/);
   });
 });
+
+describe('PATCH capabilities (t-1064)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('accepts vision and documents, which the edit form sends for most chat models', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const existing = makeModel({ isDefault: false });
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
+    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue(existing as never);
+
+    const response = await PATCH(
+      makePatchRequest(MODEL_ID, { capabilities: ['chat', 'vision', 'documents'] }),
+      routeContext(MODEL_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(prisma.aiProviderModel.update).mock.calls[0][0].data.capabilities).toEqual([
+      'chat',
+      'vision',
+      'documents',
+    ]);
+  });
+});

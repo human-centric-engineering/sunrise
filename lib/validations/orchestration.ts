@@ -24,7 +24,7 @@ import { logger } from '@/lib/logging';
 import { providerToolsSchema } from '@/lib/orchestration/llm/model-params';
 import { BINDING_OWNERS } from '@/lib/orchestration/agents/binding-owner';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
-import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
+import { KNOWN_STEP_TYPES, MODEL_CAPABILITIES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 import {
   MAX_STOP_SEQUENCES,
@@ -2110,11 +2110,13 @@ const toolUseLevelSchema = z.enum(['strong', 'moderate', 'none']);
 // `ai_provider_model.paramProfile`; null means "let the runtime derive
 // it via deriveParamProfile()".
 const paramProfileSchema = z.enum(['openai-legacy', 'openai-reasoning', 'anthropic', 'gemini']);
-// Matrix capability set — must mirror MODEL_CAPABILITIES in
-// types/orchestration.ts. Intentionally excludes `unknown` (catalogue
-// only; see app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts
+// Matrix capability set: MODEL_CAPABILITIES in types/orchestration.ts,
+// read rather than copied. The copy this replaced missed `vision` and
+// `documents` when they were added, so no model with either could be saved
+// from the edit form (found in §136 t-1064). Intentionally excludes `unknown`
+// (catalogue only; see app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts
 // for the wider enum used by the catalogue's test button).
-const capabilitySchema = z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']);
+const capabilitySchema = z.enum(MODEL_CAPABILITIES);
 const embeddingQualitySchema = z.enum(['high', 'medium', 'budget']);
 
 function requirePricePair(

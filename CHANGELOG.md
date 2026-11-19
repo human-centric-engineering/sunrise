@@ -402,6 +402,13 @@ release process.
 
 ### Fixed
 
+- **A provider model with `vision` or `documents` can be saved again
+  (t-1064).** The admin provider-model API's capability list was a copy of
+  `MODEL_CAPABILITIES` that missed both when they were added, so the edit form
+  refused to save any such model (most chat models) with "Invalid option". It
+  now reads `MODEL_CAPABILITIES` itself, and the create, update and bulk
+  routes accept every capability the form offers.
+
 - **The admin audit log kept prices, token limits and dates as values
   (t-1064).** `logAdminAction()` redacted every field whose name ends in
   key/token whatever its value, so prices (`inputCostPerMillionTokens`), token
