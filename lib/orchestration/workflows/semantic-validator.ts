@@ -75,9 +75,12 @@ const LLM_STEP_TYPES = new Set([
 const PROVIDER_CHOOSING_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'supervisor', 'chat_turn']);
 
 /**
- * Step types whose override is checked to exist on save: the LLM steps, and a
+ * Step types whose override is checked to exist: the LLM steps, and a
  * `chat_turn` override naming its provider (a bare one is the agent's own
- * provider's model, and was never checked).
+ * provider's model, and was never checked). Like the LLM steps' overrides,
+ * these are checked wherever the semantic validation runs, execution
+ * included: a run whose pinned model has left the catalogue is refused up
+ * front rather than at that step.
  */
 const EXISTENCE_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'chat_turn']);
 

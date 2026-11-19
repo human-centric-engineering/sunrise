@@ -407,7 +407,8 @@ export function DefaultModelsForm({
     // A saved value no option matches is shown as itself, so the dropdown
     // never reads as empty while something is saved: a bare model id saved
     // before pins named their provider (not matched to a provider's model by
-    // guess), or a pair whose provider is not set up. It stays saved until an
+    // guess), or a pair no active provider offers (its provider not set up, or
+    // its model turned off). It stays saved until an
     // administrator picks a model.
     const storedValue = stored[task] ?? '';
     const storedPin = isEmbeddings || isAudio ? null : parseModelPin(storedValue);
@@ -418,7 +419,7 @@ export function DefaultModelsForm({
             label:
               storedPin.providerSlug === null
                 ? `${storedValue} (by model id, no provider)`
-                : `${storedPin.modelId} (${storedPin.providerSlug}, provider not set up)`,
+                : `${storedPin.modelId} (${storedPin.providerSlug}, not offered by an active provider)`,
           }
         : null;
     const optionsForTask = unlisted ? [unlisted, ...pinnedOptions] : pinnedOptions;
@@ -535,10 +536,17 @@ export function DefaultModelsForm({
       // them out so a partial save (e.g. only chat picked, embeddings
       // left blank) doesn't 400 the whole request. The server merges by
       // key, so any slot we omit keeps its existing stored value.
+      //
+      // Only the slots that differ from what is saved are sent: the server
+      // validates each slot it is sent, so re-sending an unchanged one that
+      // has since stopped validating (a pinned model turned off, §136
+      // t-1068) would refuse a change to another slot. A legacy bare audio
+      // value the form shows normalised differs, so it is still rewritten.
+      const savedDefaults = settings?.defaultModelsStored ?? {};
       const defaultModels = Object.fromEntries(
         TASK_TYPES.flatMap((task) => {
           const v = parsed[task];
-          return v && v.length > 0 ? [[task, v]] : [];
+          return v && v.length > 0 && v !== savedDefaults[task] ? [[task, v]] : [];
         })
       );
       const payload = { defaultModels };

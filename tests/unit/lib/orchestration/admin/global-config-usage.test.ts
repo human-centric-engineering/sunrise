@@ -266,7 +266,7 @@ describe('providerModelUsage', () => {
     expect(usage.otherOrgWorkflowsByIdOnly).toBe(1);
   });
 
-  it('counts a chat_turn step only when it names this provider, since a bare id stays on its agent (§136 t-1068)', async () => {
+  it('counts a chat_turn step naming this provider exactly, and one by bare id as by id alone (§136 t-1068)', async () => {
     const chatTurn = (modelOverride: string) => ({
       steps: [{ id: 'c', type: 'chat_turn', config: { agentSlug: 'a', modelOverride } }],
     });
@@ -280,7 +280,12 @@ describe('providerModelUsage', () => {
 
     const usage = await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
 
-    expect(usage.workflows.map((w) => [w.id, w.byIdOnly])).toEqual([['ct-pair', false]]);
+    // Another provider's pair is not a use; a bare id runs on its agent's
+    // provider, which the definition does not say, so it counts by id alone.
+    expect(usage.workflows.map((w) => [w.id, w.byIdOnly])).toEqual([
+      ['ct-pair', false],
+      ['ct-bare', true],
+    ]);
   });
 
   it('ignores a step type that does not pin a model, and a malformed definition', async () => {

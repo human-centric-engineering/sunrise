@@ -162,16 +162,15 @@ function definitionPinsModel(
     if (!step || typeof step !== 'object') continue;
     const type = (step as { type?: unknown }).type;
     if (typeof type !== 'string') continue;
-    // A `chat_turn` override runs on the provider it names (§136 t-1068); by
-    // bare id it replaces the model on the agent's own binding, which the
-    // agent's own row already counts, so only its pairs are uses here.
+    // A `chat_turn` override pins a model too (§136 t-1068): a pair runs on
+    // the provider it names, a bare id on its agent's provider, which this
+    // definition does not say, so it counts by id alone like any bare pin.
     if (!LLM_STEP_TYPES.has(type) && type !== 'chat_turn') continue;
     const config = (step as { config?: unknown }).config;
     if (!config || typeof config !== 'object') continue;
     const override = (config as { modelOverride?: unknown }).modelOverride;
     if (typeof override !== 'string') continue;
     const how = pinNames(override, model);
-    if (type === 'chat_turn' && how !== 'pair') continue;
     if (how === 'pair') return 'pair';
     if (how === 'id') found = 'id';
   }

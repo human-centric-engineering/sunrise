@@ -1053,7 +1053,9 @@ describe('chat_turn — a step model pin naming its provider (§136 t-1068)', ()
     );
   });
 
-  it('keeps the binding’s fallbacks and provenance when the pair names the binding’s own provider', async () => {
+  it('drops the binding’s fallbacks even when the pair names the binding’s own provider', async () => {
+    // A fallback would be sent `gpt-4o` and run another provider's model of
+    // that id, which the pin rules out.
     const chat = arrange();
     vi.mocked(getProviderWithFallbacks).mockResolvedValue({
       provider: { chat } as never,
@@ -1062,11 +1064,11 @@ describe('chat_turn — a step model pin naming its provider (§136 t-1068)', ()
 
     await executeChatTurn(makeStep({ modelOverride: 'openai::gpt-4o' }), makeCtx());
 
-    expect(getProviderWithFallbacks).toHaveBeenCalledWith(
-      'openai',
-      ['anthropic'],
-      BINDING.provenance
-    );
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('openai', [], {
+      task: 'chat',
+      primary: 'explicit',
+      fallbacks: 'explicit',
+    });
     expect(chat.mock.calls[0][1]).toMatchObject({ model: 'gpt-4o' });
   });
 

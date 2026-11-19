@@ -259,10 +259,9 @@ export async function executeChatTurn(
   // the agent's model, not for this one.
   const overridePin = parseModelPin(config.modelOverride);
   const model = overridePin?.modelId ?? resolvedBinding.model;
-  const pinnedProvider =
-    overridePin?.providerSlug != null && overridePin.providerSlug !== resolvedBinding.providerSlug
-      ? overridePin.providerSlug
-      : null;
+  // Even the agent's own provider: its fallbacks would send this model id to
+  // another provider's model of the same id, which the pin rules out.
+  const pinnedProvider = overridePin?.providerSlug ?? null;
   const { provider, usedSlug: providerSlug } =
     pinnedProvider === null
       ? await getProviderWithFallbacks(

@@ -354,20 +354,15 @@ describe('DefaultModelsForm', () => {
         fireEvent.submit(form!);
       });
 
-      // Assert: patch was called with settings endpoint and payload
+      // Assert: patch was called with the settings endpoint. Nothing was
+      // changed, so no slot is re-sent: only a changed slot is validated, so
+      // one that has since stopped validating cannot refuse another's save
+      // (§136 t-1068).
       await waitFor(
         () => {
-          expect(mockedPatch).toHaveBeenCalledWith(
-            '/api/v1/admin/orchestration/settings',
-            expect.objectContaining({
-              body: expect.objectContaining({
-                defaultModels: expect.objectContaining({
-                  routing: 'claude-haiku-4-5',
-                  chat: 'claude-sonnet-4-6',
-                }),
-              }),
-            })
-          );
+          expect(mockedPatch).toHaveBeenCalledWith('/api/v1/admin/orchestration/settings', {
+            body: { defaultModels: {} },
+          });
         },
         { timeout: 3000 }
       );
@@ -428,8 +423,10 @@ describe('DefaultModelsForm', () => {
       for (const v of Object.values(sentBody.defaultModels)) {
         expect(v).not.toBe('');
       }
-      // The chat slot the operator already had stored is preserved.
-      expect(sentBody.defaultModels.chat).toBe('claude-sonnet-4-6');
+      // Only the changed routing slot is sent; chat, saved already, is kept
+      // by the server's merge rather than re-sent (§136 t-1068).
+      expect(sentBody.defaultModels).toHaveProperty('routing');
+      expect(sentBody.defaultModels).not.toHaveProperty('chat');
     });
   });
 
@@ -958,7 +955,7 @@ describe('DefaultModelsForm', () => {
       expect(lastSavedModels().chat).toBe('anthropic::claude-haiku-4-5');
     });
 
-    it('shows a stored bare id as its own option and saves it unchanged', async () => {
+    it('shows a stored bare id as its own option, and does not re-send it', async () => {
       mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
       const user = userEvent.setup();
       renderForm(withChat('gpt-4o', 'gpt-4o'));
@@ -973,32 +970,35 @@ describe('DefaultModelsForm', () => {
       // First option is the legacy value, ahead of the provider-named ones.
       expect(options[0].textContent).toBe('gpt-4o (by model id, no provider)');
 
-      // Closing the list and saving must not rewrite it to a guessed provider.
+      // Closing the list and saving must not rewrite it to a guessed provider:
+      // unchanged, it is not sent at all.
       await user.keyboard('{Escape}');
       await submit();
 
       await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
-      expect(lastSavedModels().chat).toBe('gpt-4o');
+      expect(lastSavedModels()).not.toHaveProperty('chat');
     });
 
-    it('shows a stored pair whose provider is not set up as its own option and saves it unchanged', async () => {
+    it('shows a stored pair no active provider offers as its own option, and does not re-send it', async () => {
       mockedPatch.mockResolvedValueOnce({ id: 'settings-1', slug: 'global' });
       const user = userEvent.setup();
       renderForm(withChat('azure::gpt-4o', 'gpt-4o'));
 
       expect(document.getElementById('model-chat')?.textContent).toBe(
-        'gpt-4o (azure, provider not set up)'
+        'gpt-4o (azure, not offered by an active provider)'
       );
       await user.click(document.getElementById('model-chat') as HTMLElement);
       expect(screen.getAllByRole('option')[0].textContent).toBe(
-        'gpt-4o (azure, provider not set up)'
+        'gpt-4o (azure, not offered by an active provider)'
       );
 
+      // Unchanged, it is not re-sent, so its failing a check now cannot
+      // refuse a change to another slot.
       await user.keyboard('{Escape}');
       await submit();
 
       await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
-      expect(lastSavedModels().chat).toBe('azure::gpt-4o');
+      expect(lastSavedModels()).not.toHaveProperty('chat');
     });
 
     it('does not show a legacy option when the stored value is a pair', async () => {
