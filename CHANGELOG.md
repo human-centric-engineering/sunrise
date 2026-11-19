@@ -18,6 +18,28 @@ release process.
 
 ### Added
 
+- **Catalogue models record a vendor's retirement (§136, t-1064).**
+  `AiProviderModel` gains two nullable columns: `retiresAt` (the day the vendor
+  stops serving the model) and `replacementId` (a self-relation to its
+  successor, `ON DELETE SET NULL`). Retiring / retired is derived from the date
+  by `modelLifecycleState()` in `lib/orchestration/model-lifecycle/state.ts`,
+  and `checkReplacement()` there is the successor rule: same provider, active,
+  not itself retiring, every capability the model has.
+  `PATCH /api/v1/admin/orchestration/provider-models/:id` accepts `retiresAt`
+  (`YYYY-MM-DD` or `null`) and `replacementId`, and the edit page has a
+  Retirement section. The audit workflow's `deactivate_provider_models`
+  capability takes optional `retiresAt` and `replacedBy` (the successor's
+  vendor model id) per entry: a day still to come leaves the model active, and
+  a day already here deactivates it; its result gains `retiring` / `retired`
+  counts and a per-model `replacementNote`. Every catalogue change now writes
+  an `AiAdminAuditLog` row (entity type `provider_model`): each write the audit
+  applies, and an admin's create, bulk add, edit (with old and new values)
+  and delete. See
+  [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#model-lifecycle).
+  _Fork impact:_ none unless you build `AiProviderModel` rows in full in your
+  own tests (add the two fields) or call `deactivate_provider_models` yourself
+  (entries without `retiresAt` behave as before).
+
 - **`runAsLivenessProbe(fn)` in `lib/tenancy/context.ts` (#1262).** A
   debug-logged null-org system scope for the database liveness probe, beside
   `runAsCredentialLookup` and `runAsCrossOrgCount`. It is confined to
@@ -380,6 +402,22 @@ release process.
   A column that is not a JSON object is still replaced, as before.
 
 ### Fixed
+
+- **A provider model with `vision` or `documents` can be saved again
+  (t-1064).** The admin provider-model API's capability list was a copy of
+  `MODEL_CAPABILITIES` that missed both when they were added, so the edit form
+  refused to save any such model (most chat models) with "Invalid option". It
+  now reads `MODEL_CAPABILITIES` itself, and the create, update and bulk
+  routes accept every capability the form offers.
+
+- **The admin audit log kept prices, token limits and dates as values
+  (t-1064).** `logAdminAction()` redacted every field whose name ends in
+  key/token whatever its value, so prices (`inputCostPerMillionTokens`), token
+  limits (`maxTokens`) and rates (`rateLimitPerKey`) were stored as
+  `[REDACTED]`, and stored every `Date` as `{}`. Under the key/token ending a
+  number or `null` is now kept (a credential is always a string), and a `Date`
+  is stored as its ISO string. `password` / `secret` / `credential` still
+  redact whatever the value.
 
 - **`/api/health` no longer reports a database outage at
   `TENANCY_MODE=multi` (#1262).** `getDatabaseHealth()` ran its `SELECT 1`

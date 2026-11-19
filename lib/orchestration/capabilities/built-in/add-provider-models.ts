@@ -25,6 +25,7 @@ import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import { CAPABILITIES } from '@/lib/orchestration/model-audit/enums';
 import { isEmbedUserId } from '@/lib/embed/auth';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -267,7 +268,7 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
       const read = readPrices(model.inputCostPerMillionTokens, model.outputCostPerMillionTokens);
       const prices = read.ok ? read : { input: null, output: null };
       try {
-        await prisma.aiProviderModel.create({
+        const row = await prisma.aiProviderModel.create({
           data: {
             name: model.name,
             slug: model.slug,
@@ -304,6 +305,26 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
           slug: model.slug,
           providerSlug: model.providerSlug,
           agentId: context.agentId,
+        });
+
+        // §136 t-1064: every catalogue change the audit applies is in the
+        // admin audit log, prices included.
+        logAdminAction({
+          userId: context.userId,
+          action: 'provider_model.create',
+          entityType: 'provider_model',
+          entityId: row.id,
+          entityName: row.name,
+          metadata: {
+            source: 'model_audit',
+            providerSlug: row.providerSlug,
+            modelId: row.modelId,
+            inputCostPerMillionTokens: row.inputCostPerMillionTokens,
+            outputCostPerMillionTokens: row.outputCostPerMillionTokens,
+            ...(context.workflowExecutionId
+              ? { workflowExecutionId: context.workflowExecutionId }
+              : {}),
+          },
         });
 
         results.push({

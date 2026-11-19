@@ -7,7 +7,7 @@
  * following the same pattern as provider-form.tsx and agent-form.tsx.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useForm } from 'react-hook-form';
@@ -117,6 +117,9 @@ function toSlug(value: string): string {
 // Schema (client-side subset)
 // ---------------------------------------------------------------------------
 
+/** Radix Select forbids `''` as an item value, so "no replacement" has a sentinel. */
+const NO_REPLACEMENT = 'none';
+
 /**
  * A price per 1M tokens as typed: empty for "not set", otherwise a number up
  * to the server's limit, so a too-large figure is caught under its own field
@@ -178,6 +181,19 @@ const modelFormSchema = z
     strengths: z.string().max(500),
     setup: z.string().max(500),
     isActive: z.boolean(),
+    // Vendor retirement (§136 t-1064). `''` = none; the server checks the
+    // day is real and the replacement passes `checkReplacement`.
+    retiresAt: z.string().refine((v) => v === '' || /^\d{4}-\d{2}-\d{2}$/.test(v), 'Pick a day'),
+    replacementId: z.string(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.replacementId !== NO_REPLACEMENT && data.retiresAt === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['retiresAt'],
+        message: 'Set a retirement date before naming a replacement',
+      });
+    }
   })
   .superRefine((data, ctx) => {
     // Only while the pricing section is shown: a hidden field's error would
@@ -211,6 +227,8 @@ const SERVER_FIELDS: Partial<Record<string, keyof ModelFormData>> = {
   tierRole: 'tierRole',
   deploymentProfiles: 'deploymentProfiles',
   bestRole: 'bestRole',
+  retiresAt: 'retiresAt',
+  replacementId: 'replacementId',
 };
 
 // ---------------------------------------------------------------------------
@@ -246,17 +264,33 @@ export interface ProviderModelData {
   setup?: string | null;
   isDefault: boolean;
   isActive: boolean;
+  /** ISO timestamp of the day the vendor retires it (§136 t-1064), or null. */
+  retiresAt?: string | null;
+  replacementId?: string | null;
+}
+
+/** A same-provider model the edit page offers as a replacement. */
+export interface ReplacementOption {
+  id: string;
+  name: string;
+  modelId: string;
 }
 
 interface ProviderModelFormProps {
   model?: ProviderModelData;
+  /**
+   * Edit mode: the models on this one's provider an admin may name as its
+   * replacement. The edit page narrows them to the eligible ones; the server
+   * checks the choice again.
+   */
+  replacementOptions?: ReplacementOption[];
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function ProviderModelForm({ model }: ProviderModelFormProps) {
+export function ProviderModelForm({ model, replacementOptions = [] }: ProviderModelFormProps) {
   const readOnly = useSharedSettingsReadOnly();
   const router = useRouter();
   const schedule = useTimeout();
@@ -322,12 +356,20 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       strengths: model?.strengths ?? '',
       setup: model?.setup ?? '',
       isActive: model?.isActive ?? true,
+      retiresAt: model?.retiresAt?.slice(0, 10) ?? '',
+      replacementId: model?.replacementId ?? NO_REPLACEMENT,
     },
   });
 
   const isActive = watch('isActive');
+  const replacementId = watch('replacementId');
   const currentName = watch('name');
   const providerSlug = watch('providerSlug');
+  // The options are the saved provider's models. While the provider is being
+  // changed none of them qualify, so none is offered, and the save clears the
+  // stored one (a replacement must be on the model's own provider).
+  const providerChanged = isEdit && providerSlug !== model.providerSlug;
+  const offeredReplacements = providerChanged ? [] : replacementOptions;
   const capabilities = watch('capabilities');
   const hasEmbedding = capabilities.includes('embedding');
   // Chat and reasoning models carry input/output prices (t-774).
@@ -405,6 +447,14 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       isActive: data.isActive,
       local: data.local,
     };
+
+    // Retirement: edit only. An empty day clears the retirement; emptying the
+    // day field has already reset the replacement on screen.
+    if (isEdit) {
+      payload.retiresAt = data.retiresAt === '' ? null : data.retiresAt;
+      payload.replacementId =
+        data.replacementId === NO_REPLACEMENT || providerChanged ? null : data.replacementId;
+    }
 
     // Prices: sent as a pair, or cleared as a pair on edit — but only while
     // the pricing section is shown. A model without chat or reasoning keeps
@@ -1094,6 +1144,87 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
                 {...register('setup')}
                 placeholder="e.g. API key → add as provider"
               />
+            </div>
+          </div>
+        )}
+
+        {isEdit && (
+          <div className="space-y-4 rounded-md border p-4">
+            <div>
+              <h3 className="text-sm font-medium">Retirement</h3>
+              <p className="text-muted-foreground text-xs">
+                When the provider has announced it will stop serving this model. It keeps working
+                until that day, so whatever uses it can be moved to the replacement first.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="retiresAt">
+                  Retires on{' '}
+                  <FieldHelp title="Retires on">
+                    The day the provider stops serving this model, from its deprecation notice, read
+                    in UTC. Before that day the model is <em>retiring</em>; from that day it is{' '}
+                    <em>retired</em> and calls to it fail at the provider. It stays offered until
+                    you turn it off with the Active switch below. Leave empty when no retirement is
+                    announced; clearing it also clears the replacement.
+                  </FieldHelp>
+                </Label>
+                <Input
+                  id="retiresAt"
+                  type="date"
+                  {...register('retiresAt', {
+                    // A replacement only means something beside a day, so
+                    // clearing the day clears it too, where the admin sees it.
+                    onChange: (event: ChangeEvent<HTMLInputElement>) => {
+                      if (event.target.value === '') {
+                        setValue('replacementId', NO_REPLACEMENT, { shouldDirty: true });
+                      }
+                    },
+                  })}
+                />
+                {errors.retiresAt && (
+                  <p className="text-destructive text-xs">{errors.retiresAt.message}</p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>
+                  Replacement{' '}
+                  <FieldHelp title="Replacement">
+                    The model whatever uses this one should move to. Only models on the same
+                    provider are offered: an org&apos;s approval and its own key are per provider,
+                    so a same-provider move never changes what an org may use or who pays. A
+                    replacement must be active, not itself retiring, and have every capability this
+                    model has.
+                  </FieldHelp>
+                </Label>
+                <Select
+                  value={providerChanged ? NO_REPLACEMENT : replacementId}
+                  onValueChange={(v) =>
+                    setValue('replacementId', v, { shouldDirty: true, shouldValidate: true })
+                  }
+                >
+                  <SelectTrigger aria-label="Replacement">
+                    <SelectValue placeholder="No replacement" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_REPLACEMENT}>No replacement</SelectItem>
+                    {offeredReplacements.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.name} ({option.modelId})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {providerChanged && (
+                  <p className="text-muted-foreground text-xs">
+                    Saving a new provider clears the replacement. Choose one on that provider after
+                    saving.
+                  </p>
+                )}
+                {errors.replacementId && (
+                  <p className="text-destructive text-xs">{errors.replacementId.message}</p>
+                )}
+              </div>
             </div>
           </div>
         )}

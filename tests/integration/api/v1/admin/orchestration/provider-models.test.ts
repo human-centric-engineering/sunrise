@@ -47,6 +47,9 @@ vi.mock('@/lib/db/client', () => ({
       groupBy: vi.fn(() => Promise.resolve([])),
       findMany: vi.fn(() => Promise.resolve([])),
     },
+    aiAdminAuditLog: {
+      create: vi.fn(() => Promise.resolve({})),
+    },
   },
 }));
 
@@ -527,6 +530,31 @@ describe('POST /api/v1/admin/orchestration/provider-models', () => {
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(data.success).toBe(true);
     expect(data.data.slug).toBe('openai-gpt-5');
+  });
+
+  it('writes an admin audit row naming the model and its prices (§136 t-1064)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const created = makeModel({
+      ...validBody,
+      id: 'cm_new',
+      inputCostPerMillionTokens: 3,
+      outputCostPerMillionTokens: 15,
+    });
+    vi.mocked(prisma.aiProviderModel.create).mockResolvedValue(created as never);
+
+    await POST(makePostRequest(validBody));
+
+    expect(prisma.aiAdminAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0].data).toMatchObject({
+      action: 'provider_model.create',
+      entityType: 'provider_model',
+      entityId: 'cm_new',
+      metadata: {
+        providerSlug: 'openai',
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
+      },
+    });
   });
 
   it('sets isDefault to false for admin-created models', async () => {

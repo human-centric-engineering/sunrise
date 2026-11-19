@@ -24,7 +24,7 @@ import { logger } from '@/lib/logging';
 import { providerToolsSchema } from '@/lib/orchestration/llm/model-params';
 import { BINDING_OWNERS } from '@/lib/orchestration/agents/binding-owner';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
-import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
+import { KNOWN_STEP_TYPES, MODEL_CAPABILITIES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
 import {
   MAX_STOP_SEQUENCES,
@@ -36,6 +36,7 @@ import { reviewSchemaSchema } from '@/lib/orchestration/review-schema/types';
 import { provenanceItemArraySchema } from '@/lib/orchestration/provenance/types';
 import { validateScopes, listValidApiKeyScopes } from '@/lib/auth/api-key-scopes';
 import { jurisdictionSchema, orgIdSchema } from '@/lib/validations/tenancy';
+import { parseRetirementDate } from '@/lib/orchestration/model-lifecycle/state';
 import {
   CONFIDENTIAL_POLICIES_BY_STRICTNESS,
   ENTITY_TYPE_PATTERN,
@@ -2109,11 +2110,13 @@ const toolUseLevelSchema = z.enum(['strong', 'moderate', 'none']);
 // `ai_provider_model.paramProfile`; null means "let the runtime derive
 // it via deriveParamProfile()".
 const paramProfileSchema = z.enum(['openai-legacy', 'openai-reasoning', 'anthropic', 'gemini']);
-// Matrix capability set — must mirror MODEL_CAPABILITIES in
-// types/orchestration.ts. Intentionally excludes `unknown` (catalogue
-// only; see app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts
+// Matrix capability set: MODEL_CAPABILITIES in types/orchestration.ts,
+// read rather than copied. The copy this replaced missed `vision` and
+// `documents` when they were added, so no model with either could be saved
+// from the edit form (found in §136 t-1064). Intentionally excludes `unknown`
+// (catalogue only; see app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts
 // for the wider enum used by the catalogue's test button).
-const capabilitySchema = z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']);
+const capabilitySchema = z.enum(MODEL_CAPABILITIES);
 const embeddingQualitySchema = z.enum(['high', 'medium', 'budget']);
 
 function requirePricePair(
@@ -2194,6 +2197,22 @@ export const createProviderModelSchema = z
   })
   .superRefine(requirePricePair);
 
+/**
+ * The day a vendor retires a model (§136 t-1064), as `YYYY-MM-DD`, read as the
+ * UTC midnight that begins it. A day, not a timestamp: vendors announce days.
+ */
+export const retirementDaySchema = z
+  .string()
+  .trim()
+  .transform((day, ctx) => {
+    const date = parseRetirementDate(day);
+    if (date === null) {
+      ctx.addIssue({ code: 'custom', message: 'Retirement date must be a day, as YYYY-MM-DD' });
+      return z.NEVER;
+    }
+    return date;
+  });
+
 /** PATCH body for updating a provider model. All fields optional. */
 export const updateProviderModelSchema = z.object({
   name: z
@@ -2255,6 +2274,12 @@ export const updateProviderModelSchema = z.object({
   setup: z.string().trim().max(500).nullable().optional(),
 
   isActive: z.boolean().optional(),
+
+  // Vendor retirement (§136 t-1064). `null` clears. The replacement's
+  // same-provider and capability rules span two rows, so the route checks them
+  // (`checkReplacement`), not this schema.
+  retiresAt: retirementDaySchema.nullable().optional(),
+  replacementId: cuidSchema.nullable().optional(),
 
   metadata: metadataSchema,
 });

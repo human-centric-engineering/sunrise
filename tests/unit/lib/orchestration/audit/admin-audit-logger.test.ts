@@ -544,3 +544,92 @@ describe('logConversationAccess', () => {
     });
   });
 });
+
+// §136 t-1064: an audit diff is how a price change is noticed, so prices,
+// token limits and dates must reach the row as values.
+describe('logAdminAction — counts, prices and dates', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.aiAdminAuditLog.create).mockResolvedValue({} as never);
+  });
+
+  async function storedRow(entry: Parameters<typeof logAdminAction>[0]) {
+    logAdminAction(entry);
+    await flushPromises();
+    return vi.mocked(prisma.aiAdminAuditLog.create).mock.calls[0][0].data;
+  }
+
+  it('shows a number under a key/token-suffixed name: prices, limits, counts', async () => {
+    const data = await storedRow({
+      userId: 'u1',
+      action: 'provider_model.update',
+      entityType: 'provider_model',
+      changes: {
+        inputCostPerMillionTokens: { from: 3, to: 4 },
+        maxTokens: { from: null, to: 4096 },
+        rateLimitPerKey: { from: 60, to: 120 },
+      },
+    });
+
+    expect(data.changes).toEqual({
+      inputCostPerMillionTokens: { from: 3, to: 4 },
+      maxTokens: { from: null, to: 4096 },
+      rateLimitPerKey: { from: 60, to: 120 },
+    });
+  });
+
+  it('still redacts a string under a key/token-suffixed name, and a mixed pair', async () => {
+    const data = await storedRow({
+      userId: 'u1',
+      action: 'agent.update',
+      entityType: 'agent',
+      changes: {
+        leaseToken: { from: null, to: 'lease-abc' },
+        // A number one side and a string the other is not a count.
+        maxTokens: { from: 5, to: 'sk-live-oops' },
+      },
+    });
+
+    expect(data.changes).toEqual({
+      leaseToken: { from: '[REDACTED]', to: '[REDACTED]' },
+      maxTokens: { from: '[REDACTED]', to: '[REDACTED]' },
+    });
+  });
+
+  it('still redacts a number under password / secret / credential', async () => {
+    const data = await storedRow({
+      userId: 'u1',
+      action: 'settings.update',
+      entityType: 'settings',
+      changes: { pinPassword: { from: 1234, to: 5678 } },
+    });
+
+    expect(data.changes).toEqual({ pinPassword: { from: '[REDACTED]', to: '[REDACTED]' } });
+  });
+
+  it('stores a date as its ISO string, not an empty object', async () => {
+    const data = await storedRow({
+      userId: 'u1',
+      action: 'provider_model.update',
+      entityType: 'provider_model',
+      changes: { retiresAt: { from: null, to: new Date('2027-03-01T00:00:00.000Z') } },
+      metadata: { at: new Date('2027-01-02T03:04:05.000Z'), bad: new Date('nope') },
+    });
+
+    expect(data.changes).toEqual({ retiresAt: { from: null, to: '2027-03-01T00:00:00.000Z' } });
+    expect(data.metadata).toEqual({ at: '2027-01-02T03:04:05.000Z', bad: null });
+  });
+
+  it('applies the same number rule to nested metadata keys', async () => {
+    const data = await storedRow({
+      userId: 'u1',
+      action: 'provider_model.create',
+      entityType: 'provider_model',
+      metadata: { prices: { outputCostPerMillionTokens: 15, apiKey: 'sk-1' } },
+    });
+
+    expect(data.metadata).toEqual({
+      prices: { outputCostPerMillionTokens: 15, apiKey: '[REDACTED]' },
+    });
+  });
+});

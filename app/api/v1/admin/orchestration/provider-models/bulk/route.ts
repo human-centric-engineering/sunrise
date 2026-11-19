@@ -28,6 +28,8 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
 import { deriveMatrixSlug } from '@/lib/orchestration/llm/model-heuristics';
 import { bulkCreateProviderModelsSchema } from '@/lib/validations/orchestration';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { getClientIP } from '@/lib/security/ip';
 
 /**
  * Reason a row was skipped from the batch. `already_in_matrix` is
@@ -131,6 +133,23 @@ export const POST = withAdminAuth(
       skipped: skippedCount,
       adminId: session.user.id,
     });
+
+    // §136 t-1064: every catalogue change is in the admin audit log. One row
+    // for the batch: `createMany` returns a count, not the rows.
+    if (createResult.count > 0) {
+      logAdminAction({
+        userId: session.user.id,
+        action: 'provider_model.bulk_create',
+        entityType: 'provider_model',
+        entityName: `${createResult.count} ${body.providerSlug} model${createResult.count === 1 ? '' : 's'}`,
+        metadata: {
+          providerSlug: body.providerSlug,
+          created: createResult.count,
+          modelIds: rowsToInsert.map((r) => r.modelId),
+        },
+        clientIp: getClientIP(request),
+      });
+    }
 
     return successResponse(
       {

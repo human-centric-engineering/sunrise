@@ -49,6 +49,10 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
+  logAdminAction: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Dynamic imports (after mocks are in place)
 // ---------------------------------------------------------------------------
@@ -59,6 +63,7 @@ const { ApplyAuditChangesCapability, AUDITABLE_FIELDS } =
   await import('@/lib/orchestration/capabilities/built-in/apply-audit-changes');
 const { CapabilityValidationError } =
   await import('@/lib/orchestration/capabilities/base-capability');
+const { logAdminAction } = await import('@/lib/orchestration/audit/admin-audit-logger');
 
 type AuditableField = (typeof AUDITABLE_FIELDS)[number];
 
@@ -1253,5 +1258,117 @@ describe('ApplyAuditChangesCapability', () => {
       expect(result.data?.invalid).toBe(1);
       expect(result.data?.changes).toHaveLength(3);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Admin audit log (§136 t-1064)
+// ---------------------------------------------------------------------------
+
+describe('ApplyAuditChangesCapability — admin audit log (§136 t-1064)', () => {
+  const mockLogAdminAction = vi.mocked(logAdminAction);
+
+  it('writes one row per model naming each applied field, a price pair included', async () => {
+    mockFindUnique.mockResolvedValue(
+      makeModel({ inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 })
+    );
+    const cap = new ApplyAuditChangesCapability();
+
+    await cap.execute(
+      cap.validate({
+        model_id: 'model-1',
+        changes: [
+          makeChange(),
+          makeChange({ field: 'inputCostPerMillionTokens', currentValue: 3, proposedValue: 4 }),
+          makeChange({ field: 'outputCostPerMillionTokens', currentValue: 15, proposedValue: 20 }),
+        ],
+      }),
+      { ...context, workflowExecutionId: 'exec-1' }
+    );
+
+    expect(mockLogAdminAction).toHaveBeenCalledTimes(1);
+    expect(mockLogAdminAction).toHaveBeenCalledWith({
+      userId: 'u1',
+      action: 'provider_model.update',
+      entityType: 'provider_model',
+      entityId: 'model-1',
+      entityName: 'GPT-4o',
+      changes: {
+        costEfficiency: { from: 'medium', to: 'high' },
+        inputCostPerMillionTokens: { from: 3, to: 4 },
+        outputCostPerMillionTokens: { from: 15, to: 20 },
+      },
+      metadata: { source: 'model_audit', workflowExecutionId: 'exec-1' },
+    });
+  });
+
+  it('logs a price the analyser wrote as a string as the number it is, not redacted', async () => {
+    mockFindUnique.mockResolvedValue(
+      makeModel({ inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 })
+    );
+    const cap = new ApplyAuditChangesCapability();
+
+    await cap.execute(
+      cap.validate({
+        model_id: 'model-1',
+        changes: [
+          makeChange({ field: 'inputCostPerMillionTokens', currentValue: '3', proposedValue: 4 }),
+          makeChange({
+            field: 'outputCostPerMillionTokens',
+            currentValue: '15',
+            proposedValue: 20,
+          }),
+        ],
+      }),
+      context
+    );
+
+    expect(mockLogAdminAction.mock.calls[0][0].changes).toEqual({
+      inputCostPerMillionTokens: { from: 3, to: 4 },
+      outputCostPerMillionTokens: { from: 15, to: 20 },
+    });
+  });
+
+  it('logs an embed visitor as no user, so the audit row is not lost to its foreign key', async () => {
+    mockFindUnique.mockResolvedValue(makeModel());
+    const cap = new ApplyAuditChangesCapability();
+
+    await cap.execute(cap.validate({ model_id: 'model-1', changes: [makeChange()] }), {
+      ...context,
+      userId: 'embed_visitor-1',
+    });
+
+    expect(mockLogAdminAction.mock.calls[0][0].userId).toBeNull();
+  });
+
+  it('leaves a change skipped for drift out of the row', async () => {
+    // The row moved on: costEfficiency is no longer what the audit saw.
+    mockFindUnique.mockResolvedValue(makeModel({ costEfficiency: 'none' }));
+    const cap = new ApplyAuditChangesCapability();
+
+    await cap.execute(
+      cap.validate({
+        model_id: 'model-1',
+        changes: [
+          makeChange(),
+          makeChange({ field: 'latency', currentValue: undefined, proposedValue: 'fast' }),
+        ],
+      }),
+      context
+    );
+
+    expect(mockLogAdminAction).toHaveBeenCalledTimes(1);
+    expect(mockLogAdminAction.mock.calls[0][0].changes).toEqual({
+      latency: { from: undefined, to: 'fast' },
+    });
+  });
+
+  it('writes no row when nothing was applied', async () => {
+    mockFindUnique.mockResolvedValue(makeModel({ costEfficiency: 'none' }));
+    const cap = new ApplyAuditChangesCapability();
+
+    await cap.execute(cap.validate({ model_id: 'model-1', changes: [makeChange()] }), context);
+
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
   });
 });

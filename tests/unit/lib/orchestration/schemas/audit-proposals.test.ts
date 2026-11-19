@@ -893,3 +893,51 @@ describe('audit-proposals schema', () => {
     });
   });
 });
+
+// §136 t-1064: a deactivation proposal can carry the vendor's retirement day
+// and the successor's vendor model id.
+describe('audit-proposals schema — retirement on deactivations', () => {
+  function withDeactivation(deactivation: Record<string, unknown>) {
+    return auditProposalsSchema.safeParse(
+      makeInput({
+        analyse_chat: {
+          models: [],
+          deactivateModels: [
+            { modelId: 'model-1', reason: 'Deprecated', sources: [SOURCE], ...deactivation },
+          ],
+        },
+      })
+    );
+  }
+
+  function messages(result: ReturnType<typeof withDeactivation>): string[] {
+    return result.success ? [] : result.error.issues.map((i) => i.message);
+  }
+
+  it('accepts a deactivation without a retirement, as before', () => {
+    expect(withDeactivation({}).success).toBe(true);
+  });
+
+  it('accepts a retirement day with a successor, and explicit nulls for neither', () => {
+    expect(withDeactivation({ retiresAt: '2027-03-01', replacedBy: 'gpt-5.1' }).success).toBe(true);
+    expect(withDeactivation({ retiresAt: null, replacedBy: null }).success).toBe(true);
+  });
+
+  it('accepts a day that is not a day: the capability makes that one entry invalid', () => {
+    // A malformed day for one model must not fail the branch, and with it
+    // every other proposal in the run.
+    for (const retiresAt of ['2027-02-30', '2027-06', '2027-06-01T00:00:00Z', 'TBD']) {
+      expect(messages(withDeactivation({ retiresAt }))).toEqual([]);
+    }
+  });
+
+  it('accepts a successor without a retirement day: the capability leaves it out and says so', () => {
+    // One stray field must not fail the whole analysis branch.
+    expect(withDeactivation({ replacedBy: 'gpt-5.1' }).success).toBe(true);
+  });
+
+  it('reads an empty string in either field as none', () => {
+    expect(withDeactivation({ retiresAt: '', replacedBy: '' }).success).toBe(true);
+    expect(withDeactivation({ retiresAt: '  ' }).success).toBe(true);
+  });
+});

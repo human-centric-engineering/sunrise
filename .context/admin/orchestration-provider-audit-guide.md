@@ -149,7 +149,7 @@ The workflow needs model data as input. The easiest way is to copy it from the A
 5. Expand the row. Instead of a wall of JSON, the **structured viewer** renders three sections:
    - **Proposed changes to existing models** — one parent per model, expandable into a per-field changes table (field, current, proposed, confidence, reason)
    - **Proposed new models** — one card per new model with its full classification
-   - **Proposed deactivations** — one row per deprecated model with the reason
+   - **Proposed deactivations** — one row per deprecated model with the reason, and, when the provider announced them, the day it retires (**Retires on**) and its successor on the same provider. A day still to come marks the model _retiring_ and leaves it on; a day already here turns it off. See [Model lifecycle](../orchestration/llm-providers.md#model-lifecycle)
    - Quality score from the evaluation step appears at the top
 6. Review the proposals — check if the tampered field was detected:
    - Look for your model in the changes list

@@ -265,10 +265,24 @@ const modelProposalSchema = z
     }
   });
 
+/** An optional string where `""` means none, the same as `null`. */
+const emptyAsNull = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+  z.string().nullish()
+);
+
 const deactivationSchema = z.object({
   modelId: z.string().min(1),
   reason: z.string().min(1),
   sources: z.array(sourceAttributionSchema).min(1),
+  // Vendor retirement (§136 t-1064): the announced day, and the vendor's
+  // model id of the same-provider successor. `null` or `""` = none found.
+  // Neither is refined here: one stray field must not fail the whole
+  // analysis branch, and every other proposal with it. The capability
+  // judges each entry: a day that is not YYYY-MM-DD makes that entry
+  // `invalid`, and a successor without a day is left out with a note.
+  retiresAt: emptyAsNull,
+  replacedBy: emptyAsNull,
 });
 
 const analysisBranchSchema = z.object({

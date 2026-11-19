@@ -524,6 +524,40 @@ Tiers are classified by input cost: `local` (≤0), `budget` (≤\$0.50/M), `mid
 
 If OpenRouter is unreachable, accessors continue serving the fallback map silently — a warning is logged.
 
+## Model lifecycle
+
+Providers retire models on days they announce. A catalogue row records that with two nullable columns on `AiProviderModel` (§136 t-1064):
+
+- **`retiresAt`** — the day the vendor stops serving the model, stored as the UTC midnight that begins it.
+- **`replacementId`** — the successor whatever uses the model should move to: another catalogue row.
+
+The state is derived from the date, at read time, by `modelLifecycleState()` in `lib/orchestration/model-lifecycle/state.ts`. Nothing flips it on a schedule:
+
+| State      | When                    | What it means                                                 |
+| ---------- | ----------------------- | ------------------------------------------------------------- |
+| `current`  | `retiresAt` is null     | No retirement known.                                          |
+| `retiring` | `retiresAt` is to come  | The vendor still serves it; move what uses it before the day. |
+| `retired`  | `retiresAt` has arrived | Calls to it fail at the vendor.                               |
+
+**Independent of `isActive`.** `isActive` says whether Sunrise offers the model in its pickers. A retiring model stays active on purpose: an inactive row is left out of the model registry's DB hydration, so deactivating early would lose its pricing while agents still call it.
+
+**The replacement rule** is `checkReplacement()`, the one check every writer runs (and the move, which must not trust a stored replacement, since either row can change after it was written). A replacement must be:
+
+- **on the same provider** (owner ruling, 2026-11-19). An org's provider approval and its own key are both per provider, so a same-provider move never changes what an org may use or who pays. Moving to another provider is a provider switch, made per agent in the agent form;
+- **not the model itself**, **active**, and **not itself retiring or retired** (which also rules out a cycle of two);
+- **able to do everything the model does**: every capability it has.
+
+The database cannot express a rule across two rows, so the foreign key only keeps `replacementId` pointing at a row that exists (`ON DELETE SET NULL`). The PATCH route checks the rule when a save changes the replacement, or the model's provider or capabilities. It does not re-check the models that name this one as their replacement when this one changes, so a stored replacement can go stale (turned off, retiring itself); the move checks again before it writes.
+
+**Who writes it:**
+
+- **The provider model audit.** A deactivation proposal may carry `retiresAt` (`YYYY-MM-DD`) and `replacedBy` (the successor's vendor model id, e.g. `gpt-5.1`, looked up on the retiring model's own provider). The `deactivate_provider_models` capability then records the retirement. A day still to come leaves the model active (`retiring`); a day already here also deactivates it (`retired`). A successor that fails `checkReplacement` is left out, and the result's `replacementNote` says why; the retirement is still recorded. Without `retiresAt` the capability deactivates as it always has; a `replacedBy` given without a day is not recorded and `replacementNote` says so. An empty string in either field reads as none, and neither field can fail the audit's `validate_proposals` guard: a day that is not `YYYY-MM-DD` makes only that entry `invalid`. A successor the same batch is retiring is refused, and so is one whose lookup fails; the retirement is still recorded and the rest of the batch applies. `add_new_models` runs first, so the successor can be a model the same audit has just added.
+- **An admin** (who keeps the Active switch: a past day leaves the model on until they turn it off, where the audit turns it off itself), on the model's edit page (Retirement section) or `PATCH /api/v1/admin/orchestration/provider-models/:id` with `retiresAt` (`YYYY-MM-DD` or `null`) and `replacementId` (a row id or `null`). A replacement without a day is refused, and clearing the day clears the replacement.
+
+**Every catalogue change is in the admin audit log** (entity type `provider_model`): an admin's create (`provider_model.create`), bulk add (`provider_model.bulk_create`, one row per batch), edit (`provider_model.update`, each field's old and new value) and delete (`provider_model.delete`), and each write the audit applies (`provider_model.update`, `.create`, `.deactivate`, `.retire`, with `metadata.source: 'model_audit'` and the run's `workflowExecutionId`). That row is how a price change is noticed; there is no separate "repriced" state.
+
+What uses a retiring model, and moving it all to the replacement, are t-1065 and t-1066. The embedding model is never moved there: changing it means re-embedding (§132).
+
 ## Cost Tracking
 
 Every provider call should be followed by `costTracker.logCost(...)`. Local models cost \$0 but their token counts are still recorded for benchmarking (`isLocal: true`).

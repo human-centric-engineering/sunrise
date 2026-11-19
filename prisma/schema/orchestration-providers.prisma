@@ -222,8 +222,23 @@ model AiProviderModel {
   setup                      String?  @db.Text
 
   // Lifecycle
-  isDefault Boolean  @default(false) // true = seed-managed, re-seedable
-  isActive  Boolean  @default(true)
+  isDefault Boolean @default(false) // true = seed-managed, re-seedable
+  isActive  Boolean @default(true)
+
+  // Vendor retirement (§136 t-1064). `retiresAt` is the day the vendor stops
+  // serving the model: set and in the future = retiring, today or past =
+  // retired; null = no retirement known. The state is derived from the date
+  // (`lib/orchestration/model-lifecycle/state.ts`), so nothing flips it on a
+  // schedule. Independent of `isActive`, which says whether Sunrise offers the
+  // model: a retiring model stays active, because deactivating it drops it from
+  // the model registry while agents still call it. `replacementId` is the
+  // successor the move (t-1066) offers: another catalogue row on the SAME
+  // provider (owner ruling), checked by `checkReplacement` on every write,
+  // which the database cannot express across rows. See
+  // `.context/orchestration/llm-providers.md` § Model lifecycle.
+  retiresAt     DateTime?
+  replacementId String?
+
   metadata  Json?
   createdBy String?
   createdAt DateTime @default(now())
@@ -232,9 +247,12 @@ model AiProviderModel {
   // Relations
   creator                    User?                     @relation("AiProviderModelCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   activeForEmbeddingSettings AiOrchestrationSettings[] @relation("ActiveEmbeddingModel")
+  replacement                AiProviderModel?          @relation("ModelReplacement", fields: [replacementId], references: [id], onDelete: SetNull)
+  replacing                  AiProviderModel[]         @relation("ModelReplacement")
 
   @@unique([providerSlug, modelId])
   @@index([createdBy])
+  @@index([replacementId])
   @@index([isActive])
   @@index([tierRole])
   @@index([providerSlug])

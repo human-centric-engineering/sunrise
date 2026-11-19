@@ -67,6 +67,25 @@ export interface AuditSupportStamp {
 // js/regex/missing-regexp-anchor).
 const SECRET_PATTERN = /password|secret|credential|(?:key|token)(?:(?:s|hash(?:es)?)?$)/i;
 
+/** The words that name a secret wherever they appear; the rest of the pattern is the key/token suffix. */
+const SECRET_WORD = /password|secret|credential/i;
+
+/**
+ * Whether `field` holding `values` is redacted. The key/token suffix also
+ * names counts, prices and limits — `maxTokens`, `inputTokens`,
+ * `inputCostPerMillionTokens`, `rateLimitPerKey` — and every such column is a
+ * number, while every credential it names (`apiKey`, `refreshToken`,
+ * `leaseToken`) is a string. So under the suffix rule a number (or `null`) is
+ * shown and anything else is redacted. Before §136 t-1064 every price and
+ * token limit in an audit diff was stored as `[REDACTED]`. The words
+ * (`password`, `secret`, `credential`) redact whatever the value.
+ */
+function isRedacted(field: string, ...values: unknown[]): boolean {
+  if (!SECRET_PATTERN.test(field)) return false;
+  if (SECRET_WORD.test(field)) return true;
+  return !values.every((v) => v === null || (typeof v === 'number' && Number.isFinite(v)));
+}
+
 function sanitizeChanges(
   changes: Record<string, { from: unknown; to: unknown }> | null | undefined
 ): Record<string, { from: unknown; to: unknown }> | null {
@@ -74,7 +93,7 @@ function sanitizeChanges(
 
   const sanitized: Record<string, { from: unknown; to: unknown }> = {};
   for (const [field, diff] of Object.entries(changes)) {
-    if (SECRET_PATTERN.test(field)) {
+    if (isRedacted(field, diff.from, diff.to)) {
       sanitized[field] = { from: '[REDACTED]', to: '[REDACTED]' };
     } else {
       sanitized[field] = {
@@ -87,13 +106,18 @@ function sanitizeChanges(
 }
 
 function sanitizeMetadataValue(value: unknown): unknown {
+  // A Date has no own enumerable keys, so walking it as an object stored `{}`
+  // for every date in an audit diff (found in §136 t-1064).
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
   if (Array.isArray(value)) {
     return value.map(sanitizeMetadataValue);
   }
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = SECRET_PATTERN.test(key) ? '[REDACTED]' : sanitizeMetadataValue(v);
+      out[key] = isRedacted(key, v) ? '[REDACTED]' : sanitizeMetadataValue(v);
     }
     return out;
   }

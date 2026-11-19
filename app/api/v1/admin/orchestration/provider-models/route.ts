@@ -28,6 +28,8 @@ import {
   createProviderModelSchema,
 } from '@/lib/validations/orchestration';
 import { modelAgentUsage, modelUsageKey } from '@/lib/orchestration/admin/global-config-usage';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { getClientIP } from '@/lib/security/ip';
 
 export const GET = withAdminAuth(
   async (request, session) => {
@@ -203,6 +205,22 @@ export const POST = withAdminAuth(
         modelId: model.id,
         slug: model.slug,
         adminId: session.user.id,
+      });
+
+      // §136 t-1064: every catalogue change is in the admin audit log.
+      logAdminAction({
+        userId: session.user.id,
+        action: 'provider_model.create',
+        entityType: 'provider_model',
+        entityId: model.id,
+        entityName: model.name,
+        metadata: {
+          providerSlug: model.providerSlug,
+          modelId: model.modelId,
+          inputCostPerMillionTokens: model.inputCostPerMillionTokens,
+          outputCostPerMillionTokens: model.outputCostPerMillionTokens,
+        },
+        clientIp: getClientIP(request),
       });
 
       return successResponse(model, undefined, { status: 201 });

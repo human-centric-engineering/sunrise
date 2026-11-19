@@ -241,20 +241,20 @@ const DEACTIVATE_PROVIDER_MODELS_DEFINITION = {
   slug: 'deactivate_provider_models',
   name: 'Deactivate Provider Models',
   description:
-    'Soft-delete provider model entries that have been deprecated or discontinued. Sets isActive=false after admin approval.',
+    'Soft-delete provider model entries that have been deprecated or discontinued, or mark them retiring on the day the vendor announced. Applied after admin approval.',
   category: 'internal',
   executionType: 'internal',
   executionHandler: 'DeactivateProviderModelsCapability',
   functionDefinition: {
     name: 'deactivate_provider_models',
     description:
-      'Deactivate (soft-delete) provider model entries that have been deprecated or discontinued. Sets isActive=false. Already-inactive models are skipped.',
+      'Deactivate provider model entries that have been deprecated or discontinued, and record a vendor retirement date and same-provider successor where known. A retirement date still to come marks the model retiring and leaves it active; one already here deactivates it. Already-inactive models without a new retirement are skipped.',
     parameters: {
       type: 'object',
       properties: {
         deactivateModels: {
           type: 'array',
-          description: 'Array of models to deactivate.',
+          description: 'Array of models to deactivate or mark as retiring.',
           items: {
             type: 'object',
             properties: {
@@ -266,6 +266,16 @@ const DEACTIVATE_PROVIDER_MODELS_DEFINITION = {
                 type: 'string',
                 description:
                   'Why this model should be deactivated (e.g. "Model deprecated by provider on 2026-03-01").',
+              },
+              retiresAt: {
+                type: 'string',
+                description:
+                  'The day the vendor stops serving the model, as YYYY-MM-DD, when the vendor has announced one.',
+              },
+              replacedBy: {
+                type: 'string',
+                description:
+                  'The vendor\'s model id of the successor on the same provider (e.g. "gpt-5.1"), when the vendor names one.',
               },
             },
             required: ['modelId', 'reason'],
