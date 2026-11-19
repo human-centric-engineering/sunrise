@@ -125,6 +125,23 @@ release process.
   `mockResolvedValueOnce` should answer by slug instead: confidential routing
   asks `isLocalProvider` first.
 
+- **An org's AI key is tested with a call the vendor checks (§137, t-1056).**
+  Saving or testing a key on `/api/v1/orgs/[id]/provider-keys` now runs the
+  provider's new `testKey()` instead of its connection check. Anthropic's model
+  list replaces a billed one-token message on a fixed model, so a key whose
+  workspace cannot use that model is no longer refused. Voyage embeds one word:
+  it has no model list, so until now no Voyage key could be saved. An
+  OpenAI-compatible host's model list is trusted only where the host refuses a
+  known-wrong key there too; where it is open to anyone (OpenRouter), a chat
+  request no host runs is sent with each key, so a mistyped key is refused
+  instead of being saved and failing on the org's first call. A host that checks
+  keys on neither call fails the test. `LlmProvider` gains the optional
+  `testKey()`, used by `testProviderKey()`, which falls back to
+  `testConnection()` without it. See
+  [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#the-orgs-page-and-api-137-t-1045).
+  _Fork impact:_ none required. `testKey()` is optional; a fork's own provider
+  class may implement it to be tested the same way.
+
 - **Meters and limits: how much an org may have (§135 t-1035).** An app
   registers a meter in the same `initAppEntitlements()` seam with
   `registerMeter({ key, label, description, period, count })`
