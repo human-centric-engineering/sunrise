@@ -310,7 +310,7 @@ describe('the switch off with no keys saved', () => {
     const credential = await runAsOrg(ORG_A, () => resolveProviderCredential(ROW));
     const provider = await chat(ORG_A);
 
-    expect(credential).toEqual({ apiKey: 'shared-install-key', identity: '' });
+    expect(credential).toEqual({ apiKey: 'shared-install-key', identity: '', ownKey: false });
     expect(breakerKeyOf(provider)).toBe('anthropic');
   });
 });

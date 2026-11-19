@@ -25,7 +25,7 @@
 
 import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
-import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import { getProviderWithFallbacks, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import type { BindingProvenance } from '@/lib/orchestration/llm/provider-eligibility';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
@@ -306,6 +306,7 @@ export async function summarizeMessages(
           ...(options.userId ? { userId: options.userId } : {}),
           model,
           provider: usedSlug,
+          ownKey: usesOrgOwnKey(provider),
           inputTokens: response.usage.inputTokens,
           outputTokens: response.usage.outputTokens,
           cacheReadTokens: response.usage.cacheReadTokens,

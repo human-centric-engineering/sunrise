@@ -11,6 +11,13 @@
  *
  * All month / day boundaries are computed in **UTC** to match
  * `cost-tracker.ts#checkBudget`.
+ *
+ * **Spend on an org's own key is reported apart** (§137). Every total here
+ * still includes it, and the summary and the org usage say how much of it was
+ * on the org's own key (`ownKey`, `ownKeyCostUsd`): the vendor bills the org
+ * for that part, so it is not the platform's spend, and the org's and the
+ * global caps leave it out. An agent's spend and the agent breakdowns keep
+ * it, since the agent's cap counts it.
  */
 
 import { prisma } from '@/lib/db/client';
@@ -90,7 +97,14 @@ export interface CostSummaryTrendPoint {
 }
 
 export interface CostSummary {
+  /** All spend in each window, the part on orgs' own keys included. */
   totals: { today: number; week: number; month: number };
+  /**
+   * The part of each of `totals` made on an org's own key (§137): billed to
+   * the org by the vendor, not to the platform. `totals` minus this is the
+   * platform's spend.
+   */
+  ownKey: { today: number; week: number; month: number };
   byAgent: CostSummaryAgentRow[];
   byModel: CostSummaryModelRow[];
   /** Last 30 UTC days in ascending order. Days with no spend are omitted. */
@@ -117,7 +131,8 @@ export interface GlobalCapStatus {
   /** The configured global monthly budget in USD, or null if not set. */
   cap: number | null;
   /**
-   * Month-to-date spend in every org. `null` for a caller in a customer org at
+   * Month-to-date spend in every org on the platform's keys: spend on an org's
+   * own key is not counted (§137). `null` for a caller in a customer org at
    * `multi`: the figure includes every other org's spend, so it is shown only
    * in the install org, where the global cap is set.
    */
@@ -128,7 +143,14 @@ export interface GlobalCapStatus {
 
 /** Spend, calls and tokens for one bucket of `AiCostLog` rows. */
 export interface UsageTotals {
+  /** All spend, the part on the org's own key included. */
   totalCostUsd: number;
+  /**
+   * The part of `totalCostUsd` made on the org's own key (§137): billed to the
+   * org by the vendor, so not the platform's spend, and not counted towards
+   * the org's cap or the global one.
+   */
+  ownKeyCostUsd: number;
   inputTokens: number;
   outputTokens: number;
   /** Number of cost rows: one per metered call. */
@@ -143,7 +165,11 @@ export interface OrgUsageRow extends UsageTotals {
   status: string;
   /** The org's `quotas.monthlyBudgetUsd`; `null` when it has set none. */
   monthlyBudgetUsd: number | null;
-  /** `spend / cap` (can exceed 1). `null` when there is no cap, or the cap is 0. */
+  /**
+   * The platform's spend over the cap, `(totalCostUsd - ownKeyCostUsd) / cap`
+   * (can exceed 1): what the cap counts. `null` when there is no cap, or the
+   * cap is 0.
+   */
   utilisation: number | null;
 }
 
@@ -321,6 +347,20 @@ export async function getCostBreakdown(opts: CostBreakdownOptions): Promise<Cost
   return { groupBy: opts.groupBy, rows, totals };
 }
 
+/** A window's spend grouped by `ownKey`: all of it, and the own-key part. */
+function splitByOwnKey(
+  groups: ReadonlyArray<{ ownKey: boolean; _sum: { totalCostUsd: number | null } }>
+): { total: number; ownKey: number } {
+  let total = 0;
+  let ownKey = 0;
+  for (const g of groups) {
+    const spend = g._sum.totalCostUsd ?? 0;
+    total += spend;
+    if (g.ownKey) ownKey += spend;
+  }
+  return { total, ownKey };
+}
+
 // ----------------------------------------------------------------------------
 // getCostSummary
 // ----------------------------------------------------------------------------
@@ -347,15 +387,19 @@ export async function getCostSummary(): Promise<CostSummary> {
 
   const [todayAgg, weekAgg, monthAgg, byAgentGrouped, byModelGrouped, trendRaw, agentsWithBudget] =
     await Promise.all([
-      prisma.aiCostLog.aggregate({
+      // By `ownKey`, so each window's own-key part comes from the same read.
+      prisma.aiCostLog.groupBy({
+        by: ['ownKey'],
         where: { createdAt: { gte: todayStart, lt: tomorrowStart } },
         _sum: { totalCostUsd: true },
       }),
-      prisma.aiCostLog.aggregate({
+      prisma.aiCostLog.groupBy({
+        by: ['ownKey'],
         where: { createdAt: { gte: weekStart, lt: tomorrowStart } },
         _sum: { totalCostUsd: true },
       }),
-      prisma.aiCostLog.aggregate({
+      prisma.aiCostLog.groupBy({
+        by: ['ownKey'],
         where: { createdAt: { gte: monthStart } },
         _sum: { totalCostUsd: true },
       }),
@@ -447,12 +491,12 @@ export async function getCostSummary(): Promise<CostSummary> {
     localSavings = null;
   }
 
+  const today = splitByOwnKey(todayAgg);
+  const week = splitByOwnKey(weekAgg);
+  const month = splitByOwnKey(monthAgg);
   return {
-    totals: {
-      today: todayAgg._sum.totalCostUsd ?? 0,
-      week: weekAgg._sum.totalCostUsd ?? 0,
-      month: monthAgg._sum.totalCostUsd ?? 0,
-    },
+    totals: { today: today.total, week: week.total, month: month.total },
+    ownKey: { today: today.ownKey, week: week.ownKey, month: month.ownKey },
     byAgent,
     byModel,
     trend,
@@ -529,8 +573,9 @@ export async function getBudgetAlerts(): Promise<BudgetAlert[]> {
  * Check whether the global monthly budget cap (from `AiOrchestrationSettings`)
  * has been exceeded. Returns null cap when no settings row or no cap configured.
  *
- * The spend is every org's (`getGlobalCapState`), read across orgs at `multi`
- * — the same figure the spend gate enforces against. So it goes only to a
+ * The spend is every org's on the platform's keys (`getGlobalCapState`; spend
+ * on an org's own key is left out), read across orgs at `multi` — the same
+ * figure the spend gate enforces against. So it goes only to a
  * caller in the install org (or a system scope), the one place the global cap
  * can be changed (`canChangeSharedSettings`). An admin in a customer org is
  * told whether the cap is reached, since it refuses their org's paid calls
@@ -553,11 +598,12 @@ export async function getGlobalCapStatus(): Promise<GlobalCapStatus> {
 // ----------------------------------------------------------------------------
 
 function emptyTotals(): UsageTotals {
-  return { totalCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 };
+  return { totalCostUsd: 0, ownKeyCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 };
 }
 
 function addTotals(acc: UsageTotals, add: UsageTotals): UsageTotals {
   acc.totalCostUsd += add.totalCostUsd;
+  acc.ownKeyCostUsd += add.ownKeyCostUsd;
   acc.inputTokens += add.inputTokens;
   acc.outputTokens += add.outputTokens;
   acc.count += add.count;
@@ -599,7 +645,7 @@ export async function getOrgUsage(opts: OrgUsageOptions): Promise<OrgUsageReport
   const read = async () => {
     const [grouped, orgs] = await Promise.all([
       prisma.aiCostLog.groupBy({
-        by: ['orgId'],
+        by: ['orgId', 'ownKey'],
         where: {
           createdAt: { gte: start, lt: end },
           ...(orgFilter !== undefined ? { orgId: orgFilter } : {}),
@@ -621,8 +667,15 @@ export async function getOrgUsage(opts: OrgUsageOptions): Promise<OrgUsageReport
 
   const byOrg = new Map<string | null, UsageTotals>();
   for (const g of grouped) {
-    byOrg.set(g.orgId, {
-      totalCostUsd: g._sum.totalCostUsd ?? 0,
+    const spend = g._sum.totalCostUsd ?? 0;
+    let totals = byOrg.get(g.orgId);
+    if (!totals) {
+      totals = emptyTotals();
+      byOrg.set(g.orgId, totals);
+    }
+    addTotals(totals, {
+      totalCostUsd: spend,
+      ownKeyCostUsd: g.ownKey ? spend : 0,
       inputTokens: g._sum.inputTokens ?? 0,
       outputTokens: g._sum.outputTokens ?? 0,
       count: g._count._all,
@@ -657,10 +710,14 @@ export async function getOrgUsage(opts: OrgUsageOptions): Promise<OrgUsageReport
       status: org.status,
       ...usage,
       monthlyBudgetUsd: cap,
-      utilisation: cap !== null && cap > 0 ? usage.totalCostUsd / cap : null,
+      // The cap counts the platform's spend only.
+      utilisation:
+        cap !== null && cap > 0 ? (usage.totalCostUsd - usage.ownKeyCostUsd) / cap : null,
     };
   });
-  rows.sort((a, b) => b.totalCostUsd - a.totalCostUsd || a.name.localeCompare(b.name));
+  // By the platform's spend, the figure the table shows and the cap counts.
+  const platform = (r: UsageTotals) => r.totalCostUsd - r.ownKeyCostUsd;
+  rows.sort((a, b) => platform(b) - platform(a) || a.name.localeCompare(b.name));
 
   const totals = rows.reduce<UsageTotals>((acc, r) => addTotals(acc, r), emptyTotals());
   if (detached) addTotals(totals, detached);

@@ -414,6 +414,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       '#654), and a fourth would be in a file no import chain connects here.',
   },
   {
+    path: 'tests/unit/lib/orchestration/llm/cost-log-own-key.test.ts',
+    reason:
+      'walks the tree for every `logCost` call site and compares what each ' +
+      'passes for `ownKey` against a written roster (§137 t-1046). A new call ' +
+      "site that forgets it counts an org's own vendor bill against the " +
+      "platform's caps, and would be in a file no import chain connects here.",
+  },
+  {
     path: 'tests/unit/lib/validations/trim-order.test.ts',
     reason:
       'parses every `z.string()` chain under app/, lib/ and components/ and ' +

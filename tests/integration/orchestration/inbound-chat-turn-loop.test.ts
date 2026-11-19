@@ -147,6 +147,8 @@ const RESPONSES = [
 ];
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  // The platform's key, never an org's own (§137).
+  usesOrgOwnKey: () => false,
   getProviderWithFallbacks: vi.fn(async () => ({
     provider: {
       chat: vi.fn(async (messages: Array<{ role: string; content: string }>) => {

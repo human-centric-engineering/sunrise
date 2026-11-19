@@ -80,6 +80,7 @@ vi.mock('@/lib/auth/admin-page-viewer', () => ({
 
 const MOCK_SUMMARY = {
   totals: { today: 1.5, week: 7.25, month: 22.0 },
+  ownKey: { today: 0, week: 0, month: 0 },
   byAgent: [
     {
       agentId: 'agent-1',
@@ -126,7 +127,7 @@ const ORG_REPORT = {
   periodEnd: '2026-11-01T00:00:00.000Z',
   orgs: [orgRow('acme', 'Acme', 5), orgRow('install', 'Install', 1)],
   detached: null,
-  totals: { totalCostUsd: 6, inputTokens: 200, outputTokens: 20, count: 2 },
+  totals: { totalCostUsd: 6, ownKeyCostUsd: 0, inputTokens: 200, outputTokens: 20, count: 2 },
 };
 
 function orgRow(orgId: string, name: string, totalCostUsd: number) {
@@ -136,6 +137,7 @@ function orgRow(orgId: string, name: string, totalCostUsd: number) {
     slug: orgId,
     status: 'ACTIVE',
     totalCostUsd,
+    ownKeyCostUsd: 0,
     inputTokens: 100,
     outputTokens: 10,
     count: 1,

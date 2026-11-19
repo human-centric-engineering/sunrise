@@ -242,7 +242,7 @@ describe('getOrgCapState', () => {
       exceeded: true,
     });
     expect(db.aiCostLog.aggregate).toHaveBeenCalledWith({
-      where: { orgId: ORG_A, createdAt: { gte: utcMonthStart() } },
+      where: { orgId: ORG_A, createdAt: { gte: utcMonthStart() }, ownKey: false },
       _sum: { totalCostUsd: true },
     });
   });
@@ -324,7 +324,11 @@ describe('the cached month-to-date totals', () => {
     expect(await getMonthToDateOrgSpend(ORG_A)).toBe(0);
     expect(db.aiCostLog.aggregate).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        where: { orgId: ORG_A, createdAt: { gte: new Date('2026-11-01T00:00:00Z') } },
+        where: {
+          orgId: ORG_A,
+          createdAt: { gte: new Date('2026-11-01T00:00:00Z') },
+          ownKey: false,
+        },
       })
     );
   });

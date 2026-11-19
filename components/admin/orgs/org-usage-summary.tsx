@@ -6,6 +6,10 @@
  * The cap is set with `PATCH /api/v1/admin/orgs/[id]` (`settings.quotas`);
  * there is no form for it yet, so with no cap the page says so rather than
  * offering one.
+ *
+ * Spend is the platform's, what the cap counts. Spend on the org's own AI key
+ * (§137) is shown beside it when there is any: the provider bills the org for
+ * it, so the cap leaves it out.
  */
 
 import { UtilisationBar } from '@/components/admin/orchestration/costs/per-agent-cost-table';
@@ -26,8 +30,14 @@ export function OrgUsageSummary({ period, row }: OrgUsageSummaryProps) {
         <div>
           <dt className="text-muted-foreground">Spend ({period})</dt>
           <dd className="text-lg font-semibold">
-            <Usd value={row.totalCostUsd} />
+            <Usd value={row.totalCostUsd - row.ownKeyCostUsd} />
           </dd>
+          {row.ownKeyCostUsd > 0 && (
+            <dd className="text-muted-foreground text-xs" data-testid="org-usage-own-key">
+              Plus <Usd value={row.ownKeyCostUsd} /> on its own AI keys, billed to it by the
+              provider
+            </dd>
+          )}
         </div>
         <div>
           <dt className="text-muted-foreground flex items-center gap-1">
@@ -37,6 +47,11 @@ export function OrgUsageSummary({ period, row }: OrgUsageSummaryProps) {
                 The most this organisation may spend on paid AI providers in a calendar month (UTC).
                 Once it is reached, its paid calls are refused until the next month; local models
                 keep working. The global monthly budget still applies on top of it.
+              </p>
+              <p className="mt-2">
+                Calls on the organisation&apos;s own AI keys are not counted and not refused: the
+                provider bills the organisation for them. An agent&apos;s own monthly budget counts
+                them, and stops its chat turns once reached.
               </p>
               <p className="mt-2">
                 Set it from the install organisation with <code>PATCH /api/v1/admin/orgs/[id]</code>{' '}
@@ -52,7 +67,7 @@ export function OrgUsageSummary({ period, row }: OrgUsageSummaryProps) {
             )}
             {row.monthlyBudgetUsd === 0 && (
               <span className="text-muted-foreground block text-xs font-normal">
-                Paid calls off
+                Paid calls off (platform keys)
               </span>
             )}
           </dd>

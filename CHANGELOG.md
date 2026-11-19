@@ -76,6 +76,34 @@ release process.
   that should let another org role manage keys answers `org.providerKeys` in
   `canRead`'s `unattributed` arm.
 
+- **Spend on an organisation's own AI key is kept out of the platform's caps,
+  and reported apart (§137, t-1046).** `AiCostLog` gains `ownKey` (default
+  `false`), set when the call went out on the org's own key. Such a call counts
+  towards its agent's monthly budget only: the org's cap and the global cap
+  neither count it nor refuse it, at the provider manager's gate, in provider
+  selection and in chat's check at the start of a turn, while any call the same
+  turn makes on the platform's keys still meets both. The agent's budget, which
+  only chat enforces, still stops its turns; outside chat nothing caps an
+  own-key call. `GET /costs/summary`
+  gains `ownKey: { today, week, month }`, the part of `totals` on own keys, and
+  every bucket of `GET /costs/orgs` gains `ownKeyCostUsd`; the costs page, the
+  per-org table and the org page show the platform's spend with own-key spend
+  apart. Also new: `BudgetStatus.agentCapExceeded`, `PaidCallHold.agentCapReached`,
+  an `{ ownKey }` option on `spendCapRefusal()` and `assertWithinSpendCaps()`,
+  and `usesOrgOwnKey()` / `providerUsesOrgOwnKey()` on the provider manager.
+  `LogCostParams` gains `ownKey`: every core `logCost` caller passes
+  `usesOrgOwnKey(provider)` for the provider it called, and a new guard test
+  holds every call site in the tree to that. See
+  [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#what-an-own-key-call-costs-and-which-caps-hold-it-137-t-1046).
+  _Fork impact:_ `/costs/orgs`'s `utilisation` is now the platform's spend over
+  the cap, which differs from `totalCostUsd / cap` once an org has own-key
+  spend; nothing changes before then. `resolveProviderCredential()` now also
+  answers `ownKey`, always `false` for your resolver's credentials. A test
+  fixture typed as `CostSummary` or `UsageTotals` needs the new fields. Your own
+  `logCost` calls should pass `ownKey: usesOrgOwnKey(provider)`; without it an
+  org's own-key spend in them counts against the org's and the global caps. The
+  migration adds one column with a default.
+
 - **Meters and limits: how much an org may have (§135 t-1035).** An app
   registers a meter in the same `initAppEntitlements()` seam with
   `registerMeter({ key, label, description, period, count })`

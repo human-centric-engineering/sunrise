@@ -43,18 +43,18 @@ const { prisma } = await import('@/lib/db/client');
 const { calculateLocalSavings } = await import('@/lib/orchestration/llm/cost-tracker');
 const { getCostSummary } = await import('@/lib/orchestration/llm/cost-reports');
 
-const mockedAggregate = prisma.aiCostLog.aggregate as unknown as ReturnType<typeof vi.fn>;
 const mockedGroupBy = prisma.aiCostLog.groupBy as unknown as ReturnType<typeof vi.fn>;
 const mockedAgentFind = prisma.aiAgent.findMany as unknown as ReturnType<typeof vi.fn>;
 const mockedRaw = prisma.$queryRawUnsafe as unknown as ReturnType<typeof vi.fn>;
 const mockedCalcLocalSavings = calculateLocalSavings as unknown as ReturnType<typeof vi.fn>;
 
 function setupDefaultMocks() {
-  // Today, week, month aggregates
-  mockedAggregate
-    .mockResolvedValueOnce({ _sum: { totalCostUsd: 1 } })
-    .mockResolvedValueOnce({ _sum: { totalCostUsd: 5 } })
-    .mockResolvedValueOnce({ _sum: { totalCostUsd: 20 } });
+  // Today, week and month, then byAgent and byModel
+  // Today, week and month, each grouped by ownKey (§137).
+  mockedGroupBy
+    .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 1 } }])
+    .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 5 } }])
+    .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 20 } }]);
   // byAgent groupBy, byModel groupBy
   mockedGroupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
   // trend raw
@@ -124,17 +124,19 @@ describe('getCostSummary — byModel provider attribution (#436)', () => {
     // Assert — without `provider` in the grouping the UI can only guess which
     // catalogue entry a spend row belongs to, and picks the wrong one for any
     // model id that exists under two providers.
-    const byModelCall = mockedGroupBy.mock.calls[1]?.[0] as { by?: string[] } | undefined;
-    expect(byModelCall?.by).toEqual(['model', 'provider']);
+    const groupings = mockedGroupBy.mock.calls.map(([args]) => (args as { by: string[] }).by);
+    const byModel = groupings.find((by) => by.includes('model'));
+    expect(byModel).toEqual(['model', 'provider']);
   });
 
   it('keeps the same model id under two providers as separate rows', async () => {
     // Arrange — the exact shape behind the bug: gpt-4o served by OpenAI, and a
     // second catalogue provider carrying the same id.
-    mockedAggregate
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 1 } })
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 5 } })
-      .mockResolvedValueOnce({ _sum: { totalCostUsd: 20 } });
+    // Today, week and month, each grouped by ownKey (§137).
+    mockedGroupBy
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 1 } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 5 } }])
+      .mockResolvedValueOnce([{ ownKey: false, _sum: { totalCostUsd: 20 } }]);
     mockedGroupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([
       { model: 'gpt-4o', provider: 'openai', _sum: { totalCostUsd: 1.9 } },
       { model: 'gpt-4o', provider: 'microsoft', _sum: { totalCostUsd: 0.4 } },

@@ -25,7 +25,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { audioLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { isOriginAllowed, resolveEmbedToken, type EmbedContext } from '@/lib/embed/auth';
 import { runAsOrg } from '@/lib/tenancy/context';
-import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getAudioProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { enforceContentLengthCap, validateTranscribeUpload } from '@/lib/validations/transcribe';
@@ -190,6 +190,7 @@ async function transcribeForToken(
       agentId: agent.id,
       model: audio.modelId,
       provider: audio.providerSlug,
+      ownKey: usesOrgOwnKey(audio.provider),
       inputTokens: 0,
       outputTokens: 0,
       operation: 'transcription',

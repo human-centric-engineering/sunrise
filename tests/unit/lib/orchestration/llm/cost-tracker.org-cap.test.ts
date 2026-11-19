@@ -140,12 +140,16 @@ describe('checkBudget — org cap', () => {
 });
 
 describe('checkBudget — no org cap set (behaviour-neutral)', () => {
-  /** What checkBudget returned for an agent before org caps existed. */
+  /**
+   * What checkBudget returned for an agent before org caps existed, plus the
+   * flag naming the agent's own cap when it is the one reached (§137 t-1046).
+   */
   const before = (spent: number, limit: number | null) => ({
     withinBudget: limit === null || spent < limit,
     spent,
     limit,
     remaining: limit === null ? null : limit - spent,
+    ...(limit !== null && spent >= limit ? { agentCapExceeded: true } : {}),
   });
 
   it.each([

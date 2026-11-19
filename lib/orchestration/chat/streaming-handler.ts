@@ -55,6 +55,8 @@ import {
   getProviderWithFallbacks,
   getProviderIfBreakerClosed,
   isLocalProvider,
+  providerUsesOrgOwnKey,
+  usesOrgOwnKey,
   type AttachmentCapability,
 } from '@/lib/orchestration/llm/provider-manager';
 import { fallbackCallContext } from '@/lib/orchestration/llm/provider-eligibility';
@@ -710,9 +712,17 @@ export class StreamingChatHandler {
       const budget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
       budgetNotice = { agent, budget };
 
-      // Budget warning at 80%
+      // Neither the org's nor the global cap holds a turn on the org's own key
+      // (§137): the vendor bills the org. Such a turn goes ahead unless its
+      // agent's cap is reached (below).
+      const onOwnKey =
+        !budget.withinBudget && (await providerUsesOrgOwnKey(resolvedBinding.providerSlug));
+      const refused = !budget.withinBudget && (!onOwnKey || budget.agentCapExceeded === true);
+
+      // Budget warning at 80%, for any turn that goes on with its agent's cap
+      // not yet reached.
       if (
-        budget.withinBudget &&
+        !refused &&
         budget.limit !== null &&
         budget.limit > 0 &&
         budget.spent / budget.limit >= 0.8
@@ -737,10 +747,15 @@ export class StreamingChatHandler {
       // provider gate refuses each one it would make — a fallback, a failover
       // mid-stream, a tool, the summarizer. (The org and global caps are
       // enforced at the gate in any case; the agent's cap is known only here.)
-      if (!budget.withinBudget && (await isLocalProvider(resolvedBinding.providerSlug))) {
+      //
+      // A turn on the org's own key goes ahead with nothing held, and any call
+      // it makes on the platform's keys meets the org's and the global caps at
+      // the gate.
+      if (refused && (await isLocalProvider(resolvedBinding.providerSlug))) {
         hold.cap = budgetRefusal(budget).cap;
-      } else if (!budget.withinBudget) {
-        const refusal = budgetRefusal(budget);
+        hold.agentCapReached = budget.agentCapExceeded === true;
+      } else if (refused) {
+        const refusal = budgetRefusal(budget, { ownKey: onOwnKey });
         yield errorEvent(refusal.code, refusal.message);
         notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
         return;
@@ -1026,6 +1041,21 @@ export class StreamingChatHandler {
         route.found,
         conversation.metadata
       );
+      // A turn let past a reached org or global cap because its primary is on
+      // the org's own key is refused cleanly here, rather than by the gate
+      // part way through, if routing moved it to a provider that is not.
+      if (
+        onOwnKey &&
+        !refused &&
+        route.binding.providerSlug !== resolvedBinding.providerSlug &&
+        !(await providerUsesOrgOwnKey(route.binding.providerSlug)) &&
+        !(await isLocalProvider(route.binding.providerSlug))
+      ) {
+        const refusal = budgetRefusal(budget);
+        yield errorEvent(refusal.code, refusal.message);
+        notifyBudgetExceeded({ agent, budget, cap: refusal.cap, request, conversationId });
+        return;
+      }
       resolvedBinding = route.binding;
       resolvedModel = route.binding.model;
       resolvedFallbackProviders = route.binding.fallbacks;
@@ -1057,29 +1087,6 @@ export class StreamingChatHandler {
             // never collide with a platform metadata field.
             ...(request.messageMetadata ? { metadata: { app: request.messageMetadata } } : {}),
           });
-
-      // Log a single `vision` cost row when the turn carries
-      // attachments. Fires once per turn, regardless of how the chat
-      // call ends (success / error / tool-call iteration), because the
-      // platform overhead is per-attachment, not per-completion. Per-
-      // token chat cost still rolls up under the `chat` rows downstream.
-      if (hasImageAttachments || hasPdfAttachments) {
-        const imageCount = attachments.filter((a) => a.mediaType.startsWith('image/')).length;
-        const pdfCount = attachments.filter((a) => a.mediaType === 'application/pdf').length;
-        void logCost({
-          agentId: agent.id,
-          conversationId: conversation.id,
-          userId: userIdForUserRef(request.userId),
-          model: resolvedModel,
-          provider: resolvedBinding.providerSlug,
-          inputTokens: 0,
-          outputTokens: 0,
-          operation: CostOperation.VISION,
-          imageCount,
-          pdfCount,
-          ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
-        });
-      }
 
       // Mirror to the evaluation log when this chat turn is running
       // inside an evaluation session. No-op otherwise. Skipped for an opening
@@ -1680,6 +1687,31 @@ export class StreamingChatHandler {
       resolvedProviderSlug = usedSlug;
       resolvedBreakerKey = usedBreakerKeyOrUndefined ?? usedSlug;
 
+      // Log a single `vision` cost row when the turn carries attachments,
+      // once its provider is chosen: billed with the turn's call, so on that
+      // provider's key. Fires once per turn, regardless of how the chat call
+      // ends (success / error / tool-call iteration), because the platform
+      // overhead is per-attachment, not per-completion. Per-token chat cost
+      // still rolls up under the `chat` rows downstream.
+      if (hasImageAttachments || hasPdfAttachments) {
+        const imageCount = attachments.filter((a) => a.mediaType.startsWith('image/')).length;
+        const pdfCount = attachments.filter((a) => a.mediaType === 'application/pdf').length;
+        void logCost({
+          agentId: agent.id,
+          conversationId: conversation.id,
+          userId: userIdForUserRef(request.userId),
+          model: resolvedModel,
+          provider: usedSlug,
+          ownKey: usesOrgOwnKey(provider),
+          inputTokens: 0,
+          outputTokens: 0,
+          operation: CostOperation.VISION,
+          imageCount,
+          pdfCount,
+          ...(request.costLogMetadata ? { metadata: request.costLogMetadata } : {}),
+        });
+      }
+
       // Extract responseFormat from agent metadata if configured
       const agentMetadata =
         agent.metadata && typeof agent.metadata === 'object' && !Array.isArray(agent.metadata)
@@ -1958,6 +1990,7 @@ export class StreamingChatHandler {
                     userId: userIdForUserRef(request.userId),
                     model: resolvedModel,
                     provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+                    ownKey: usesOrgOwnKey(currentProvider),
                     inputTokens: errUsage.inputTokens,
                     outputTokens: errUsage.outputTokens,
                     cacheReadTokens: errUsage.cacheReadTokens,
@@ -2072,7 +2105,9 @@ export class StreamingChatHandler {
                     try {
                       const acquired = await getProviderIfBreakerClosed(candidate, fallbackOrigin);
                       const refusal = acquired
-                        ? await spendCapRefusal(candidate, acquired.provider.isLocal === true)
+                        ? await spendCapRefusal(candidate, acquired.provider.isLocal === true, {
+                            ownKey: usesOrgOwnKey(acquired.provider),
+                          })
                         : null;
                       if (refusal) {
                         capRefusal = refusal;
@@ -2503,6 +2538,7 @@ export class StreamingChatHandler {
               userId: userIdForUserRef(request.userId),
               model: resolvedModel,
               provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+              ownKey: usesOrgOwnKey(currentProvider),
               inputTokens: u.inputTokens,
               outputTokens: u.outputTokens,
               cacheReadTokens: u.cacheReadTokens,
@@ -2606,6 +2642,7 @@ export class StreamingChatHandler {
             userId: userIdForUserRef(request.userId),
             model: resolvedModel,
             provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+            ownKey: usesOrgOwnKey(currentProvider),
             inputTokens: turnUsage.inputTokens,
             outputTokens: turnUsage.outputTokens,
             cacheReadTokens: turnUsage.cacheReadTokens,
@@ -2701,11 +2738,15 @@ export class StreamingChatHandler {
         // prevent TOCTOU overruns when concurrent requests hit the same agent).
         const midBudget = await withAgentBudgetLock(agent.id, () => checkBudget(agent.id));
         budgetNotice = { agent, budget: midBudget };
-        if (!midBudget.withinBudget) {
-          const refusal = budgetRefusal(midBudget);
+        // As before the turn, a turn on the org's own key goes on unless its
+        // agent's cap is reached.
+        const midOnOwnKey = usesOrgOwnKey(currentProvider);
+        if (!midBudget.withinBudget && (midBudget.agentCapExceeded || !midOnOwnKey)) {
+          const refusal = budgetRefusal(midBudget, { ownKey: midOnOwnKey });
           // Held, as before the turn, while the turn is on a local provider.
           if (currentProvider.isLocal) {
             hold.cap = refusal.cap;
+            hold.agentCapReached = midBudget.agentCapExceeded === true;
           } else {
             notifyBudgetExceeded({
               agent,
@@ -4252,12 +4293,19 @@ function refusalText(code: string): string {
  * the one worth saying. The org and global messages name no amount — the
  * reader may be an embed visitor, and those caps are not theirs to know.
  */
-function budgetRefusal(budget: BudgetStatus): BudgetRefusalReason {
-  const cap: SpendCap = budget.globalCapExceeded
-    ? 'global'
-    : budget.orgCapExceeded
-      ? 'org'
-      : 'agent';
+function budgetRefusal(
+  budget: BudgetStatus,
+  options: { ownKey?: boolean } = {}
+): BudgetRefusalReason {
+  // A turn on the org's own key is refused only for its agent's cap (§137), so
+  // that is the cap it names, whichever others are also reached.
+  const cap: SpendCap = options.ownKey
+    ? 'agent'
+    : budget.globalCapExceeded
+      ? 'global'
+      : budget.orgCapExceeded
+        ? 'org'
+        : 'agent';
   const code = SPEND_CAP_CODES[cap];
   return { code, cap, message: refusalText(code) };
 }

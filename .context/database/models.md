@@ -902,6 +902,7 @@ Note the quoted `"documentId"` — columns are camelCase even though the table n
 - All foreign keys (`agentId`, `conversationId`, `workflowExecutionId`) are **optional** and use `onDelete: SetNull` — cost logs outlive their parents for historical reporting.
 - `operation` follows `CostOperation` (`chat`, `tool_call`, `embedding`, `evaluation`).
 - `isLocal` flags local-model runs (e.g. Ollama) where `totalCostUsd` will be zero.
+- `ownKey` marks a call made on the org's own vendor key (§137 t-1046): billed to the org by the vendor, so left out of the org's and the global monthly caps, and shown apart in the cost reports. An agent's own budget still counts it. Passed to `logCost` by its caller as `usesOrgOwnKey(provider)` for the provider it called; `false` when omitted. See `.context/orchestration/llm-providers.md`.
 - Indexes on `provider`, `operation`, and `createdAt` support the time-series aggregations used by cost dashboards.
 
 Use the `CostSummary` type from `@/types/orchestration` for roll-ups by provider/model/operation.

@@ -100,6 +100,17 @@ export interface ProviderCredential {
   identity: string;
 }
 
+/**
+ * What {@link resolveProviderCredential} answers: the credential, and whether
+ * it is the org's own key from core's store (§137). Only core's lookup sets
+ * `ownKey`; whatever a registered resolver returns is the platform's as far as
+ * spend caps and cost reports are concerned, since nothing says whose vendor
+ * account it bills.
+ */
+export interface ResolvedProviderCredential extends ProviderCredential {
+  ownKey: boolean;
+}
+
 export type ProviderCredentialResolver = (
   config: ProviderCredentialConfig,
   context: ProviderCredentialContext
@@ -211,7 +222,7 @@ function currentCredentialContext(): ProviderCredentialContext {
  */
 export async function resolveProviderCredential(
   config: ProviderCredentialConfig
-): Promise<ProviderCredential> {
+): Promise<ResolvedProviderCredential> {
   appInit.ensure();
   if (registrationFailed) {
     // Logged once, loudly, by the gate when the init threw; this names the
@@ -229,11 +240,11 @@ export async function resolveProviderCredential(
   // At `single` the one org's key is the install's: nothing to look up.
   if (context.orgId !== null && isMultiTenant()) {
     const own = await resolveOrgProviderKey(config, context.orgId);
-    if (own) return own;
+    if (own) return { ...own, ownKey: true };
   }
 
   const resolver = appResolver;
-  if (!resolver) return credentialFromEnv(config);
+  if (!resolver) return { ...credentialFromEnv(config), ownKey: false };
 
   let returned: unknown;
   try {
@@ -263,7 +274,7 @@ export async function resolveProviderCredential(
       retriable: false,
     });
   }
-  return { apiKey: parsed.data.apiKey || undefined, identity: parsed.data.identity };
+  return { apiKey: parsed.data.apiKey || undefined, identity: parsed.data.identity, ownKey: false };
 }
 
 /**

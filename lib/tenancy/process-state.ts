@@ -282,7 +282,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['globalEntry'],
     posture: 'shared-by-decision',
     keyedBy: 'nothing — one install-wide total',
-    why: "The global monthly budget is the operator's ceiling on the shared provider keys (§110 t-788), so its spend total sums every org and one org's spend counts against every org's calls. It is compared with the global cap, and shown only in the install org (`getGlobalCapStatus`); a customer org is told only whether the cap is reached. Revisit if the global cap is ever made per org.",
+    why: "The global monthly budget is the operator's ceiling on the shared provider keys (§110 t-788), so its spend total sums every org's spend on them (calls on an org's own key are left out, §137) and one org's spend counts against every org's calls. It is compared with the global cap, and shown only in the install org (`getGlobalCapStatus`); a customer org is told only whether the cap is reached. Revisit if the global cap is ever made per org.",
   },
   {
     file: 'lib/orchestration/llm/circuit-breaker.ts',
@@ -379,10 +379,10 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/llm/provider-manager.ts',
-    holders: ['instanceCache', 'viewKeys'],
+    holders: ['instanceCache', 'viewKeys', 'ownKeyViews'],
     posture: 'shared-by-decision',
     keyedBy: 'provider slug (rows), then credential identity (clients)',
-    why: "AiProviderConfig rows, a global-config model whose slugs are unique install-wide, each holding the clients built from it ONE PER CREDENTIAL IDENTITY (§120 t-744): the credential seam may give two orgs different keys for one row, so a client is never shared across identities, and an org only ever reaches the client for the identity the resolver gave it in its own context. Clients on the install's shared credential are shared by every org by decision. `viewKeys` maps each handed-out view to that (slug, identity) key, for the breaker.",
+    why: "AiProviderConfig rows, a global-config model whose slugs are unique install-wide, each holding the clients built from it ONE PER CREDENTIAL IDENTITY (§120 t-744): the credential seam may give two orgs different keys for one row, so a client is never shared across identities, and an org only ever reaches the client for the identity the resolver gave it in its own context. Clients on the install's shared credential are shared by every org by decision. `viewKeys` maps each handed-out view to that (slug, identity) key, for the breaker, and `ownKeyViews` holds the views whose identity is an org's own key from core's store (§137), so the spend gate and cost marking can tell them apart.",
   },
   {
     file: 'lib/orchestration/llm/provider-selector.ts',
@@ -453,7 +453,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     file: 'lib/orchestration/llm/spend-caps.ts',
     holders: ['globalForPaidCallHold', 'paidCallHold'],
     posture: 'async-local',
-    why: "One chat turn's hold on paid calls, set when the turn goes on, on a local model, past its agent's reached budget (§110 t-788); the gate reads it for every paid call that turn makes. The handle is on globalThis (#1138) so a capability running in another module graph meets the same hold; the hold is per turn, and a nested turn runs under its own.",
+    why: "One chat turn's hold on paid calls, set when the turn goes on, on a local model, past a reached budget (§110 t-788), and whether its agent's own budget is among them, which is all that holds a call on the org's own key (§137); the gate reads it for every paid call that turn makes. The handle is on globalThis (#1138) so a capability running in another module graph meets the same hold; the hold is per turn, and a nested turn runs under its own.",
   },
   {
     file: 'lib/orchestration/privacy/scope.ts',

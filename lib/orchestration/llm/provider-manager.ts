@@ -116,6 +116,12 @@ interface BuiltProvider {
    */
   identity: string;
   /**
+   * The credential is the org's own key from core's store (§137), so the
+   * vendor bills the org: its calls skip the org's and the global spend caps,
+   * and their cost rows are marked.
+   */
+  ownKey: boolean;
+  /**
    * One Proxy per call origin. The gate needs to know where the provider came
    * from and the instance is shared by every caller with this credential, so
    * the origin lives on the view each caller is handed rather than on the
@@ -148,12 +154,20 @@ const instanceCache = new Map<string, CachedRow>();
 /** Which credential key each view counts and breaks under. See {@link breakerKeyOf}. */
 const viewKeys = new WeakMap<LlmProvider, string>();
 
+/** The views whose calls go out on an org's own key. See {@link usesOrgOwnKey}. */
+const ownKeyViews = new WeakSet<LlmProvider>();
+
 function isFresh(row: CachedRow | undefined): row is CachedRow {
   return row !== undefined && Date.now() - row.cachedAt < CACHE_TTL_MS;
 }
 
-function newBuilt(instance: LlmProvider, slug: string, identity: string): BuiltProvider {
-  const built: BuiltProvider = { instance, slug, identity, views: new Map() };
+function newBuilt(
+  instance: LlmProvider,
+  slug: string,
+  identity: string,
+  ownKey = false
+): BuiltProvider {
+  const built: BuiltProvider = { instance, slug, identity, ownKey, views: new Map() };
   // Build the unprovenanced view now, so an unwrappable instance (an empty
   // slug) throws when it is built rather than on its first read.
   viewOf(built, undefined);
@@ -176,8 +190,9 @@ function viewOf(built: BuiltProvider, origin: CallOrigin): LlmProvider {
   let view = built.views.get(key);
   if (!view) {
     const stateKey = credentialKey(built.slug, built.identity);
-    view = withInFlightTracking(built.instance, built.slug, origin, stateKey);
+    view = withInFlightTracking(built.instance, built.slug, origin, stateKey, built.ownKey);
     viewKeys.set(view, stateKey);
+    if (built.ownKey) ownKeyViews.add(view);
     built.views.set(key, view);
   }
   return view;
@@ -192,6 +207,40 @@ function viewOf(built: BuiltProvider, origin: CallOrigin): LlmProvider {
  */
 export function breakerKeyOf(provider: LlmProvider): string | undefined {
   return viewKeys.get(provider);
+}
+
+/**
+ * Whether calls on a provider `getProvider` returned go out on the org's own
+ * key (§137), so the vendor bills the org rather than the platform. `false`
+ * for the shared key, an app resolver's key, and an object that did not come
+ * from the manager. Every `logCost` caller passes it for the provider its
+ * call was made on (`LogCostParams.ownKey`), and callers that pick a provider
+ * ask it so a spend cap that does not hold for own-key calls does not pass one
+ * over (`spendCapRefusal(..., { ownKey })`).
+ */
+export function usesOrgOwnKey(provider: LlmProvider): boolean {
+  return ownKeyViews.has(provider);
+}
+
+/**
+ * Whether calls to `slugOrName` in this context would go out on the org's own
+ * key: {@link usesOrgOwnKey} on what `getProvider` returns. `false` when the
+ * provider cannot be fetched, since a call to it then fails anyway. Makes no
+ * vendor call. For a check made before the provider is fetched for the call,
+ * such as chat's budget check at the start of a turn.
+ */
+export async function providerUsesOrgOwnKey(slugOrName: string): Promise<boolean> {
+  try {
+    return usesOrgOwnKey(await getProvider(slugOrName));
+  } catch (err) {
+    // Said, since it can decide a turn: answered "no", a turn with the org's
+    // or the global cap reached is refused, as its call would fail anyway.
+    logger.warn('Could not tell whether a provider goes out on the org’s own key', {
+      provider: slugOrName,
+      error: err instanceof ProviderError ? err.code : err instanceof Error ? err.name : 'unknown',
+    });
+    return false;
+  }
 }
 
 /**
@@ -349,7 +398,8 @@ async function acquireProvider(slugOrName: string, context: CallOrigin): Promise
     built = newBuilt(
       buildProviderFromConfig(row.config, credential.apiKey),
       row.config.slug,
-      credential.identity
+      credential.identity,
+      credential.ownKey
     );
     row.byIdentity.set(credential.identity, built);
   }
@@ -547,7 +597,10 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
  * monthly spend caps** — the org's and the global one — by
  * `assertWithinSpendCaps` (§110 t-788), so a workflow, an evaluation or a job
  * cannot spend past a cap chat would have refused; a local provider is
- * exempt, since it costs nothing. Throws on an empty `slug`,
+ * exempt, since it costs nothing, and a call on the org's own key (`ownKey`,
+ * §137) is held by neither, since the vendor bills the org: only a chat
+ * turn's hold for its agent's cap refuses it, the one place the agent's cap is
+ * enforced. Its caller marks the call's cost row with `usesOrgOwnKey()`. Throws on an empty `slug`,
  * because the alternative — returning the instance unwrapped — is the one way
  * the cache's invariant could quietly fail.
  *
@@ -564,7 +617,8 @@ function withInFlightTracking(
   provider: LlmProvider,
   slug: string,
   context: CallOrigin,
-  stateKey: string = slug
+  stateKey: string = slug,
+  ownKey = false
 ): LlmProvider {
   // Refuse rather than return the bare instance. This used to be
   // `if (!slug) return provider;`, described as defensive — but the callers are
@@ -599,7 +653,7 @@ function withInFlightTracking(
           const task = taskOfMethod(method);
           return async (...args: unknown[]): Promise<unknown> => {
             await assertProviderCallPermitted(slug, context, task);
-            await assertWithinSpendCaps(slug, target.isLocal === true);
+            await assertWithinSpendCaps(slug, target.isLocal === true, { ownKey });
             // After both gates, so a refused call is never scanned (§127).
             const { sent, restorer } = await privacyStage(
               slug,
@@ -619,7 +673,7 @@ function withInFlightTracking(
           const method = prop as ProviderMethodName;
           const task = taskOfMethod(method);
           return (...args: unknown[]): AsyncIterable<unknown> =>
-            gatedStream(slug, context, task, target.isLocal === true, async () => {
+            gatedStream(slug, context, task, target.isLocal === true, ownKey, async () => {
               const { sent, restorer } = await privacyStage(
                 slug,
                 target.isLocal === true,
@@ -681,10 +735,11 @@ async function* gatedStream(
   context: CallOrigin,
   task: TaskType,
   isLocal: boolean,
+  ownKey: boolean,
   open: () => Promise<AsyncIterable<unknown>>
 ): AsyncGenerator<unknown> {
   await assertProviderCallPermitted(slug, context, task);
-  await assertWithinSpendCaps(slug, isLocal);
+  await assertWithinSpendCaps(slug, isLocal, { ownKey });
   yield* await open();
 }
 
@@ -867,7 +922,9 @@ export async function getProviderWithFallbacks(
       // pass over it to a candidate that can serve: a local one, which the caps
       // never refuse (§110 t-788). The refusal is cached state, so asking costs
       // no query while the caps' entries are warm.
-      const refusal = await spendCapRefusal(slug, provider.isLocal === true);
+      const refusal = await spendCapRefusal(slug, provider.isLocal === true, {
+        ownKey: usesOrgOwnKey(provider),
+      });
       if (refusal) {
         capRefusal = refusal;
         continue;

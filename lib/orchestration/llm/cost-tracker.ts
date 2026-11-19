@@ -217,6 +217,15 @@ export interface LogCostParams {
   pdfCount?: number;
   /** Explicit override; otherwise inferred from the model registry tier. */
   isLocal?: boolean;
+  /**
+   * The call went out on the org's own vendor key (§137): pass
+   * `usesOrgOwnKey(provider)` for the provider the call was made on. The
+   * vendor bills the org for it, so the row is left out of the org's and the
+   * global monthly caps and shown apart in the cost reports; the agent's cap
+   * still counts it. Omitted means the platform's key. Every caller that makes
+   * a vendor call passes it (`tests/unit/lib/orchestration/llm/cost-log-own-key.test.ts`).
+   */
+  ownKey?: boolean;
   metadata?: Record<string, unknown>;
   /**
    * OTEL trace correlation. Set when a non-default tracer is registered and
@@ -281,9 +290,12 @@ export function calculateAttachmentCost(imageCount: number, pdfCount: number): C
 /** Budget snapshot returned by `checkBudget`. */
 export interface BudgetStatus {
   withinBudget: boolean;
+  /** The agent's month-to-date spend, its calls on the org's own key included. */
   spent: number;
   limit: number | null;
   remaining: number | null;
+  /** Set when the agent's own spend has met or passed its `monthlyBudgetUsd`. */
+  agentCapExceeded?: boolean;
   /**
    * Set when the singleton `AiOrchestrationSettings.globalMonthlyBudgetUsd`
    * has been met or exceeded by the combined spend of *all* agents this
@@ -496,6 +508,8 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
     cost = calculateCost(params.model, params.inputTokens, params.outputTokens, params);
   }
   const isLocal = params.isLocal ?? cost.isLocal;
+  // A local call holds no key, so it is never on the org's own.
+  const ownKey = !isLocal && params.ownKey === true;
 
   // Stamp operation-specific counters into metadata so analytics can
   // split "no usage reported" from "0-byte / 0-attachment clip".
@@ -551,6 +565,7 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
     outputCostUsd: cost.outputCostUsd,
     totalCostUsd: cost.totalCostUsd,
     isLocal,
+    ownKey,
     operation: params.operation,
   };
   if (params.agentId !== undefined) data.agentId = params.agentId;
@@ -575,8 +590,9 @@ async function writeCostLog(params: LogCostParams): Promise<AiCostLog | null> {
   try {
     const row = await prisma.aiCostLog.create({ data });
     touchAgentLastActive(params.agentId, row.createdAt);
-    // So this process's spend caps see the row before their cached totals expire.
-    noteSpend(row.orgId, row.totalCostUsd, row.createdAt);
+    // So this process's spend caps see the row before their cached totals
+    // expire. Not an own-key row: neither the org's nor the global cap counts it.
+    if (!row.ownKey) noteSpend(row.orgId, row.totalCostUsd, row.createdAt);
     logger.debug('Cost logged', {
       agentId: params.agentId,
       model: params.model,
@@ -656,13 +672,19 @@ export async function getAgentCosts(
  * "Month" is the current calendar month in UTC. Three caps apply, and the
  * agent is within budget only when it is within all three:
  *
- * - the agent's own `monthlyBudgetUsd` (none when unset);
+ * - the agent's own `monthlyBudgetUsd` (none when unset), on all of the
+ *   agent's spend, its calls on the org's own key included — surfaced as
+ *   `agentCapExceeded: true`;
  * - its org's `Org.settings.quotas.monthlyBudgetUsd` (none when unset), on the
- *   org's combined spend — surfaced as `orgCapExceeded: true`;
+ *   org's combined spend on the platform's keys — surfaced as
+ *   `orgCapExceeded: true`;
  * - the singleton `AiOrchestrationSettings.globalMonthlyBudgetUsd`, on every
- *   org's combined spend — surfaced as `globalCapExceeded: true`.
+ *   org's combined spend on the platform's keys — surfaced as
+ *   `globalCapExceeded: true`.
  *
- * The flags let the chat handler say which cap was hit. A failure reading the
+ * The flags let the chat handler say which cap was hit, and let a turn on the
+ * org's own key go ahead with only the org's or the global cap reached, since
+ * neither holds it (§137). A failure reading the
  * org or global cap is logged and that cap skipped, so it never takes the
  * per-agent check down.
  *
@@ -708,6 +730,7 @@ export async function checkBudget(agentId: string): Promise<BudgetStatus> {
     spent,
     limit,
     remaining: limit === null ? null : limit - spent,
+    ...(!withinAgentBudget ? { agentCapExceeded: true } : {}),
     ...(globalCapExceeded ? { globalCapExceeded: true } : {}),
     ...(org ? { org: { limit: org.limit, spent: org.spent } } : {}),
     ...(orgCapExceeded ? { orgCapExceeded: true } : {}),

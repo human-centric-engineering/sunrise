@@ -51,7 +51,7 @@ import {
   type SupervisorReport,
 } from '@/types/orchestration';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
-import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
@@ -247,6 +247,7 @@ export const POST = withAdminAuth<{ id: string }>(
         userId: session.user.id,
         model: modelId,
         provider: modelInfo.provider,
+        ownKey: usesOrgOwnKey(provider),
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
         cacheReadTokens: response.usage.cacheReadTokens,

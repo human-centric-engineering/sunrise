@@ -23,7 +23,7 @@ import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { audioLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
-import { getAudioProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getAudioProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { enforceContentLengthCap, validateTranscribeUpload } from '@/lib/validations/transcribe';
@@ -103,6 +103,7 @@ export const POST = withAdminAuth(
         userId: session.user.id,
         model: audio.modelId,
         provider: audio.providerSlug,
+        ownKey: usesOrgOwnKey(audio.provider),
         inputTokens: 0,
         outputTokens: 0,
         operation: 'transcription',

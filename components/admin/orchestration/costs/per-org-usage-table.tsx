@@ -8,6 +8,10 @@
  * cards. The detached
  * row is spend whose org has been erased; it still counts towards the global
  * cap, so it is shown rather than dropped.
+ *
+ * Spend is the platform's: what the org's cap counts. Spend on an org's own AI
+ * key (§137) has its own column, shown once any org has some, since the vendor
+ * bills the org for it and no cap here counts it.
  */
 
 import Link from 'next/link';
@@ -26,7 +30,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { UtilisationBar } from '@/components/admin/orchestration/costs/per-agent-cost-table';
 import { Usd } from '@/components/admin/orchestration/costs/usd';
-import type { OrgUsageReport } from '@/lib/orchestration/llm/cost-reports';
+import type { OrgUsageReport, UsageTotals } from '@/lib/orchestration/llm/cost-reports';
 
 export interface PerOrgUsageTableProps {
   report: OrgUsageReport;
@@ -36,8 +40,14 @@ function formatCount(value: number): string {
   return value.toLocaleString('en-US');
 }
 
+/** The platform's part of a bucket's spend: what the org's and the global caps count. */
+function platformSpend(totals: UsageTotals): number {
+  return totals.totalCostUsd - totals.ownKeyCostUsd;
+}
+
 export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {
   const detached = report.detached && report.detached.count > 0 ? report.detached : null;
+  const showOwnKeys = report.totals.ownKeyCostUsd > 0;
 
   return (
     <Card data-testid="per-org-usage-table">
@@ -49,6 +59,11 @@ export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {
               Each organisation&apos;s AI spend for this calendar month (UTC), against the monthly
               cap set on the organisation. When an organisation reaches its cap, its calls to paid
               providers are refused until the next month.
+            </p>
+            <p className="mt-2">
+              <strong>Own keys</strong> is spend on an organisation&apos;s own AI key. The provider
+              bills the organisation for it, so it is not in Spend and no cap counts it, except an
+              agent&apos;s own monthly budget.
             </p>
             <p className="mt-2">
               <strong>No org</strong> is spend from organisations that have been deleted. It still
@@ -63,10 +78,17 @@ export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {
             <TableRow>
               <TableHead>Organisation</TableHead>
               <TableHead className="text-right">
-                <Tip label="LLM spend this calendar month (UTC)">
+                <Tip label="LLM spend on the platform's keys this calendar month (UTC)">
                   <span>Spend</span>
                 </Tip>
               </TableHead>
+              {showOwnKeys && (
+                <TableHead className="text-right">
+                  <Tip label="LLM spend on the organisation's own AI keys, billed to it by the provider">
+                    <span>Own keys</span>
+                  </Tip>
+                </TableHead>
+              )}
               <TableHead className="text-right">
                 <Tip label="Number of metered AI calls this month">
                   <span>Calls</span>
@@ -104,8 +126,13 @@ export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {
                   <div className="text-muted-foreground font-mono text-xs">{row.slug}</div>
                 </TableCell>
                 <TableCell className="text-right">
-                  <Usd value={row.totalCostUsd} />
+                  <Usd value={platformSpend(row)} />
                 </TableCell>
+                {showOwnKeys && (
+                  <TableCell className="text-right">
+                    <Usd value={row.ownKeyCostUsd} />
+                  </TableCell>
+                )}
                 <TableCell className="text-right tabular-nums">{formatCount(row.count)}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatCount(row.inputTokens + row.outputTokens)}
@@ -115,7 +142,9 @@ export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {
                 </TableCell>
                 <TableCell>
                   {row.monthlyBudgetUsd === 0 ? (
-                    <span className="text-muted-foreground text-xs">Paid calls off</span>
+                    <span className="text-muted-foreground text-xs">
+                      Paid calls off (platform keys)
+                    </span>
                   ) : (
                     <UtilisationBar utilisation={row.utilisation} />
                   )}
@@ -126,8 +155,13 @@ export function PerOrgUsageTable({ report }: PerOrgUsageTableProps) {
               <TableRow data-testid="per-org-usage-detached">
                 <TableCell className="text-muted-foreground italic">No org</TableCell>
                 <TableCell className="text-right">
-                  <Usd value={detached.totalCostUsd} />
+                  <Usd value={platformSpend(detached)} />
                 </TableCell>
+                {showOwnKeys && (
+                  <TableCell className="text-right">
+                    <Usd value={detached.ownKeyCostUsd} />
+                  </TableCell>
+                )}
                 <TableCell className="text-right tabular-nums">
                   {formatCount(detached.count)}
                 </TableCell>

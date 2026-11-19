@@ -31,7 +31,7 @@ import type { Prisma } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
-import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { getProvider, usesOrgOwnKey } from '@/lib/orchestration/llm/provider-manager';
 import {
   primaryCallContext,
   type ProviderEligibilityContext,
@@ -186,6 +186,7 @@ export async function completeEvaluationSession(
   const costParams: Parameters<typeof logCost>[0] = {
     model,
     provider: providerSlug,
+    ownKey: usesOrgOwnKey(provider),
     inputTokens: analysis.tokenUsage.input,
     outputTokens: analysis.tokenUsage.output,
     cacheReadTokens: analysis.tokenUsage.cacheRead,
