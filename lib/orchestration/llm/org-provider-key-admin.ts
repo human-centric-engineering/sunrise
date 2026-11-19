@@ -175,8 +175,10 @@ export async function assertKeysCanBeSaved(): Promise<void> {
 }
 
 /**
- * Test `apiKey` against `config` with one cheap vendor call. The vendor's
- * message is never returned. It is logged with the whole key cut out; a
+ * Test `apiKey` against `config` with a call the vendor authenticates
+ * (`testProviderKey`: up to four calls for an OpenAI-compatible host, up to
+ * three for Anthropic, the third a billed one-token message where the model
+ * list proves nothing, and one billed embedding for Voyage). The vendor's message is never returned. It is logged with the whole key cut out; a
  * vendor's own masked echo of it (a prefix and the last four, say) is left,
  * as the hint already shows the last four.
  */

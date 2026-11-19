@@ -2,7 +2,7 @@
  * Test an org's saved AI key (§137 t-1045)
  *
  * POST /api/v1/orgs/[id]/provider-keys/[providerId]/test — re-check the saved
- *      key with one cheap vendor call. Answers `{ ok, reason? }` with 200
+ *      key with a call the vendor authenticates (`testProviderKey`). Answers `{ ok, reason? }` with 200
  *      whether the key passed or not: `test_failed` (the vendor refused it or
  *      could not be reached) or `will_not_open` (the stored key cannot be
  *      opened, so it must be saved again). 404 when no key is saved; refused,

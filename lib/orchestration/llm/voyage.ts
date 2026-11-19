@@ -8,10 +8,11 @@
  *   - `input_type`: 'document' | 'query' — improves retrieval quality
  *   - `output_dimension`: truncate to match the pgvector column width
  *
- * This provider delegates `chat()`, `chatStream()`, `listModels()`, and
- * `testConnection()` to an inner `OpenAiCompatibleProvider` pointing at
- * `https://api.voyageai.com/v1`. The `embed()` method is custom to pass
- * Voyage-specific parameters.
+ * This provider delegates `chat()`, `chatStream()` and `listModels()` to an
+ * inner `OpenAiCompatibleProvider` pointing at `https://api.voyageai.com/v1`.
+ * The `embed()` method is custom to pass Voyage-specific parameters, and
+ * `testConnection()` / `testKey()` make one embedding call, since Voyage has
+ * no model list.
  *
  * Platform-agnostic: no Next.js imports.
  */
@@ -24,6 +25,7 @@ import {
   embeddingTimeoutMs,
   ProviderError,
   fetchWithTimeout,
+  KEY_TEST_TIMEOUT_MS,
   withRetry,
   type LlmProvider,
   type ProviderTestResult,
@@ -43,6 +45,15 @@ import type {
 
 /** Voyage API base URL. */
 const VOYAGE_BASE_URL = 'https://api.voyageai.com/v1';
+
+/** How much of a failed key test's response is kept for the log. */
+const KEY_TEST_DETAIL_LIMIT = 500;
+
+/**
+ * The most of a key test's response that is read: room for one embedding of
+ * one word (about 20 KB as JSON at 1,024 dimensions) many times over.
+ */
+const KEY_TEST_BODY_LIMIT = 256 * 1024;
 
 /** Default embedding model. */
 const DEFAULT_EMBEDDING_MODEL = 'voyage-3';
@@ -96,7 +107,7 @@ export class VoyageProvider implements LlmProvider {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
 
-    // Delegate chat/stream/models/test to OpenAI-compatible layer
+    // Delegate chat/stream/models to OpenAI-compatible layer
     this.inner = new OpenAiCompatibleProvider({
       name: config.name,
       baseUrl: config.baseUrl ?? VOYAGE_BASE_URL,
@@ -223,10 +234,7 @@ export class VoyageProvider implements LlmProvider {
         );
 
         if (!response.ok) {
-          const errorText = await response.text();
-          let message = errorText;
-          const parsed = z.object({ detail: z.string() }).safeParse(safeJsonParse(errorText));
-          if (parsed.success) message = parsed.data.detail;
+          const message = voyageErrorDetail(await response.text());
           throw new ProviderError(`Voyage embed failed (${response.status}): ${message}`, {
             code: `http_${response.status}`,
             status: response.status,
@@ -263,9 +271,115 @@ export class VoyageProvider implements LlmProvider {
     return this.inner.listModels();
   }
 
+  /**
+   * The same check as {@link testKey}, for the platform's own provider test
+   * (§137 t-1056). Voyage has no model list, so asking for one, as the inner
+   * OpenAI-compatible provider would, fails every Voyage row with 404.
+   */
   testConnection(): Promise<ProviderTestResult> {
-    return this.inner.testConnection();
+    return this.testKey();
   }
+
+  /**
+   * The key alone (§137 t-1056): one embedding of one word, at the row's
+   * host. Voyage has no model list (`GET /models` answers 404 to any key),
+   * and its embeddings call refuses a wrong key with 401. Billed, a token or
+   * two. One attempt: a key test is not retried. Passes only on a 2xx whose
+   * body is an embeddings answer, so a proxy that answers anything with 200
+   * does not pass a key. The call and the reading of its body are each held
+   * to {@link KEY_TEST_TIMEOUT_MS}, and at most {@link KEY_TEST_BODY_LIMIT} of
+   * the body is read.
+   */
+  async testKey(): Promise<ProviderTestResult> {
+    try {
+      const response = await fetchWithTimeout(
+        `${this.embedBaseUrl}/embeddings`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.embeddingModel,
+            input: ['ping'],
+            input_type: 'query',
+          }),
+        },
+        KEY_TEST_TIMEOUT_MS
+      );
+      const text = await readKeyTestBody(response, KEY_TEST_BODY_LIMIT, KEY_TEST_TIMEOUT_MS);
+      if (response.ok) {
+        if (voyageEmbeddingsResponseSchema.safeParse(safeJsonParse(text)).success) {
+          return { ok: true, models: [this.embeddingModel] };
+        }
+        return {
+          ok: false,
+          models: [],
+          error: `Voyage key test got an answer that is not an embeddings response (${response.status})`,
+        };
+      }
+      const reason = voyageErrorDetail(text).slice(0, KEY_TEST_DETAIL_LIMIT);
+      return {
+        ok: false,
+        models: [],
+        error: `Voyage key test failed (${response.status})${reason ? `: ${reason}` : ''}`,
+      };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      return { ok: false, models: [], error };
+    }
+  }
+}
+
+/** Voyage's own reason from an error body: its `detail`, else the body as sent. */
+function voyageErrorDetail(text: string): string {
+  const parsed = z.object({ detail: z.string() }).safeParse(safeJsonParse(text));
+  return parsed.success ? parsed.data.detail : text;
+}
+
+/**
+ * A key test's response body, read within `ms` and at most `maxBytes`.
+ * `fetchWithTimeout` stops timing once the headers arrive, so a host that
+ * sends them and then stalls or floods the body would otherwise hold the test
+ * open or fill memory. Read through a reader of its own, so that past either
+ * limit the body is cancelled, not left streaming; what was read is answered.
+ */
+async function readKeyTestBody(response: Response, maxBytes: number, ms: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return response.text().catch(() => '');
+  const deadline = Date.now() + ms;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let finished = false;
+  try {
+    while (size <= maxBytes) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));
+      });
+      const next = await Promise.race([reader.read(), timedOut]).finally(() => clearTimeout(timer));
+      if (next === null) break;
+      if (next.done) {
+        finished = true;
+        break;
+      }
+      chunks.push(next.value);
+      size += next.value.byteLength;
+    }
+  } catch {
+    // A failed read answers what was read before it.
+  }
+  if (!finished) void reader.cancel().catch(() => undefined);
+  const bytes = new Uint8Array(Math.min(size, maxBytes));
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (offset >= bytes.length) break;
+    const part = chunk.subarray(0, bytes.length - offset);
+    bytes.set(part, offset);
+    offset += part.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 /** `JSON.parse` that answers `undefined` for a non-JSON body instead of throwing. */

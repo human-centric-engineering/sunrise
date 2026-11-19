@@ -55,9 +55,15 @@ import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
   embeddingTimeoutMs,
+  KEY_TEST_TIMEOUT_MS,
+  KNOWN_WRONG_KEY,
+  keyTestSignal,
   LOCAL_TIMEOUT_MS,
   ProviderError,
   buildRequestOptions,
+  probeCall,
+  refusedForTheKey,
+  refusesKey,
   toProviderError,
   toProviderErrorWithUsage,
   withRetry,
@@ -114,6 +120,11 @@ const embeddingsResponseSchema = z.object({
 
 /** Sentinel API key for local servers that require *something* in the header. */
 const LOCAL_API_KEY_SENTINEL = 'not-needed';
+
+/** A failed key test, with the reason the caller logs (never shows). */
+function failed(error: string | undefined): ProviderTestResult {
+  return { ok: false, models: [], error: error ?? 'The provider refused this key' };
+}
 
 /**
  * Default embedding model for cloud OpenAI-compatible hosts. Used only
@@ -174,6 +185,9 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   public readonly isLocal: boolean;
 
   private readonly client: OpenAI;
+  /** `options.baseUrl` and the key, for the clients `testKey()` builds. */
+  private readonly baseUrl: string;
+  private readonly apiKey: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly embeddingModel: string;
@@ -214,10 +228,18 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       options.embeddingModel ??
       (options.isLocal ? DEFAULT_LOCAL_EMBEDDING_MODEL : DEFAULT_CLOUD_EMBEDDING_MODEL);
 
-    this.client = new OpenAI({
-      apiKey: options.apiKey && options.apiKey.length > 0 ? options.apiKey : LOCAL_API_KEY_SENTINEL,
-      baseURL: options.baseUrl,
-      timeout: this.timeoutMs,
+    this.baseUrl = options.baseUrl;
+    this.apiKey =
+      options.apiKey && options.apiKey.length > 0 ? options.apiKey : LOCAL_API_KEY_SENTINEL;
+    this.client = this.buildClient(this.apiKey);
+  }
+
+  /** A vendor client on this provider's host, timeout and redirect policy. */
+  private buildClient(apiKey: string, timeoutMs: number = this.timeoutMs): OpenAI {
+    return new OpenAI({
+      apiKey,
+      baseURL: this.baseUrl,
+      timeout: timeoutMs,
       maxRetries: 0,
       // Refuse redirects (#635). `baseURL` is an admin-set `AiProvider.baseUrl`
       // validated once by `checkSafeProviderUrl` and never re-checked per hop,
@@ -715,6 +737,71 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       const error = err instanceof Error ? err.message : String(err);
       return { ok: false, models: [], error };
     }
+  }
+
+  /**
+   * The key alone (§137 t-1056), on a host Sunrise knows nothing else about.
+   *
+   * First the model list, with this key and with a known-wrong one at once.
+   * It proves the key only where it answers this key and fails the wrong one
+   * with a 4xx (OpenAI and Mistral 401, Groq 403, Gemini and xAI 400).
+   *
+   * Anything else goes on to a chat request no host will run (no model, no
+   * messages), sent with each key: a list open to anyone (OpenRouter), none
+   * at all (Perplexity), one that answers with something that is not a list,
+   * and a list that refuses this key, which may only lack the scope to read
+   * models (an OpenAI project key). 401 or 403 for this key on chat is a
+   * refused key; any other answer to it, where the wrong key was refused,
+   * means the host accepted it before rejecting the request. Nothing is
+   * billed. A host that does not answer fails the test, and so does one that
+   * checks keys on neither call, since it cannot say whether the key works.
+   *
+   * Each call, its body included, is held to {@link KEY_TEST_TIMEOUT_MS}
+   * (`keyTestSignal`); each pair is sent together.
+   */
+  async testKey(): Promise<ProviderTestResult> {
+    const mine = this.buildClient(this.apiKey, KEY_TEST_TIMEOUT_MS);
+    const wrong = this.buildClient(KNOWN_WRONG_KEY, KEY_TEST_TIMEOUT_MS);
+
+    let models: string[] = [];
+    const [myList, theirList] = await Promise.all([
+      probeCall(async () => {
+        const page = await mine.models.list({ signal: keyTestSignal() });
+        models = page.data.map((entry) => entry.id);
+      }),
+      probeCall(() => wrong.models.list({ signal: keyTestSignal() })),
+    ]);
+    if (myList.error === undefined && refusedForTheKey(theirList.status)) {
+      return { ok: true, models };
+    }
+
+    const request = () => ({ model: '', messages: [], max_tokens: 1 });
+    const [myChat, theirChat] = await Promise.all([
+      probeCall(() => mine.chat.completions.create(request(), { signal: keyTestSignal() })),
+      probeCall(() => wrong.chat.completions.create(request(), { signal: keyTestSignal() })),
+    ]);
+    if (refusesKey(myChat.status)) return failed(myChat.error);
+    if (myChat.status === undefined && myChat.error !== undefined) return failed(myChat.error);
+    if (theirChat.status === undefined && theirChat.error !== undefined) {
+      return failed(theirChat.error);
+    }
+    if (refusesKey(theirChat.status)) return { ok: true, models };
+
+    // Neither call told the keys apart. Where the list failed this key as it
+    // failed the wrong one (a mistyped Gemini key: 400 for both), it was
+    // refused like a wrong key; otherwise the host checks keys nowhere. A 404
+    // or 405 for both says only that there is no list.
+    if (
+      refusedForTheKey(myList.status) &&
+      myList.status !== 404 &&
+      myList.status !== 405 &&
+      myList.status === theirList.status
+    ) {
+      return failed(`The provider answered this key as it answers a wrong one: ${myList.error}`);
+    }
+    return failed(
+      'This host checks keys on neither its model list nor its chat endpoint, so the key cannot be tested'
+    );
   }
 
   // --- internal helpers ---

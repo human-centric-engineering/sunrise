@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const createMock = vi.fn();
+const modelsListMock = vi.fn();
 
 /** Options the SDK client was constructed with, so the wiring can be asserted. */
 const anthropicConstructorArgs: Record<string, unknown>[] = [];
@@ -15,7 +16,14 @@ const anthropicConstructorArgs: Record<string, unknown>[] = [];
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages = { create: createMock };
+    // Told which key its client was built with, so a key test's two lists
+    // can be answered apart (t-1056).
+    public models: { list: (params: unknown, options?: unknown) => unknown };
     constructor(opts: unknown) {
+      const apiKey = (opts as { apiKey?: unknown } | undefined)?.apiKey;
+      this.models = {
+        list: (params: unknown, options?: unknown) => modelsListMock(params, apiKey, options),
+      };
       anthropicConstructorArgs.push((opts ?? {}) as Record<string, unknown>);
     }
   }
@@ -32,6 +40,7 @@ import type { LlmReasoningBlock, StreamChunk } from '@/lib/orchestration/llm/typ
 
 beforeEach(() => {
   createMock.mockReset();
+  modelsListMock.mockReset();
 });
 
 /**
@@ -1194,6 +1203,96 @@ describe('AnthropicProvider.chatStream', () => {
 
     const done = chunks[chunks.length - 1] as { type: string };
     expect(done.type).toBe('done');
+  });
+});
+
+describe('AnthropicProvider.testKey (§137 t-1056)', () => {
+  const WRONG = 'sunrise-key-check-not-a-real-key';
+  /** An SDK error with an HTTP status, as the real one carries. */
+  const status = (code: number) => Object.assign(new Error(`${code} status`), { status: code });
+  const pong = {
+    content: [{ type: 'text', text: 'pong' }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+    model: 'claude-haiku-4-5',
+    stop_reason: 'end_turn',
+  };
+
+  it('passes on the model list where Anthropic refuses a wrong key there, sending no message', async () => {
+    modelsListMock.mockImplementation(async (_params: unknown, key: unknown) => {
+      if (key === WRONG) throw status(401);
+      return { data: [{ id: 'claude-haiku-4-5' }] };
+    });
+
+    const result = await makeProvider().testKey();
+
+    expect(result.ok).toBe(true);
+    expect(result.models).toContain('claude-sonnet-4-6');
+    expect(modelsListMock).toHaveBeenCalledWith({ limit: 1 }, WRONG, expect.anything());
+    // Not billed, and no fixed model the key's workspace must be able to use.
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('aborts each call, its body included, with a signal of its own', async () => {
+    modelsListMock.mockResolvedValue({ data: [] });
+    createMock.mockResolvedValue(pong);
+
+    await makeProvider().testKey();
+
+    const listSignals = modelsListMock.mock.calls.map((c) => (c[2] as { signal?: unknown }).signal);
+    expect(listSignals).toHaveLength(2);
+    expect(listSignals.every((s) => s instanceof AbortSignal)).toBe(true);
+    // The fallback message too.
+    expect(createMock.mock.calls[0][1]).toMatchObject({ signal: expect.any(AbortSignal) });
+  });
+
+  it('holds its calls to the key test’s short timeout', async () => {
+    modelsListMock.mockImplementation(async (_params: unknown, key: unknown) => {
+      if (key === WRONG) throw status(401);
+      return { data: [] };
+    });
+    anthropicConstructorArgs.length = 0;
+
+    await makeProvider().testKey();
+
+    // The provider's own client, then the two the test builds.
+    expect(anthropicConstructorArgs.slice(1).map((o) => o.timeout)).toEqual([15_000, 15_000]);
+  });
+
+  it.each([
+    ['a list open to any key (a gateway)', () => ({ data: [] })],
+    ['no list at all (a 404 from a gateway)', () => Promise.reject(status(404))],
+    ['an unmapped route answered with 403 (AWS API Gateway)', () => Promise.reject(status(403))],
+  ])('falls back to the one-token message on %s', async (_label, list) => {
+    modelsListMock.mockImplementation(list);
+    createMock.mockResolvedValue(pong);
+
+    const result = await makeProvider().testKey();
+
+    expect(result.ok).toBe(true);
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ max_tokens: 1 }),
+      expect.anything()
+    );
+  });
+
+  it('fails a key Anthropic refuses: the list refuses it, and so does the message', async () => {
+    modelsListMock.mockRejectedValue(status(401));
+    createMock.mockRejectedValue(new Error('401 invalid x-api-key'));
+
+    const result = await makeProvider().testKey();
+
+    expect(result).toEqual({ ok: false, models: [], error: '401 invalid x-api-key' });
+  });
+
+  it('fails a key a gateway with an open list takes but whose messages refuse it', async () => {
+    modelsListMock.mockResolvedValue({ data: [] });
+    createMock.mockRejectedValue('upstream refused');
+
+    await expect(makeProvider().testKey()).resolves.toEqual({
+      ok: false,
+      models: [],
+      error: 'upstream refused',
+    });
   });
 });
 
