@@ -141,6 +141,7 @@ describe('closing a core section to org admins (t-929)', () => {
     expect(pages).toEqual([
       '/admin',
       '/admin/members',
+      '/admin/org-options',
       '/admin/provider-keys',
       '/admin/support-access',
       '/admin/waitlist',
