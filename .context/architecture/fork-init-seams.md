@@ -1,10 +1,10 @@
 # Fork Init Seams
 
-Twenty-four `initApp*()` functions, in twenty-three of the `lib/app/*` scaffolds Sunrise
+Twenty-five `initApp*()` functions, in twenty-four of the `lib/app/*` scaffolds Sunrise
 ships (`evaluations.ts` holds two), are reached the same way: a core registry runs
 the fork's function **once, lazily, before its first read**. (Most of `lib/app/`
 is not this — the majority of those files are value and config scaffolds with no
-init function at all, and two of the twenty-six `initApp*` exports are different
+init function at all, and two of the twenty-seven `initApp*` exports are different
 shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -74,6 +74,7 @@ Three properties come with it:
 | `privacy-adapters.ts`              | `initAppPrivacyAdapters`             | `lib/privacy/adapters/registry.ts`                          | roll back, log, **refuse**     |
 | `provider-credentials.ts`          | `initAppProviderCredentials`         | `lib/orchestration/llm/provider-credentials.ts`             | roll back, log, **refuse**     |
 | `sealed-stores.ts`                 | `initAppSealedStores`                | `lib/security/sealed-stores.ts`                             | roll back, log, **refuse**     |
+| `signup-org.ts`                    | `initAppSignupOrgResolver`           | `lib/tenancy/signup-org.ts`                                 | roll back, log, degrade        |
 | `tenancy-classification.ts`        | `initAppTenancyClassification`       | `lib/tenancy/classification.ts`                             | roll back, log, degrade        |
 | `user-created.ts`                  | `initAppUserCreatedHooks`            | `lib/auth/user-created-hooks.ts`                            | roll back, log, degrade        |
 

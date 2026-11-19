@@ -161,6 +161,12 @@ const appInit = createAppInitGate({
   },
 });
 
+/** True when the app has registered a resolver. Runs the fork's init first. */
+export function hasSignupOrgResolver(): boolean {
+  appInit.ensure();
+  return resolver !== null;
+}
+
 /** Test-only: forget the registered resolver and re-arm the one-shot init. */
 export function __resetSignupOrgResolverForTests(): void {
   resolver = null;

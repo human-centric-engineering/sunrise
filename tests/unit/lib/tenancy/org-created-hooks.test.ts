@@ -61,12 +61,21 @@ const rawSql = vi.hoisted(
         return [{ lease: claimed }];
       }
       if (sql.includes('SELECT id FROM org')) {
-        const [keys] = values as [string[]];
+        const [keys, excludedKey] = values as [string[], string | undefined];
+        // Played only when the statement says so (t-1062), so dropping the
+        // clause from the SQL fails the test that relies on it.
+        const excludes = sql.includes('NOT settings ? ?') && typeof excludedKey === 'string';
         return [...store.orgs.entries()]
           .filter(([, row]) => {
             const owed = recordOf(row.settings)?.owed;
+            const marked =
+              excludes &&
+              typeof row.settings === 'object' &&
+              row.settings !== null &&
+              excludedKey in row.settings;
             return (
               (row.status ?? 'ACTIVE') === 'ACTIVE' &&
+              !marked &&
               Array.isArray(owed) &&
               owed.some((key) => keys.includes(key as string))
             );
@@ -630,6 +639,13 @@ describe('retryOwedOrgCreatedHooks', () => {
       status: 'SUSPENDED',
     });
     store.orgs.set('org-done', { slug: 'd', name: 'D', settings: null, createdAt: LONG_AGO });
+    // A signup org whose founder has not joined yet (t-1062): its hooks wait.
+    store.orgs.set('org-awaiting', {
+      slug: 'w',
+      name: 'W',
+      settings: { ...orgCreatedSettings(['app:provider'], 'signup'), awaitingFounder: true },
+      createdAt: LONG_AGO,
+    });
     // Owes only a key nothing registers any more: not selected at all.
     store.orgs.set('org-stale', {
       slug: 'x',
