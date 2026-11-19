@@ -278,8 +278,10 @@ export async function writePlatformAgentsMarker(
 
 /**
  * The key that marks an org made at self-serve signup whose founder has not
- * joined it yet (§134 t-1062): `true` while it is there, and removed in the
- * transaction that writes the founder's membership. Written by
+ * joined it, or cannot act there yet (§134 t-1062): `true` while it is there.
+ * Removed in the transaction that writes the founder's membership once their
+ * address is verified (or the install does not require it), else when they
+ * verify (`releaseFoundedSignupOrgs`, `lib/tenancy/membership.ts`). Written by
  * `createSignupOrg()` (`lib/tenancy/lifecycle.ts`). While it is set the
  * org-created retry job skips the org, and once the org is older than an hour
  * with no member and no user's signup record naming it, the

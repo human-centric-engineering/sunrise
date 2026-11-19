@@ -133,6 +133,20 @@ describe('signupOrgMemberships — the default', () => {
     expect(a.slug).not.toBe(b.slug);
   });
 
+  it('drops accents from the slug rather than splitting the word', async () => {
+    await signupOrgMemberships({ ...person, name: 'Renée Dubois' }, EMAIL);
+    const [input] = mockCreateSignupOrg.mock.calls[0] as [{ slug: string }];
+    expect(input.slug).toMatch(/^renee-dubois-s-organisation-[0-9a-f]{8}$/);
+  });
+
+  it('cuts a long name by character, never inside an emoji', async () => {
+    const name = `${'a'.repeat(84)}😀😀`;
+    await signupOrgMemberships({ ...person, name }, EMAIL);
+    const [input] = mockCreateSignupOrg.mock.calls[0] as [{ name: string }];
+    expect(input.name).toBe(`${'a'.repeat(84)}😀’s organisation`);
+    expect(input.name.isWellFormed()).toBe(true);
+  });
+
   it('names the org from the address’s local part when no name was given', async () => {
     await signupOrgMemberships({ ...person, name: '  ' }, EMAIL);
     const [input] = mockCreateSignupOrg.mock.calls[0] as [{ name: string }];
@@ -189,7 +203,7 @@ describe('signupOrgMemberships — an app’s resolver', () => {
 
   it('`join` puts them in an existing org as MEMBER, creating nothing', async () => {
     registerSignupOrgResolver(async () => ({ kind: 'join', orgId: CUSTOMER_ORG }));
-    db.org.findUnique.mockResolvedValue({ id: CUSTOMER_ORG });
+    db.org.findUnique.mockResolvedValue({ id: CUSTOMER_ORG, status: 'ACTIVE', settings: {} });
 
     const result = await signupOrgMemberships(person, EMAIL);
 
@@ -199,7 +213,7 @@ describe('signupOrgMemberships — an app’s resolver', () => {
 
   it('`join` with a role gives that role', async () => {
     registerSignupOrgResolver(() => ({ kind: 'join', orgId: CUSTOMER_ORG, role: 'ADMIN' }));
-    db.org.findUnique.mockResolvedValue({ id: CUSTOMER_ORG });
+    db.org.findUnique.mockResolvedValue({ id: CUSTOMER_ORG, status: 'ACTIVE', settings: {} });
 
     expect(await signupOrgMemberships(person, EMAIL)).toEqual({
       membership: { orgId: CUSTOMER_ORG, role: ORG_ADMIN_ROLE },
@@ -228,6 +242,23 @@ describe('signupOrgMemberships — an app’s resolver', () => {
       expect(logger.error).toHaveBeenCalledWith(
         expect.stringContaining('does not exist'),
         expect.objectContaining({ orgId: 'cmorg000000000000000000gone' })
+      );
+    });
+
+    it.each([
+      ['is not active', { status: 'SUSPENDED', settings: {} }],
+      [
+        'is still awaiting its own founder',
+        { status: 'ACTIVE', settings: { awaitingFounder: true } },
+      ],
+    ])('when it names an org that %s', async (why, row) => {
+      registerSignupOrgResolver(() => ({ kind: 'join', orgId: CUSTOMER_ORG }));
+      db.org.findUnique.mockResolvedValue({ id: CUSTOMER_ORG, ...row });
+
+      expect(await signupOrgMemberships(person, EMAIL)).toBeNull();
+      expect(logger.error).toHaveBeenCalledWith(
+        `Signup-org resolver named an org that ${why}; using the install org`,
+        expect.objectContaining({ orgId: CUSTOMER_ORG })
       );
     });
 

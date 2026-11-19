@@ -329,7 +329,8 @@ that a signup does not have.
 
 **A fault never refuses a signup.** A resolver that throws, runs past
 `SIGNUP_ORG_RESOLVER_TIMEOUT_MS` (5 s), answers nothing or something
-malformed (validated with Zod), or names an org that does not exist, falls
+malformed (validated with Zod), or names an org that does not exist, is not
+`ACTIVE`, or still awaits its own founder (another signup's), falls
 back to the decision as it was: the install org, by the role rule above,
 logged at `error`. So does a failure to create the org.
 
@@ -339,10 +340,23 @@ with no member, and marked: `Org.settings.awaitingFounder = true`. While
 marked, its org-created hooks are owed but not run (a hook is told the owner,
 and there is none yet) and the retry job skips it. The create does not place
 its platform agents either.
-`writeNewUserMemberships` removes the mark in the transaction that writes the
-founder's membership, and the after hook then runs both
-(`completeSignupOrg()`); a founder healed in at a later sign-in has the mark
-removed the same way and the maintenance jobs catch the setup up.
+**The setup waits for a founder who can act there.** `writeNewUserMemberships`
+removes the mark in the transaction that writes the founder's membership only
+when their address is verified or the install does not require it
+(`REQUIRE_EMAIL_VERIFICATION`); the after hook then runs both
+(`completeSignupOrg()`) **after the response**, so an app's slow hook never
+holds the signup. Where verification is required and the address is not yet
+proven (every email signup in production), the org keeps its mark until they
+verify: `afterEmailVerificationHook` runs `completeVerifiedSignupOrgs()`, which
+releases it (`releaseFoundedSignupOrgs()`, one `UPDATE … RETURNING`) and runs
+the setup. So a form submitted with an address nobody proves leaves an org row
+and nothing set up in it; such an org has a member, so the sweep below leaves
+it. A founder healed in at a later sign-in has the mark removed the same way,
+and the session hook runs the setup. As a backstop, the `orgCreatedHooks` job
+releases the mark itself on a signup org older than 15 minutes
+(`ORG_CREATED_FOUNDER_GRACE_MS`) whose OWNER can act, for a release one of
+those paths missed. The platform agents job may still place agents in a marked
+org.
 
 **A signup that fails after its org exists leaves no org behind for good.**
 The user INSERT can still be refused after the org is made. The

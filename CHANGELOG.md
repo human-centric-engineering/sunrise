@@ -83,11 +83,19 @@ release process.
   this way is created by the new `createSignupOrg()` marked
   `Org.settings.awaitingFounder` (`ORG_AWAITING_FOUNDER_KEY`), and its
   org-created hooks (`source: 'signup'`) and platform agents run through
-  `completeSignupOrg()` once its founder's membership exists. A new
+  `completeSignupOrg()`, after the response, once its founder is a member
+  and can act there: where `REQUIRE_EMAIL_VERIFICATION` holds, when they
+  verify (`completeVerifiedSignupOrgs()`, `releaseFoundedSignupOrgs()`), with
+  the `orgCreatedHooks` job releasing a missed one after
+  `ORG_CREATED_FOUNDER_GRACE_MS` (15 min). `requiresEmailVerification()`
+  (`lib/auth/verification-status.ts`) is the one statement of that rule. A
+  resolver naming a suspended org, or another signup's still awaiting its
+  founder, falls back like a missing one. A new
   system-scoped `abandonedSignupOrgs` maintenance job (appended to
   `backgroundTasks`, hourly) deletes a marked org with no member that no
   user's signup record names, after `SIGNUP_ORG_ABANDONED_AFTER_MS` (1 h).
-  `writeNewUserMemberships()` now answers `{ founded }`, and it and
+  `writeNewUserMemberships()` now answers `{ founded }`,
+  `activeOrgForSession()` adds `founded`, and `writeNewUserMemberships()`,
   `healSignupRecord()` / `syncInstallMembershipRole()` take a client with
   `$executeRaw` (a transaction client has it). See
   [`.context/tenancy/identity.md`](./.context/tenancy/identity.md#self-serve-signup-an-org-of-their-own).

@@ -20,7 +20,7 @@
  * so a new query shows up as a TypeError rather than an unexplained pass.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
   DEFAULT_ORG_ROLE,
@@ -31,9 +31,16 @@ import {
 import { PLATFORM_ADMIN_ROLE, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 vi.mock('@/lib/db/client', () => ({ prisma: {} }));
-const mockEnv = vi.hoisted((): { TENANCY_MODE: 'single' | 'multi' } => ({
-  TENANCY_MODE: 'single',
-}));
+const mockEnv = vi.hoisted(
+  (): {
+    TENANCY_MODE: 'single' | 'multi';
+    REQUIRE_EMAIL_VERIFICATION?: boolean;
+    NODE_ENV: string;
+  } => ({
+    TENANCY_MODE: 'single',
+    NODE_ENV: 'test',
+  })
+);
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 import {
@@ -47,6 +54,7 @@ import {
   membershipsFromSignupRecord,
   signupRecordFor,
   undecidedMembershipsForNewUser,
+  releaseFoundedSignupOrgs,
   writeNewUserMemberships,
 } from '@/lib/tenancy/membership';
 
@@ -69,16 +77,27 @@ const mocks = {
   $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   // Removing a signup org's awaiting-founder mark (t-1062): rows changed.
   $executeRaw: vi.fn(() => Promise.resolve(0)),
+  // Releasing founded signup orgs (t-1062): the rows released.
+  $queryRaw: vi.fn(() => Promise.resolve([] as unknown[])),
 };
 // These delegates' methods are all these functions call; anything else is a
 // TypeError at the call site, which is the point of not mocking more.
 const db = mocks as unknown as Pick<
   PrismaClient,
-  'orgMembership' | 'user' | 'org' | '$transaction' | '$executeRaw'
+  'orgMembership' | 'user' | 'org' | '$transaction' | '$executeRaw' | '$queryRaw'
 >;
 
 const OTHER_ORG = 'cmorg000000000000000other';
 const USER_ID = 'cmuser00000000000000user1';
+
+/** A `Prisma.sql` fragment's text, `?` for each value, and its values. */
+function sqlText(fragment: unknown): string {
+  expect(fragment).toHaveProperty('strings');
+  return (fragment as Prisma.Sql).strings.join('?').replace(/\s+/g, ' ').trim();
+}
+function sqlValues(fragment: unknown): unknown[] {
+  return (fragment as Prisma.Sql).values;
+}
 /** Who issued the invitation: the bootstrap asks for their owner standing. */
 const ISSUER = 'cmuser0000000000000issuer';
 const BY_ISSUER = { invitedBy: ISSUER };
@@ -124,6 +143,7 @@ function orgHas(rows: FakeMember[]): void {
 beforeEach(() => {
   vi.clearAllMocks();
   mockEnv.TENANCY_MODE = 'single';
+  delete mockEnv.REQUIRE_EMAIL_VERIFICATION;
   mocks.orgMembership.count.mockResolvedValue(0);
   mocks.orgMembership.findMany.mockResolvedValue([]);
   mocks.orgMembership.upsert.mockResolvedValue(undefined);
@@ -924,7 +944,25 @@ describe('the signup record (t-838)', () => {
     expect(sql.join('?')).toMatch(
       /UPDATE org[\s\S]*settings - [\s\S]*WHERE id = \?[\s\S]*settings \? \?/
     );
-    expect(params).toEqual(['awaitingFounder', OTHER_ORG, 'awaitingFounder']);
+    // No verification required: nothing more is asked of the founder.
+    expect(params.slice(0, 3)).toEqual(['awaitingFounder', OTHER_ORG, 'awaitingFounder']);
+    expect(sqlText(params[3])).toBe('TRUE');
+  });
+
+  it('where verification is required, removes the mark only for a founder whose address is verified (t-1062)', async () => {
+    mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
+
+    await writeNewUserMemberships(
+      USER_ID,
+      { membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE } },
+      db
+    );
+
+    const [, , , , canAct] = mocks.$executeRaw.mock.calls[0] as unknown as unknown[];
+    expect(sqlText(canAct)).toMatch(
+      /EXISTS \(SELECT 1 FROM "user" fu WHERE fu\.id = \? AND fu\."emailVerified"\)/
+    );
+    expect(sqlValues(canAct)).toEqual([USER_ID]);
   });
 
   it('reports no founded org when the membership’s org carries no mark', async () => {
@@ -977,11 +1015,27 @@ describe('activeOrgForSession — healing from the signup record (t-838)', () =>
     mocks.orgMembership.findMany.mockResolvedValue([]);
   });
 
+  it('reports the signup org the heal founded, so the caller runs its setup (t-1062)', async () => {
+    mocks.user.findUnique.mockResolvedValue(recorded(OTHER_ORG, ORG_OWNER_ROLE));
+    mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
+    mocks.$executeRaw.mockResolvedValueOnce(1);
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({
+      orgId: OTHER_ORG,
+      healed: true,
+      founded: OTHER_ORG,
+    });
+  });
+
   it('at multi, heals an invitee whose write failed into the org that invited them — not the install org', async () => {
     mocks.user.findUnique.mockResolvedValue(recorded(OTHER_ORG, ORG_ADMIN_ROLE));
     mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
 
-    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: OTHER_ORG, healed: true });
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({
+      orgId: OTHER_ORG,
+      healed: true,
+      founded: null,
+    });
     expect(mocks.orgMembership.upsert).toHaveBeenCalledTimes(1);
     expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -999,7 +1053,11 @@ describe('activeOrgForSession — healing from the signup record (t-838)', () =>
     mocks.user.findUnique.mockResolvedValue(recorded(INSTALL_ORG_ID, DEFAULT_ORG_ROLE));
     mocks.org.findUnique.mockResolvedValue({ id: INSTALL_ORG_ID });
 
-    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: INSTALL_ORG_ID, healed: true });
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({
+      orgId: INSTALL_ORG_ID,
+      healed: true,
+      founded: null,
+    });
     expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { orgId: INSTALL_ORG_ID, userId: USER_ID, role: DEFAULT_ORG_ROLE },
@@ -1031,7 +1089,11 @@ describe('activeOrgForSession — healing from the signup record (t-838)', () =>
     mocks.user.findUnique.mockResolvedValue(recorded(OTHER_ORG, ORG_ADMIN_ROLE));
     mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
 
-    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: OTHER_ORG, healed: true });
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({
+      orgId: OTHER_ORG,
+      healed: true,
+      founded: null,
+    });
     expect(mocks.orgMembership.upsert).toHaveBeenCalledTimes(2);
     expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1052,5 +1114,46 @@ describe('activeOrgForSession — healing from the signup record (t-838)', () =>
 
     await activeOrgForSession(USER_ID, db);
     expect(mocks.user.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('releaseFoundedSignupOrgs (§134 t-1062)', () => {
+  const released = [{ orgId: OTHER_ORG, ownerUserId: USER_ID }];
+
+  function statement(): { text: string; values: unknown[] } {
+    const [strings, ...values] = mocks.$queryRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    return { text: strings.join('?').replace(/\s+/g, ' '), values };
+  }
+
+  it('for one user: releases the marked orgs they own, in one conditional UPDATE … RETURNING', async () => {
+    mocks.$queryRaw.mockResolvedValueOnce(released);
+
+    expect(await releaseFoundedSignupOrgs({ userId: USER_ID }, db)).toEqual(released);
+
+    const { text, values } = statement();
+    expect(text).toMatch(/JOIN org_membership m ON m\."orgId" = o\.id AND m\.role = 'OWNER'/);
+    expect(text).toMatch(/WHERE o\.settings \? \?/);
+    expect(text).toMatch(/UPDATE org SET settings = org\.settings - \?::text/);
+    // Re-tested on the row updated, so two callers cannot both release it.
+    expect(text).toMatch(/WHERE org\.id = founded\."orgId" AND org\.settings \? \? RETURNING/);
+    expect(sqlText(values[1])).toBe('AND m."userId" = ?');
+    expect(sqlValues(values[1])).toEqual([USER_ID]);
+    expect(sqlText(values[2])).toBe('TRUE');
+  });
+
+  it('for the job: only orgs created before the cutoff, and only a verified owner where verification is required', async () => {
+    mockEnv.REQUIRE_EMAIL_VERIFICATION = true;
+    const cutoff = new Date('2026-11-19T10:00:00Z');
+
+    await releaseFoundedSignupOrgs({ createdBefore: cutoff }, db);
+
+    const { values } = statement();
+    expect(sqlText(values[1])).toBe('AND o."createdAt" < ?');
+    expect(sqlValues(values[1])).toEqual([cutoff]);
+    // Each owner's own row, not a bound value.
+    expect(sqlText(values[2])).toMatch(/fu\.id = m\."userId" AND fu\."emailVerified"/);
   });
 });

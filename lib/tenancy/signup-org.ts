@@ -38,6 +38,14 @@
  * live org that has lost its members: that org had a founder, so its mark is
  * gone, and it is never deleted here.
  *
+ * **Its setup waits for a founder who can act.** The app's org-created hooks
+ * (which may provision paid resources) and the platform agents run once the
+ * founder is a member and their address is verified, or the install does not
+ * require it (`REQUIRE_EMAIL_VERIFICATION`). Until then the org keeps its mark,
+ * so an email signup with an address nobody proves leaves an org row and
+ * nothing set up in it. That setup runs after the response, never on the
+ * signup request.
+ *
  * @see lib/app/signup-org.ts — the fork-owned registration seam
  * @see lib/tenancy/lifecycle.ts — `createSignupOrg()`, `completeSignupOrg()`
  * @see .context/tenancy/identity.md — the guide
@@ -68,8 +76,9 @@ export interface SignupOrgRequest {
   /** The address they signed up with. */
   email: string;
   /**
-   * Whether the address is proven yet: true on an OAuth signup, false on an
-   * email signup, whose verification comes after this. Where the install
+   * Whether the address is proven yet: false on an email signup, whose
+   * verification comes after this; on an OAuth signup, whatever the provider
+   * says, which can be false. Never infer it from `signupMethod`. Where the install
    * requires verification before sign-in (`REQUIRE_EMAIL_VERIFICATION`, the
    * production default), an unproven address can never use the account; where
    * it does not, anyone can sign up as any address.
@@ -228,16 +237,23 @@ export async function signupOrgMemberships(
       if (answer.orgId === INSTALL_ORG_ID) return null;
       const org = await prisma.org.findUnique({
         where: { id: answer.orgId },
-        select: { id: true },
+        select: { id: true, status: true, settings: true },
       });
-      if (!org) {
-        logger.error(
-          'Signup-org resolver named an org that does not exist; using the install org',
-          {
-            ...log,
-            orgId: answer.orgId,
-          }
-        );
+      // A suspended org would refuse their every request from the first, and
+      // one still awaiting its own founder is another signup's. Both are a
+      // resolver bug, not a place to put someone.
+      const unusable = !org
+        ? 'does not exist'
+        : org.status !== 'ACTIVE'
+          ? 'is not active'
+          : isAwaitingFounder(org.settings)
+            ? 'is still awaiting its own founder'
+            : null;
+      if (!org || unusable) {
+        logger.error(`Signup-org resolver named an org that ${unusable}; using the install org`, {
+          ...log,
+          orgId: answer.orgId,
+        });
         return null;
       }
       return { membership: { orgId: org.id, role: answer.role ?? DEFAULT_ORG_ROLE } };
@@ -284,7 +300,20 @@ function defaultOrgName(user: { email: string; name: string }): string {
   const who = user.name.trim() || user.email.split('@')[0].trim();
   if (!who) return 'New organisation';
   const suffix = '’s organisation';
-  return `${who.slice(0, ORG_NAME_MAX - suffix.length)}${suffix}`;
+  // By code point, so a cut never splits a surrogate pair (an emoji).
+  return `${Array.from(who)
+    .slice(0, ORG_NAME_MAX - suffix.length)
+    .join('')}${suffix}`;
+}
+
+/** Whether an org's settings still carry the awaiting-founder mark. */
+function isAwaitingFounder(settings: unknown): boolean {
+  return (
+    typeof settings === 'object' &&
+    settings !== null &&
+    !Array.isArray(settings) &&
+    ORG_AWAITING_FOUNDER_KEY in settings
+  );
 }
 
 /**
@@ -295,6 +324,8 @@ function defaultOrgName(user: { email: string; name: string }): string {
 function signupOrgSlug(name: string): string {
   const base = name
     .normalize('NFKD')
+    // Drop the accents NFKD split off, so "Renée" is "renee", not "rene-e".
+    .replace(/\p{M}+/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')

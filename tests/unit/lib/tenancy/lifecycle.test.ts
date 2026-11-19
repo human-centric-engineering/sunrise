@@ -33,6 +33,8 @@ const db = vi.hoisted(() => ({
   $transaction: vi.fn(),
   // A healed signup record removes its org's awaiting-founder mark (t-1062).
   $executeRaw: vi.fn(),
+  // A verified founder's signup orgs, released (t-1062).
+  $queryRaw: vi.fn(),
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 
@@ -74,6 +76,7 @@ import {
   changeMemberRole,
   checkInvitationInto,
   completeSignupOrg,
+  completeVerifiedSignupOrgs,
   createOrg,
   createSignupOrg,
   OrgLifecycleError,
@@ -413,6 +416,31 @@ describe('createSignupOrg (§134 t-1062)', () => {
     expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: OWNER });
     expect(mockReconcile).toHaveBeenCalledWith(ORG);
     expect(order).toEqual(['hooks', 'agents']);
+  });
+
+  it('completeVerifiedSignupOrgs sets up each org the release hands back, with its owner', async () => {
+    mockRunHooks.mockResolvedValue({ succeeded: 1, failed: 0, unregistered: 0 });
+    mockReconcile.mockResolvedValue({});
+    db.$queryRaw.mockResolvedValue([{ orgId: ORG, ownerUserId: OWNER }]);
+
+    await completeVerifiedSignupOrgs(OWNER);
+
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: OWNER });
+    expect(mockReconcile).toHaveBeenCalledWith(ORG);
+  });
+
+  it('completeVerifiedSignupOrgs logs a failed release and sets nothing up, without throwing', async () => {
+    db.$queryRaw.mockRejectedValue(new Error('connection reset'));
+
+    await expect(completeVerifiedSignupOrgs(OWNER)).resolves.toBeUndefined();
+
+    expect(mockRunHooks).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'Failed to release a verified founder’s signup org',
+      expect.any(Error),
+      { userId: OWNER }
+    );
   });
 });
 

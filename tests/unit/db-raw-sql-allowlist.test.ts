@@ -182,8 +182,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/tenancy/membership.ts',
-    calls: 1,
-    why: "self-serve signup orgs (§134 t-1062): removing an org's awaiting-founder mark (`settings - 'awaitingFounder'`) in the batch transaction that writes the founder's membership, conditional on the mark (`settings ? …`). Prisma can neither remove a JSON key nor run a read-modify-write inside a batch transaction. Touches only `org`, a system table with no row policy; the org id and key are bound parameters",
+    calls: 2,
+    why: "self-serve signup orgs (§134 t-1062): removing an org's awaiting-founder mark (`settings - 'awaitingFounder'`) in the batch transaction that writes the founder's membership, conditional on the mark (`settings ? …`) and on the founder being able to act (a verified address, when the install requires one); and `releaseFoundedSignupOrgs`, one `UPDATE … RETURNING` that removes the mark from the marked orgs whose OWNER can now act (on verification, and as the org-created job's backstop), so two callers cannot both release one org. Prisma can neither remove a JSON key nor run a read-modify-write inside a batch transaction. Touches `org`, and reads `org_membership` and `user`, all system tables with no row policy; every value is a bound parameter",
   },
   {
     file: 'lib/tenancy/org-created-hooks.ts',

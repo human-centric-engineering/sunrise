@@ -63,6 +63,7 @@ import {
   healSignupRecord,
   initialMembershipFor,
   isPlatformStaff,
+  releaseFoundedSignupOrgs,
   takesFirstOwnership,
 } from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
@@ -302,10 +303,16 @@ export async function createOrg(
  * (`Org.settings.awaitingFounder`), and with the app's org-created hooks
  * recorded as owed but **not run**: a hook is told the org's owner, and there
  * is none yet. Nor are the platform agents placed. (The `platformAgents` job
- * may still reach a marked org; what it writes cascades with the org.) The mark is removed in the
- * transaction that writes the founder's membership (`writeNewUserMemberships`,
- * `healSignupRecord`), and then {@link completeSignupOrg} runs both. The
- * org-created retry job skips a marked org.
+ * may still reach a marked org; what it writes cascades with the org.) The mark
+ * is removed once the founder is a member **and can act there**: their address
+ * is verified, or the install does not require it. That is the transaction
+ * that writes the founder's membership (`writeNewUserMemberships`,
+ * `healSignupRecord`) when it already holds, else the founder's verification
+ * ({@link completeVerifiedSignupOrgs}); then {@link completeSignupOrg} runs
+ * both. So an email signup whose address is never proven gets an org row and
+ * nothing set up in it. The org-created retry job skips a marked org, and
+ * releases the mark itself for a founder who can act but whose release was
+ * missed.
  *
  * A signup that fails after this (the user INSERT is refused) leaves a marked
  * org with no member that no user's signup record names; the
@@ -333,14 +340,36 @@ export async function createSignupOrg(
 /**
  * Run what {@link createSignupOrg} deferred, once the founder's membership
  * exists: the app's org-created hooks, told the founder as owner, then the
- * platform agents. Called by the signup's after hook when its membership write
- * removed the org's awaiting-founder mark. Never throws: whatever fails is
- * caught up by the `orgCreatedHooks` and `platformAgents` maintenance jobs,
- * which also cover a founder whose membership was written at a later sign-in.
+ * platform agents. Called once the org's awaiting-founder mark is removed: by
+ * the signup's after hook and the sign-in heal when their membership write
+ * removed it, and by {@link completeVerifiedSignupOrgs}. Callers on a request
+ * run it after the response, since a hook may take seconds. Never throws:
+ * whatever fails is caught up by the `orgCreatedHooks` and `platformAgents`
+ * maintenance jobs.
  */
 export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {
   logger.info('Signup org founded', { orgId, ownerUserId });
   await setUpCreatedOrg(orgId, ownerUserId);
+}
+
+/**
+ * Set up the signup orgs `userId` founded whose setup waited for their address
+ * to be proven (§134 t-1062): release each one's awaiting-founder mark
+ * (`releaseFoundedSignupOrgs`) and run {@link completeSignupOrg}. Called when
+ * they verify their address. Never throws: a release that fails is logged,
+ * and the `orgCreatedHooks` job's backstop releases the org later.
+ */
+export async function completeVerifiedSignupOrgs(userId: string): Promise<void> {
+  let founded: Array<{ orgId: string; ownerUserId: string }>;
+  try {
+    founded = await releaseFoundedSignupOrgs({ userId });
+  } catch (error) {
+    logger.error('Failed to release a verified founder’s signup org', error, { userId });
+    return;
+  }
+  for (const { orgId, ownerUserId } of founded) {
+    await completeSignupOrg(orgId, ownerUserId);
+  }
 }
 
 /**

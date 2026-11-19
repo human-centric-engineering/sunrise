@@ -23,10 +23,11 @@
  * Server-side: reaches Prisma. The vocabulary it writes is
  * `lib/tenancy/roles.ts`, which is what a client component imports instead.
  */
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { serviceAccountWhere } from '@/lib/auth/account';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { requiresEmailVerification } from '@/lib/auth/verification-status';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE, type OrgRole } from '@/lib/tenancy/roles';
@@ -535,7 +536,7 @@ export async function healSignupRecord(
   }
   // A signup org founded here runs its deferred setup from the maintenance
   // jobs (the mark is what kept them off it).
-  await clearAwaitingFounder(recorded.membership.orgId, db);
+  await clearAwaitingFounder(recorded.membership.orgId, userId, db);
   await db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD });
 }
 
@@ -569,10 +570,13 @@ export function membershipsFromSignupRecord(
  * repaired.
  *
  * The same transaction removes the org's awaiting-founder mark when it is an
- * org a self-serve signup made (§134 t-1062, `createSignupOrg()`), so an org
- * either has its founder or is still marked, never neither. Answers the org
- * whose mark it removed, so the caller can run that org's deferred setup
- * (`completeSignupOrg()`), or `null`.
+ * org a self-serve signup made (§134 t-1062, `createSignupOrg()`) and its
+ * founder can act there: their address is verified, or the install does not
+ * require it. So an org whose founder has not joined, or whose founder's
+ * address is unproven, is still marked, and its setup waits
+ * ({@link releaseFoundedSignupOrgs} removes the mark once they verify).
+ * Answers the org whose mark it removed, so the caller can run that org's
+ * deferred setup (`completeSignupOrg()`), or `null`.
  */
 export async function writeNewUserMemberships(
   userId: string,
@@ -584,7 +588,7 @@ export async function writeNewUserMemberships(
     .map((m) => upsertMembership(userId, m, db));
   const orgId = memberships.membership.orgId;
   const [unmarked] = await db.$transaction([
-    clearAwaitingFounder(orgId, db),
+    clearAwaitingFounder(orgId, userId, db),
     ...writes,
     db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD }),
   ]);
@@ -593,18 +597,78 @@ export async function writeNewUserMemberships(
 
 /**
  * Remove an org's awaiting-founder mark (`ORG_AWAITING_FOUNDER_KEY`), if it
- * has one; resolves to the rows changed, 1 or 0. One conditional statement
- * because Prisma cannot remove a key from a JSON column, and so it can sit in
- * the membership write's batch transaction. `org` is a system table, with no
- * row policy, so this is the same write at `single` and `multi`.
+ * has one and `founderId` can act there ({@link founderCanAct}); resolves to
+ * the rows changed, 1 or 0. One conditional statement because Prisma cannot
+ * remove a key from a JSON column, and so it can sit in the membership write's
+ * batch transaction. `org` is a system table, with no row policy, so this is
+ * the same write at `single` and `multi`.
  */
-function clearAwaitingFounder(orgId: string, db: Pick<PrismaClient, '$executeRaw'>) {
+function clearAwaitingFounder(
+  orgId: string,
+  founderId: string,
+  db: Pick<PrismaClient, '$executeRaw'>
+) {
   return db.$executeRaw`
     UPDATE org
        SET settings = settings - ${ORG_AWAITING_FOUNDER_KEY}::text,
            "updatedAt" = now()
      WHERE id = ${orgId}
-       AND settings ? ${ORG_AWAITING_FOUNDER_KEY}`;
+       AND settings ? ${ORG_AWAITING_FOUNDER_KEY}
+       AND ${founderCanAct(Prisma.sql`${founderId}`)}`;
+}
+
+/**
+ * Whether the user `userId` (an SQL expression) can act in an org they
+ * founded: their address is verified, or the install does not require it
+ * (`requiresEmailVerification()`). Until then a signup org's setup (the app's
+ * org-created hooks, which may provision paid resources) waits, so a form
+ * submitted with an address nobody proves sets nothing up.
+ */
+function founderCanAct(userId: Prisma.Sql): Prisma.Sql {
+  if (!requiresEmailVerification()) return Prisma.sql`TRUE`;
+  return Prisma.sql`EXISTS (SELECT 1 FROM "user" fu WHERE fu.id = ${userId} AND fu."emailVerified")`;
+}
+
+/**
+ * Remove the awaiting-founder mark from every signup org (§134 t-1062) whose
+ * OWNER can now act there ({@link founderCanAct}), and answer them with that
+ * owner: the orgs whose deferred setup is now due (`completeSignupOrg()`).
+ *
+ * - `userId`: only the orgs this user owns. Called when they verify their
+ *   address, the moment an email signup's org stops waiting.
+ * - `createdBefore`: only orgs created before it. The `orgCreatedHooks` job's
+ *   backstop, for a founder whose mark the moment above missed (a heal that
+ *   wrote their membership outside the signup, a verification whose release
+ *   failed). The cutoff leaves a signup in flight to its own hook.
+ *
+ * One conditional `UPDATE … RETURNING`, so two callers cannot both release the
+ * same org. System-scoped: `org` has no row policy.
+ */
+export async function releaseFoundedSignupOrgs(
+  filter: { userId: string } | { createdBefore: Date },
+  db: Pick<PrismaClient, '$queryRaw'> = prisma
+): Promise<Array<{ orgId: string; ownerUserId: string }>> {
+  const scope =
+    'userId' in filter
+      ? Prisma.sql`AND m."userId" = ${filter.userId}`
+      : Prisma.sql`AND o."createdAt" < ${filter.createdBefore}`;
+  return db.$queryRaw<Array<{ orgId: string; ownerUserId: string }>>`
+    WITH founded AS (
+      SELECT DISTINCT ON (o.id) o.id AS "orgId", m."userId" AS "ownerUserId"
+        FROM org o
+        JOIN org_membership m ON m."orgId" = o.id AND m.role = 'OWNER'
+       WHERE o.settings ? ${ORG_AWAITING_FOUNDER_KEY}
+         ${scope}
+         AND ${founderCanAct(Prisma.sql`m."userId"`)}
+       ORDER BY o.id, m."createdAt"
+    )
+    UPDATE org
+       SET settings = org.settings - ${ORG_AWAITING_FOUNDER_KEY}::text,
+           "updatedAt" = now()
+      FROM founded
+     WHERE org.id = founded."orgId"
+       AND org.settings ? ${ORG_AWAITING_FOUNDER_KEY}
+ RETURNING founded."orgId", founded."ownerUserId"`;
 }
 
 /**
@@ -642,7 +706,9 @@ function clearAwaitingFounder(orgId: string, db: Pick<PrismaClient, '$executeRaw
  *
  * Returns the org id and whether it wrote a membership, so the hook can log
  * the self-heal or the refusal — both are `error`-level events upstream, and
- * silence here would hide that the signup path is failing.
+ * silence here would hide that the signup path is failing. `founded` is the
+ * signup org (§134 t-1062) whose awaiting-founder mark the heal removed, whose
+ * deferred setup the caller then runs (`completeSignupOrg()`).
  *
  * `Org.status` is read only to choose AMONG several memberships: a member of
  * one suspended and one active org starts in the active one, because the
@@ -657,7 +723,7 @@ function clearAwaitingFounder(orgId: string, db: Pick<PrismaClient, '$executeRaw
 export async function activeOrgForSession(
   userId: string,
   db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$transaction' | '$executeRaw'> = prisma
-): Promise<{ orgId: string | null; healed: boolean }> {
+): Promise<{ orgId: string | null; healed: boolean; founded?: string | null }> {
   const all = await db.orgMembership.findMany({
     where: { userId },
     select: { orgId: true, createdAt: true, org: { select: { status: true } } },
@@ -685,8 +751,8 @@ export async function activeOrgForSession(
 
   const recorded = await recordedMemberships(userId, user, db);
   if (recorded) {
-    await writeNewUserMemberships(userId, recorded, db);
-    return { orgId: recorded.membership.orgId, healed: true };
+    const { founded } = await writeNewUserMemberships(userId, recorded, db);
+    return { orgId: recorded.membership.orgId, healed: true, founded };
   }
   if (isMultiTenant()) return { orgId: null, healed: false };
 

@@ -28,7 +28,9 @@ import {
 } from '@/lib/tenancy/membership';
 import { ORG_ROLES } from '@/lib/tenancy/roles';
 import { asksSignupOrg, signupOrgMemberships } from '@/lib/tenancy/signup-org';
-import { completeSignupOrg } from '@/lib/tenancy/lifecycle';
+import { completeSignupOrg, completeVerifiedSignupOrgs } from '@/lib/tenancy/lifecycle';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
+import { requiresEmailVerification } from '@/lib/auth/verification-status';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import {
   getPendingSignup,
@@ -288,7 +290,12 @@ export async function userCreateBeforeHook(
   }
 
   const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
-  const signupMethod = isOAuthSignup ? 'oauth' : 'email';
+  // What a signup-org resolver is told. Wider than `isOAuthSignup`, which
+  // reads the OAuth invitation state only a callback carries: better-auth
+  // also creates an OAuth account from `POST /sign-in/social` with an
+  // `idToken` (see the invite_only gate below).
+  const signupMethod =
+    isOAuthSignup || (ctx?.path?.includes('/sign-in/social') ?? false) ? 'oauth' : 'email';
 
   // Set when a valid invitation token authorises this OAuth signup; read by the
   // invite_only gate below.
@@ -582,9 +589,17 @@ export async function userCreateAfterHook(
     try {
       const { founded } = await writeNewUserMemberships(user.id, memberships);
       // An org of their own, made by the before hook (§134 t-1062): its app
-      // setup and platform agents waited for its founder, who is now in it.
-      // Never throws.
-      if (founded) await completeSignupOrg(founded, user.id);
+      // setup and platform agents waited for its founder, who is now in it
+      // and can act there (an unverified address keeps it waiting, for the
+      // verification hook). After the response: an app's hooks may take
+      // seconds, and the signup must not wait on them.
+      if (founded) {
+        keepRunningAfterResponse(
+          () => completeSignupOrg(founded, user.id),
+          'Setting up a new signup org',
+          { orgId: founded, userId: user.id }
+        );
+      }
     } catch (membershipError) {
       logger.error('Failed to create org membership for new user', membershipError, {
         userId: user.id,
@@ -658,7 +673,7 @@ export async function userCreateAfterHook(
   }
 
   // Determine if welcome email should be sent immediately
-  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+  const requiresVerification = requiresEmailVerification();
 
   const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || viaInvitation;
 
@@ -843,11 +858,22 @@ export async function afterEmailVerificationHook(
     return;
   }
 
+  // A signup org whose setup waited for this address to be proven (§134
+  // t-1062). After the response, so the verification click does not wait on
+  // an app's hooks; never throws.
+  if (isMultiTenant()) {
+    keepRunningAfterResponse(
+      () => completeVerifiedSignupOrgs(user.id),
+      'Setting up a verified founder’s signup org',
+      { userId: user.id }
+    );
+  }
+
   // Only send welcome email here if verification was required at signup.
   // When verification is not required, the welcome email is sent immediately
   // on account creation (databaseHooks.user.create.after). If the user later
   // verifies voluntarily from their profile/settings, we must not send it again.
-  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+  const requiresVerification = requiresEmailVerification();
 
   if (!requiresVerification) {
     logger.info('Skipping welcome email after verification (already sent at signup)', {
@@ -1089,7 +1115,16 @@ export async function sessionCreateBeforeHook(
       return { data: { activeOrgId: pending.membership.orgId } };
     }
 
-    const { orgId, healed } = await activeOrgForSession(session.userId);
+    const { orgId, healed, founded } = await activeOrgForSession(session.userId);
+    // A signup org the heal just gave its founder (§134 t-1062): its setup
+    // waited for them. After the response, as on the signup itself.
+    if (founded) {
+      keepRunningAfterResponse(
+        () => completeSignupOrg(founded, session.userId),
+        'Setting up a healed signup org',
+        { orgId: founded, userId: session.userId }
+      );
+    }
     if (orgId === null) {
       logger.error(
         'User has no org membership at sign-in and no signup record to heal from; refused at multi until added to an org',
@@ -1153,14 +1188,14 @@ export const auth = betterAuth({
     // Email verification: enabled by default in production, disabled in development
     // Override with REQUIRE_EMAIL_VERIFICATION environment variable
     // Note: Verification email sending is configured in emailVerification block below
-    requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
+    requireEmailVerification: requiresEmailVerification(),
     sendResetPassword: sendResetPasswordHook,
   },
 
   // Email verification configuration
   emailVerification: {
     // Trigger verification email on signup when required
-    sendOnSignUp: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
+    sendOnSignUp: requiresEmailVerification(),
 
     // Automatically sign in user after successful email verification
     autoSignInAfterVerification: true,

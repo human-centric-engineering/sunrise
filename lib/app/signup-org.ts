@@ -40,9 +40,11 @@
  * proven yet (`emailVerified: false`): it is safe to match on only where the
  * install requires verification before sign-in (`REQUIRE_EMAIL_VERIFICATION`,
  * the production default), since otherwise anyone can sign up as any address.
+ * An OAuth signup's flag is the provider's, and can be false too.
  *
  * A resolver that throws, runs past 5 seconds, answers nothing, or names an
- * org that does not exist puts the signup in the install org, logged at
+ * org that does not exist, is suspended, or is another signup's still awaiting
+ * its founder, puts the signup in the install org, logged at
  * `error`: a fault here never refuses a signup. Empty = an org of their own
  * for every self-serve signup at `multi`.
  *
