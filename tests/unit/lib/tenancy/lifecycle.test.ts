@@ -242,6 +242,23 @@ describe('createOrg', () => {
     expect(order).toEqual(['hooks', 'agents']);
   });
 
+  it('returns the org as the hooks left it, not the row as inserted', async () => {
+    const inserted = {
+      ...orgRow(),
+      settings: { orgCreated: { owed: ['app:x'], source: 'admin' } },
+    };
+    const after = { ...orgRow(), settings: null };
+    db.org.findUnique
+      .mockResolvedValueOnce(null) // slug free
+      .mockResolvedValueOnce(after); // re-read after the hooks
+    db.org.create.mockResolvedValue(inserted);
+    mockHookKeys.mockReturnValue(['app:x']);
+
+    const org = await createOrg({ slug: 'other', name: 'Other Org', source: 'admin' });
+
+    expect(org.settings).toBeNull();
+  });
+
   it("records an app's own call as `app` when it names no source", async () => {
     db.org.findUnique.mockResolvedValue(null);
     db.org.create.mockResolvedValue(orgRow());

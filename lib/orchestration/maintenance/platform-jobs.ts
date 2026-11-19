@@ -289,7 +289,9 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     run: () => runOrgCreatedHooks(requireOrgId()),
     // A hook that keeps failing is not work: counting it would hold the idle
     // gate open, and a scale-to-zero database awake, for as long as it fails.
-    foundWork: (r) => r.succeeded > 0 || r.dropped > 0,
+    // ACTIVE orgs only, like every per-org job: a suspended org that still
+    // owes hooks gets them once it is reinstated.
+    foundWork: (r) => r.succeeded > 0,
   }),
 ];
 

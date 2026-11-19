@@ -58,6 +58,7 @@ import {
   registerOrgCreatedHook,
   runOrgCreatedHooks,
   orgCreatedHookKeys,
+  ORG_CREATED_HOOK_TIMEOUT_MS,
   __resetOrgCreatedHooksForTests,
   type OrgCreatedContext,
 } from '@/lib/tenancy/org-created-hooks';
@@ -127,7 +128,7 @@ describe('runOrgCreatedHooks', () => {
     await expect(runOrgCreatedHooks(ORG)).resolves.toEqual({
       succeeded: 0,
       failed: 0,
-      dropped: 0,
+      unregistered: 0,
     });
     expect(db.org.findUnique).not.toHaveBeenCalled();
   });
@@ -143,7 +144,7 @@ describe('runOrgCreatedHooks', () => {
 
     const result = await runOrgCreatedHooks(ORG, { ownerUserId: 'user-founder' });
 
-    expect(result).toEqual({ succeeded: 1, failed: 0, dropped: 0 });
+    expect(result).toEqual({ succeeded: 1, failed: 0, unregistered: 0 });
     expect(seen).toEqual([
       {
         ctx: {
@@ -153,6 +154,7 @@ describe('runOrgCreatedHooks', () => {
           source: 'admin',
           ownerUserId: 'user-founder',
           retry: false,
+          signal: expect.any(AbortSignal),
         },
         orgInScope: ORG,
       },
@@ -192,7 +194,7 @@ describe('runOrgCreatedHooks', () => {
 
     const result = await runOrgCreatedHooks(ORG, { ownerUserId: null });
 
-    expect(result).toEqual({ succeeded: 1, failed: 1, dropped: 0 });
+    expect(result).toEqual({ succeeded: 1, failed: 1, unregistered: 0 });
     expect(owedNow()).toEqual(['app:crm']);
     expect(loggerError).toHaveBeenCalledWith(
       expect.stringMatching(/org-created hook failed/),
@@ -208,7 +210,7 @@ describe('runOrgCreatedHooks', () => {
 
     const result = await runOrgCreatedHooks(ORG);
 
-    expect(result).toEqual({ succeeded: 1, failed: 0, dropped: 0 });
+    expect(result).toEqual({ succeeded: 1, failed: 0, unregistered: 0 });
     expect(provider).not.toHaveBeenCalled();
     expect(crm).toHaveBeenCalledWith(
       expect.objectContaining({ ownerUserId: 'user-founder', retry: true, source: 'admin' })
@@ -223,23 +225,66 @@ describe('runOrgCreatedHooks', () => {
 
     const result = await runOrgCreatedHooks(ORG);
 
-    expect(result).toEqual({ succeeded: 0, failed: 0, dropped: 0 });
+    expect(result).toEqual({ succeeded: 0, failed: 0, unregistered: 0 });
     expect(provider).not.toHaveBeenCalled();
     expect(db.org.update).not.toHaveBeenCalled();
   });
 
-  it('drops an owed key whose hook is no longer registered, with a warning', async () => {
+  it('leaves owed a key this process has no hook for, so another version can run it', async () => {
+    // A rolling deploy: the org owes a hook only the newer instances register.
     register({ 'app:provider': () => {} });
-    seedOrg(['app:provider', 'app:renamed-away']);
+    seedOrg(['app:provider', 'app:only-on-new-version']);
 
     const result = await runOrgCreatedHooks(ORG, { ownerUserId: null });
 
-    expect(result).toEqual({ succeeded: 1, failed: 0, dropped: 1 });
-    expect(owedNow()).toBeNull();
-    expect(loggerWarn).toHaveBeenCalledWith(
-      expect.stringMatching(/no longer registered/),
-      expect.objectContaining({ hooks: ['app:renamed-away'] })
-    );
+    expect(result).toEqual({ succeeded: 1, failed: 0, unregistered: 1 });
+    expect(owedNow()).toEqual(['app:only-on-new-version']);
+  });
+
+  it('runs hooks one at a time, in registration order, not owed-list order', async () => {
+    const events: string[] = [];
+    const slow = (name: string) => async () => {
+      events.push(`${name}:start`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      events.push(`${name}:end`);
+    };
+    register({ 'app:first': slow('first'), 'app:second': slow('second') });
+    seedOrg(['app:second', 'app:first']);
+
+    await runOrgCreatedHooks(ORG, { ownerUserId: null });
+
+    expect(events).toEqual(['first:start', 'first:end', 'second:start', 'second:end']);
+  });
+
+  it('gives up on a hook past its time limit, leaves it owed, aborts its signal, and runs the next', async () => {
+    vi.useFakeTimers();
+    try {
+      let seenSignal: AbortSignal | undefined;
+      const next = vi.fn();
+      initAppOrgCreatedHooks.mockImplementation(() => {
+        registerOrgCreatedHook('app:hangs', ({ signal }) => {
+          seenSignal = signal;
+          return new Promise<void>(() => {});
+        });
+        registerOrgCreatedHook('app:next', next);
+      });
+      seedOrg(['app:hangs', 'app:next']);
+
+      const run = runOrgCreatedHooks(ORG, { ownerUserId: null });
+      await vi.advanceTimersByTimeAsync(ORG_CREATED_HOOK_TIMEOUT_MS);
+      const result = await run;
+
+      expect(result).toEqual({ succeeded: 1, failed: 1, unregistered: 0 });
+      expect(seenSignal?.aborted).toBe(true);
+      expect(next).toHaveBeenCalled();
+      expect(owedNow()).toEqual(['app:hangs']);
+      expect(loggerError).toHaveBeenCalledWith(
+        expect.stringMatching(/org-created hook failed/),
+        expect.objectContaining({ hook: 'app:hangs', error: expect.stringMatching(/timed out/) })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves the hooks owed when their success cannot be recorded, so they run again', async () => {
@@ -282,7 +327,7 @@ describe('runOrgCreatedHooks', () => {
     await expect(runOrgCreatedHooks('org-gone')).resolves.toEqual({
       succeeded: 0,
       failed: 0,
-      dropped: 0,
+      unregistered: 0,
     });
     expect(provider).not.toHaveBeenCalled();
   });
@@ -329,7 +374,7 @@ describe('runOrgCreatedHooks', () => {
     await expect(runOrgCreatedHooks(ORG)).resolves.toEqual({
       succeeded: 0,
       failed: 0,
-      dropped: 0,
+      unregistered: 0,
     });
     expect(loggerError).toHaveBeenCalledWith(
       expect.stringMatching(/could not be run/),

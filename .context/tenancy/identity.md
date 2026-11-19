@@ -631,8 +631,9 @@ while they are acting in that org — never by a role check in a route.
 **An app's own setup runs for every new org** (§134 t-1061). `createOrg()` is
 the only place an org row is written, so it is where the org-created seam
 (`lib/app/org-created.ts`, registry `lib/tenancy/org-created-hooks.ts`)
-dispatches, whichever path made the org: the admin route (`source: 'admin'`),
-self-serve signup (`'signup'`), or a fork's own call (`'app'`, the default).
+dispatches, whichever path made the org: the admin route (`source: 'admin'`)
+or a fork's own call (`'app'`, the default). `'signup'` is reserved for
+self-serve signup (§134 t-1062), which does not create orgs yet.
 
 - **After the commit, never inside it.** A hook cannot refuse or roll back an
   org: a fault in app code, or a vendor it calls being down, must not fail a
@@ -644,8 +645,16 @@ self-serve signup (`'signup'`), or a fork's own call (`'app'`, the default).
   until it succeeds. So a hook **must be idempotent**, and is told `retry`.
 - **Only orgs created after a hook is registered owe it.** Filling the seam does
   not run it over the orgs that already exist; an app that needs that writes a
-  one-off script. An owed key whose hook is no longer registered is dropped,
-  with a warning.
+  one-off script. An owed key no hook is registered under in this process is
+  left owed, not dropped: during a rolling deploy the next run may be on an
+  instance that has it.
+- **One at a time, each bounded.** Hooks run in registration order, so two
+  that write `Org.settings` never clash in its serializable transaction, and
+  each has `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) before the run moves on and
+  leaves it owed; the hook's `signal` aborts then. The create waits for them,
+  so this is what keeps a hung vendor call from holding it open.
+- **Active orgs only, on retry.** The job is per-org over ACTIVE orgs, so an
+  org suspended while it owes hooks gets them once it is reinstated.
 - **Before the platform agents.** The app's hooks run first, so a provider an
   app grants is what the agents' bindings are picked from.
 - **In the new org's scope** (`runAsOrg`), so what a hook writes is stamped
@@ -653,7 +662,8 @@ self-serve signup (`'signup'`), or a fork's own call (`'app'`, the default).
   when there is one; on a retry it is the org's earliest OWNER, read then, so
   the owed record holds no pointer to a person.
 - **Nothing registered, nothing changes**: `createOrg()` writes the same row as
-  before, and the job returns without reading anything.
+  before, and the job returns without reading anything. When hooks did run,
+  `createOrg()` returns the org as they left it, not the row as inserted.
 
 **The members routes need a browser session, and the org arm is a session
 grant.** Every members route refuses an API key at the handler, and the

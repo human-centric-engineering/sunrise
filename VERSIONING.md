@@ -146,7 +146,7 @@ covered by the version contract.
   - `lib/app/own-modules.ts` → `appOwnModules` — a leaf fork's own `lib/app/` modules, which the seam-coverage guards then skip
   - `lib/app/surface.ts` → `classifySurface()` / `DEFAULT_SURFACE` — per-surface theming classifier
   - `lib/app/user-created.ts` → `initAppUserCreatedHooks()` — post-signup hook registry
-  - `lib/app/org-created.ts` → `initAppOrgCreatedHooks()` — setup run for every new org, however it was made, retried until it succeeds (§134 t-1061; primitives: `registerOrgCreatedHook()`, `OrgCreatedHook`, `OrgCreatedContext` and `OrgCreatedSource` in `lib/tenancy/org-created-hooks.ts`, and `createOrg()`'s `source` in `lib/tenancy/lifecycle.ts`)
+  - `lib/app/org-created.ts` → `initAppOrgCreatedHooks()` — setup run for every new org, however it was made, retried until it succeeds (§134 t-1061; primitives: `registerOrgCreatedHook()`, `OrgCreatedHook`, `OrgCreatedContext`, `OrgCreatedSource` and `ORG_CREATED_HOOK_TIMEOUT_MS` in `lib/tenancy/org-created-hooks.ts`, and `createOrg()`'s `source` in `lib/tenancy/lifecycle.ts`)
   - `lib/app/waitlist-config.ts` → `waitlistConfig` — whether the app has a waitlist, and its fields, lists, consent version and `screen()` (type: `WaitlistConfig` in `lib/waitlist/config.ts`)
 
   Outside `lib/app/` — **hand-maintained, so check it against the tree rather

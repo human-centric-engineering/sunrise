@@ -8,8 +8,8 @@
  * admin skipped it and could call no AI provider.
  *
  * **Every org passes through `createOrg()`** (`lib/tenancy/lifecycle.ts`), the
- * one place an org row is written, so a dispatch there covers the admin route,
- * a fork calling it, and self-serve signup.
+ * one place an org row is written, so a dispatch there covers the admin route
+ * and a fork calling it (and, once §134 t-1062 ships, self-serve signup).
  *
  * **Hooks run after the create commits, never inside it.** A hook that could
  * fail the create would let a fault in app code (or a vendor's outage) refuse
@@ -26,9 +26,16 @@
  * Each hook runs inside the new org's tenant scope (`runAsOrg`), so the rows
  * it writes are stamped with the org, and are confined to it at `multi`.
  *
+ * Hooks run one at a time, in registration order, each bounded by
+ * {@link ORG_CREATED_HOOK_TIMEOUT_MS}, so a create is never held open by a hung
+ * vendor call.
+ *
  * Hooks are keyed, so re-registering a key replaces the hook. A key that is
- * owed but no longer registered is dropped from the owed list with a warning:
- * there is nothing left to run.
+ * owed but not registered in this process is left owed rather than dropped:
+ * during a rolling deploy, the next run may be on an instance that has it.
+ *
+ * The retry job runs over ACTIVE orgs only (`forEachOrg`), so an org
+ * suspended while it still owes hooks gets them when it is reinstated.
  *
  * @see lib/app/org-created.ts — the fork-owned registration seam
  * @see lib/tenancy/lifecycle.ts — `createOrg()`, the producer
@@ -40,6 +47,7 @@ import { logger } from '@/lib/logging';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppOrgCreatedHooks } from '@/lib/app/org-created';
 import { runAsOrg } from '@/lib/tenancy/context';
+import { withTimeout } from '@/lib/utils/with-timeout';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import {
   clearOrgCreatedOwed,
@@ -58,8 +66,9 @@ export interface OrgCreatedContext {
   /** Its display name, as it stands when the hook runs. */
   name: string;
   /**
-   * How it was made: `admin` from Sunrise's admin, `signup` by a self-serve
-   * signup, `app` by an app's own call to `createOrg()`.
+   * How it was made: `admin` from Sunrise's admin, `app` by an app's own call
+   * to `createOrg()`. `signup` is reserved for Sunrise's self-serve signup
+   * (§134 t-1062), which does not create orgs yet.
    */
   source: OrgCreatedSource;
   /**
@@ -70,6 +79,12 @@ export interface OrgCreatedContext {
   ownerUserId: string | null;
   /** False on the run straight after the create; true when the maintenance job re-runs it. */
   retry: boolean;
+  /**
+   * Aborts when the hook has run for {@link ORG_CREATED_HOOK_TIMEOUT_MS}. The
+   * run stops waiting then either way, and the hook stays owed; pass it to a
+   * vendor call so the call stops too.
+   */
+  signal: AbortSignal;
 }
 
 /** A unit of app-owned setup that runs for every new org. Must be idempotent. */
@@ -122,22 +137,37 @@ export function orgCreatedHookKeys(): string[] {
 export interface OrgCreatedRunResult {
   /** Hooks that ran and succeeded, and are no longer owed. */
   succeeded: number;
-  /** Hooks that threw, and stay owed. */
+  /** Hooks that threw or timed out, and stay owed. */
   failed: number;
-  /** Owed keys with no hook registered any more, dropped from the list. */
-  dropped: number;
+  /**
+   * Owed keys this process has no hook for. Left owed, not run: during a
+   * rolling deploy the next run may be on an instance that has it.
+   */
+  unregistered: number;
 }
 
-const NOTHING_RAN: OrgCreatedRunResult = { succeeded: 0, failed: 0, dropped: 0 };
+const NOTHING_RAN: OrgCreatedRunResult = { succeeded: 0, failed: 0, unregistered: 0 };
 
 /**
- * Run every hook an org is still owed, and take the ones that succeeded off
- * its list.
+ * How long one hook may run before it is given up on for this run and left
+ * owed. A create waits for the hooks, so one hung on a vendor must not hold
+ * the request open; the hook is told through `signal` so it can stop.
+ */
+export const ORG_CREATED_HOOK_TIMEOUT_MS = 10_000;
+
+/**
+ * Run every hook an org is still owed, one at a time in the order they were
+ * registered, and take the ones that succeeded off its list.
  *
- * Never throws: a hook's throw is logged at `error` and leaves it owed, and a
- * failure to read the org or to record the successes is logged too, since the
- * maintenance job asks again. With no hook registered it returns at once,
- * without reading the org.
+ * **One at a time** because a hook that writes `Org.settings` (switches, a
+ * provider grant) does so in a SERIALIZABLE transaction on the org row: two
+ * at once would make one of them fail. Registration order also lets an app
+ * rely on one hook's setup being there for the next.
+ *
+ * Never throws: a hook's throw or timeout is logged at `error` and leaves it
+ * owed, and a failure to read the org or to record the successes is logged
+ * too, since the maintenance job asks again. With no hook registered it
+ * returns at once, without reading the org.
  *
  * @param known What the caller already knows, to save the reads on the run
  *   straight after a create: the founding owner it named. Absent on a retry,
@@ -159,7 +189,7 @@ export async function runOrgCreatedHooks(
     if (!org || !owed) return NOTHING_RAN;
 
     const ownerUserId = known ? known.ownerUserId : await foundingOwnerOf(orgId);
-    const ctx: OrgCreatedContext = {
+    const base = {
       orgId,
       slug: org.slug,
       name: org.name,
@@ -168,40 +198,40 @@ export async function runOrgCreatedHooks(
       retry: known === undefined,
     };
 
-    const runnable = owed.owed.flatMap((key) => {
-      const hook = hooks.get(key);
-      return hook ? [{ key, hook }] : [];
-    });
-    const dropped = owed.owed.filter((key) => !hooks.has(key));
-    if (dropped.length > 0) {
-      logger.warn('org-created: owed hooks are no longer registered; dropped', {
+    const owedKeys = new Set(owed.owed);
+    const runnable = [...hooks.entries()].filter(([key]) => owedKeys.has(key));
+    const unregistered = owed.owed.filter((key) => !hooks.has(key));
+    if (unregistered.length > 0) {
+      // Not dropped: an instance on another version may have it. A key no
+      // version registers any more stays owed and costs nothing.
+      logger.debug('org-created: owed hooks not registered in this process; left owed', {
         orgId,
-        hooks: dropped,
+        hooks: unregistered,
       });
     }
 
-    const outcomes = await runAsOrg(orgId, () =>
-      Promise.all(
-        runnable.map(async ({ key, hook }) => {
-          try {
-            await hook(ctx);
-            return { key, ok: true };
-          } catch (err) {
-            logger.error('org-created hook failed; the maintenance job retries it', {
-              hook: key,
-              orgId,
-              retry: ctx.retry,
-              error: err instanceof Error ? err.message : String(err),
-            });
-            return { key, ok: false };
-          }
-        })
-      )
-    );
+    const succeeded = await runAsOrg(orgId, async () => {
+      const done: string[] = [];
+      for (const [key, hook] of runnable) {
+        try {
+          await withTimeout(ORG_CREATED_HOOK_TIMEOUT_MS, `org-created hook ${key}`, (signal) =>
+            Promise.resolve(hook({ ...base, signal }))
+          );
+          done.push(key);
+        } catch (err) {
+          logger.error('org-created hook failed; the maintenance job retries it', {
+            hook: key,
+            orgId,
+            retry: base.retry,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      return done;
+    });
 
-    const succeeded = outcomes.filter((o) => o.ok).map((o) => o.key);
     try {
-      await clearOrgCreatedOwed(orgId, [...succeeded, ...dropped]);
+      await clearOrgCreatedOwed(orgId, succeeded);
     } catch (err) {
       // The hooks ran; only the record of it failed, so they run again.
       logger.warn('org-created: could not record the hooks that succeeded; they will run again', {
@@ -212,8 +242,8 @@ export async function runOrgCreatedHooks(
     }
     return {
       succeeded: succeeded.length,
-      failed: outcomes.length - succeeded.length,
-      dropped: dropped.length,
+      failed: runnable.length - succeeded.length,
+      unregistered: unregistered.length,
     };
   } catch (err) {
     logger.error('org-created hooks could not be run for an org; the maintenance job retries', {

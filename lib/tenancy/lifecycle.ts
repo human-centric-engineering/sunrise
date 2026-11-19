@@ -296,9 +296,18 @@ export async function createOrg(
   // The app's setup first, so a provider it grants is there for the platform
   // agents' bindings to be picked from. Never fatal: what fails stays owed and
   // the `orgCreatedHooks` maintenance job retries it.
-  if (settings) await runOrgCreatedHooks(org.id, { ownerUserId: owner?.id ?? null });
+  if (!settings) {
+    await materialisePlatformAgents(org.id);
+    return org;
+  }
+  await runOrgCreatedHooks(org.id, { ownerUserId: owner?.id ?? null });
   await materialisePlatformAgents(org.id);
-  return org;
+  // The row as inserted still lists every hook as owed; answer with what the
+  // hooks left, so a caller is not told setup is pending when it is not.
+  const current = await db.org
+    .findUnique({ where: { id: org.id }, select: orgSelect })
+    .catch(() => null);
+  return current ?? org;
 }
 
 /**

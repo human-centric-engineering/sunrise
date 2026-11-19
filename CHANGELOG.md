@@ -46,11 +46,14 @@ release process.
   `lib/tenancy/org-created-hooks.ts` to grant a new org a provider, set its
   starting switches or anything else it needs. Every org passes through
   `createOrg()`, so the hooks run however it was made, told
-  `{ orgId, slug, name, source, ownerUserId, retry }` (`OrgCreatedContext`,
-  `OrgCreatedSource`). `createOrg()` takes an optional `source`
-  (`'admin' | 'signup' | 'app'`, default `'app'`). Hooks run after the create
-  commits, in the new org's scope and before its platform agents; one that
-  throws stays owed in `Org.settings.orgCreated` and a new `orgCreatedHooks`
+  `{ orgId, slug, name, source, ownerUserId, retry, signal }`
+  (`OrgCreatedContext`, `OrgCreatedSource`). `createOrg()` takes an optional
+  `source` (`'admin' | 'signup' | 'app'`, default `'app'`; `'signup'` is
+  reserved for self-serve signup, which does not create orgs yet). Hooks run
+  after the create commits, one at a time in registration order, each bounded
+  by `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s), in the new org's scope and before
+  its platform agents; one that throws or times out stays owed in
+  `Org.settings.orgCreated` and a new `orgCreatedHooks`
   maintenance job (appended to `backgroundTasks`) retries it every 15 minutes
   until it succeeds, so **hooks must be idempotent**. Only orgs created after a
   hook is registered owe it. With nothing registered, creating an org writes
