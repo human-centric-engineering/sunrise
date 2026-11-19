@@ -422,6 +422,16 @@ describe('a signup org’s deferred setup, off the request (t-1062)', () => {
     await vi.waitFor(() => expect(mockCompleteSignupOrg).toHaveBeenCalledWith(NEW_ORG, userId));
   });
 
+  it('the session minted at an OAuth signup releases the founder’s org too', async () => {
+    const user = newUser();
+
+    await signUp(user, OAUTH_PATH);
+
+    await vi.waitFor(() =>
+      expect(mockCompleteFoundedSignupOrgs).toHaveBeenCalledWith(user.id, { signingIn: true })
+    );
+  });
+
   it('every sign-in at multi releases the signup orgs the user founded, as able to act', async () => {
     const userId = 'cmuser00000000000000signin';
     db.orgMembership.findMany.mockResolvedValue([

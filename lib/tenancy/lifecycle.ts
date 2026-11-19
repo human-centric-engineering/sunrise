@@ -54,6 +54,7 @@ import { prisma } from '@/lib/db/client';
 import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { logger } from '@/lib/logging';
 import { APIError } from '@/lib/api/errors';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -304,15 +305,15 @@ export async function createOrg(
  * recorded as owed but **not run**: a hook is told the org's owner, and there
  * is none yet. Nor are the platform agents placed. (The `platformAgents` job
  * may still reach a marked org; what it writes cascades with the org.) The mark
- * is removed once the founder is a member **and can act there**: their address
- * is verified, or the install does not require it. That is the transaction
- * that writes the founder's membership (`writeNewUserMemberships`,
- * `healSignupRecord`) when it already holds, else the founder's verification
- * ({@link completeFoundedSignupOrgs}); then {@link completeSignupOrg} runs
+ * is removed once the founder is a member **and can act there**: the install
+ * does not require a verified address, or theirs is verified, or they have
+ * had a session. That is the transaction that writes the founder's membership
+ * (`writeNewUserMemberships`, `healSignupRecord`) when it already holds, else
+ * their verification or sign-in ({@link completeFoundedSignupOrgs}); then {@link completeSignupOrg} runs
  * both. So an email signup whose address is never proven gets an org row and
- * none of the app's setup (the `platformAgents` job may still place agents). The org-created retry job skips a marked org, and
- * releases the mark itself for a founder who can act but whose release was
- * missed.
+ * none of the app's setup (the `platformAgents` job may still place agents).
+ * The org-created retry job skips a marked org, and releases the mark itself
+ * for a founder who can act but whose release was missed.
  *
  * A signup that fails after this (the user INSERT is refused) leaves a marked
  * org with no member that no user's signup record names; the
@@ -399,14 +400,15 @@ async function insertOrg(
   ownerId: string | null,
   db: LifecycleDb
 ): Promise<OrgRecord> {
-  return db
+  let healedSignupOrg: string | null = null;
+  const org = await db
     .$transaction(async (tx) => {
       const created = await tx.org.create({
         data: { slug: input.slug, name: input.name, ...(settings ? { settings } : {}) },
         select: orgSelect,
       });
       if (ownerId) {
-        await healSignupRecord(ownerId, tx);
+        healedSignupOrg = await healSignupRecord(ownerId, tx);
         await tx.orgMembership.create({
           data: { orgId: created.id, userId: ownerId, role: ORG_OWNER_ROLE },
         });
@@ -419,6 +421,22 @@ async function insertOrg(
       }
       throw err;
     });
+  if (ownerId) setUpHealedSignupOrg(healedSignupOrg, ownerId);
+  return org;
+}
+
+/**
+ * Run the deferred setup of a signup org a `healSignupRecord()` just gave its
+ * founder (§134 t-1062), after the response, once the writer's transaction
+ * has committed. Nothing when the heal founded none.
+ */
+function setUpHealedSignupOrg(orgId: string | null, ownerUserId: string): void {
+  if (!orgId) return;
+  keepRunningAfterResponse(
+    () => completeSignupOrg(orgId, ownerUserId),
+    'Setting up a healed signup org',
+    { orgId, userId: ownerUserId }
+  );
 }
 
 /**
@@ -646,8 +664,9 @@ export async function addMember(
 
   // Placed by hand: a signup record that survived a failed write is paid and
   // cleared first (t-838), in the same transaction.
+  let healedSignupOrg: string | null = null;
   const membership = await db.$transaction(async (tx) => {
-    await healSignupRecord(userId, tx);
+    healedSignupOrg = await healSignupRecord(userId, tx);
     // The record may have named this very org, in which case it is now written
     // — with the role the invitation gave. A role the caller asked for wins
     // over it (review round 3); with none asked, the invitation's stands.
@@ -669,6 +688,7 @@ export async function addMember(
     });
   });
 
+  setUpHealedSignupOrg(healedSignupOrg, userId);
   logger.info('Org member added', { orgId, userId, role: membership.role });
   return membership;
 }
@@ -867,7 +887,9 @@ export async function syncInstallMembershipRole(
 ): Promise<MembershipRecord> {
   // A surviving signup record is paid first (t-838): the floor written alone
   // would stop the sign-in heal ever placing them in the org that invited them.
-  await healSignupRecord(user.id, db);
+  // Its setup runs after the response, by when a caller's transaction has
+  // committed.
+  setUpHealedSignupOrg(await healSignupRecord(user.id, db), user.id);
   const { role } = initialMembershipFor(user);
   const membership = await db.orgMembership.upsert({
     where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId: user.id } },

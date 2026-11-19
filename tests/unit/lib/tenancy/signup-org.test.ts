@@ -124,9 +124,9 @@ describe('signupOrgMemberships — the default', () => {
     expect(mockCreateSignupOrg).toHaveBeenCalledTimes(1);
     const [input] = mockCreateSignupOrg.mock.calls[0] as [{ slug: string; name: string }];
     expect(input.name).toBe('Ada Lovelace’s organisation');
-    // The name in slug form with a random suffix; never the address.
-    expect(input.slug).toMatch(/^ada-lovelace-s-organisation-[0-9a-f]{8}$/);
-    expect(input.slug).not.toContain('example');
+    // Neither their name nor their address: a slug is in URLs and logs, and
+    // outlives an erased founder.
+    expect(input.slug).toMatch(/^org-[0-9a-f]{8}$/);
   });
 
   it('two people with the same name get different slugs', async () => {
@@ -136,10 +136,11 @@ describe('signupOrgMemberships — the default', () => {
     expect(a.slug).not.toBe(b.slug);
   });
 
-  it('drops accents from the slug rather than splitting the word', async () => {
-    await signupOrgMemberships({ ...person, name: 'Renée Dubois' }, EMAIL);
+  it('drops accents from an app-named org’s slug rather than splitting the word', async () => {
+    registerSignupOrgResolver(() => ({ kind: 'own', name: 'Café Renée' }));
+    await signupOrgMemberships(person, EMAIL);
     const [input] = mockCreateSignupOrg.mock.calls[0] as [{ slug: string }];
-    expect(input.slug).toMatch(/^renee-dubois-s-organisation-[0-9a-f]{8}$/);
+    expect(input.slug).toMatch(/^cafe-renee-[0-9a-f]{8}$/);
   });
 
   it('cuts a long name by character, never inside an emoji', async () => {

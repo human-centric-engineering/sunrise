@@ -1817,9 +1817,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
         expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
         const [ops] = mocks.prisma.$transaction.mock.calls[0] as [unknown[]];
-        // Both memberships, the cleared record, and the awaiting-founder
-        // clear for a signup org (t-1062).
-        expect(ops).toHaveLength(4);
+        // Both memberships and the cleared record; an ADMIN membership never
+        // founds a signup org, so no awaiting-founder clear (t-1062).
+        expect(ops).toHaveLength(3);
         expect(mocks.prisma.user.update).toHaveBeenCalledWith({
           where: { id: 'tx-user' },
           data: { signupOrgId: null, signupOrgRole: null },

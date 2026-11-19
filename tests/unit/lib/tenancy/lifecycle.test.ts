@@ -570,6 +570,25 @@ describe('addMember', () => {
     });
   });
 
+  it('runs the deferred setup of a signup org the heal founded, after the add (t-1062)', async () => {
+    const FOUNDED = 'cmorg00000000000000founded';
+    db.user.findUnique.mockResolvedValue({
+      ...human(OTHER),
+      signupOrgId: FOUNDED,
+      signupOrgRole: ORG_OWNER_ROLE,
+    });
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.orgMembership.count.mockResolvedValue(3);
+    db.$executeRaw.mockResolvedValue(1); // the founder's mark removed
+    mockRunHooks.mockResolvedValue({ succeeded: 0, failed: 0, unregistered: 0 });
+    mockReconcile.mockResolvedValue({});
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER);
+
+    await vi.waitFor(() => expect(mockReconcile).toHaveBeenCalledWith(FOUNDED));
+    expect(mockRunHooks).toHaveBeenCalledWith(FOUNDED, { ownerUserId: OTHER });
+  });
+
   it('a role the caller asked for wins over the one a healed record wrote for the same org (review round 3)', async () => {
     db.user.findUnique.mockResolvedValue({
       ...human(OTHER),

@@ -259,7 +259,10 @@ export async function signupOrgMemberships(
         return null;
       }
       // The seat it takes is counted as `addMember()` counts one; a full org
-      // is a fallback like the rest, not a refusal of the signup.
+      // is a fallback like the rest, not a refusal of the signup. Counted
+      // here, before the membership is written, without a lock: two signups
+      // at once can both take the last seat, as two invitations accepted at
+      // once can.
       const full = await refuseOverSeatsLimit(org.id, { platformAdmin: false }).then(
         () => false,
         (error: unknown) => {
@@ -275,8 +278,12 @@ export async function signupOrgMemberships(
       return { membership: { orgId: org.id, role: answer.role ?? DEFAULT_ORG_ROLE } };
     }
 
-    const name = answer.name ?? defaultOrgName(user);
-    const org = await createSignupOrg({ name, slug: signupOrgSlug(name) });
+    const org = await createSignupOrg({
+      name: answer.name ?? defaultOrgName(user),
+      // Named by the app: its slug may follow its name. The default name is
+      // the person's, which a URL and a log line must not carry.
+      slug: answer.name ? signupOrgSlug(answer.name) : signupOrgSlug(''),
+    });
     return { membership: { orgId: org.id, role: ORG_OWNER_ROLE } };
   } catch (error) {
     logger.error('Failed to decide a signup’s own org; using the install org', error, log);
@@ -333,9 +340,10 @@ function isAwaitingFounder(settings: unknown): boolean {
 }
 
 /**
- * A slug for a new signup org: the name in slug form, cut short, and a random
- * suffix so two people with the same name never collide. Not the address: a
- * slug can appear in URLs.
+ * A slug for a new signup org: an app-chosen name in slug form, cut short,
+ * and a random suffix so two orgs with the same name never collide; with no
+ * name, `org-` and the suffix. Never from the person's name or address: a
+ * slug appears in URLs and logs, and outlives an erased founder.
  */
 function signupOrgSlug(name: string): string {
   const base = name

@@ -884,6 +884,28 @@ describe('the signup record (t-838)', () => {
     expect(mocks.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: cleared });
   });
 
+  it('healSignupRecord answers the signup org it founded, only for an OWNER record (t-1062)', async () => {
+    mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
+    mocks.$executeRaw.mockResolvedValue(1);
+
+    mocks.user.findUnique.mockResolvedValue({
+      ...human,
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: ORG_OWNER_ROLE,
+    });
+    expect(await healSignupRecord(USER_ID, db)).toBe(OTHER_ORG);
+
+    // A member, not the founder: the mark is never touched.
+    mocks.$executeRaw.mockClear();
+    mocks.user.findUnique.mockResolvedValue({
+      ...human,
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: ORG_ADMIN_ROLE,
+    });
+    expect(await healSignupRecord(USER_ID, db)).toBeNull();
+    expect(mocks.$executeRaw).not.toHaveBeenCalled();
+  });
+
   it('healSignupRecord writes nothing for a user with no record', async () => {
     mocks.user.findUnique.mockResolvedValue({ ...human, signupOrgId: null, signupOrgRole: null });
 
@@ -909,8 +931,10 @@ describe('the signup record (t-838)', () => {
 
     expect(mocks.$transaction).toHaveBeenCalledTimes(1);
     const [ops] = mocks.$transaction.mock.calls[0];
-    // The awaiting-founder clear, both memberships, the cleared record.
-    expect(ops).toHaveLength(4);
+    // Both memberships and the cleared record: an ADMIN membership never
+    // founds a signup org, so there is no awaiting-founder clear (t-1062).
+    expect(ops).toHaveLength(3);
+    expect(mocks.$executeRaw).not.toHaveBeenCalled();
     expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: { orgId: OTHER_ORG, userId: USER_ID, role: ORG_ADMIN_ROLE },

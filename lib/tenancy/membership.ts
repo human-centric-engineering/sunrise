@@ -519,25 +519,29 @@ const CLEARED_SIGNUP_RECORD: SignupRecord = { signupOrgId: null, signupOrgRole: 
  *
  * Runs on `db` as given: pass the transaction the caller writes in, so the
  * grant, the caller's own write and the clear land together.
+ *
+ * Answers the signup org (§134 t-1062) whose awaiting-founder mark it
+ * removed, or `null`: the caller runs that org's deferred setup
+ * (`completeSignupOrg()`) once its transaction has committed.
  */
 export async function healSignupRecord(
   userId: string,
   db: Pick<PrismaClient, 'user' | 'org' | 'orgMembership' | '$executeRaw'> = prisma
-): Promise<void> {
+): Promise<string | null> {
   const user = await db.user.findUnique({
     where: { id: userId },
     select: { role: true, accountType: true, signupOrgId: true, signupOrgRole: true },
   });
-  if (!user?.signupOrgId) return;
+  if (!user?.signupOrgId) return null;
   const recorded = await recordedMemberships(userId, user, db);
-  if (!recorded) return; // the org is gone, and recordedMemberships cleared it
+  if (!recorded) return null; // the org is gone, and recordedMemberships cleared it
   for (const membership of [recorded.membership, recorded.installMembership]) {
     if (membership) await upsertMembership(userId, membership, db);
   }
-  // A signup org founded here runs its deferred setup from the maintenance
-  // jobs (the mark is what kept them off it).
-  await clearAwaitingFounder(recorded.membership.orgId, userId, db);
+  // A signup org founded here: the caller runs its deferred setup.
+  const unmarked = (await clearAwaitingFounder(recorded.membership, userId, db)) ?? 0;
   await db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD });
+  return unmarked > 0 ? recorded.membership.orgId : null;
 }
 
 /**
@@ -587,27 +591,35 @@ export async function writeNewUserMemberships(
     .filter((m): m is InitialMembership => m !== undefined)
     .map((m) => upsertMembership(userId, m, db));
   const orgId = memberships.membership.orgId;
-  const [unmarked] = await db.$transaction([
-    clearAwaitingFounder(orgId, userId, db),
-    ...writes,
-    db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD }),
-  ]);
+  const clear = clearAwaitingFounder(memberships.membership, userId, db);
+  const cleared = db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD });
+  if (!clear) {
+    await db.$transaction([...writes, cleared]);
+    return { founded: null };
+  }
+  // After the membership writes, so the mark goes with the founder's row.
+  const results = await db.$transaction([...writes, clear, cleared]);
+  const unmarked = results[writes.length] as number;
   return { founded: unmarked > 0 ? orgId : null };
 }
 
 /**
  * Remove an org's awaiting-founder mark (`ORG_AWAITING_FOUNDER_KEY`), if it
- * has one and `founderId` can act there ({@link founderCanAct}); resolves to
- * the rows changed, 1 or 0. One conditional statement because Prisma cannot
+ * has one, the membership being written makes `founderId` its OWNER, and
+ * they can act there ({@link founderCanAct}); resolves to the rows changed,
+ * 1 or 0. Any other membership (a resolver's `join` that raced a signup's
+ * mark) never removes it. One conditional statement because Prisma cannot
  * remove a key from a JSON column, and so it can sit in the membership write's
  * batch transaction. `org` is a system table, with no row policy, so this is
  * the same write at `single` and `multi`.
  */
 function clearAwaitingFounder(
-  orgId: string,
+  membership: InitialMembership,
   founderId: string,
   db: Pick<PrismaClient, '$executeRaw'>
-) {
+): Prisma.PrismaPromise<number> | null {
+  const { orgId } = membership;
+  if (membership.role !== ORG_OWNER_ROLE) return null;
   return db.$executeRaw`
     UPDATE org
        SET settings = settings - ${ORG_AWAITING_FOUNDER_KEY}::text,

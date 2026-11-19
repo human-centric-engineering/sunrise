@@ -1112,6 +1112,16 @@ export async function sessionCreateBeforeHook(
   try {
     const pending = await getPendingSignup();
     if (pending) {
+      // A session minted at signup (OAuth) proves the founder can act, though
+      // the after hook, which writes the membership, runs after this hook and
+      // may have found no session row yet. After the response, by when it has.
+      if (isMultiTenant()) {
+        keepRunningAfterResponse(
+          () => completeFoundedSignupOrgs(session.userId, { signingIn: true }),
+          'Setting up a signing-in founder’s signup org',
+          { userId: session.userId }
+        );
+      }
       return { data: { activeOrgId: pending.membership.orgId } };
     }
 
