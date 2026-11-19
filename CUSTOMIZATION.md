@@ -700,7 +700,7 @@ waitlistEntryId }` and answers one of:
 
 | Answer                           | The person lands as                                                       |
 | -------------------------------- | ------------------------------------------------------------------------- |
-| `{ kind: 'own', name? }`         | OWNER of a new org (`name` is its display name; the platform picks one)   |
+| `{ kind: 'own', name? }`         | OWNER of a new org (`name` is its display name; else "My organisation")   |
 | `{ kind: 'join', orgId, role? }` | `role` (default MEMBER) in an org that exists; the role is taken as given |
 | `{ kind: 'install' }`            | the install org, as before this seam existed                              |
 

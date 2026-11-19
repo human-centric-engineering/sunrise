@@ -356,10 +356,14 @@ the setup. So a form submitted with an address nobody proves runs none of the
 app's setup; such an org has a member, so the sweep below leaves it. A founder
 healed in later (at sign-in, or by `healSignupRecord()` when an admin adds them
 elsewhere) has the mark removed the same way, and that org's setup runs after
-the response. Only an `OWNER` membership removes a mark. The default org's slug
-is `org-<random>`, never from the person's name or address (a slug is in URLs
-and logs, and outlives an erased founder); an app-chosen `name` gives a slug
-from that name. As a backstop,
+the response. Only an `OWNER` membership removes a mark.
+
+**Nothing of the person is copied onto the org.** With no app-chosen `name`,
+the org is called "My organisation" (`DEFAULT_SIGNUP_ORG_NAME`) and its slug is
+`org-<random>`: never from the person's name or address. `eraseUser()` does not
+touch `Org`, so a copy there would outlive their erasure, and a slug is in URLs
+and logs. An app that answers `{ kind: 'own', name }` with a name taken from
+the person makes that copy itself, and owns its erasure. As a backstop,
 the `orgCreatedHooks` job (hooks registered or not) releases the mark itself on
 a signup org older than 15 minutes (`ORG_CREATED_FOUNDER_GRACE_MS`) whose OWNER
 can act. A marked org is not a resolver's `join` target. The `platformAgents`

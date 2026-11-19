@@ -43,6 +43,7 @@ vi.mock('@/lib/logging', () => ({
 
 import {
   asksSignupOrg,
+  DEFAULT_SIGNUP_ORG_NAME,
   hasSignupOrgResolver,
   registerSignupOrgResolver,
   signupOrgMemberships,
@@ -123,9 +124,10 @@ describe('signupOrgMemberships — the default', () => {
     expect(result).toEqual({ membership: { orgId: NEW_ORG, role: ORG_OWNER_ROLE } });
     expect(mockCreateSignupOrg).toHaveBeenCalledTimes(1);
     const [input] = mockCreateSignupOrg.mock.calls[0] as [{ slug: string; name: string }];
-    expect(input.name).toBe('Ada Lovelace’s organisation');
-    // Neither their name nor their address: a slug is in URLs and logs, and
-    // outlives an erased founder.
+    // Neither name nor slug carries their name or address: the org row
+    // outlives an erased founder, and a slug is in URLs and logs.
+    expect(input.name).toBe(DEFAULT_SIGNUP_ORG_NAME);
+    expect(input.name).not.toMatch(/ada|lovelace/i);
     expect(input.slug).toMatch(/^org-[0-9a-f]{8}$/);
   });
 
@@ -141,20 +143,6 @@ describe('signupOrgMemberships — the default', () => {
     await signupOrgMemberships(person, EMAIL);
     const [input] = mockCreateSignupOrg.mock.calls[0] as [{ slug: string }];
     expect(input.slug).toMatch(/^cafe-renee-[0-9a-f]{8}$/);
-  });
-
-  it('cuts a long name by character, never inside an emoji', async () => {
-    const name = `${'a'.repeat(84)}😀😀`;
-    await signupOrgMemberships({ ...person, name }, EMAIL);
-    const [input] = mockCreateSignupOrg.mock.calls[0] as [{ name: string }];
-    expect(input.name).toBe(`${'a'.repeat(84)}😀’s organisation`);
-    expect(input.name.isWellFormed()).toBe(true);
-  });
-
-  it('names the org from the address’s local part when no name was given', async () => {
-    await signupOrgMemberships({ ...person, name: '  ' }, EMAIL);
-    const [input] = mockCreateSignupOrg.mock.calls[0] as [{ name: string }];
-    expect(input.name).toBe('ada’s organisation');
   });
 
   it('falls back to the install org, logged at error, when the org cannot be created', async () => {

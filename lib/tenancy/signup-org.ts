@@ -98,7 +98,9 @@ export interface SignupOrgRequest {
  * Where a resolver sends a self-serve signup.
  *
  * - `own`: a new org of their own, as its `OWNER` (the default). `name` is the
- *   org's display name; absent, the platform's ("Ada's organisation").
+ *   org's display name; absent, {@link DEFAULT_SIGNUP_ORG_NAME}, which the
+ *   founder renames. An app that names the org after the person takes on
+ *   that copy of their personal data, which erasure does not scrub.
  * - `join`: an org that exists, with `role` (default `MEMBER`). The role is
  *   taken as given, `OWNER` included, so name one only when the match proves
  *   the person should hold it.
@@ -134,6 +136,14 @@ export const SIGNUP_ORG_ABANDONED_AFTER_MS = 60 * 60 * 1000;
 export const SIGNUP_ORG_SWEEP_BATCH = 100;
 
 const ORG_NAME_MAX = 100;
+
+/**
+ * The name of a signup's own org when the app gives none. Deliberately not
+ * the person's: an org row outlives its founder's erasure (`eraseUser()` does
+ * not touch `Org`), so a name copied from theirs would survive it. Their slug
+ * is neutral for the same reason ({@link signupOrgSlug}).
+ */
+export const DEFAULT_SIGNUP_ORG_NAME = 'My organisation';
 
 /** A resolver's answer is app code's output: validated, not trusted. */
 const answerSchema = z.discriminatedUnion('kind', [
@@ -279,10 +289,9 @@ export async function signupOrgMemberships(
     }
 
     const org = await createSignupOrg({
-      name: answer.name ?? defaultOrgName(user),
-      // Named by the app: its slug may follow its name. The default name is
-      // the person's, which a URL and a log line must not carry.
-      slug: answer.name ? signupOrgSlug(answer.name) : signupOrgSlug(''),
+      name: answer.name ?? DEFAULT_SIGNUP_ORG_NAME,
+      // Named by the app: its slug may follow its name.
+      slug: signupOrgSlug(answer.name ?? ''),
     });
     return { membership: { orgId: org.id, role: ORG_OWNER_ROLE } };
   } catch (error) {
@@ -316,17 +325,6 @@ async function askResolver(
     return null;
   }
   return parsed.data;
-}
-
-/** "Ada Lovelace's organisation", from the name they gave, else their address's local part. */
-function defaultOrgName(user: { email: string; name: string }): string {
-  const who = user.name.trim() || user.email.split('@')[0].trim();
-  if (!who) return 'New organisation';
-  const suffix = '’s organisation';
-  // By code point, so a cut never splits a surrogate pair (an emoji).
-  return `${Array.from(who)
-    .slice(0, ORG_NAME_MAX - suffix.length)
-    .join('')}${suffix}`;
 }
 
 /** Whether an org's settings still carry the awaiting-founder mark. */

@@ -91,7 +91,9 @@ release process.
   `ORG_CREATED_FOUNDER_GRACE_MS` (15 min). `requiresEmailVerification()`
   (`lib/auth/verification-status.ts`) is the one statement of that rule. A
   resolver naming a suspended org, one at its seats limit, or another
-  signup's still awaiting its founder, falls back like a missing one. A new
+  signup's still awaiting its founder, falls back like a missing one. With no
+  app-chosen name the org is "My organisation" (`DEFAULT_SIGNUP_ORG_NAME`) with
+  an `org-<random>` slug: nothing of the person is copied onto it. A new
   system-scoped `abandonedSignupOrgs` maintenance job (appended to
   `backgroundTasks`, hourly) deletes a marked org with no member that no
   user's signup record names, after `SIGNUP_ORG_ABANDONED_AFTER_MS` (1 h).
