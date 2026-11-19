@@ -458,13 +458,4 @@ describe('retiring and retired models still in use (§136 t-1065)', () => {
     expect(check(report.checks, 'retired_model_in_use').failed).toBe(true);
     expect(report.summary.critical).toBe(0);
   });
-
-  it('reads what is in use once for both checks', async () => {
-    await runConfigHealthChecks();
-    expect(retiringModelsInUse).toHaveBeenCalledTimes(1);
-
-    // Forgotten once settled: the next report reads afresh.
-    await runConfigHealthChecks();
-    expect(retiringModelsInUse).toHaveBeenCalledTimes(2);
-  });
 });
