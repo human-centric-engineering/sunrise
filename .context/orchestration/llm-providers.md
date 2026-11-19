@@ -903,12 +903,15 @@ selection (`spendCapRefusal(..., { ownKey })`) are told by the provider
 manager: `usesOrgOwnKey(provider)` for a provider `getProvider` returned, and
 `providerUsesOrgOwnKey(slug)` before one is fetched, as chat asks at the start
 of a turn. With a cap reached, chat holds the turn's paid calls and, once
-confidential routing has said where the turn goes, asks of the provider it is
-bound for and of each fallback (t-1057): the turn is answered if one of them is
-local, or on the org's own key with the agent's cap not reached, since
-provider selection passes over a paid candidate the caps refuse. Otherwise it
-is refused before anything is saved or sent, naming the agent's cap when a
-candidate on the org's own key was there to answer it. Any call the turn makes
+confidential routing has said where the turn goes, asks the gate
+(`spendCapRefusal`) about the provider it is bound for (t-1057): the agent's,
+or the model for confidential messages it was moved to. The turn is answered
+if that provider is local, or on the org's own key with the agent's cap not
+reached. Otherwise it is refused before anything is saved or sent, naming the
+agent's cap when the provider was on the org's own key. A fallback is not
+asked: chat sends whichever provider serves the turn the bound model's id,
+which a local model or another vendor does not serve, so a turn let in on a
+fallback would fail after its message was saved. Any call the turn makes
 on the platform's keys (a fallback, the summarizer, an embedding on another
 row) meets the org's and the global caps at the gate. Only
 core's own store makes a key the org's own: whatever a registered resolver
