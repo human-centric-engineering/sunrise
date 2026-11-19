@@ -227,8 +227,9 @@ export async function processImage(
   // Create Sharp instance. `.rotate()` with no angle applies the EXIF
   // Orientation tag to the pixels, so phone photos are stored upright. It must
   // come before the metadata read and the resize: `metadata()` still reports
-  // the sensor-order width/height (only swapped for quarter turns, which the
-  // square `cover` size is indifferent to). The tag itself is dropped on
+  // the stored (sensor-order) width/height, not the upright ones. That is safe
+  // here because the `cover` size below is min(width, height), which does not
+  // depend on which side is which. The tag itself is dropped on
   // re-encode, so a sideways result could never be corrected later. An untagged
   // (or orientation 1) input is left as it is, so a caller that pre-rotates is
   // not turned twice.
