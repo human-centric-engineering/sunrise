@@ -71,6 +71,7 @@ import {
   registerEntitlementSwitch,
 } from '@/lib/tenancy/entitlements';
 import { createMockAuthSession } from '@/tests/helpers/auth';
+import { API_KEY_SESSION_ID_PREFIX } from '@/lib/auth/api-keys';
 
 const ORG = 'cmorg000000000000000acme1';
 const OTHER = 'cmorg000000000000000other';
@@ -255,5 +256,65 @@ describe('PATCH (t-1054)', () => {
         },
       })
     );
+  });
+});
+
+describe('the remaining refusals and answers (t-1054)', () => {
+  it('refuses a platform admin for an org they are not acting in: they use the platform route', async () => {
+    const admin = session(ORG);
+    mockGetSession.mockResolvedValue({ ...admin, user: { ...admin.user, role: 'ADMIN' } });
+    mockPrisma.org.findUnique.mockResolvedValue({ id: OTHER, settings: {} });
+    const res = await get(OTHER);
+    expect(res.status).toBe(403);
+    expect((await json(res)).error?.message).toBe(
+      'Switch to this organisation to see or change its switches'
+    );
+  });
+
+  it('refuses an admin API key: setting them is a person’s choice', async () => {
+    const admin = session(ORG);
+    mockResolveApiKey.mockResolvedValue({
+      session: {
+        ...admin,
+        session: { ...admin.session, id: `${API_KEY_SESSION_ID_PREFIX}key_1` },
+        user: { ...admin.user, role: 'ADMIN' },
+      },
+      scopes: ['admin'],
+      rateLimitRpm: null,
+      // Unbound: a key bound to an org is refused before the handler runs.
+      orgId: null,
+      ownerAccountType: 'HUMAN',
+    });
+    const res = await patch({ on: ['beta_editor'], off: [] });
+    expect(res.status).toBe(403);
+    expect((await json(res)).error?.message).toContain('browser session');
+    expect(mockPrisma.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the write;
+  });
+
+  it('answers 409 on a clash with another settings write, auditing nothing', async () => {
+    const { Prisma } = await import('@prisma/client');
+    mockPrisma.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('conflict', { code: 'P2034', clientVersion: 'x' })
+    );
+    expect((await patch({ on: ['beta_editor'], off: [] })).status).toBe(409);
+    expect(mockLogAdminAction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing landed;
+  });
+
+  it('writes and audits nothing when the change leaves the org as it is', async () => {
+    orgStores({ entitlements: { on: ['beta_editor'], off: [] } });
+    const res = await patch({ on: ['beta_editor'], off: [] });
+    expect(res.status).toBe(200);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing to write;
+    expect(mockLogAdminAction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing changed;
+  });
+
+  it("says so when the app's switches failed to register", async () => {
+    __resetEntitlementRegistryForTests();
+    vi.mocked(initAppEntitlements).mockImplementation(() => {
+      throw new Error('broken init');
+    });
+    const res = await patch({ on: ['beta_editor'], off: [] });
+    expect(res.status).toBe(409);
+    expect((await json(res)).error?.message).toContain('failed to register');
   });
 });
