@@ -283,13 +283,17 @@ export const ORG_CREATED_HOOKS_KEY = 'orgCreated';
 export const ORG_CREATED_SOURCES = ['admin', 'signup', 'app'] as const;
 export type OrgCreatedSource = (typeof ORG_CREATED_SOURCES)[number];
 
-const orgCreatedOwedSchema = z.object({
-  owed: z.array(z.string().min(1)),
-  source: z.enum(ORG_CREATED_SOURCES),
-  // Set by a run that holds the org's hooks (`claimOrgCreatedRun`), as the
-  // database wrote it; dropped by that run's {@link clearOrgCreatedOwed}.
-  leaseUntil: z.string().optional(),
-});
+const orgCreatedOwedSchema = z
+  .object({
+    owed: z.array(z.string().min(1)),
+    source: z.enum(ORG_CREATED_SOURCES),
+    // Set by a run that holds the org's hooks (`claimOrgCreatedRun`), as the
+    // database wrote it; dropped by that same run's {@link clearOrgCreatedOwed}.
+    leaseUntil: z.string().optional(),
+  })
+  // Kept, not stripped: a field a newer version adds survives this version's
+  // clear during a rolling deploy.
+  .passthrough();
 
 /**
  * The org-created hooks an org is still owed (§134 t-1061).
@@ -325,15 +329,23 @@ export function orgCreatedSettings(
 }
 
 /**
- * Take `done` off the hooks an org is owed and release the run's lease,
- * removing the key when nothing is left owed. Works from the owed list as the
- * transaction reads it. A serialization clash fails this writer; the hooks it
- * ran stay owed and run again once the lease expires, which is why a hook must
- * be idempotent.
+ * Take `done` off the hooks an org is owed, removing the key when nothing is
+ * left owed, and release the run's lease when `release` names it.
+ *
+ * Works from the record as the transaction reads it, keeping every field it
+ * does not change. The lease is removed only when it is still the one this run
+ * took (`release`, the value its claim wrote): a run that stalled past its
+ * lease must not free the lease a later run now holds. A run that ended on a
+ * timeout passes `null` and keeps its lease until it expires, since its hook
+ * may still be running.
+ *
+ * A serialization clash fails this writer; the hooks it ran stay owed and run
+ * again once the lease expires, which is why a hook must be idempotent.
  */
 export async function clearOrgCreatedOwed(
   orgId: string,
   done: readonly string[],
+  release: string | null,
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<void> {
   await updateSettingsSlice(
@@ -343,7 +355,10 @@ export async function clearOrgCreatedOwed(
       const current = readOrgCreatedOwed(settings);
       if (!current) return LEAVE_AS_IS;
       const owed = current.owed.filter((key) => !done.includes(key));
-      return owed.length === 0 ? null : { owed, source: current.source };
+      if (owed.length === 0) return null;
+      const { leaseUntil, ...rest } = current;
+      const keepLease = leaseUntil !== undefined && leaseUntil !== release;
+      return { ...rest, owed, ...(keepLease ? { leaseUntil } : {}) };
     },
     db
   );

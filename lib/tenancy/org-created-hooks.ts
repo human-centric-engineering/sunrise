@@ -231,13 +231,21 @@ export async function runOrgCreatedHooks(
   if (hooks.size === 0) return NOTHING_RAN;
 
   try {
-    if (!(await claimOrgCreatedRun(orgId))) return NOTHING_RAN;
+    const lease = await claimOrgCreatedRun(orgId);
+    if (lease === null) return NOTHING_RAN;
     const org = await prisma.org.findUnique({
       where: { id: orgId },
       select: { slug: true, name: true, settings: true },
     });
     const owed = org ? readOrgCreatedOwed(org.settings) : null;
-    if (!org || !owed) return NOTHING_RAN;
+    if (!org || !owed) {
+      // A record this version cannot read (one a newer version wrote, say).
+      // Its lease is left to expire; nothing here can run its hooks.
+      logger.warn('org-created: owed record unreadable by this version; left as it is', {
+        orgId,
+      });
+      return NOTHING_RAN;
+    }
 
     const ownerUserId = known ? known.ownerUserId : await foundingOwnerOf(orgId);
     const base = {
@@ -254,7 +262,8 @@ export async function runOrgCreatedHooks(
     const unregistered = owed.owed.filter((key) => !hooks.has(key));
     if (unregistered.length > 0) {
       // Not dropped: an instance on another version may have it. A key no
-      // version registers any more stays owed and costs nothing.
+      // version registers any more stays owed, but the retry job only
+      // selects orgs owing a key this process registers, so it costs a row.
       logger.debug('org-created: owed hooks not registered in this process; left owed', {
         orgId,
         hooks: unregistered,
@@ -262,6 +271,7 @@ export async function runOrgCreatedHooks(
     }
 
     const deadline = Date.now() + ORG_CREATED_RUN_BUDGET_MS;
+    let endedOnTimeout = false;
     const succeeded = await runAsOrg(orgId, async () => {
       const done: string[] = [];
       for (const [key, hook] of runnable) {
@@ -291,15 +301,19 @@ export async function runOrgCreatedHooks(
             retry: base.retry,
             error: err instanceof Error ? err.message : String(err),
           });
-          // It may still be running; the next must not start beside it.
-          if (timedOut) break;
+          // It may still be running; the next must not start beside it, and
+          // the lease stays until it expires so no other run can either.
+          if (timedOut) {
+            endedOnTimeout = true;
+            break;
+          }
         }
       }
       return done;
     });
 
     try {
-      await clearOrgCreatedOwed(orgId, succeeded);
+      await clearOrgCreatedOwed(orgId, succeeded, endedOnTimeout ? null : lease);
     } catch (err) {
       // The hooks ran; only the record of it failed, so they run again.
       logger.warn('org-created: could not record the hooks that succeeded; they will run again', {
@@ -323,27 +337,30 @@ export async function runOrgCreatedHooks(
 }
 
 /**
- * Take the org's lease on its owed hooks: true when this run holds it now.
- * One statement, so two runs cannot both see it free; false when nothing is
- * owed or another run's lease has not expired. `org` is a system table, with
- * no row policy, so this is the same write at `single` and `multi`.
+ * Take the org's lease on its owed hooks. Returns the lease as written, which
+ * the run hands back to release it, or `null` when nothing is owed or another
+ * run's lease has not expired. One statement, so two runs cannot both see it
+ * free. `org` is a system table, with no row policy, so this is the same write
+ * at `single` and `multi`; it bumps `updatedAt` as every other settings write
+ * does.
  */
-async function claimOrgCreatedRun(orgId: string): Promise<boolean> {
-  const claimed = await prisma.$queryRaw<Array<{ id: string }>>`
+async function claimOrgCreatedRun(orgId: string): Promise<string | null> {
+  const claimed = await prisma.$queryRaw<Array<{ lease: string | null }>>`
     UPDATE org
        SET settings = jsonb_set(
              settings,
              '{orgCreated,leaseUntil}',
              to_jsonb(now() + ${ORG_CREATED_LEASE_MS} * interval '1 millisecond')
-           )
+           ),
+           "updatedAt" = now()
      WHERE id = ${orgId}
        AND settings ? 'orgCreated'
        AND (
          settings->'orgCreated'->>'leaseUntil' IS NULL
          OR (settings->'orgCreated'->>'leaseUntil')::timestamptz <= now()
        )
- RETURNING id`;
-  return claimed.length > 0;
+ RETURNING settings->'orgCreated'->>'leaseUntil' AS lease`;
+  return claimed[0]?.lease ?? null;
 }
 
 /** What one maintenance tick did across the orgs that still owe hooks. */
@@ -361,7 +378,7 @@ export interface OrgCreatedRetryResult {
  * still have some.
  *
  * Runs once per tick in the system scope, not once per org: it selects only
- * ACTIVE orgs whose settings still hold an owed record (at most
+ * ACTIVE orgs owing a key this process registers (at most
  * {@link ORG_CREATED_JOB_BATCH}, in random order so a few orgs whose hooks
  * keep failing cannot hold the rest back), and enters each one's own scope to
  * run them. It starts no further org once {@link ORG_CREATED_JOB_BUDGET_MS}
@@ -373,10 +390,13 @@ export async function retryOwedOrgCreatedHooks(): Promise<OrgCreatedRetryResult>
   appInit.ensure();
   if (hooks.size === 0) return result;
 
+  // Only orgs owing a key this process can run: one owing only a key no
+  // version registers any more would otherwise take a batch slot every tick.
+  const keys = [...hooks.keys()];
   const owing = await prisma.$queryRaw<Array<{ id: string }>>`
     SELECT id FROM org
      WHERE status = 'ACTIVE'
-       AND settings ? 'orgCreated'
+       AND settings->'orgCreated'->'owed' ?| ${keys}::text[]
      ORDER BY random()
      LIMIT ${ORG_CREATED_JOB_BATCH}`;
 

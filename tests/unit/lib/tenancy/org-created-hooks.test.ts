@@ -37,7 +37,10 @@ const store = vi.hoisted(() => ({
  */
 const rawSql = vi.hoisted(
   () =>
-    async (strings: TemplateStringsArray, ...values: unknown[]): Promise<Array<{ id: string }>> => {
+    async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ): Promise<Array<{ id: string } | { lease: string }>> => {
       const sql = strings.join('?');
       const recordOf = (settings: unknown): Record<string, unknown> | null => {
         if (typeof settings !== 'object' || settings === null) return null;
@@ -53,12 +56,21 @@ const rawSql = vi.hoisted(
         if (!row || !record) return [];
         const lease = record.leaseUntil;
         if (typeof lease === 'string' && new Date(lease).getTime() > Date.now()) return [];
-        record.leaseUntil = new Date(Date.now() + leaseMs).toISOString();
-        return [{ id: orgId }];
+        const claimed = new Date(Date.now() + leaseMs).toISOString();
+        record.leaseUntil = claimed;
+        return [{ lease: claimed }];
       }
       if (sql.includes('SELECT id FROM org')) {
+        const [keys] = values as [string[]];
         return [...store.orgs.entries()]
-          .filter(([, row]) => (row.status ?? 'ACTIVE') === 'ACTIVE' && recordOf(row.settings))
+          .filter(([, row]) => {
+            const owed = recordOf(row.settings)?.owed;
+            return (
+              (row.status ?? 'ACTIVE') === 'ACTIVE' &&
+              Array.isArray(owed) &&
+              owed.some((key) => keys.includes(key as string))
+            );
+          })
           .map(([id]) => ({ id }));
       }
       throw new Error(`unexpected raw SQL: ${sql}`);
@@ -319,6 +331,70 @@ describe('runOrgCreatedHooks', () => {
     expect((await runOrgCreatedHooks(ORG)).succeeded).toBe(1);
   });
 
+  it("does not free a later run's lease when it finishes after its own expired", async () => {
+    // Run A stalls past its lease (here, inside its hook); run B takes the
+    // expired lease meanwhile. A's clear must leave B's lease in place.
+    let laterLease: string | undefined;
+    register({
+      'app:first': () => {
+        const record = (store.orgs.get(ORG)?.settings as { orgCreated: Record<string, unknown> })
+          .orgCreated;
+        // Later than this run's own lease, as a run that claimed after it would be.
+        laterLease = new Date(Date.now() + ORG_CREATED_LEASE_MS + 60_000).toISOString();
+        record.leaseUntil = laterLease;
+      },
+      'app:second': () => {
+        throw new Error('still failing');
+      },
+    });
+    seedOrg(['app:first', 'app:second']);
+
+    await runOrgCreatedHooks(ORG, { ownerUserId: null });
+
+    expect(store.orgs.get(ORG)?.settings).toEqual({
+      orgCreated: { owed: ['app:second'], source: 'admin', leaseUntil: laterLease },
+    });
+  });
+
+  it('keeps fields of the record it does not know about when it clears', async () => {
+    register({
+      'app:crm': () => {
+        throw new Error('CRM down');
+      },
+    });
+    seedOrg(['app:crm']);
+    const record = (store.orgs.get(ORG)?.settings as { orgCreated: Record<string, unknown> })
+      .orgCreated;
+    record.addedByNewerVersion = 1;
+
+    await runOrgCreatedHooks(ORG, { ownerUserId: null });
+
+    expect(store.orgs.get(ORG)?.settings).toEqual({
+      orgCreated: { owed: ['app:crm'], source: 'admin', addedByNewerVersion: 1 },
+    });
+  });
+
+  it('warns and runs nothing when the owed record is one this version cannot read', async () => {
+    const provider = vi.fn();
+    register({ 'app:provider': provider });
+    store.orgs.set(ORG, {
+      slug: 'new',
+      name: 'New Org',
+      settings: { orgCreated: { owed: ['app:provider'], source: 'import-from-newer' } },
+      createdAt: LONG_AGO,
+    });
+
+    await expect(runOrgCreatedHooks(ORG)).resolves.toEqual({
+      succeeded: 0,
+      failed: 0,
+      unregistered: 0,
+    });
+    expect(provider).not.toHaveBeenCalled();
+    expect(loggerWarn).toHaveBeenCalledWith(expect.stringMatching(/unreadable by this version/), {
+      orgId: ORG,
+    });
+  });
+
   it('releases the lease when it records what happened, even when every hook failed', async () => {
     register({
       'app:crm': () => {
@@ -400,6 +476,13 @@ describe('runOrgCreatedHooks', () => {
       expect(seenSignal?.aborted).toBe(true);
       expect(next).not.toHaveBeenCalled();
       expect(owedNow()).toEqual(['app:hangs', 'app:next']);
+      // The hung hook may still be running, so its lease is kept until it
+      // expires: no other run may start the same hooks beside it.
+      expect(
+        (store.orgs.get(ORG)?.settings as { orgCreated: { leaseUntil?: string } }).orgCreated
+          .leaseUntil
+      ).toEqual(expect.any(String));
+      expect((await runOrgCreatedHooks(ORG)).failed).toBe(0);
       expect(loggerError).toHaveBeenCalledWith(
         expect.stringMatching(/org-created hook failed/),
         expect.objectContaining({ hook: 'app:hangs', error: expect.stringMatching(/timed out/) })
@@ -547,10 +630,18 @@ describe('retryOwedOrgCreatedHooks', () => {
       status: 'SUSPENDED',
     });
     store.orgs.set('org-done', { slug: 'd', name: 'D', settings: null, createdAt: LONG_AGO });
+    // Owes only a key nothing registers any more: not selected at all.
+    store.orgs.set('org-stale', {
+      slug: 'x',
+      name: 'X',
+      settings: orgCreatedSettings(['app:renamed-away'], 'admin'),
+      createdAt: LONG_AGO,
+    });
 
     const result = await retryOwedOrgCreatedHooks();
 
     expect(result).toEqual({ orgs: 2, succeeded: 2, failed: 0 });
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1 + 2); // the select, then one claim per org
     expect(seen.map((s) => s.orgId).sort()).toEqual(['org-a', 'org-b']);
     for (const s of seen) expect(s.inScope).toBe(s.orgId);
     expect(readOrgCreatedOwed(store.orgs.get('org-suspended')?.settings)?.owed).toEqual([

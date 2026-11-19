@@ -659,10 +659,12 @@ self-serve signup (§134 t-1062), which does not create orgs yet.
   (`orgCreated.leaseUntil`, `ORG_CREATED_LEASE_MS`, 2 min) in one conditional
   `UPDATE`, judged on the database's clock, and does nothing if another run
   holds it. So the create and every instance's maintenance job never run a
-  hook side by side; the run releases it when it records what succeeded, and
-  a process that dies mid-run leaves it to expire.
+  hook side by side. The run releases it when it records what succeeded,
+  unless it ended on a timeout (the hook may still be running, so the lease
+  is left to expire), and only if it is still the lease this run took; a
+  process that dies mid-run leaves it to expire.
 - **The retry is one bounded pass.** The job runs once per tick in the system
-  scope: it selects only ACTIVE orgs whose settings still hold an owed record
+  scope: it selects only ACTIVE orgs owing a key this process registers
   (`ORG_CREATED_JOB_BATCH`, 25, in random order so a few failing orgs cannot
   hold the rest back), enters each one's scope, and starts no further org past
   `ORG_CREATED_JOB_BUDGET_MS` (60 s). An install whose orgs owe nothing pays
