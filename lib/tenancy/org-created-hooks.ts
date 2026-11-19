@@ -34,8 +34,9 @@
  * owed but not registered in this process is left owed rather than dropped:
  * during a rolling deploy, the next run may be on an instance that has it.
  *
- * The retry job runs over ACTIVE orgs only (`forEachOrg`), so an org
- * suspended while it still owes hooks gets them when it is reinstated.
+ * The retry job ({@link retryOwedOrgCreatedHooks}) picks up only ACTIVE orgs
+ * that still owe hooks, so an org suspended while it owes some gets them when
+ * it is reinstated.
  *
  * @see lib/app/org-created.ts — the fork-owned registration seam
  * @see lib/tenancy/lifecycle.ts — `createOrg()`, the producer
@@ -99,9 +100,16 @@ const hooks = new Map<string, OrgCreatedHook>();
  * part-way through rolls back.
  *
  * The key is recorded on each new org until the hook succeeds there, so keep
- * it stable: renaming it drops it from orgs still owed the old one.
+ * it stable: an org still owed the old key never runs the renamed hook.
+ *
+ * Throws on an empty key, so the init gate rolls the registration back: a
+ * key the owed record cannot hold would make the whole record unreadable,
+ * and then no hook would run for any new org.
  */
 export function registerOrgCreatedHook(key: string, hook: OrgCreatedHook): void {
+  if (key.trim().length === 0) {
+    throw new Error('registerOrgCreatedHook: the key must not be empty');
+  }
   hooks.set(key, hook);
 }
 
@@ -163,11 +171,23 @@ export const ORG_CREATED_HOOK_TIMEOUT_MS = 10_000;
 export const ORG_CREATED_RUN_BUDGET_MS = 30_000;
 
 /**
- * How old an org must be before the maintenance job runs its owed hooks. The
- * create runs them itself, for up to {@link ORG_CREATED_RUN_BUDGET_MS}; a job
- * that also picked up a brand-new org would run the same hook beside it.
+ * How long a run holds an org's owed hooks before another run may take them
+ * (`Org.settings.orgCreated.leaseUntil`). Longer than
+ * {@link ORG_CREATED_RUN_BUDGET_MS} plus a timed-out hook's tail; a run
+ * releases it when it records what succeeded, so this only matters when a
+ * process dies mid-run.
  */
-export const ORG_CREATED_RETRY_AFTER_MS = 5 * 60 * 1000;
+export const ORG_CREATED_LEASE_MS = 2 * 60 * 1000;
+
+/**
+ * How long one maintenance tick spends on owed hooks across all orgs. Past
+ * it no further org is started, so a vendor outage across many new orgs
+ * cannot fill the tick.
+ */
+export const ORG_CREATED_JOB_BUDGET_MS = 60_000;
+
+/** The most orgs one maintenance tick picks up. */
+export const ORG_CREATED_JOB_BATCH = 25;
 
 /**
  * Run every hook an org is still owed, one at a time in the order they were
@@ -184,9 +204,11 @@ export const ORG_CREATED_RETRY_AFTER_MS = 5 * 60 * 1000;
  * rest stay owed for the job, as do any not started within
  * {@link ORG_CREATED_RUN_BUDGET_MS}.
  *
- * **A retry leaves a new org to its create.** Without `known`, an org younger
- * than {@link ORG_CREATED_RETRY_AFTER_MS} is skipped, so the job never runs a
- * hook beside the create's own run of it.
+ * **Never two runs at once.** A run first takes the org's lease
+ * ({@link ORG_CREATED_LEASE_MS}) in one conditional UPDATE, judged on the
+ * database's clock, and returns at once if another run holds it: the create
+ * and the maintenance job, or two instances' jobs, never run a hook side by
+ * side.
  *
  * Reads and writes through the application client, as the platform-agent
  * reconcile after it does: `createOrg()`'s `db` exists for its own tests, and
@@ -209,15 +231,13 @@ export async function runOrgCreatedHooks(
   if (hooks.size === 0) return NOTHING_RAN;
 
   try {
+    if (!(await claimOrgCreatedRun(orgId))) return NOTHING_RAN;
     const org = await prisma.org.findUnique({
       where: { id: orgId },
-      select: { slug: true, name: true, settings: true, createdAt: true },
+      select: { slug: true, name: true, settings: true },
     });
     const owed = org ? readOrgCreatedOwed(org.settings) : null;
     if (!org || !owed) return NOTHING_RAN;
-    if (!known && Date.now() - org.createdAt.getTime() < ORG_CREATED_RETRY_AFTER_MS) {
-      return NOTHING_RAN;
-    }
 
     const ownerUserId = known ? known.ownerUserId : await foundingOwnerOf(orgId);
     const base = {
@@ -300,6 +320,75 @@ export async function runOrgCreatedHooks(
     });
     return NOTHING_RAN;
   }
+}
+
+/**
+ * Take the org's lease on its owed hooks: true when this run holds it now.
+ * One statement, so two runs cannot both see it free; false when nothing is
+ * owed or another run's lease has not expired. `org` is a system table, with
+ * no row policy, so this is the same write at `single` and `multi`.
+ */
+async function claimOrgCreatedRun(orgId: string): Promise<boolean> {
+  const claimed = await prisma.$queryRaw<Array<{ id: string }>>`
+    UPDATE org
+       SET settings = jsonb_set(
+             settings,
+             '{orgCreated,leaseUntil}',
+             to_jsonb(now() + ${ORG_CREATED_LEASE_MS} * interval '1 millisecond')
+           )
+     WHERE id = ${orgId}
+       AND settings ? 'orgCreated'
+       AND (
+         settings->'orgCreated'->>'leaseUntil' IS NULL
+         OR (settings->'orgCreated'->>'leaseUntil')::timestamptz <= now()
+       )
+ RETURNING id`;
+  return claimed.length > 0;
+}
+
+/** What one maintenance tick did across the orgs that still owe hooks. */
+export interface OrgCreatedRetryResult {
+  /** Orgs a run was started for. */
+  orgs: number;
+  /** Hooks that succeeded across them. */
+  succeeded: number;
+  /** Hooks that failed or were not reached, and stay owed. */
+  failed: number;
+}
+
+/**
+ * The `orgCreatedHooks` maintenance job: run the owed hooks of the orgs that
+ * still have some.
+ *
+ * Runs once per tick in the system scope, not once per org: it selects only
+ * ACTIVE orgs whose settings still hold an owed record (at most
+ * {@link ORG_CREATED_JOB_BATCH}, in random order so a few orgs whose hooks
+ * keep failing cannot hold the rest back), and enters each one's own scope to
+ * run them. It starts no further org once {@link ORG_CREATED_JOB_BUDGET_MS}
+ * has passed. With no hook registered it returns without a query. A suspended
+ * org's owed hooks wait until it is reinstated.
+ */
+export async function retryOwedOrgCreatedHooks(): Promise<OrgCreatedRetryResult> {
+  const result: OrgCreatedRetryResult = { orgs: 0, succeeded: 0, failed: 0 };
+  appInit.ensure();
+  if (hooks.size === 0) return result;
+
+  const owing = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM org
+     WHERE status = 'ACTIVE'
+       AND settings ? 'orgCreated'
+     ORDER BY random()
+     LIMIT ${ORG_CREATED_JOB_BATCH}`;
+
+  const deadline = Date.now() + ORG_CREATED_JOB_BUDGET_MS;
+  for (const { id } of owing) {
+    if (Date.now() >= deadline) break;
+    const run = await runAsOrg(id, () => runOrgCreatedHooks(id), { source: 'job' });
+    if (run.succeeded + run.failed > 0) result.orgs += 1;
+    result.succeeded += run.succeeded;
+    result.failed += run.failed;
+  }
+  return result;
 }
 
 /** The org's earliest OWNER, or `null` when it has none. */

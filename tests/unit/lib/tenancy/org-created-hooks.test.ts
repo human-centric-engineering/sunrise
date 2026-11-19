@@ -22,9 +22,48 @@ vi.mock('@/lib/logging', () => ({
 
 /** One org row's settings column, and its OWNER memberships, as the double holds them. */
 const store = vi.hoisted(() => ({
-  orgs: new Map<string, { slug: string; name: string; settings: unknown; createdAt: Date }>(),
+  orgs: new Map<
+    string,
+    { slug: string; name: string; settings: unknown; createdAt: Date; status?: string }
+  >(),
   owners: new Map<string, string[]>(),
 }));
+
+/**
+ * The two raw statements, played against the store with the same rules the
+ * SQL states: the lease is taken only when an owed record exists and no
+ * unexpired lease is on it; the job selects ACTIVE orgs holding a record.
+ * The SQL itself was checked against Postgres with EXPLAIN when written.
+ */
+const rawSql = vi.hoisted(
+  () =>
+    async (strings: TemplateStringsArray, ...values: unknown[]): Promise<Array<{ id: string }>> => {
+      const sql = strings.join('?');
+      const recordOf = (settings: unknown): Record<string, unknown> | null => {
+        if (typeof settings !== 'object' || settings === null) return null;
+        const record = (settings as Record<string, unknown>).orgCreated;
+        return typeof record === 'object' && record !== null
+          ? (record as Record<string, unknown>)
+          : null;
+      };
+      if (sql.includes('UPDATE org')) {
+        const [leaseMs, orgId] = values as [number, string];
+        const row = store.orgs.get(orgId);
+        const record = row ? recordOf(row.settings) : null;
+        if (!row || !record) return [];
+        const lease = record.leaseUntil;
+        if (typeof lease === 'string' && new Date(lease).getTime() > Date.now()) return [];
+        record.leaseUntil = new Date(Date.now() + leaseMs).toISOString();
+        return [{ id: orgId }];
+      }
+      if (sql.includes('SELECT id FROM org')) {
+        return [...store.orgs.entries()]
+          .filter(([, row]) => (row.status ?? 'ACTIVE') === 'ACTIVE' && recordOf(row.settings))
+          .map(([id]) => ({ id }));
+      }
+      throw new Error(`unexpected raw SQL: ${sql}`);
+    }
+);
 
 const db = vi.hoisted(() => {
   const client = {
@@ -49,6 +88,7 @@ const db = vi.hoisted(() => {
       }),
     },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(client)),
+    $queryRaw: vi.fn(rawSql),
   };
   return client;
 });
@@ -59,8 +99,10 @@ import {
   runOrgCreatedHooks,
   orgCreatedHookKeys,
   ORG_CREATED_HOOK_TIMEOUT_MS,
-  ORG_CREATED_RETRY_AFTER_MS,
+  ORG_CREATED_JOB_BUDGET_MS,
+  ORG_CREATED_LEASE_MS,
   ORG_CREATED_RUN_BUDGET_MS,
+  retryOwedOrgCreatedHooks,
   __resetOrgCreatedHooksForTests,
   type OrgCreatedContext,
 } from '@/lib/tenancy/org-created-hooks';
@@ -113,6 +155,16 @@ describe('orgCreatedHookKeys', () => {
   it('names every registered hook', () => {
     register({ 'app:provider': () => {}, 'app:package': () => {} });
     expect(orgCreatedHookKeys()).toEqual(['app:provider', 'app:package']);
+  });
+
+  it('refuses an empty key, rolling back the whole init', () => {
+    // An empty key would make the owed record unreadable for every new org.
+    initAppOrgCreatedHooks.mockImplementation(() => {
+      registerOrgCreatedHook('app:fine', () => {});
+      registerOrgCreatedHook('  ', () => {});
+    });
+
+    expect(orgCreatedHookKeys()).toEqual([]);
   });
 
   it('rolls back what a throwing init had already registered', () => {
@@ -250,19 +302,38 @@ describe('runOrgCreatedHooks', () => {
     expect(owedNow()).toEqual(['app:only-on-new-version']);
   });
 
-  it('leaves a brand-new org to its create on a retry, and runs it once it is old enough', async () => {
+  it('does not start a run while another holds the lease, and runs once it expires', async () => {
     const provider = vi.fn();
     register({ 'app:provider': provider });
     seedOrg(['app:provider']);
-    const org = store.orgs.get(ORG);
-    if (org) org.createdAt = new Date(Date.now() - ORG_CREATED_RETRY_AFTER_MS + 60_000);
+    const record = (store.orgs.get(ORG)?.settings as { orgCreated: Record<string, unknown> })
+      .orgCreated;
+    // Another run (the create, or another instance's job) holds it.
+    record.leaseUntil = new Date(Date.now() + ORG_CREATED_LEASE_MS).toISOString();
 
-    expect((await runOrgCreatedHooks(ORG)).succeeded).toBe(0);
+    expect(await runOrgCreatedHooks(ORG)).toEqual({ succeeded: 0, failed: 0, unregistered: 0 });
     expect(provider).not.toHaveBeenCalled();
 
-    if (org) org.createdAt = new Date(Date.now() - ORG_CREATED_RETRY_AFTER_MS - 1);
+    // That run died without releasing it: once expired, the next run takes it.
+    record.leaseUntil = new Date(Date.now() - 1).toISOString();
     expect((await runOrgCreatedHooks(ORG)).succeeded).toBe(1);
-    // The create's own run is never held back by the age check.
+  });
+
+  it('releases the lease when it records what happened, even when every hook failed', async () => {
+    register({
+      'app:crm': () => {
+        throw new Error('CRM down');
+      },
+    });
+    seedOrg(['app:crm']);
+
+    await runOrgCreatedHooks(ORG, { ownerUserId: null });
+
+    expect(store.orgs.get(ORG)?.settings).toEqual({
+      orgCreated: { owed: ['app:crm'], source: 'admin' },
+    });
+    // So the next tick can take it at once, not after the lease runs out.
+    expect((await runOrgCreatedHooks(ORG)).failed).toBe(1);
   });
 
   it('cuts the last hook to what is left of the run budget, leaving the rest owed', async () => {
@@ -408,6 +479,7 @@ describe('runOrgCreatedHooks', () => {
 
   it('never throws when the org cannot be read, even for a non-Error', async () => {
     register({ 'app:provider': () => {} });
+    seedOrg(['app:provider']);
     db.org.findUnique.mockRejectedValueOnce('socket hang up');
 
     await runOrgCreatedHooks(ORG);
@@ -420,6 +492,7 @@ describe('runOrgCreatedHooks', () => {
 
   it('never throws when the org cannot be read', async () => {
     register({ 'app:provider': () => {} });
+    seedOrg(['app:provider']);
     db.org.findUnique.mockRejectedValueOnce(new Error('connection reset'));
 
     await expect(runOrgCreatedHooks(ORG)).resolves.toEqual({
@@ -431,5 +504,93 @@ describe('runOrgCreatedHooks', () => {
       expect.stringMatching(/could not be run/),
       expect.objectContaining({ orgId: ORG, error: 'connection reset' })
     );
+  });
+});
+
+describe('retryOwedOrgCreatedHooks', () => {
+  it('makes no query when no hook is registered', async () => {
+    seedOrg(['app:gone']);
+
+    await expect(retryOwedOrgCreatedHooks()).resolves.toEqual({
+      orgs: 0,
+      succeeded: 0,
+      failed: 0,
+    });
+    expect(db.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('runs the owed hooks of each ACTIVE org that owes some, each in its own scope', async () => {
+    const seen: Array<{ orgId: string; inScope: string | null | undefined }> = [];
+    register({
+      'app:provider': (ctx) => {
+        seen.push({ orgId: ctx.orgId, inScope: getTenantContext()?.orgId });
+      },
+    });
+    const owed = orgCreatedSettings(['app:provider'], 'admin');
+    store.orgs.set('org-a', {
+      slug: 'a',
+      name: 'A',
+      settings: structuredClone(owed),
+      createdAt: LONG_AGO,
+    });
+    store.orgs.set('org-b', {
+      slug: 'b',
+      name: 'B',
+      settings: structuredClone(owed),
+      createdAt: LONG_AGO,
+    });
+    store.orgs.set('org-suspended', {
+      slug: 's',
+      name: 'S',
+      settings: structuredClone(owed),
+      createdAt: LONG_AGO,
+      status: 'SUSPENDED',
+    });
+    store.orgs.set('org-done', { slug: 'd', name: 'D', settings: null, createdAt: LONG_AGO });
+
+    const result = await retryOwedOrgCreatedHooks();
+
+    expect(result).toEqual({ orgs: 2, succeeded: 2, failed: 0 });
+    expect(seen.map((s) => s.orgId).sort()).toEqual(['org-a', 'org-b']);
+    for (const s of seen) expect(s.inScope).toBe(s.orgId);
+    expect(readOrgCreatedOwed(store.orgs.get('org-suspended')?.settings)?.owed).toEqual([
+      'app:provider',
+    ]);
+  });
+
+  it('starts no further org once the tick budget is spent', async () => {
+    vi.useFakeTimers();
+    try {
+      // Each org's hook hangs until its own limit, so each org takes exactly
+      // ORG_CREATED_HOOK_TIMEOUT_MS and the tick has room for budget/limit.
+      const ran: string[] = [];
+      register({
+        'app:hangs': (ctx) => {
+          ran.push(ctx.orgId);
+          return new Promise<void>(() => {});
+        },
+      });
+      const owed = orgCreatedSettings(['app:hangs'], 'admin');
+      const ids = Array.from({ length: 8 }, (_, n) => `org-${n}`);
+      for (const id of ids) {
+        store.orgs.set(id, {
+          slug: id,
+          name: id,
+          settings: structuredClone(owed),
+          createdAt: LONG_AGO,
+        });
+      }
+
+      const run = retryOwedOrgCreatedHooks();
+      await vi.advanceTimersByTimeAsync(ORG_CREATED_JOB_BUDGET_MS * 2);
+      const result = await run;
+
+      const fits = ORG_CREATED_JOB_BUDGET_MS / ORG_CREATED_HOOK_TIMEOUT_MS;
+      expect(fits).toBeLessThan(ids.length);
+      expect(ran).toHaveLength(fits);
+      expect(result).toEqual({ orgs: fits, succeeded: 0, failed: fits });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

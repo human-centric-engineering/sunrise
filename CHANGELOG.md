@@ -54,9 +54,10 @@ release process.
   by `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) and the run by
   `ORG_CREATED_RUN_BUDGET_MS` (30 s), in the new org's scope and before
   its platform agents; one that throws or times out stays owed in
-  `Org.settings.orgCreated` and a new `orgCreatedHooks`
+  `Org.settings.orgCreated` and a new system-scoped `orgCreatedHooks`
   maintenance job (appended to `backgroundTasks`) retries it every 15 minutes
-  until it succeeds, so **hooks must be idempotent**. Only orgs created after a
+  until it succeeds, so **hooks must be idempotent**. A run takes a lease on
+  the org first, so two runs never overlap. Only orgs created after a
   hook is registered owe it. With nothing registered, creating an org writes
   what it did before.
 

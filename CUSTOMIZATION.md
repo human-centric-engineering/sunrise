@@ -626,7 +626,7 @@ export function initAppOrgCreatedHooks(): void {
     const current = await loadOrgEntitlements(orgId);
     if (!current || current.unreadable) throw new Error('switches unreadable');
     if (current.on.length + current.off.length > 0) return;
-    await setOrgSwitches(orgId, { on: ['free-tier'], off: [] });
+    await setOrgSwitches(orgId, { on: ['free_tier'], off: [] });
   });
 }
 ```
@@ -646,9 +646,9 @@ collide. Each has 10 seconds (`ORG_CREATED_HOOK_TIMEOUT_MS`), and all of them
 together 30 (`ORG_CREATED_RUN_BUDGET_MS`): the create waits for them, so a hung
 vendor call must not hold it open. A hook past its time stays owed, its `signal`
 aborts (pass it to your vendor call), and the run stops there, since the hook
-may still be running; the hooks after it stay owed too. The retry job leaves an
-org alone for its first 5 minutes, so it never runs a hook beside the create's
-own run of it. A hook that keeps failing is retried, and logged, every 15
+may still be running; the hooks after it stay owed too. A run takes a short
+lease on the org first, so the create and the retry job (on any instance) never
+run your hooks side by side. A hook that keeps failing is retried, and logged, every 15
 minutes until it succeeds: there is no give-up, because an org without the
 app's setup is the failure this seam exists to prevent.
 

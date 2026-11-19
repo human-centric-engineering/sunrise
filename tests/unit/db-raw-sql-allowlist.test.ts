@@ -180,6 +180,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     calls: 10,
     why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express, plus `SELECT now()` for the run pre-pass's start time (the database clock, not the app's); deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read. And (t-843) a running workflow's own check for erasure receipts since its run started: `data_erasure_receipt` is install-wide (no orgId), and the subquery reads only the run's own row, in the org context the engine writes it under; and erasure's pass after its commit, which lists the runs not finished or written since by id and then locks each one by id (system-scoped, as every erasure read). And (§122 t-901) the same receipt check anchored on a copy's read time rather than a run's start, for a retroactive review: install-wide receipts only. And (t-882) a run's rows in other tables — running-step turns, step-dispatch results, lease events — read by the run's id and narrowed by the same text search, for the run erasure already holds locked; system-scoped like every erasure read",
   },
+  {
+    file: 'lib/tenancy/org-created-hooks.ts',
+    calls: 2,
+    why: "the org-created seam (§134 t-1061): a run's lease on an org's owed hooks, taken in one conditional `UPDATE … RETURNING` on the database's clock so the create and every instance's maintenance job cannot both see it free (Prisma has no conditional JSON update), and the job's select of the ACTIVE orgs whose settings still hold an owed record (`settings ? 'orgCreated'`, a JSON key test Prisma cannot express). Both touch only `org`, a system table with no row policy; the org id is a bound parameter",
+  },
 ];
 
 function countRawSqlCalls(source: string): number {

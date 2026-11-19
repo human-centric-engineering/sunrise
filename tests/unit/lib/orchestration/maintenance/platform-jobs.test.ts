@@ -196,13 +196,14 @@ describe('PLATFORM_JOB_NAMES', () => {
     ]);
   });
 
-  it('declares a scope on every task, and only the audit-table prune and the pending-erasure retrier run as system (§108)', () => {
+  it('declares a scope on every task, and only the audit-table prune, the pending-erasure retrier and the org-created retry run as system (§108)', () => {
     // Every task that touches a tenant-owned table is per-org: under the
     // system scope nothing is stamped, and the reaper, recovery, the scheduler
     // and the evaluation worker all CREATE rows. The system tasks are the
     // prune of two tables that have no org column at all, and the erasure
     // retrier, because a person (`User`) has no org and an erasure spans all
-    // of theirs.
+    // of theirs; and the org-created retry, which selects the few orgs that
+    // owe hooks and enters each one's scope itself (t-1061).
     const scopes = PLATFORM_JOBS.map((job) => [job.name, job.scope] as const);
 
     expect(scopes).toEqual([
@@ -218,7 +219,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       ['platformAgents', 'per-org'],
       ['pendingErasures', { system: expect.stringContaining('pendingErasures') }],
       ['waitlistRetention', 'per-org'],
-      ['orgCreatedHooks', 'per-org'],
+      ['orgCreatedHooks', { system: expect.stringContaining('orgCreatedHooks') }],
     ]);
   });
 

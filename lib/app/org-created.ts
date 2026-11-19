@@ -23,7 +23,7 @@
  *       const current = await loadOrgEntitlements(orgId);
  *       if (!current || current.unreadable) throw new Error('switches unreadable');
  *       if (current.on.length + current.off.length > 0) return;
- *       await setOrgSwitches(orgId, { on: ['free-tier'], off: [] });
+ *       await setOrgSwitches(orgId, { on: ['free_tier'], off: [] });
  *     });
  *   }
  *

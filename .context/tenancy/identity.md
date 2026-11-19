@@ -655,12 +655,20 @@ self-serve signup (§134 t-1062), which does not create orgs yet.
   from holding it open. A timeout aborts the hook's `signal` and ends the run,
   since a hook that ignores the signal is still running; it and the hooks
   after it stay owed.
-- **Never two runs at once.** The retry job skips an org younger than
-  `ORG_CREATED_RETRY_AFTER_MS` (5 min), longer than a create's own run can
-  take. A hook that keeps failing is retried every 15 minutes with no give-up:
-  an org without the app's setup is what the seam exists to prevent.
-- **Active orgs only, on retry.** The job is per-org over ACTIVE orgs, so an
-  org suspended while it owes hooks gets them once it is reinstated.
+- **Never two runs at once.** A run first takes the org's lease
+  (`orgCreated.leaseUntil`, `ORG_CREATED_LEASE_MS`, 2 min) in one conditional
+  `UPDATE`, judged on the database's clock, and does nothing if another run
+  holds it. So the create and every instance's maintenance job never run a
+  hook side by side; the run releases it when it records what succeeded, and
+  a process that dies mid-run leaves it to expire.
+- **The retry is one bounded pass.** The job runs once per tick in the system
+  scope: it selects only ACTIVE orgs whose settings still hold an owed record
+  (`ORG_CREATED_JOB_BATCH`, 25, in random order so a few failing orgs cannot
+  hold the rest back), enters each one's scope, and starts no further org past
+  `ORG_CREATED_JOB_BUDGET_MS` (60 s). An install whose orgs owe nothing pays
+  one read a tick. A hook that keeps failing is retried with no give-up: an
+  org without the app's setup is what the seam exists to prevent. A suspended
+  org's owed hooks wait until it is reinstated.
 - **Before the platform agents.** The app's hooks run first, so a provider an
   app grants is what the agents' bindings are picked from.
 - **In the new org's scope** (`runAsOrg`), so what a hook writes is stamped

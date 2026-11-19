@@ -286,6 +286,9 @@ export type OrgCreatedSource = (typeof ORG_CREATED_SOURCES)[number];
 const orgCreatedOwedSchema = z.object({
   owed: z.array(z.string().min(1)),
   source: z.enum(ORG_CREATED_SOURCES),
+  // Set by a run that holds the org's hooks (`claimOrgCreatedRun`), as the
+  // database wrote it; dropped by that run's {@link clearOrgCreatedOwed}.
+  leaseUntil: z.string().optional(),
 });
 
 /**
@@ -322,18 +325,17 @@ export function orgCreatedSettings(
 }
 
 /**
- * Take `done` off the hooks an org is owed, removing the key when none is
- * left. Works from the owed list as the transaction reads it, so two runs
- * finishing at once each remove only their own. A serialization clash fails
- * this writer; the hooks it ran stay owed and run again, which is why a hook
- * must be idempotent.
+ * Take `done` off the hooks an org is owed and release the run's lease,
+ * removing the key when nothing is left owed. Works from the owed list as the
+ * transaction reads it. A serialization clash fails this writer; the hooks it
+ * ran stay owed and run again once the lease expires, which is why a hook must
+ * be idempotent.
  */
 export async function clearOrgCreatedOwed(
   orgId: string,
   done: readonly string[],
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<void> {
-  if (done.length === 0) return;
   await updateSettingsSlice(
     orgId,
     ORG_CREATED_HOOKS_KEY,
@@ -341,7 +343,7 @@ export async function clearOrgCreatedOwed(
       const current = readOrgCreatedOwed(settings);
       if (!current) return LEAVE_AS_IS;
       const owed = current.owed.filter((key) => !done.includes(key));
-      return owed.length === 0 ? null : { ...current, owed };
+      return owed.length === 0 ? null : { owed, source: current.source };
     },
     db
   );
