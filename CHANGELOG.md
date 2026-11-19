@@ -110,8 +110,9 @@ release process.
   `ownKeyMonthSpend`, and each row and the totals of `GET /costs` (all three
   `groupBy`s) `ownKeyCostUsd`: the part of the spend on orgs' own keys. The
   costs page's trend chart, the dashboard's 7-day chart and the per-model table
-  plot the platform's spend, as the cards beside them do, and say what they
-  leave out. With the org's or the global cap reached, a chat turn is now
+  show the platform's spend, as the cards beside them do: the charts say what
+  they leave out, and the table gains an Own keys column. With the org's or the
+  global cap reached, a chat turn is now
   answered when the provider confidential routing moves it to, or one of its
   fallbacks, is local or on the org's own key, rather than refused because its
   primary is on the platform's key; the refusal, when there is one, comes after
