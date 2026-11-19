@@ -470,6 +470,7 @@ small and conflict-free.)
 | `lib/app/waitlist-config.ts`               | whether the app has a waitlist, and its fields, lists and screening    | `getWaitlistConfig()` → the waitlist routes, page and erasure step (server)                                           |
 | `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)                                  | `instrumentation.ts` `register()` (server, all envs)                                                                  |
 | `lib/app/user-created.ts`                  | react to a new account (`initAppUserCreatedHooks`)                     | better-auth `user.create.after` (server)                                                                              |
+| `lib/app/org-created.ts`                   | set up every new org (`initAppOrgCreatedHooks`)                        | `createOrg()`, then the `orgCreatedHooks` maintenance job until it succeeds (server)                                  |
 | `lib/app/erasure.ts`                       | erasure cleanup for your data (`initAppErasureHooks`)                  | `eraseUser()` via `getErasureCleanupHooks()` (server)                                                                 |
 | `lib/app/jobs.ts`                          | recurring background work (`initAppJobs`)                              | the maintenance tick (server)                                                                                         |
 | `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)                             | root `eslint.config.mjs` spread (lint)                                                                                |
@@ -608,6 +609,60 @@ fork that needs one edits that hook. Hooks are dispatched together, so a slow on
 others — hand long work to a queue rather than awaiting it here. The `key` is
 for logging and for replacing a registration; register the same key twice and
 the second wins.
+
+**Setting up every new org — `lib/app/org-created.ts`.** To grant a new org an
+AI provider, record how it is served or set its starting entitlement switches,
+fill the empty `initAppOrgCreatedHooks()`:
+
+```typescript
+// lib/app/org-created.ts — yours to edit
+import { registerOrgCreatedHook } from '@/lib/tenancy/org-created-hooks';
+import { setOrgSwitches } from '@/lib/tenancy/entitlements';
+import { loadOrgEntitlements } from '@/lib/tenancy/org-settings';
+
+export function initAppOrgCreatedHooks(): void {
+  // A retry must not undo switches staff have set since: fill only an empty set.
+  registerOrgCreatedHook('app:starting-package', async ({ orgId }) => {
+    const current = await loadOrgEntitlements(orgId);
+    if (!current || current.unreadable) throw new Error('switches unreadable');
+    if (current.on.length + current.off.length > 0) return;
+    await setOrgSwitches(orgId, { on: ['free_tier'], off: [] });
+  });
+}
+```
+
+Every org is made by `createOrg()` (`lib/tenancy/lifecycle.ts`), whether from
+Admin → Organisations or your own code, so the hooks run for all of them. The
+context is `{ orgId, slug, name, source, ownerUserId, retry, signal }`: `source`
+is `admin` or `app` (your own call, the default; `signup` is reserved for
+Sunrise's self-serve signup, which §134 adds next), and `ownerUserId` is the
+founding OWNER or `null`. Each hook runs inside the new org's tenant scope, and
+before the platform agents are placed in it, so a provider you grant is the one
+their bindings are picked from.
+
+Hooks run **one at a time, in the order you register them**, so a later hook
+can rely on an earlier one's setup, and two writes to the org's settings never
+collide. Each has 10 seconds (`ORG_CREATED_HOOK_TIMEOUT_MS`), and all of them
+together 30 (`ORG_CREATED_RUN_BUDGET_MS`): the create waits for them, so a hung
+vendor call must not hold it open. A hook past its time stays owed, its `signal`
+aborts (pass it to your vendor call), and the run stops there, since the hook
+may still be running; the hooks after it stay owed too. A run takes a short
+lease on the org first, so the create and the retry job (on any instance) never
+run your hooks side by side. A hook that keeps failing is retried, and logged, every 15
+minutes until it succeeds: there is no give-up, because an org without the
+app's setup is the failure this seam exists to prevent.
+
+Hooks run **after** the org is created, so one **cannot refuse an org**. A throw
+is logged and the hook stays owed: the org records which hooks it is owed in
+`Org.settings.orgCreated`, and the `orgCreatedHooks` maintenance job runs them
+again every 15 minutes until they succeed. So **write each hook to be
+idempotent**: it can run more than once for one org (`retry` says which run
+this is). Only orgs created after a hook is registered are owed it, so filling
+the seam does not run it for the orgs you already have. Keep the `key` stable:
+an owed key no hook is registered under is left owed rather than dropped (during
+a rolling deploy another instance may have it), so a key you rename is never
+run for the orgs that still owe the old one. The retry runs over active orgs, so
+an org suspended while it still owes a hook gets it once reinstated.
 
 **Recurring background work — `lib/app/jobs.ts`.** To run periodic work on the
 existing maintenance tick instead of standing up a second scheduler, fill the

@@ -70,6 +70,7 @@ import { occupiedTiers } from '@/lib/app/reserved-tiers';
 import { appOwnModules } from '@/lib/app/own-modules';
 import { APP_CAPABILITY_PAIRS, APP_UNCHECKED_SEEDS } from '@/lib/app/capability-seed-pairs';
 import * as userCreatedHooks from '@/lib/auth/user-created-hooks';
+import * as orgCreatedHooks from '@/lib/tenancy/org-created-hooks';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
   getAppSubjectSources,
@@ -158,13 +159,14 @@ import {
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
 
-// tests/setup.ts pins these three seams for every file (#1125, #1139). This
+// tests/setup.ts pins these four seams for every file (#1125, #1139). This
 // file asserts what Sunrise really ships, so it puts the real scaffolds back:
 // their rows below read them through the registries' own lazy wiring, which a
 // per-row `importActual` would bypass.
 vi.mock('@/lib/app/admin-tier', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/user-created', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/erasure', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/org-created', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -479,6 +481,16 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     },
   },
   {
+    seam: 'lib/app/org-created.ts',
+    risk: 'a stray hook would run for every new org on every install, and be recorded on each as owed until it succeeds',
+    assert: () => {
+      orgCreatedHooks.__resetOrgCreatedHooksForTests();
+      // Reading the owed keys runs the lazy init, so this exercises the REAL
+      // seam; an empty list is what makes createOrg() write nothing extra.
+      expect(orgCreatedHooks.orgCreatedHookKeys()).toEqual([]);
+    },
+  },
+  {
     seam: 'lib/app/mcp-resources.ts',
     risk: 'a stray handler would expose app data over MCP to every install\u2019s connected clients',
     assert: () => {
@@ -750,6 +762,7 @@ describe('lib/app/ seams ship empty', () => {
     ['llm-providers', 'provider-eligibility', []],
     ['admin-tier', 'org-tier admin', [ROSTER]],
     ['user-created', 'user-created', []],
+    ['org-created', 'org-created', []],
     ['erasure', 'erasure', [STALE]],
   ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so

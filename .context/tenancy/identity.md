@@ -628,6 +628,59 @@ while they are acting in that org — never by a role check in a route.
   transaction, memberships and credentials cascade, and users are never
   deleted. [Export](../privacy/org-export.md) precedes it.
 
+**An app's own setup runs for every new org** (§134 t-1061). `createOrg()` is
+the only place an org row is written, so it is where the org-created seam
+(`lib/app/org-created.ts`, registry `lib/tenancy/org-created-hooks.ts`)
+dispatches, whichever path made the org: the admin route (`source: 'admin'`)
+or a fork's own call (`'app'`, the default). `'signup'` is reserved for
+self-serve signup (§134 t-1062), which does not create orgs yet.
+
+- **After the commit, never inside it.** A hook cannot refuse or roll back an
+  org: a fault in app code, or a vendor it calls being down, must not fail a
+  create, least of all a signup.
+- **But not fire-and-forget.** The hooks an org is owed are recorded in the
+  same INSERT, as `Org.settings.orgCreated` (`{ owed, source }`), and each is
+  taken off when it succeeds. One that throws is logged at `error` and stays
+  owed; the `orgCreatedHooks` maintenance job runs it again every 15 minutes
+  until it succeeds. So a hook **must be idempotent**, and is told `retry`.
+- **Only orgs created after a hook is registered owe it.** Filling the seam does
+  not run it over the orgs that already exist; an app that needs that writes a
+  one-off script. An owed key no hook is registered under in this process is
+  left owed, not dropped: during a rolling deploy the next run may be on an
+  instance that has it.
+- **One at a time, and bounded.** Hooks run in registration order, so two
+  that write `Org.settings` never clash in its serializable transaction. Each
+  has `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) and the run `ORG_CREATED_RUN_BUDGET_MS`
+  (30 s); the create waits for them, so this is what keeps a hung vendor call
+  from holding it open. A timeout aborts the hook's `signal` and ends the run,
+  since a hook that ignores the signal is still running; it and the hooks
+  after it stay owed.
+- **Never two runs at once.** A run first takes the org's lease
+  (`orgCreated.leaseUntil`, `ORG_CREATED_LEASE_MS`, 2 min) in one conditional
+  `UPDATE`, judged on the database's clock, and does nothing if another run
+  holds it. So the create and every instance's maintenance job never run a
+  hook side by side. The run releases it when it records what succeeded,
+  unless it ended on a timeout (the hook may still be running, so the lease
+  is left to expire), and only if it is still the lease this run took; a
+  process that dies mid-run leaves it to expire.
+- **The retry is one bounded pass.** The job runs once per tick in the system
+  scope: it selects only ACTIVE orgs owing a key this process registers
+  (`ORG_CREATED_JOB_BATCH`, 25, in random order so a few failing orgs cannot
+  hold the rest back), enters each one's scope, and starts no further org past
+  `ORG_CREATED_JOB_BUDGET_MS` (60 s). An install whose orgs owe nothing pays
+  one read a tick. A hook that keeps failing is retried with no give-up: an
+  org without the app's setup is what the seam exists to prevent. A suspended
+  org's owed hooks wait until it is reinstated.
+- **Before the platform agents.** The app's hooks run first, so a provider an
+  app grants is what the agents' bindings are picked from.
+- **In the new org's scope** (`runAsOrg`), so what a hook writes is stamped
+  with that org and confined to it at `multi`. The founding owner is passed
+  when there is one; on a retry it is the org's earliest OWNER, read then, so
+  the owed record holds no pointer to a person.
+- **Nothing registered, nothing changes**: `createOrg()` writes the same row as
+  before, and the job returns without reading anything. When hooks did run,
+  `createOrg()` returns the org as they left it, not the row as inserted.
+
 **The members routes need a browser session, and the org arm is a session
 grant.** Every members route refuses an API key at the handler, and the
 default policy's org arm refuses an `api-key` principal outright — a key's

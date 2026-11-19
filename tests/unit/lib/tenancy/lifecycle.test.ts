@@ -58,6 +58,15 @@ vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgents: mockReconcile,
 }));
 
+// The seam's own behaviour is `org-created-hooks.test.ts`; here, only what
+// createOrg() writes and when it dispatches.
+const mockHookKeys = vi.hoisted(() => vi.fn((): string[] => []));
+const mockRunHooks = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/tenancy/org-created-hooks', () => ({
+  orgCreatedHookKeys: mockHookKeys,
+  runOrgCreatedHooks: mockRunHooks,
+}));
+
 import {
   addMember,
   changeMemberRole,
@@ -114,6 +123,8 @@ beforeEach(() => {
   mockRefuseSeats.mockReset().mockResolvedValue(undefined);
   mockPendingFor.mockReset().mockResolvedValue({ readable: [], unreadable: 0 });
   mockReconcile.mockReset().mockResolvedValue({});
+  mockHookKeys.mockReset().mockReturnValue([]);
+  mockRunHooks.mockReset().mockResolvedValue({ succeeded: 0, failed: 0, dropped: 0 });
   // The transaction client IS the double, so writes inside are visible.
   db.$transaction.mockImplementation((fn: (tx: typeof db) => Promise<unknown>) => fn(db));
   mockRevoke.mockResolvedValue(0);
@@ -179,6 +190,91 @@ describe('createOrg', () => {
       expect.stringMatching(/Platform agents not materialised/),
       { orgId: ORG, error: 'provider table locked' }
     );
+  });
+
+  it('with no org-created hook registered, writes exactly the org and dispatches nothing', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.org.create.mockResolvedValue(orgRow());
+    mockHookKeys.mockReturnValue([]);
+
+    await createOrg({ slug: 'other', name: 'Other Org', source: 'admin' });
+
+    expect(db.org.create).toHaveBeenCalledWith({
+      data: { slug: 'other', name: 'Other Org' },
+      select: expect.any(Object),
+    });
+    expect(mockRunHooks).not.toHaveBeenCalled();
+  });
+
+  it('records the owed hooks in the same INSERT, then runs them after commit and before the platform agents', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.user.findUnique.mockResolvedValue(human(OWNER));
+    db.org.create.mockResolvedValue(orgRow());
+    mockHookKeys.mockReturnValue(['app:provider', 'app:package']);
+    const order: string[] = [];
+    let committed = false;
+    db.$transaction.mockImplementationOnce(async (fn: (tx: typeof db) => Promise<unknown>) => {
+      const result = await fn(db);
+      committed = true;
+      return result;
+    });
+    mockRunHooks.mockImplementation(async () => {
+      expect(committed).toBe(true);
+      order.push('hooks');
+      return { succeeded: 2, failed: 0, dropped: 0 };
+    });
+    mockReconcile.mockImplementation(async () => {
+      order.push('agents');
+      return {};
+    });
+
+    await createOrg({ slug: 'other', name: 'Other Org', ownerUserId: OWNER, source: 'admin' });
+
+    expect(db.org.create).toHaveBeenCalledWith({
+      data: {
+        slug: 'other',
+        name: 'Other Org',
+        settings: { orgCreated: { owed: ['app:provider', 'app:package'], source: 'admin' } },
+      },
+      select: expect.any(Object),
+    });
+    expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: OWNER });
+    expect(order).toEqual(['hooks', 'agents']);
+  });
+
+  it('returns the org as the hooks left it, not the row as inserted', async () => {
+    const inserted = {
+      ...orgRow(),
+      settings: { orgCreated: { owed: ['app:x'], source: 'admin' } },
+    };
+    const after = { ...orgRow(), settings: null };
+    db.org.findUnique
+      .mockResolvedValueOnce(null) // slug free
+      .mockResolvedValueOnce(after); // re-read after the hooks
+    db.org.create.mockResolvedValue(inserted);
+    mockHookKeys.mockReturnValue(['app:x']);
+
+    const org = await createOrg({ slug: 'other', name: 'Other Org', source: 'admin' });
+
+    expect(org.settings).toBeNull();
+  });
+
+  it("records an app's own call as `app` when it names no source", async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.org.create.mockResolvedValue(orgRow());
+    mockHookKeys.mockReturnValue(['app:provider']);
+    mockRunHooks.mockResolvedValue({ succeeded: 1, failed: 0, dropped: 0 });
+
+    await createOrg({ slug: 'other', name: 'Other Org' });
+
+    expect(db.org.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          settings: { orgCreated: { owed: ['app:provider'], source: 'app' } },
+        }),
+      })
+    );
+    expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: null });
   });
 
   it('creates an owner-less org when no owner is named', async () => {

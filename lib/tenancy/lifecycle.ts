@@ -66,7 +66,13 @@ import {
   takesFirstOwnership,
 } from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
-import { applyOrgSettingsPatch, definedEntries } from '@/lib/tenancy/org-settings';
+import {
+  applyOrgSettingsPatch,
+  definedEntries,
+  orgCreatedSettings,
+  type OrgCreatedSource,
+} from '@/lib/tenancy/org-settings';
+import { orgCreatedHookKeys, runOrgCreatedHooks } from '@/lib/tenancy/org-created-hooks';
 import { invitationTakesSeat, refuseOverSeatsLimit } from '@/lib/tenancy/meters';
 import { pendingInvitationsFor } from '@/lib/utils/invitation-token';
 import {
@@ -248,20 +254,27 @@ async function requireSlugFree(slug: string, exceptOrgId: string | null, db: Lif
  * same 409 `SLUG_TAKEN` (t-814). Any other unique violation goes to the
  * shared handler.
  *
- * Once the org is committed it gets its own instances of the platform agents
- * (§116 t-724) — see {@link materialisePlatformAgents}.
+ * Once the org is committed it runs the app's org-created hooks (§134
+ * t-1061), recorded as owed in the same INSERT so a failed one is retried by
+ * the maintenance job (`lib/tenancy/org-created-hooks.ts`), and then gets its
+ * own instances of the platform agents (§116 t-724) — see
+ * {@link materialisePlatformAgents}. `source` tells the hooks how the org was
+ * made; a caller that names none is an app's own (`'app'`).
  */
 export async function createOrg(
-  input: { slug: string; name: string; ownerUserId?: string },
+  input: { slug: string; name: string; ownerUserId?: string; source?: OrgCreatedSource },
   db: LifecycleDb = prisma
 ): Promise<OrgRecord> {
   await requireSlugFree(input.slug, null, db);
   const owner = input.ownerUserId ? await requireManageableUser(input.ownerUserId, db) : null;
+  // The app's org-created hooks this org is owed, recorded in the same
+  // INSERT so a crash after the commit still leaves them owed (t-1061).
+  const settings = orgCreatedSettings(orgCreatedHookKeys(), input.source ?? 'app');
 
   const org = await db
     .$transaction(async (tx) => {
       const created = await tx.org.create({
-        data: { slug: input.slug, name: input.name },
+        data: { slug: input.slug, name: input.name, ...(settings ? { settings } : {}) },
         select: orgSelect,
       });
       if (owner) {
@@ -280,8 +293,27 @@ export async function createOrg(
     });
 
   logger.info('Org created', { orgId: org.id, slug: org.slug, ownerUserId: owner?.id ?? null });
+  // The app's setup first, so a provider it grants is there for the platform
+  // agents' bindings to be picked from. Never fatal: what fails stays owed and
+  // the `orgCreatedHooks` maintenance job retries it.
+  if (!settings) {
+    await materialisePlatformAgents(org.id);
+    return org;
+  }
+  await runOrgCreatedHooks(org.id, { ownerUserId: owner?.id ?? null });
   await materialisePlatformAgents(org.id);
-  return org;
+  // The row as inserted still lists every hook as owed; answer with what the
+  // hooks left, so a caller is not told setup is pending when it is not.
+  const current = await db.org
+    .findUnique({ where: { id: org.id }, select: orgSelect })
+    .catch((err: unknown) => {
+      logger.warn('Org created, but could not be re-read after its hooks; answering as inserted', {
+        orgId: org.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    });
+  return current ?? org;
 }
 
 /**

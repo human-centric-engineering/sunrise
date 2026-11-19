@@ -40,6 +40,27 @@ release process.
   own tests (add the two fields) or call `deactivate_provider_models` yourself
   (entries without `retiresAt` behave as before).
 
+- **An app's own setup runs for every new organisation (§134 t-1061, #1270).**
+  A new fork seam, `lib/app/org-created.ts` (`initAppOrgCreatedHooks()`, ships
+  empty), where an app calls `registerOrgCreatedHook(key, hook)` from
+  `lib/tenancy/org-created-hooks.ts` to grant a new org a provider, set its
+  starting switches or anything else it needs. Every org passes through
+  `createOrg()`, so the hooks run however it was made, told
+  `{ orgId, slug, name, source, ownerUserId, retry, signal }`
+  (`OrgCreatedContext`, `OrgCreatedSource`). `createOrg()` takes an optional
+  `source` (`'admin' | 'signup' | 'app'`, default `'app'`; `'signup'` is
+  reserved for self-serve signup, which does not create orgs yet). Hooks run
+  after the create commits, one at a time in registration order, each bounded
+  by `ORG_CREATED_HOOK_TIMEOUT_MS` (10 s) and the run by
+  `ORG_CREATED_RUN_BUDGET_MS` (30 s), in the new org's scope and before
+  its platform agents; one that throws or times out stays owed in
+  `Org.settings.orgCreated` and a new system-scoped `orgCreatedHooks`
+  maintenance job (appended to `backgroundTasks`) retries it every 15 minutes
+  until it succeeds, so **hooks must be idempotent**. A run takes a lease on
+  the org first, so two runs never overlap. Only orgs created after a
+  hook is registered owe it. With nothing registered, creating an org writes
+  what it did before.
+
 - **`runAsLivenessProbe(fn)` in `lib/tenancy/context.ts` (#1262).** A
   debug-logged null-org system scope for the database liveness probe, beside
   `runAsCredentialLookup` and `runAsCrossOrgCount`. It is confined to
