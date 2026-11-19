@@ -117,11 +117,13 @@ release process.
   on the org's own key, rather than refused because the agent's provider is on
   the platform's key; the refusal, when there is one, comes after routing and
   still before anything is saved or sent. A fallback still does not let a capped
-  turn in. _Fork impact:_ a test fixture typed as `CostSummaryTrendPoint`,
-  `CostSummaryModelRow`, `CostBreakdownRow` or `CostBreakdownTotals` needs the
-  new field. A test that mocks `isLocalProvider` or `providerUsesOrgOwnKey` for
-  the agent's primary with `mockResolvedValueOnce` should answer by slug
-  instead: confidential routing asks `isLocalProvider` first.
+  turn in. `spendCapRefusal()` gains a `quiet` option, for a check made ahead of
+  any call, so it is not logged as a refused one. _Fork impact:_ a test fixture
+  typed as `CostSummaryTrendPoint`, `CostSummaryModelRow`, `CostBreakdownRow` or
+  `CostBreakdownTotals` needs the new field. A test that mocks `isLocalProvider`
+  or `providerUsesOrgOwnKey` for the agent's primary with
+  `mockResolvedValueOnce` should answer by slug instead: confidential routing
+  asks `isLocalProvider` first.
 
 - **Meters and limits: how much an org may have (§135 t-1035).** An app
   registers a meter in the same `initAppEntitlements()` seam with

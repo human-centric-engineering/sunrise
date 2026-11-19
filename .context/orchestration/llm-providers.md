@@ -904,7 +904,8 @@ manager: `usesOrgOwnKey(provider)` for a provider `getProvider` returned, and
 `providerUsesOrgOwnKey(slug)` before one is fetched, as chat asks at the start
 of a turn. With a cap reached, chat holds the turn's paid calls and, once
 confidential routing has said where the turn goes, asks the gate
-(`spendCapRefusal`) about the provider it is bound for (t-1057): the agent's,
+(`spendCapRefusal(..., { quiet: true })`, so the ask is not logged as a
+refused call) about the provider it is bound for (t-1057): the agent's,
 or the model for confidential messages it was moved to. The turn is answered
 if that provider is local, or on the org's own key with the agent's cap not
 reached. Otherwise it is refused before anything is saved or sent, naming the
