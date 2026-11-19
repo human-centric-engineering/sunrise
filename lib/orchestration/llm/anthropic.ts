@@ -62,6 +62,7 @@ import {
   buildRequestOptions,
   KEY_TEST_TIMEOUT_MS,
   KNOWN_WRONG_KEY,
+  keyTestSignal,
   probeCall,
   refusedForTheKey,
   toProviderError,
@@ -710,14 +711,17 @@ export class AnthropicProvider implements LlmProvider {
     return this.ping(this.client);
   }
 
-  /** A one-token message on the ping model, with `client`. */
-  private async ping(client: Anthropic): Promise<ProviderTestResult> {
+  /** A one-token message on the ping model, with `client`, under `signal`. */
+  private async ping(client: Anthropic, signal?: AbortSignal): Promise<ProviderTestResult> {
     try {
-      await client.messages.create({
-        model: PING_MODEL,
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'ping' }],
-      });
+      await client.messages.create(
+        {
+          model: PING_MODEL,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }],
+        },
+        signal ? { signal } : undefined
+      );
       return { ok: true, models: CLAUDE_MODELS.map((m) => m.id) };
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -735,20 +739,20 @@ export class AnthropicProvider implements LlmProvider {
    * sends, which the key must pass: a gateway behind `ANTHROPIC_BASE_URL`
    * with no model list, whatever it answers for the route (404, 403, 501), or
    * one whose list is open to any key. So does a key the list refuses, which
-   * the message then refuses too. Each call is held to
-   * {@link KEY_TEST_TIMEOUT_MS}.
+   * the message then refuses too. Each call, its body included, is held to
+   * {@link KEY_TEST_TIMEOUT_MS} (`keyTestSignal`).
    */
   async testKey(): Promise<ProviderTestResult> {
     const mine = this.buildClient(this.apiKey, KEY_TEST_TIMEOUT_MS);
     const wrong = this.buildClient(KNOWN_WRONG_KEY, KEY_TEST_TIMEOUT_MS);
     const [myList, theirList] = await Promise.all([
-      probeCall(() => mine.models.list({ limit: 1 })),
-      probeCall(() => wrong.models.list({ limit: 1 })),
+      probeCall(() => mine.models.list({ limit: 1 }, { signal: keyTestSignal() })),
+      probeCall(() => wrong.models.list({ limit: 1 }, { signal: keyTestSignal() })),
     ]);
     if (myList.error === undefined && refusedForTheKey(theirList.status)) {
       return { ok: true, models: CLAUDE_MODELS.map((m) => m.id) };
     }
-    return this.ping(mine);
+    return this.ping(mine, keyTestSignal());
   }
 
   // --- internal helpers ---

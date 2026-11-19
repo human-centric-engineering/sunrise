@@ -18,10 +18,12 @@ vi.mock('@anthropic-ai/sdk', () => {
     public messages = { create: createMock };
     // Told which key its client was built with, so a key test's two lists
     // can be answered apart (t-1056).
-    public models: { list: (params: unknown) => unknown };
+    public models: { list: (params: unknown, options?: unknown) => unknown };
     constructor(opts: unknown) {
       const apiKey = (opts as { apiKey?: unknown } | undefined)?.apiKey;
-      this.models = { list: (params: unknown) => modelsListMock(params, apiKey) };
+      this.models = {
+        list: (params: unknown, options?: unknown) => modelsListMock(params, apiKey, options),
+      };
       anthropicConstructorArgs.push((opts ?? {}) as Record<string, unknown>);
     }
   }
@@ -1225,9 +1227,22 @@ describe('AnthropicProvider.testKey (§137 t-1056)', () => {
 
     expect(result.ok).toBe(true);
     expect(result.models).toContain('claude-sonnet-4-6');
-    expect(modelsListMock).toHaveBeenCalledWith({ limit: 1 }, WRONG);
+    expect(modelsListMock).toHaveBeenCalledWith({ limit: 1 }, WRONG, expect.anything());
     // Not billed, and no fixed model the key's workspace must be able to use.
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('aborts each call, its body included, with a signal of its own', async () => {
+    modelsListMock.mockResolvedValue({ data: [] });
+    createMock.mockResolvedValue(pong);
+
+    await makeProvider().testKey();
+
+    const listSignals = modelsListMock.mock.calls.map((c) => (c[2] as { signal?: unknown }).signal);
+    expect(listSignals).toHaveLength(2);
+    expect(listSignals.every((s) => s instanceof AbortSignal)).toBe(true);
+    // The fallback message too.
+    expect(createMock.mock.calls[0][1]).toMatchObject({ signal: expect.any(AbortSignal) });
   });
 
   it('holds its calls to the key test’s short timeout', async () => {
@@ -1254,7 +1269,10 @@ describe('AnthropicProvider.testKey (§137 t-1056)', () => {
     const result = await makeProvider().testKey();
 
     expect(result.ok).toBe(true);
-    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ max_tokens: 1 }));
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ max_tokens: 1 }),
+      expect.anything()
+    );
   });
 
   it('fails a key Anthropic refuses: the list refuses it, and so does the message', async () => {

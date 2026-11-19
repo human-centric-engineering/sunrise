@@ -57,6 +57,7 @@ import {
   embeddingTimeoutMs,
   KEY_TEST_TIMEOUT_MS,
   KNOWN_WRONG_KEY,
+  keyTestSignal,
   LOCAL_TIMEOUT_MS,
   ProviderError,
   buildRequestOptions,
@@ -755,8 +756,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    * billed. A host that does not answer fails the test, and so does one that
    * checks keys on neither call, since it cannot say whether the key works.
    *
-   * Each call is held to {@link KEY_TEST_TIMEOUT_MS}; each pair is sent
-   * together.
+   * Each call, its body included, is held to {@link KEY_TEST_TIMEOUT_MS}
+   * (`keyTestSignal`); each pair is sent together.
    */
   async testKey(): Promise<ProviderTestResult> {
     const mine = this.buildClient(this.apiKey, KEY_TEST_TIMEOUT_MS);
@@ -765,10 +766,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     let models: string[] = [];
     const [myList, theirList] = await Promise.all([
       probeCall(async () => {
-        const page = await mine.models.list();
+        const page = await mine.models.list({ signal: keyTestSignal() });
         models = page.data.map((entry) => entry.id);
       }),
-      probeCall(() => wrong.models.list()),
+      probeCall(() => wrong.models.list({ signal: keyTestSignal() })),
     ]);
     if (myList.error === undefined && refusedForTheKey(theirList.status)) {
       return { ok: true, models };
@@ -776,8 +777,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
     const request = () => ({ model: '', messages: [], max_tokens: 1 });
     const [myChat, theirChat] = await Promise.all([
-      probeCall(() => mine.chat.completions.create(request())),
-      probeCall(() => wrong.chat.completions.create(request())),
+      probeCall(() => mine.chat.completions.create(request(), { signal: keyTestSignal() })),
+      probeCall(() => wrong.chat.completions.create(request(), { signal: keyTestSignal() })),
     ]);
     if (refusesKey(myChat.status)) return failed(myChat.error);
     if (myChat.status === undefined && myChat.error !== undefined) return failed(myChat.error);
@@ -788,8 +789,14 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
     // Neither call told the keys apart. Where the list failed this key as it
     // failed the wrong one (a mistyped Gemini key: 400 for both), it was
-    // refused like a wrong key; otherwise the host checks keys nowhere.
-    if (refusedForTheKey(myList.status) && myList.status === theirList.status) {
+    // refused like a wrong key; otherwise the host checks keys nowhere. A 404
+    // or 405 for both says only that there is no list.
+    if (
+      refusedForTheKey(myList.status) &&
+      myList.status !== 404 &&
+      myList.status !== 405 &&
+      myList.status === theirList.status
+    ) {
       return failed(`The provider answered this key as it answers a wrong one: ${myList.error}`);
     }
     return failed(

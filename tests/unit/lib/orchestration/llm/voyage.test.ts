@@ -763,23 +763,51 @@ describe('VoyageProvider.testKey', () => {
   it('stops waiting for a body the host stalls, and cancels it', async () => {
     vi.useFakeTimers();
     try {
-      const cancel = vi.fn(() => Promise.resolve());
-      const stalled = {
-        ok: true,
-        status: 200,
-        text: () => new Promise<string>(() => {}),
-        body: { cancel },
-      } as unknown as Response;
+      // Real headers, then a body that never sends a byte.
+      const cancelled = vi.fn();
+      const stalled = new Response(new ReadableStream({ cancel: cancelled }), { status: 200 });
       mockFetchWithTimeout.mockResolvedValue(stalled);
 
       const pending = new VoyageProvider(VALID_CONFIG).testKey();
       await vi.advanceTimersByTimeAsync(15_000);
 
       await expect(pending).resolves.toMatchObject({ ok: false });
-      expect(cancel).toHaveBeenCalled();
+      expect(cancelled).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reads at most 256 KB of a body, and cancels the rest', async () => {
+    const cancelled = vi.fn();
+    const chunk = new TextEncoder().encode('y'.repeat(64 * 1024));
+    let sent = 0;
+    const flood = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        sent += 1;
+        controller.enqueue(chunk);
+      },
+      cancel: cancelled,
+    });
+    mockFetchWithTimeout.mockResolvedValue(new Response(flood, { status: 502 }));
+
+    const result = await new VoyageProvider(VALID_CONFIG).testKey();
+
+    expect(result.error).toBe(`Voyage key test failed (502): ${'y'.repeat(500)}`);
+    expect(cancelled).toHaveBeenCalled();
+    // A few chunks past the cap at most, not an endless read.
+    expect(sent).toBeLessThan(10);
+  });
+
+  it('passes on a real streamed embeddings answer', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ embedding: [0.1], index: 0 }] }), { status: 200 })
+    );
+
+    await expect(new VoyageProvider(VALID_CONFIG).testKey()).resolves.toEqual({
+      ok: true,
+      models: ['voyage-3'],
+    });
   });
 
   it('fails with the status alone when the body cannot be read', async () => {

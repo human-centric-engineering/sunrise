@@ -49,6 +49,12 @@ const VOYAGE_BASE_URL = 'https://api.voyageai.com/v1';
 /** How much of a failed key test's response is kept for the log. */
 const KEY_TEST_DETAIL_LIMIT = 500;
 
+/**
+ * The most of a key test's response that is read: room for one embedding of
+ * one word (about 20 KB as JSON at 1,024 dimensions) many times over.
+ */
+const KEY_TEST_BODY_LIMIT = 256 * 1024;
+
 /** Default embedding model. */
 const DEFAULT_EMBEDDING_MODEL = 'voyage-3';
 
@@ -281,7 +287,8 @@ export class VoyageProvider implements LlmProvider {
    * two. One attempt: a key test is not retried. Passes only on a 2xx whose
    * body is an embeddings answer, so a proxy that answers anything with 200
    * does not pass a key. The call and the reading of its body are each held
-   * to {@link KEY_TEST_TIMEOUT_MS}.
+   * to {@link KEY_TEST_TIMEOUT_MS}, and at most {@link KEY_TEST_BODY_LIMIT} of
+   * the body is read.
    */
   async testKey(): Promise<ProviderTestResult> {
     try {
@@ -301,7 +308,7 @@ export class VoyageProvider implements LlmProvider {
         },
         KEY_TEST_TIMEOUT_MS
       );
-      const text = await textWithin(response, KEY_TEST_TIMEOUT_MS);
+      const text = await readKeyTestBody(response, KEY_TEST_BODY_LIMIT, KEY_TEST_TIMEOUT_MS);
       if (response.ok) {
         if (voyageEmbeddingsResponseSchema.safeParse(safeJsonParse(text)).success) {
           return { ok: true, models: [this.embeddingModel] };
@@ -332,26 +339,47 @@ function voyageErrorDetail(text: string): string {
 }
 
 /**
- * A response body, read within `ms`. `fetchWithTimeout` stops timing once the
- * headers arrive, so a host that sends them and then stalls the body would
- * otherwise hold a key test open. Past `ms`, or if the read fails, the body
- * is cancelled and the answer is empty.
+ * A key test's response body, read within `ms` and at most `maxBytes`.
+ * `fetchWithTimeout` stops timing once the headers arrive, so a host that
+ * sends them and then stalls or floods the body would otherwise hold the test
+ * open or fill memory. Read through a reader of its own, so that past either
+ * limit the body is cancelled, not left streaming; what was read is answered.
  */
-async function textWithin(response: Response, ms: number): Promise<string> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), ms);
-  });
+async function readKeyTestBody(response: Response, maxBytes: number, ms: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return response.text().catch(() => '');
+  const deadline = Date.now() + ms;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  let finished = false;
   try {
-    const text = await Promise.race([response.text().catch(() => ''), timedOut]);
-    if (text === null) {
-      void response.body?.cancel().catch(() => undefined);
-      return '';
+    while (size <= maxBytes) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));
+      });
+      const next = await Promise.race([reader.read(), timedOut]).finally(() => clearTimeout(timer));
+      if (next === null) break;
+      if (next.done) {
+        finished = true;
+        break;
+      }
+      chunks.push(next.value);
+      size += next.value.byteLength;
     }
-    return text;
-  } finally {
-    clearTimeout(timer);
+  } catch {
+    // A failed read answers what was read before it.
   }
+  if (!finished) void reader.cancel().catch(() => undefined);
+  const bytes = new Uint8Array(Math.min(size, maxBytes));
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (offset >= bytes.length) break;
+    const part = chunk.subarray(0, bytes.length - offset);
+    bytes.set(part, offset);
+    offset += part.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 /** `JSON.parse` that answers `undefined` for a non-JSON body instead of throwing. */

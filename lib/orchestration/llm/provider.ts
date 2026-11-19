@@ -53,6 +53,15 @@ export const DEFAULT_TIMEOUT_MS = 120_000;
 export const KEY_TEST_TIMEOUT_MS = 15_000;
 
 /**
+ * A signal that aborts one key-test call after {@link KEY_TEST_TIMEOUT_MS}.
+ * Passed to each SDK call, so the body is held to the limit too: the SDKs'
+ * own `timeout` stops counting once the headers arrive.
+ */
+export function keyTestSignal(): AbortSignal {
+  return AbortSignal.timeout(KEY_TEST_TIMEOUT_MS);
+}
+
+/**
  * A key no vendor issues, sent by `testKey()` beside the real one to learn
  * whether a call checks keys at all (§137 t-1056). Not a secret.
  */

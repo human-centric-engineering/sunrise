@@ -23,9 +23,10 @@ interface HostAnswers {
 }
 
 const answers = vi.hoisted((): { byKey: Map<string, HostAnswers> } => ({ byKey: new Map() }));
-const calls = vi.hoisted((): { log: string[]; timeouts: unknown[] } => ({
+const calls = vi.hoisted((): { log: string[]; timeouts: unknown[]; signals: unknown[] } => ({
   log: [],
   timeouts: [],
+  signals: [],
 }));
 
 vi.mock('openai', () => {
@@ -50,8 +51,20 @@ vi.mock('openai', () => {
     public embeddings = { create: vi.fn() };
     constructor(opts: { apiKey: string; timeout?: unknown }) {
       calls.timeouts.push(opts.timeout);
-      this.models = { list: () => answer(opts.apiKey, 'list') };
-      this.chat = { completions: { create: () => answer(opts.apiKey, 'chat') } };
+      this.models = {
+        list: (options?: { signal?: unknown }) => {
+          calls.signals.push(options?.signal);
+          return answer(opts.apiKey, 'list');
+        },
+      };
+      this.chat = {
+        completions: {
+          create: (_body: unknown, options?: { signal?: unknown }) => {
+            calls.signals.push(options?.signal);
+            return answer(opts.apiKey, 'chat');
+          },
+        },
+      };
     }
   }
   return { default: MockOpenAI, toFile: vi.fn() };
@@ -84,6 +97,7 @@ beforeEach(() => {
   answers.byKey.clear();
   calls.log = [];
   calls.timeouts = [];
+  calls.signals = [];
 });
 
 /** The calls made, in a stable order: each pair is sent together. */
@@ -152,6 +166,25 @@ describe('OpenAiCompatibleProvider.testKey', () => {
     host({ list: 'not-a-list', chat: 400 }, { list: 'not-a-list', chat: 401 });
 
     await expect(provider().testKey()).resolves.toMatchObject({ ok: true });
+  });
+
+  it('aborts every call, its body included, with a signal of its own', async () => {
+    // The SDK's own timeout stops once the headers arrive.
+    host({ list: 'ok', chat: 400 }, { list: 'ok', chat: 401 });
+
+    await provider().testKey();
+
+    expect(calls.signals).toHaveLength(4);
+    expect(calls.signals.every((s) => s instanceof AbortSignal)).toBe(true);
+    expect(new Set(calls.signals).size).toBe(4);
+  });
+
+  it('does not blame the key when both lists are missing (404) and chat cannot tell', async () => {
+    host({ list: 404, chat: 400 }, { list: 404, chat: 400 });
+
+    const result = await provider().testKey();
+
+    expect(result.error).toMatch(/^This host checks keys on neither/);
   });
 
   it('holds every call to a short timeout, not the provider’s two minutes', async () => {
