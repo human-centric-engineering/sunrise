@@ -9,6 +9,7 @@ import {
 import { API } from '@/lib/api/endpoints';
 import { requireAllServerData, requireServerData } from '@/lib/api/server-load';
 import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
+import { MoveModelUsesDialog } from '@/components/admin/orchestration/move-model-uses-dialog';
 import {
   ProviderModelUses,
   type ProviderModelLifecycleData,
@@ -80,6 +81,14 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
         retiresAt={model.retiresAt ?? null}
         lifecycle={model.lifecycle}
         uses={model.uses}
+        action={
+          <MoveModelUsesDialog
+            modelId={model.id}
+            modelName={model.name}
+            replacementOptions={replacementOptions.filter((o) => o.id !== model.id)}
+            replacementId={model.replacementId ?? null}
+          />
+        }
       />
 
       <ProviderModelForm model={model} replacementOptions={replacementOptions} />

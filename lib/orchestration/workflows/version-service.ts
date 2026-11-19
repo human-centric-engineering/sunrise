@@ -4,9 +4,13 @@
  *
  * All mutating functions:
  *   1. Validate the snapshot they are about to write (Zod + structural DAG +
- *      semantic) — except `saveDraft`, which accepts an in-progress draft.
+ *      semantic) — except `saveDraft`, which accepts an in-progress draft,
+ *      and `repinWorkflow`, whose new version differs only in a model pin
+ *      the caller checked (Zod + structural only; see its docblock).
  *   2. Run inside a `$transaction` when more than one row is written.
- *   3. Emit a `logAdminAction` audit entry.
+ *   3. Emit a `logAdminAction` audit entry — except `repinWorkflow`, which
+ *      runs inside the model move's per-org transaction; the move writes the
+ *      entry once that commits.
  *
  * See `.context/orchestration/workflow-versioning.md`.
  */
@@ -576,6 +580,113 @@ export async function createInitialVersion(
     data: { publishedVersionId: version.id },
   });
   return version;
+}
+
+export interface RepinWorkflowArgs {
+  /** The org's transaction: the move writes each org's changes as one (§136 t-1066). */
+  tx: Prisma.TransactionClient;
+  workflowId: string;
+  /**
+   * The definition with its pins rewritten, or the same object when nothing
+   * in it changes. Called on the draft and on the published snapshot as they
+   * stand under the row lock, so a save that committed after the caller's
+   * read is rewritten, never overwritten.
+   */
+  rewrite: (definition: unknown) => unknown;
+  changeSummary: string;
+  userId: string;
+}
+
+export interface RepinWorkflowResult {
+  draftChanged: boolean;
+  /** The published version before and after, when a new one was published. */
+  published: { from: number; to: number } | null;
+}
+
+/**
+ * Change the model a workflow's steps pin, in its draft and in what it runs
+ * (§136 t-1066): the draft is rewritten in place, and a published snapshot
+ * gets a NEW published version that differs from it only in the pins. A
+ * published snapshot is never edited, so an execution pinned to it keeps
+ * running exactly what it started on.
+ *
+ * Under the row lock a builder save takes (`lockWorkflowRow`): a save that
+ * committed first is read and rewritten here, and one that waits is refused
+ * by its `If-Match` afterwards, since the definition version moves.
+ *
+ * The new published version is checked against the schema and the DAG rules.
+ * It skips the semantic check publishing runs, on purpose: the only change is
+ * a model pin, to a replacement the move has already checked
+ * (`checkReplacement`: same provider, so no approval changes), and anything
+ * else the semantic check could say was equally true of the version it
+ * copies, which runs today. Failing a move over an unrelated deleted agent
+ * would leave the workflow on the retiring model instead.
+ *
+ * Writes no audit row: the move writes one per entity once its org commits.
+ */
+export async function repinWorkflow(args: RepinWorkflowArgs): Promise<RepinWorkflowResult> {
+  const { tx, workflowId, rewrite, changeSummary, userId } = args;
+  await lockWorkflowRow(tx, workflowId);
+  const row = await tx.aiWorkflow.findUnique({
+    where: { id: workflowId },
+    select: {
+      draftDefinition: true,
+      publishedVersion: { select: { version: true, snapshot: true } },
+    },
+  });
+  if (!row) throw new NotFoundError(`Workflow ${workflowId} not found`);
+
+  let draftChanged = false;
+  if (row.draftDefinition !== null) {
+    const draft = rewrite(row.draftDefinition);
+    if (draft !== row.draftDefinition) {
+      // A draft may be half-built, so it is not validated (as `saveDraft`).
+      await tx.aiWorkflow.update({
+        where: { id: workflowId },
+        data: { draftDefinition: draft as Prisma.InputJsonValue },
+      });
+      draftChanged = true;
+    }
+  }
+
+  let published: RepinWorkflowResult['published'] = null;
+  const current = row.publishedVersion;
+  if (current) {
+    const rewritten = rewrite(current.snapshot);
+    if (rewritten !== current.snapshot) {
+      const parsed = workflowDefinitionSchema.safeParse(rewritten);
+      if (!parsed.success) {
+        throw new ValidationError('The published workflow does not match the current schema', {
+          definition: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+        });
+      }
+      const dag = validateWorkflow(parsed.data);
+      if (!dag.ok) {
+        throw new ValidationError('The published workflow is structurally invalid', {
+          definition: dag.errors.map((e) => e.message),
+        });
+      }
+      // A new version row is one an erasure scanning the versions would not
+      // see: take its locks, as every version writer does (§122 t-900).
+      const toWrite = await lockedWithoutErasedApprovers(tx, parsed.data);
+      const next = await nextVersionNumber(tx, workflowId);
+      const version = await tx.aiWorkflowVersion.create({
+        data: {
+          workflowId,
+          version: next,
+          snapshot: toWrite as unknown as Prisma.InputJsonValue,
+          changeSummary,
+          createdBy: userId,
+        },
+      });
+      await tx.aiWorkflow.update({
+        where: { id: workflowId },
+        data: { publishedVersionId: version.id },
+      });
+      published = { from: current.version, to: next };
+    }
+  }
+  return { draftChanged, published };
 }
 
 export interface ListVersionsOptions {

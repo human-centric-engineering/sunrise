@@ -26,6 +26,28 @@
  * Pure: no database, no Next.js imports. Safe in client components.
  */
 
+/**
+ * Step types whose `config.modelOverride` is a model pin: the semantic
+ * validator's PROVIDER_CHOOSING_STEP_TYPES (its LLM_STEP_TYPES plus
+ * `supervisor`, which passes its override to the LLM call), in
+ * lib/orchestration/workflows/semantic-validator.ts. Kept in sync by hand
+ * because exporting from the validator would pull its runtime deps (the
+ * model registry) in for no benefit. Read by the uses finder
+ * (`global-config-usage.ts`) and the model move (`move-plan.ts`), so the two
+ * see the same steps. `chat_turn` takes a pin too and is handled beside this
+ * set by each reader, since a bare id there runs on its agent's provider.
+ */
+export const MODEL_OVERRIDE_STEP_TYPES: ReadonlySet<string> = new Set([
+  'llm_call',
+  'route',
+  'reflect',
+  'guard',
+  'evaluate',
+  'plan',
+  'orchestrator',
+  'supervisor',
+]);
+
 /** The separator between provider slug and model id. */
 const SEPARATOR = '::';
 

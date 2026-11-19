@@ -174,6 +174,10 @@ export const API = {
       PROVIDER_MODELS: '/api/v1/admin/orchestration/provider-models',
       providerModelById: (id: string): string =>
         `/api/v1/admin/orchestration/provider-models/${id}`,
+      providerModelMoveUses: (id: string): string =>
+        `/api/v1/admin/orchestration/provider-models/${id}/move-uses`,
+      providerModelMoveUsesPreview: (id: string): string =>
+        `/api/v1/admin/orchestration/provider-models/${id}/move-uses/preview`,
       PROVIDER_MODELS_BULK: '/api/v1/admin/orchestration/provider-models/bulk',
       PROVIDER_MODEL_RECOMMEND: '/api/v1/admin/orchestration/provider-models/recommend',
       DISCOVERY_MODELS: '/api/v1/admin/orchestration/discovery/models',

@@ -29,8 +29,13 @@
  * Platform-agnostic: no Next.js imports.
  */
 
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
-import { formatModelPin, pinNames } from '@/lib/orchestration/llm/model-pin';
+import {
+  formatModelPin,
+  MODEL_OVERRIDE_STEP_TYPES,
+  pinNames,
+} from '@/lib/orchestration/llm/model-pin';
 import type { CapabilityAgentRef } from '@/types/orchestration';
 import { getTenantContext, isMultiTenant, runAsCrossOrgCount } from '@/lib/tenancy/context';
 import { bindingFollowsPlatform } from '@/lib/orchestration/agents/platform-agent-guard';
@@ -124,27 +129,6 @@ export function providerUsage(slug: string): Promise<ProviderUsage> {
 // ── Provider models ─────────────────────────────────────────────────────────
 
 /**
- * Step types whose `config.modelOverride` pins a model: the semantic
- * validator's PROVIDER_CHOOSING_STEP_TYPES (its LLM_STEP_TYPES plus
- * `supervisor`, which passes its override to the LLM call), in
- * lib/orchestration/workflows/semantic-validator.ts. Kept in sync by hand
- * because exporting from the validator would pull its runtime deps (the
- * model registry) in for no benefit. Moved here from the provider-models
- * route with the check it serves, which left `supervisor` out until t-731's
- * review.
- */
-const LLM_STEP_TYPES = new Set([
-  'llm_call',
-  'route',
-  'reflect',
-  'guard',
-  'evaluate',
-  'plan',
-  'orchestrator',
-  'supervisor',
-]);
-
-/**
  * How a workflow definition pins `model` in a step's `modelOverride`, a model
  * pin (§136 t-1068): `'pair'` when some step names its provider and id,
  * `'id'` when steps name it by id alone (it may run on another provider's
@@ -165,7 +149,7 @@ function definitionPinsModel(
     // A `chat_turn` override pins a model too (§136 t-1068): a pair runs on
     // the provider it names, a bare id on its agent's provider, which this
     // definition does not say, so it counts by id alone like any bare pin.
-    if (!LLM_STEP_TYPES.has(type) && type !== 'chat_turn') continue;
+    if (!MODEL_OVERRIDE_STEP_TYPES.has(type) && type !== 'chat_turn') continue;
     const config = (step as { config?: unknown }).config;
     if (!config || typeof config !== 'object') continue;
     const override = (config as { modelOverride?: unknown }).modelOverride;
@@ -175,6 +159,32 @@ function definitionPinsModel(
     if (how === 'id') found = 'id';
   }
   return found;
+}
+
+/**
+ * A prefilter, not the check, for workflows whose draft or published
+ * definition may pin `(providerSlug, modelId)` in a step's `modelOverride`:
+ * JSON containment (`@>`) narrows the read to definitions with SOME step
+ * naming the pair or the bare id, so every org's workflow JSON does not cross
+ * the wire (§107 t-752). The caller still decides by step type, as
+ * `definitionPinsModel` does. Shared with the model move (§136 t-1066), so
+ * the two read the same workflows.
+ */
+export function workflowsMayPinWhere(
+  providerSlug: string,
+  modelId: string
+): Prisma.AiWorkflowWhereInput {
+  const stepPinning = (modelOverride: string) => ({
+    path: ['steps'],
+    array_contains: [{ config: { modelOverride } }],
+  });
+  const pinned = [stepPinning(modelId), stepPinning(formatModelPin(providerSlug, modelId))];
+  return {
+    OR: pinned.flatMap((pins) => [
+      { draftDefinition: pins },
+      { publishedVersion: { is: { snapshot: pins } } },
+    ]),
+  };
 }
 
 /** A workflow pinning a model, as {@link providerModelUsage} names it. */
@@ -227,15 +237,6 @@ export function providerModelUsage(
   options: CountScope = {}
 ): Promise<ProviderModelUsage> {
   const isCallers = callersRows();
-  // A prefilter, not the check: JSON containment (`@>`) narrows the read to
-  // definitions with SOME step pinning `modelId`, so every org's workflow
-  // JSON no longer crosses the wire; `definitionPinsModel` below still
-  // decides, by step type (§107 t-752).
-  const stepPinning = (modelOverride: string) => ({
-    path: ['steps'],
-    array_contains: [{ config: { modelOverride } }],
-  });
-  const pinned = [stepPinning(modelId), stepPinning(formatModelPin(providerSlug, modelId))];
   return scoped(options, async () => {
     const [agentRows, workflowRows] = await Promise.all([
       prisma.aiAgent.findMany({
@@ -251,13 +252,7 @@ export function providerModelUsage(
         orderBy: { name: 'asc' },
       }),
       prisma.aiWorkflow.findMany({
-        where: {
-          isActive: true,
-          OR: pinned.flatMap((pins) => [
-            { draftDefinition: pins },
-            { publishedVersion: { is: { snapshot: pins } } },
-          ]),
-        },
+        where: { isActive: true, ...workflowsMayPinWhere(providerSlug, modelId) },
         select: {
           id: true,
           name: true,

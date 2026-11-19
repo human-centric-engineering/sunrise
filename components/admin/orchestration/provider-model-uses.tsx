@@ -7,12 +7,14 @@
  * the model route's `lifecycle` and `uses` (`GET /provider-models/:id`).
  *
  * An agent whose model the platform picks says so: it moves off a retiring
- * model on its own. The embedding settings say they are not moved with the
+ * model on its own. Everything else moves with the page's `action`, the move
+ * dialog (§136 t-1066). The embedding settings say they are not moved with the
  * rest, since changing the embedding model means re-embedding (§132).
  *
  * Server-safe (no hooks).
  */
 
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 
 import { Badge } from '@/components/ui/badge';
@@ -90,9 +92,11 @@ export interface ProviderModelUsesProps {
   retiresAt: string | null;
   lifecycle: ProviderModelLifecycleData;
   uses: ProviderModelUsesData;
+  /** Shown beside the heading when something uses the model: the move (§136 t-1066). */
+  action?: ReactNode;
 }
 
-export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelUsesProps) {
+export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: ProviderModelUsesProps) {
   const nothing =
     uses.agents.length +
       uses.otherOrgAgents +
@@ -119,6 +123,7 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
         {state === 'retired' && retiresAt && (
           <Badge variant="destructive">Retired on {formatDay(retiresAt)}</Badge>
         )}
+        {!nothing && action && <div className="ml-auto">{action}</div>}
       </div>
 
       {state !== 'current' && (
