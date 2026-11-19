@@ -18,6 +18,30 @@ release process.
 
 ### Added
 
+- **Move every use of a retiring model to its replacement in one audited
+  action (§136, t-1066).** `POST /api/v1/admin/orchestration/provider-models/:id/move-uses/preview`
+  and `POST …/move-uses` (platform admin; the move from the install org only),
+  body `{ replacementId }`, and a **Move uses…** dialog on the model's page.
+  The replacement is re-checked and must be on the same provider. Each active
+  org is moved inside its own scope and transaction: agents bound to the model
+  get the replacement as a new agent version, workflows get the pin in their
+  draft and a new published version, and the install's task defaults, audio
+  default and confidential-message model follow (the embedding pins never
+  move). Every moved pin is written as `provider::model`. An org on its own key
+  for the provider has the key tested against the replacement first, with a
+  short message billed to that key, and is skipped if it fails. An org that
+  fails rolls back alone. Audit rows: `agent.model_moved`,
+  `workflow.model_moved`, `settings.model_moved` and the summary
+  `provider_model.uses_moved`. New: `moveModelUses()` / `previewModelMove()` /
+  `loadMoveTarget()` (`lib/orchestration/model-lifecycle/move.ts`),
+  `repinWorkflow()` (`workflows/version-service.ts`), `testProviderKeyOnModel()`
+  (`llm/provider-manager.ts`), `workflowsMayPinWhere()`
+  (`admin/global-config-usage.ts`), and `MODEL_OVERRIDE_STEP_TYPES` now
+  exported from `llm/model-pin.ts`.
+  _Fork impact:_ none required. A fork's own step type that takes a
+  `modelOverride` is neither counted by the uses finder nor moved, as before;
+  pins a fork keeps elsewhere get a seam in t-1067, still to come.
+
 - **What uses a catalogue model, and a warning when a retiring one is in use
   (§136, t-1065).** `GET /api/v1/admin/orchestration/provider-models/:id` now
   returns `lifecycle` (`state`, `replacement`) and `uses`: the agents and

@@ -79,15 +79,16 @@ recovery path needs to resume them.
 writes version rows or flips `publishedVersionId`. Routes call into it; nothing
 else touches the underlying tables directly.
 
-| Function               | Purpose                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| `saveDraft`            | Writes `draftDefinition`. **No** structural / semantic validation — drafts can be partial. |
-| `discardDraft`         | Clears `draftDefinition`.                                                                  |
-| `publishDraft`         | Promotes the draft. Runs Zod + `validateWorkflow` + `semanticValidateWorkflow` first.      |
-| `rollback`             | Creates a NEW version copied from `targetVersionId` and pins it. Validates the snapshot.   |
-| `createInitialVersion` | Helper used by POST `/workflows` and `save-as-template` inside their transactions.         |
-| `listVersions`         | Paginated read, descending by `version` int.                                               |
-| `getVersion`           | Single-version read by `version` int.                                                      |
+| Function               | Purpose                                                                                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `saveDraft`            | Writes `draftDefinition`. **No** structural / semantic validation — drafts can be partial.                                                                                                                                                              |
+| `discardDraft`         | Clears `draftDefinition`.                                                                                                                                                                                                                               |
+| `publishDraft`         | Promotes the draft. Runs Zod + `validateWorkflow` + `semanticValidateWorkflow` first.                                                                                                                                                                   |
+| `rollback`             | Creates a NEW version copied from `targetVersionId` and pins it. Validates the snapshot.                                                                                                                                                                |
+| `createInitialVersion` | Helper used by POST `/workflows` and `save-as-template` inside their transactions.                                                                                                                                                                      |
+| `repinWorkflow`        | The model move's (§136 t-1066): rewrites the draft and publishes a NEW version differing only in a model pin, inside the caller's transaction, under the row lock. Zod + `validateWorkflow`, not the semantic check; no audit row (the move writes it). |
+| `listVersions`         | Paginated read, descending by `version` int.                                                                                                                                                                                                            |
+| `getVersion`           | Single-version read by `version` int.                                                                                                                                                                                                                   |
 
 Mutating functions:
 

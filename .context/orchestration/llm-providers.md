@@ -565,7 +565,38 @@ The database cannot express a rule across two rows, so the foreign key only keep
 
 A stored replacement can stop qualifying after it was chosen (turned off, or retiring itself); the page says so beside it. `DELETE /provider-models/:id` also refuses (409) while a saved setting names the model, not only an agent or workflow: a saved default or the confidential-message model would name a missing row, and the active embedding model would be cleared. A default the system only suggests does not block it.
 
-Moving all of it to the replacement is t-1066.
+### Moving every use to the replacement (§136 t-1066)
+
+The **Move uses** dialog on the model's page moves everything that uses the model to a replacement on the same provider in one action, from `moveModelUses()` in `lib/orchestration/model-lifecycle/move.ts`. It is also exposed as two routes, for a platform admin only:
+
+| Route                                         | What it does                                                                                                                                                                                                       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /provider-models/:id/move-uses/preview` | `{ replacementId }` → what would move, org by org (counts, never another org's names), what would be left and why, and the settings. Changes nothing and sends nothing to a vendor.                                |
+| `POST /provider-models/:id/move-uses`         | `{ replacementId }` → moves it, and answers every org's outcome: `moved`, `skipped` (with the reason) or `failed` (rolled back, with the reason), plus totals. From the install org only (`writesSharedSettings`). |
+
+Both re-check the replacement with `checkReplacement()` first (`loadMoveTarget`), since a stored one can have stopped qualifying, and refuse with 400 (`replacementId`) a model on another provider, one turned off or itself retiring, or one missing a capability.
+
+**One org at a time, in its own scope and transaction.** Each active org is read and written inside `runAsOrg`, and each read and write also names the org, so row isolation and the query agree. Never the system bypass. Suspended orgs are not entered, as `forEachOrg` skips them; the answer counts them. **An org's changes are one transaction**: its agents and workflows move together or not at all, and one org failing rolls back that org alone, is reported as `failed` with a reason (a database error's text is never shown), and leaves the orgs before and after it moved. At `single` there is one pass over every row.
+
+**What moves**:
+
+- **Agents** bound to the `(provider, model)` pair, active or turned off (a turned-off agent turned back on would otherwise be on a retired model), not soft-deleted. The model id changes and the provider stays. Each change is a new agent version (`ensureBaselineVersion` and `recordAgentVersion`, label "Model … moved to … (retiring model)"). `bindingOwner` is left as it was. An agent changed off the model between the read and the write is left as its editor left it.
+- **Workflows** pinning the model in a step's `modelOverride`: the draft in place, and a **new published version** that differs from the old one only in the pins (`repinWorkflow` in `workflows/version-service.ts`). The published snapshot is never edited, so an execution keeps running what it started on. The rewrite runs on the definition as read under the row lock a builder save takes, and a builder opened before the move is refused its next save (412) because the definition version moved. The new version is checked against the schema and the DAG rules, but not the publish-time semantic check: only a pin changed, to a model the move checked, and anything else that check could say was equally true of the version running today.
+- **Settings**: the task defaults (`routing`, `chat`, `reasoning`, `audio`) and the confidential-message model. A default the system only suggests is **saved** as the replacement, since agents with no model inherit it. A slot changed since the move read it is left.
+
+**Every moved pin is written as a pair** (`provider::model`), since the replacement's id may be one another provider also offers. **What is left, and why** (`move-plan.ts`, shared by the preview and the move):
+
+| Left                                                          | Why                                                                                                                        |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| A pin by the id alone, when another active provider offers it | It may be running on that provider's model; the move does not guess (the t-1065 ruling). Unshared, it moves, as a pair.    |
+| A `chat_turn` step's override by the id alone                 | It runs on its agent's provider, which the definition does not say, and a pair there would also drop the step's fallbacks. |
+| The `embeddings` default and the active embedding model       | Changing the embedding model means re-embedding every org's documents (§132), so the move never does it.                   |
+
+**An org on its own key** for the provider (§137) has the key tested against the replacement before anything of its moves (`testProviderKeyOnModel` in `provider-manager.ts`): t-1056's key test, then, for a chat model, a short message to the replacement sent with that key, since a vendor can restrict a key to some models and the key test names none. If either fails, or the key will not open, the org is **skipped** with the reason and nothing in it changes. The message is billed to the org's key (a few tokens), which is why the preview does not send it. No org is skipped for policy: a same-provider move never changes what an org may use. The vendor's message is logged with the key cut out (`withoutKey`) and never returned.
+
+**The audit trail**: one row per agent (`agent.model_moved`) and per workflow (`workflow.model_moved`) in its org, written once the org commits; `settings.model_moved` for the install settings; and a summary row, `provider_model.uses_moved` on the model, with the moved, skipped and failed counts and every org not moved with its reason.
+
+The move runs inside one request, so a very large install (many orgs, each with an own-key test) may take a while to answer; nothing is lost if it is cut off, since each org that finished has committed and a second run finds only what is left.
 
 ## Cost Tracking
 
