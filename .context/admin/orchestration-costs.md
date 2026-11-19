@@ -83,7 +83,7 @@ The per-model table does the same: **Spend** is the platform's, sorted by it, an
 
 ### Zero-fill for missing days
 
-The API omits days with no spend from the trend response. The `fillZeroDays()` helper in the chart component generates the full 30-day date range and fills gaps with `totalCostUsd: 0`. This prevents the chart from drawing misleading connecting lines across multi-day gaps. If every day has zero spend, the chart shows the "No spend recorded" empty state.
+The API omits days with no spend from the trend response. The `fillZeroDays()` helper in the chart component generates the full date range (`days`, 30 unless the caller says otherwise; the dashboard passes 7) and fills gaps with `totalCostUsd: 0`. Points before the range are left out, from the plot and from the own-key line: since days with no spend are omitted, the last N points can reach further back than N days. This prevents the chart from drawing misleading connecting lines across multi-day gaps. If every day has zero spend, the chart shows the "No spend recorded" empty state.
 
 ## Local savings methodology
 
