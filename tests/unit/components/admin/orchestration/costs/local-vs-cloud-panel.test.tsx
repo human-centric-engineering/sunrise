@@ -212,6 +212,17 @@ describe('LocalVsCloudPanel spend split', () => {
 
     expect(screen.getByText('Cloud spend:').parentElement).toHaveTextContent('$25.00');
   });
+
+  it('counts only the platform’s spend as cloud, as the cards beside it do (§137 t-1058)', () => {
+    // $40 of the model's $50 was on an org's own key, billed to the org.
+    const summary = summaryWithRows([
+      { model: 'claude-sonnet-4-6', provider: 'anthropic', monthSpend: 50, ownKeyMonthSpend: 40 },
+    ]);
+
+    render(<LocalVsCloudPanel summary={summary} models={[CLOUD_MODEL]} />);
+
+    expect(screen.getByText('Cloud spend:').parentElement).toHaveTextContent('$10.00');
+  });
 });
 
 describe('LocalVsCloudPanel tooltip formatter', () => {

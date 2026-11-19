@@ -372,45 +372,44 @@ interface OwnKeyGroup {
   _count?: { _all: number };
 }
 
+/** What a fold adds up for one key: the sums of both halves, and the own-key part. */
+type OwnKeySums = Omit<CostBreakdownRow, 'key' | 'label'>;
+
 /**
  * Fold `groupBy` rows split by `ownKey` back into one per `keyOf`, in the
- * order each key is first seen: the sums of both halves, and the own-key
- * part of the spend. The first row of each key stands for its other fields.
+ * order each key is first seen. Each result keeps the grouping fields of the
+ * first row seen for its key, and `sums`: the sums of both halves, and the
+ * own-key part of the spend. A row's own `_sum`, `_count` and `ownKey` are
+ * left out, since they would hold only one half. `sums.count` is 0 for a
+ * read that does not count rows.
  */
 function foldOwnKeyGroups<G extends OwnKeyGroup, K>(
   groups: readonly G[],
   keyOf: (g: G) => K
-): Array<G & { sums: Omit<CostBreakdownRow, 'key' | 'label'> }> {
-  const folded = new Map<K, G & { sums: Omit<CostBreakdownRow, 'key' | 'label'> }>();
+): Array<Omit<G, keyof OwnKeyGroup> & { sums: OwnKeySums }> {
+  const folded = new Map<K, Omit<G, keyof OwnKeyGroup> & { sums: OwnKeySums }>();
   for (const g of groups) {
-    const spend = g._sum.totalCostUsd ?? 0;
+    const { ownKey, _sum, _count, ...fields } = g;
+    const spend = _sum.totalCostUsd ?? 0;
     const key = keyOf(g);
     const into = folded.get(key) ?? {
-      ...g,
+      ...fields,
       sums: { totalCostUsd: 0, ownKeyCostUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 },
     };
     into.sums.totalCostUsd += spend;
-    if (g.ownKey) into.sums.ownKeyCostUsd += spend;
-    into.sums.inputTokens += g._sum.inputTokens ?? 0;
-    into.sums.outputTokens += g._sum.outputTokens ?? 0;
-    into.sums.count += g._count?._all ?? 0;
+    if (ownKey) into.sums.ownKeyCostUsd += spend;
+    into.sums.inputTokens += _sum.inputTokens ?? 0;
+    into.sums.outputTokens += _sum.outputTokens ?? 0;
+    into.sums.count += _count?._all ?? 0;
     folded.set(key, into);
   }
   return [...folded.values()];
 }
 
 /** A window's spend grouped by `ownKey`: all of it, and the own-key part. */
-function splitByOwnKey(
-  groups: ReadonlyArray<{ ownKey: boolean; _sum: { totalCostUsd: number | null } }>
-): { total: number; ownKey: number } {
-  let total = 0;
-  let ownKey = 0;
-  for (const g of groups) {
-    const spend = g._sum.totalCostUsd ?? 0;
-    total += spend;
-    if (g.ownKey) ownKey += spend;
-  }
-  return { total, ownKey };
+function splitByOwnKey(groups: readonly OwnKeyGroup[]): { total: number; ownKey: number } {
+  const sums = foldOwnKeyGroups(groups, () => 'window')[0]?.sums;
+  return { total: sums?.totalCostUsd ?? 0, ownKey: sums?.ownKeyCostUsd ?? 0 };
 }
 
 // ----------------------------------------------------------------------------
