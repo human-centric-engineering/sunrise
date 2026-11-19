@@ -125,6 +125,27 @@ release process.
   `mockResolvedValueOnce` should answer by slug instead: confidential routing
   asks `isLocalProvider` first.
 
+- **Switches an org's own admins may set (§135 t-1054).**
+  `registerEntitlementSwitch()` takes `setBy: 'platform' | 'org'`, defaulting
+  to `'platform'`, so every switch registered today stays platform-only. An
+  `'org'` switch (a beta opt-in, a free add-on) can also be set by the org's
+  own admins for their own org, on a new org-tier page, **Options**
+  (`/admin/org-options`, shown only when such a switch is registered), over
+  new routes `GET` / `PATCH /api/v1/orgs/[id]/entitlements`. Who may is the
+  authorization policy's answer about a new resource kind, `org.switches`
+  (`ORG_SWITCHES_RESOURCE_KIND`): by default the org's OWNER and ADMIN while
+  acting in it, so a fork's policy can narrow it. The route needs a browser
+  session, refuses writes from a support session, refuses any platform-set
+  key with a 403 (`details.reason: 'switch_set_by_platform'`) and writes
+  nothing over a stored slice it cannot read (409, `switches_unreadable`). A
+  write is audited as `org.entitlements.update` with `metadata.setBy: 'org'`.
+  New: `orgSettableSwitches()`, `setOrgSwitches()`'s optional fourth argument
+  `{ refuseUnreadable }` and `OrgSwitchesUnreadableError`, `API.ORGS.entitlements()`,
+  and an `orgOptionsEnabled` prop on `AdminSidebar`. The platform route's
+  switches now carry `setBy`, and `/admin/orgs/[id]` marks the org-set ones.
+  **A new core admin section, `org-options`**, joins `CORE_ADMIN_SECTIONS` and
+  `ORG_TIER_ADMIN_PAGES`: a fork with its own page under `/admin/org-options`
+  must move it.
 - **Show a surface an org lacks locked, with your own words (§135
   t-1053).** `registerEntitlementSwitch()` takes three new optional fields.
   `whenLacking: 'lock'` shows a nav item whose switch the org lacks with a

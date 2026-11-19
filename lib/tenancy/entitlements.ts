@@ -96,7 +96,7 @@ export interface EntitlementSwitch {
    * Who may set it on an org (t-1054). `'platform'` (the default): platform
    * staff, from the install organisation, as for anything an org buys.
    * `'org'`: also the org's own admins, for their own org, from
-   * `/admin/org-switches` or `PATCH /api/v1/orgs/[id]/entitlements`: a beta
+   * `/admin/org-options` or `PATCH /api/v1/orgs/[id]/entitlements`: a beta
    * opt-in, a free add-on, a feature an org may turn off for its own users.
    * The authorization policy decides which of an org's people may (resource
    * kind {@link ORG_SWITCHES_RESOURCE_KIND}), so an app can narrow it.
@@ -455,6 +455,38 @@ function switchStateIn(org: OrgSwitches | null, key: string): 'on' | 'off' | 'un
   return org.on.includes(key) ? 'on' : 'off';
 }
 
+/** Options for {@link setOrgSwitches}. */
+export interface SetOrgSwitchesOptions {
+  /**
+   * Refuse, writing nothing, when the stored slice could not be read, rather
+   * than store every switch the change does not name as off (t-1054). An
+   * org's own admin passes it: their change names only the switches they may
+   * set, and closing every platform-set switch would be a decision about
+   * what the org bought, made by the org.
+   */
+  refuseUnreadable?: boolean;
+}
+
+/**
+ * What {@link setOrgSwitches} throws, with `refuseUnreadable`, over a stored
+ * slice it could not read. Nothing was written.
+ */
+export class OrgSwitchesUnreadableError extends Error {
+  constructor(readonly orgId: string) {
+    super(`The stored switches of org ${orgId} could not be read, so none was changed`);
+    this.name = 'OrgSwitchesUnreadableError';
+  }
+}
+
+/**
+ * The registered switches an org's own admins may set (`setBy: 'org'`,
+ * t-1054), in registration order. Empty on vanilla Sunrise, and while the
+ * app's registration has failed.
+ */
+export function orgSettableSwitches(): readonly RegisteredEntitlementSwitch[] {
+  return registeredEntitlementSwitches().filter((s) => s.setBy === 'org');
+}
+
 /**
  * Set the named switches on an org, on or off, leaving every other stored
  * value as it is; or, given `null`, put every registered switch back to its
@@ -480,7 +512,10 @@ function switchStateIn(org: OrgSwitches | null, key: string): 'on' | 'off' | 'un
  * registration has failed it throws and writes nothing, since there is then no
  * telling which switches exist. **It decides nothing about who may**: ask
  * `mayChangeOrgCommercialSettings()` (`lib/tenancy/shared-settings.ts`) after
- * a platform-admin check. A clash with a concurrent settings write throws
+ * a platform-admin check, or for a switch registered `setBy: 'org'`, the
+ * org's own admin through the authorization policy (t-1054; the org route
+ * refuses any other key, and passes `{ refuseUnreadable: true }`). A clash
+ * with a concurrent settings write throws
  * `P2034` (`isSettingsWriteConflict`).
  *
  * @returns what was stored before (read, and `previousStored` exactly as
@@ -490,7 +525,8 @@ function switchStateIn(org: OrgSwitches | null, key: string): 'on' | 'off' | 'un
 export async function setOrgSwitches(
   orgId: string,
   change: { on: readonly string[]; off: readonly string[] } | null,
-  db: Pick<PrismaClient, '$transaction'> = prisma
+  db: Pick<PrismaClient, '$transaction'> = prisma,
+  options: SetOrgSwitchesOptions = {}
 ): Promise<{
   previous: OrgEntitlementsRead;
   previousStored: unknown;
@@ -510,6 +546,10 @@ export async function setOrgSwitches(
     orgId,
     (previous) => {
       if (named.size === 0) return undefined;
+      if (previous.unreadable && options.refuseUnreadable) {
+        // Thrown inside the transaction, so nothing is written.
+        throw new OrgSwitchesUnreadableError(orgId);
+      }
       if (previous.unreadable) {
         const held = [...previous.on, ...previous.off].filter((key) => !named.has(key));
         const closed = change === null ? [] : [...registered].filter((key) => !named.has(key));

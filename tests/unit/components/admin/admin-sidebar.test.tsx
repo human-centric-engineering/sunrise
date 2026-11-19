@@ -730,8 +730,20 @@ describe('sectionsForCapabilities', () => {
     },
   ];
 
-  it('returns the very array it was given when the app has a waitlist', () => {
-    expect(sectionsForCapabilities(sections, { waitlistEnabled: true })).toBe(sections);
+  it('returns the very array it was given when the app has a waitlist and org options', () => {
+    expect(
+      sectionsForCapabilities(sections, { waitlistEnabled: true, orgOptionsEnabled: true })
+    ).toBe(sections);
+  });
+
+  it('removes /admin/org-options when no switch is org-set, the default (t-1054)', () => {
+    const withOptions = [{ title: 'M', items: [item('/admin/org-options'), item('/o')] }];
+    expect(sectionsForCapabilities(withOptions, { waitlistEnabled: true })).toEqual([
+      { title: 'M', items: [item('/o')] },
+    ]);
+    expect(
+      sectionsForCapabilities(withOptions, { waitlistEnabled: true, orgOptionsEnabled: true })
+    ).toBe(withOptions);
   });
 
   it('removes /admin/waitlist, from items and subgroups, and leaves everything else', () => {
@@ -751,9 +763,9 @@ describe('sectionsForCapabilities', () => {
       secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
 
     const before = flat(coreNavSections).map((i) => i.href);
-    const after = flat(sectionsForCapabilities(coreNavSections, { waitlistEnabled: false })).map(
-      (i) => i.href
-    );
+    const after = flat(
+      sectionsForCapabilities(coreNavSections, { waitlistEnabled: false, orgOptionsEnabled: true })
+    ).map((i) => i.href);
 
     expect(before).toContain('/admin/waitlist');
     expect(after).toEqual(before.filter((h) => h !== '/admin/waitlist'));

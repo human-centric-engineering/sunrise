@@ -17,6 +17,7 @@ import {
 } from '@/lib/auth/admin-page-viewer';
 import { SupportBanner } from '@/components/admin/support-banner';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
+import { orgSettableSwitches } from '@/lib/tenancy/entitlements';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import {
@@ -158,6 +159,7 @@ export default async function AdminLayout({
           pageRequirements={pageRequirements}
           lockedSwitches={lockedSwitches}
           waitlistEnabled={isWaitlistEnabled()}
+          orgOptionsEnabled={orgSettableSwitches().length > 0}
         />
         <div className="flex flex-1 flex-col overflow-hidden">
           {supportSession && <SupportBanner view={supportSession} />}

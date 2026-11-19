@@ -42,6 +42,7 @@ import {
   LifeBuoy,
   Hourglass,
   Lock,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -105,6 +106,13 @@ export const coreNavSections: NavSection[] = [
         label: 'Members',
         icon: UsersRound,
         description: 'People in this organisation',
+      },
+      {
+        href: '/admin/org-options',
+        tier: 'org',
+        label: 'Options',
+        icon: SlidersHorizontal,
+        description: 'Parts of the app this organisation turns on or off',
       },
       {
         href: '/admin/provider-keys',
@@ -559,6 +567,12 @@ interface AdminSidebarProps {
    * Its item is hidden otherwise, as its routes answer 404.
    */
   waitlistEnabled?: boolean;
+  /**
+   * The app registers a switch an org's own admins may set (`setBy: 'org'`,
+   * §135 t-1054). The Options item is hidden otherwise, as its page lists
+   * nothing.
+   */
+  orgOptionsEnabled?: boolean;
 }
 
 /**
@@ -590,14 +604,23 @@ export function sectionsForMode(sections: NavSection[], multiTenant: boolean): N
 
 /** Items shown only when the app has switched their capability on. */
 const WAITLIST_ITEM = '/admin/waitlist';
+/** Shown only when the app registers a switch an org's own admins may set (t-1054). */
+const ORG_OPTIONS_ITEM = '/admin/org-options';
 
-/** The sections without the waitlist item, when the app has no waitlist. */
+/** The sections without the waitlist item when the app has no waitlist, nor the options item when it has no org-set switch. */
 export function sectionsForCapabilities(
   sections: NavSection[],
-  { waitlistEnabled }: { waitlistEnabled: boolean }
+  {
+    waitlistEnabled,
+    orgOptionsEnabled = false,
+  }: { waitlistEnabled: boolean; orgOptionsEnabled?: boolean }
 ): NavSection[] {
-  if (waitlistEnabled) return sections;
-  const kept = (items: NavItem[]) => items.filter((item) => item.href !== WAITLIST_ITEM);
+  if (waitlistEnabled && orgOptionsEnabled) return sections;
+  const hidden = new Set([
+    ...(waitlistEnabled ? [] : [WAITLIST_ITEM]),
+    ...(orgOptionsEnabled ? [] : [ORG_OPTIONS_ITEM]),
+  ]);
+  const kept = (items: NavItem[]) => items.filter((item) => !hidden.has(item.href));
   return sections.map((section) => ({
     ...section,
     ...(section.items ? { items: kept(section.items) } : {}),
@@ -808,6 +831,7 @@ export function AdminSidebar({
   lockedSwitches = NO_LOCKED_SWITCHES,
   multiTenant = false,
   waitlistEnabled = false,
+  orgOptionsEnabled = false,
 }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
@@ -823,7 +847,7 @@ export function AdminSidebar({
         sectionsForViewer(
           sectionsForCapabilities(
             sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
-            { waitlistEnabled }
+            { waitlistEnabled, orgOptionsEnabled }
           ),
           reach,
           orgTierPages,
@@ -846,6 +870,7 @@ export function AdminSidebar({
       lockedSwitches,
       multiTenant,
       waitlistEnabled,
+      orgOptionsEnabled,
     ]
   );
   // Which shown items are locked, by href, for every item renderer below.

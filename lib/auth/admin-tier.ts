@@ -264,6 +264,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   // page a pattern names on the list by name.
   '/admin/orchestration/executions/live',
   '/admin/members',
+  '/admin/org-options',
   '/admin/provider-keys',
   '/admin/support-access',
   '/admin/waitlist',
@@ -283,6 +284,7 @@ export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
   'logs',
   'members',
   'orchestration',
+  'org-options',
   'orgs',
   'overview',
   'provider-keys',

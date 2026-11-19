@@ -63,6 +63,8 @@ export interface OrgEntitlementsView {
     label: string;
     description: string;
     whenNothingSet: boolean;
+    /** `'org'` when the org's own admins may set it too (t-1054). Absent from an older server. */
+    setBy?: 'platform' | 'org';
     on: boolean;
     /** Nobody has set it on this org, so it follows `whenNothingSet`. */
     atDefault: boolean;
@@ -226,7 +228,9 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
           <FieldHelp title="Entitlement switches">
             <p>
               Each switch opens a part of the app this organisation has bought or may use. Ticking
-              one gives it to the organisation; its own admins cannot change these.
+              one gives it to the organisation. Its own admins cannot change these, except the ones
+              marked <em>organisation can change</em>, which they can also set on their Organisation
+              options page.
             </p>
             <p className="mt-2">
               A switch nobody has set on this organisation is at its default, marked{' '}
@@ -256,6 +260,11 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
                   {s.whenNothingSet && (
                     <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
                       on by default
+                    </Badge>
+                  )}
+                  {s.setBy === 'org' && (
+                    <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                      organisation can change
                     </Badge>
                   )}
                 </label>
