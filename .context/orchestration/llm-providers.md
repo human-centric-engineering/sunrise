@@ -873,7 +873,7 @@ platform's provider test uses.
 | OpenAI-compatible | The model list with the key and with a known-wrong one, together. It proves the key where the list answers the key and fails the wrong one with a 4xx (OpenAI, Mistral 401; Groq 403; Gemini, xAI 400). Anything else (a list open to anyone, as OpenRouter's is; none, as Perplexity has; a body that is not a list; a list that refuses the key, which may only lack the scope to read models) goes on to a chat request no host will run (no model, no messages), sent with each key: 401 or 403 for the key fails it, and any other answer passes it if the wrong key was refused. Nothing is billed. |
 
 Every call, the reading of its answer included, is held to 15 seconds
-(`KEY_TEST_TIMEOUT_MS`).
+(`KEY_TEST_TIMEOUT_MS`), and Voyage reads at most 256 KB of its answer.
 
 A host that checks keys on neither call fails the test, with a message saying
 so: it cannot tell whether the key works. So does one that does not answer. A
@@ -883,7 +883,7 @@ cannot use or a spending limit at the vendor.
 
 **Rate limit.** `providerKeyTestLimiter` caps saves and tests at 10 a minute per
 org each (`RATE_LIMIT_PROVIDER_KEY_TEST`): each one makes vendor calls on the key
-(up to four for an OpenAI-compatible host, above).
+(up to four for an OpenAI-compatible host and three for Anthropic, above).
 The buckets are separate, so testing (support's, or another admin's) never
 uses up the org's chance to replace a leaked key.
 
