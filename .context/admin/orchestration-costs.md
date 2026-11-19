@@ -113,7 +113,7 @@ Validation lives in `app/api/v1/admin/orchestration/settings/route.ts`:
 
 Defence-in-depth: bogus ids never reach the DB, even if a non-form caller PATCHes the endpoint directly.
 
-At runtime, values resolve via `getDefaultModelForTask(task)` in `lib/orchestration/llm/settings-resolver.ts`, called whenever the chat handler needs a model for a task the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
+At runtime, values resolve via `getDefaultModelPinForTask(task)` in `lib/orchestration/llm/settings-resolver.ts` — each is a model pin, `provider::model` or a bare id (§136 t-1068; [`llm-providers.md` § A pin names its provider](../orchestration/llm-providers.md#a-pin-names-its-provider-136-t-1068)) — called whenever the chat handler needs a model for a task the agent has not explicitly overridden. A 30-second in-memory TTL cache sits in front of the Prisma read; PATCH calls `invalidateSettingsCache()` so the next chat turn picks up the change immediately.
 
 ### Global monthly budget cap — enforcement
 
