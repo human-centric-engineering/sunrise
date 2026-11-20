@@ -1161,7 +1161,8 @@ export function initAppMessages(): void {
 ```
 
 The JSON files can live anywhere you keep your own modules; a folder under
-`lib/app/`, as here, is listed in `lib/app/own-modules.ts` (`'lib/app/messages/'`).
+`lib/app/`, as here, must be added to `appOwnModules` in `lib/app/own-modules.ts`
+(`'lib/app/messages/'`), or the seam-coverage guards fail on it.
 Your strings go under the `app` namespace (`framework` for a framework tier),
 which Sunrise never ships, so an upgrade cannot collide with them. A registered
 locale is choosable at once, by a user, an org or a visitor. A key a locale

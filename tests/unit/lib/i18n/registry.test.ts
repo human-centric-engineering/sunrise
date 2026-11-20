@@ -273,6 +273,14 @@ describe('registration guards', () => {
     expect(() => registerAppLocale('iw')).toThrow(/deprecated tag; use "he"/);
   });
 
+  it('refuses a key whose shape differs between locales', () => {
+    registerAppMessages('en', { app: { title: 'Clients' } });
+    registerAppLocale('fr');
+    expect(() => registerAppMessages('fr', { app: { title: { one: 'x' } } })).toThrow(
+      /"app\.title" was registered in "en" as a string/
+    );
+  });
+
   it('refuses a later call that changes a string into a group, or back', () => {
     registerAppMessages('en', { app: { client: { title: 'X', body: 'Y' } } });
     expect(() => registerAppMessages('en', { app: { client: 'Clients' } })).toThrow(
@@ -281,6 +289,17 @@ describe('registration guards', () => {
     expect(() => registerAppMessages('en', { app: { client: { title: { a: 'b' } } } })).toThrow(
       /"app\.client\.title" was registered as a string/
     );
+  });
+});
+
+describe('a regional tag', () => {
+  it('is served by its registered base language', () => {
+    appInit.run = () => {
+      registerAppLocale('fr', { common: { save: 'Enregistrer' } });
+    };
+    expect(catalogueFor('fr-CA')).toBe(catalogueFor('fr'));
+    expect(translate('fr-CA', 'common.save')).toBe('Enregistrer');
+    expect(catalogueFor('de-AT')).toEqual(en);
   });
 });
 

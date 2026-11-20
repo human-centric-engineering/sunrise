@@ -97,6 +97,7 @@ const appInit = createAppInitGate({
     restoreMap(appMessages, before.messages);
     restoreMap(overrides, before.overrides);
     built.clear();
+    warnedMissing.clear();
   },
 });
 
@@ -148,7 +149,13 @@ export function registerAppMessages(locale: string, messages: MessageTree): void
     }
   }
   const current = appMessages.get(target) ?? {};
-  refuseReshape(current, tree, `registerAppMessages("${target}")`);
+  const where = `registerAppMessages("${target}")`;
+  refuseReshape(current, tree, where);
+  // Every locale's strings merge over the source's, so a key must have the
+  // same shape in all of them.
+  for (const [other, theirs] of appMessages) {
+    if (other !== target) refuseReshape(theirs, tree, where, '', other);
+  }
   appMessages.set(target, merge(current, tree));
   built.clear();
 }
@@ -183,14 +190,16 @@ export function appLocaleTags(): readonly string[] {
 
 /**
  * The full catalogue for `locale`: the source language merged with what the
- * app registered for it. A locale nothing registered gets the source.
+ * app registered for it. A tag with no catalogue of its own falls back to its
+ * base language (`fr-CA` → `fr`), then to the source. The pseudo-locale is
+ * served only when asked for by name.
  */
 export function catalogueFor(locale: string): MessageTree {
   appInit.ensure();
   const key =
     locale.toLowerCase() === PSEUDO_LOCALE.toLowerCase()
       ? PSEUDO_LOCALE
-      : (registeredTag(locale) ?? DEFAULT_LOCALE);
+      : (servingTag(locale) ?? DEFAULT_LOCALE);
   let catalogue = built.get(key);
   if (!catalogue) {
     catalogue = build(key);
@@ -256,6 +265,16 @@ function registeredTag(locale: string): string | null {
   return null;
 }
 
+/** The registered app locale that serves `locale`: itself, or its base language. */
+function servingTag(locale: string): string | null {
+  const parts = locale.split('-');
+  for (let n = parts.length; n > 0; n--) {
+    const tag = registeredTag(parts.slice(0, n).join('-'));
+    if (tag) return tag;
+  }
+  return null;
+}
+
 /** The locale a write targets: `en` or a registered app locale. */
 function writableLocale(locale: string, fn: string): string {
   const tag = canonicalTag(locale);
@@ -280,7 +299,8 @@ function refuseReshape(
   current: MessageTree,
   incoming: MessageTree,
   where: string,
-  path = ''
+  path = '',
+  inLocale?: string
 ): void {
   for (const [key, value] of Object.entries(incoming)) {
     if (!Object.hasOwn(current, key)) continue;
@@ -288,11 +308,11 @@ function refuseReshape(
     const before = current[key];
     if (typeof before !== typeof value) {
       throw new Error(
-        `i18n: ${where}: "${at}" was registered as ${typeof before === 'string' ? 'a string' : 'a group of strings'} and cannot change shape`
+        `i18n: ${where}: "${at}" was registered${inLocale ? ` in "${inLocale}"` : ''} as ${typeof before === 'string' ? 'a string' : 'a group of strings'} and cannot change shape`
       );
     }
     if (typeof before === 'object' && typeof value === 'object') {
-      refuseReshape(before, value, where, at);
+      refuseReshape(before, value, where, at, inLocale);
     }
   }
 }

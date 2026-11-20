@@ -28,7 +28,10 @@
  * before the first catalogue or supported-language read. Register inside the
  * function, not at the module's top level, so a throw rolls back: if it
  * throws, none of your strings or languages are registered, the log says why,
- * and every screen shows the platform's own catalogue.
+ * and every screen shows the platform's own catalogue. Keep
+ * `initAppMessages` a `function` declaration, not a `const` arrow: this file
+ * and the registry import each other, and a `const` read before this module
+ * finishes loading throws.
  *
  * @example
  * ```ts
