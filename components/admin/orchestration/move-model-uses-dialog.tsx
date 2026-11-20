@@ -344,8 +344,8 @@ export function MoveModelUsesDialog({
                           {org.ownKey && (
                             <p className="text-muted-foreground text-xs">
                               Uses its own key for this provider. The key is sent one short test
-                              message to {preview.replacement.name} first, billed to it, and the
-                              organisation is skipped if that fails.
+                              message to {preview.replacement.name} first, billed to it. If that
+                              fails the organisation is skipped, and the settings are left too.
                             </p>
                           )}
                           <LeftList

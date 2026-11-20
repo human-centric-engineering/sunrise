@@ -47,9 +47,11 @@
  *
  * An org may pay for this provider with its own key (§137). The vendor may
  * not let that key use the replacement, and every one of its calls would then
- * fail after the move. So before anything of the org's moves, the key is
- * tested against the replacement (`testProviderKeyOnModel`), and if the test
- * fails the org is skipped with the reason. No org is skipped for policy: a
+ * fail after the move. So before anything moves, every org's key for the
+ * provider is tested against the replacement (`testProviderKeyOnModel`), and
+ * an org whose test fails is skipped with the reason. The install settings
+ * are then left too: an agent with no model of its own follows them, in that
+ * org as in any other. No org is skipped for policy: a
  * same-provider move never changes which providers an org may use. The test is
  * run by the move, not the preview, since it is billed to the org's key.
  *
@@ -90,6 +92,7 @@ import { settingsPinsFor } from '@/lib/orchestration/model-lifecycle/settings-pi
 import { checkReplacement } from '@/lib/orchestration/model-lifecycle/state';
 import {
   getOrchestrationSettings,
+  hydrateSettings,
   invalidateOrchestrationSettingsCache,
   parseStoredDefaults,
 } from '@/lib/orchestration/settings';
@@ -243,7 +246,7 @@ export interface LeftStep {
 }
 
 interface OrgUses {
-  agents: Array<{ id: string; name: string; isActive: boolean }>;
+  agents: Array<{ id: string; name: string; isActive: boolean; createdBy: string | null }>;
   /** Agents on the model whose binding follows the platform's pick: left, as it moves them. */
   followingPlatform: number;
   /** Workflows with a step that moves: the draft, the published snapshot, or both. */
@@ -268,6 +271,7 @@ async function readOrgUses(pass: OrgPass, target: MoveTarget): Promise<OrgUses> 
         isSystem: true,
         slug: true,
         bindingOwner: true,
+        createdBy: true,
       },
       orderBy: { name: 'asc' },
     }),
@@ -287,7 +291,7 @@ async function readOrgUses(pass: OrgPass, target: MoveTarget): Promise<OrgUses> 
   ]);
   const moving = agents.filter((a) => !bindingFollowsPlatform(a));
   const uses: OrgUses = {
-    agents: moving.map(({ id, name, isActive }) => ({ id, name, isActive })),
+    agents: moving.map(({ id, name, isActive, createdBy }) => ({ id, name, isActive, createdBy })),
     followingPlatform: agents.length - moving.length,
     workflows: [],
     left: [],
@@ -297,11 +301,19 @@ async function readOrgUses(pass: OrgPass, target: MoveTarget): Promise<OrgUses> 
     const published = w.publishedVersion
       ? repinDefinition(w.publishedVersion.snapshot, pins)
       : null;
-    // A step left in both the draft and the published version is one step.
+    // A step left in both the draft and the published version is one step,
+    // matched by id; steps with no id are counted from whichever of the two
+    // has more of them.
     const left = new Map<string, LeftReason>();
-    for (const l of [...(published?.left ?? []), ...(draft?.left ?? [])])
-      left.set(l.stepId, l.reason);
+    const unnamed = [published?.left ?? [], draft?.left ?? []].map((ls) =>
+      ls.filter((l) => l.stepId === '')
+    );
+    for (const l of [...(published?.left ?? []), ...(draft?.left ?? [])]) {
+      if (l.stepId !== '') left.set(l.stepId, l.reason);
+    }
     for (const [stepId, reason] of left) uses.left.push({ workflowId: w.id, stepId, reason });
+    const moreUnnamed = unnamed[0].length >= unnamed[1].length ? unnamed[0] : unnamed[1];
+    for (const l of moreUnnamed) uses.left.push({ workflowId: w.id, stepId: '', reason: l.reason });
     const draftMoves = (draft?.moved ?? 0) > 0;
     const publishedMoves = (published?.moved ?? 0) > 0;
     // The move leaves such a workflow whole (`repinWorkflow`); say so now.
@@ -511,6 +523,9 @@ function failureReason(err: unknown): string {
   if (isAgentVersionConflict(err)) {
     return 'One of its agents was changed at the same moment. Run the move again.';
   }
+  if (err instanceof NotFoundError) {
+    return 'One of its workflows was removed during the move, so nothing in it moved. Run the move again.';
+  }
   if (err instanceof StaleRecordError) {
     return 'One of its workflows was changed during the move, so nothing in it moved. Run the move again.';
   }
@@ -542,11 +557,14 @@ async function writeOrg(
   return prisma.$transaction(
     async (tx) => {
       const writes: OrgWrites = { agents: [], refused: [], workflows: [] };
-      // Erasure's locks for everyone the workflows name, before any row lock
-      // (an agent's included), the order every definition writer keeps.
+      // Erasure's locks before any row lock (an agent's included), the order
+      // every definition writer keeps: everyone the workflows name, the
+      // creators of every row this writes (an erasure's delete cascades onto
+      // them after it takes the person's lock), and the acting admin.
       const readAt = await lockRepinSubjects(
         tx,
-        uses.workflows.map((w) => w.id)
+        uses.workflows.map((w) => w.id),
+        [actor.userId, ...uses.agents.flatMap((a) => (a.createdBy ? [a.createdBy] : []))]
       );
       for (const agent of uses.agents) {
         // Exactly the binding read above: an agent moved off the model since
@@ -650,11 +668,38 @@ function auditOrg(target: MoveTarget, writes: OrgWrites, actor: MoveActor): void
   }
 }
 
-/** Move one org: test its own key, then its agents and workflows, in its scope. */
+/**
+ * Whether the org's own key passes its test against the replacement: the
+ * reason it fails, or `null` (no key for this provider, or it passes). In the
+ * org's scope. A key that cannot be read fails, as one that cannot be tested.
+ */
+async function testOrgKey(
+  pass: OrgPass,
+  target: MoveTarget,
+  config: Awaited<ReturnType<typeof providerConfigFor>>
+): Promise<string | null> {
+  return inOrg(pass, async () => {
+    try {
+      return await ownKeyProblem(pass, target, config);
+    } catch (err) {
+      logger.warn('Model move: an org’s own key could not be read', {
+        orgId: pass.orgId,
+        error: describeError(err),
+      });
+      return 'Its own key for this provider could not be read, so it could not be tested.';
+    }
+  });
+}
+
+/**
+ * Move one org's agents and workflows, in its scope. `keyProblem` is why its
+ * own key failed the test against the replacement ({@link testOrgKey}), which
+ * skips it.
+ */
 async function moveOrg(
   pass: OrgPass,
   target: MoveTarget,
-  config: Awaited<ReturnType<typeof providerConfigFor>>,
+  keyProblem: string | null,
   actor: MoveActor
 ): Promise<OrgMoveResult | null> {
   return inOrg(pass, async () => {
@@ -669,17 +714,9 @@ async function moveOrg(
     if (uses.agents.length + uses.workflows.length === 0) {
       return { ...base, status: 'left', agents: 0, workflows: 0 };
     }
-    let problem: string | null;
-    try {
-      problem = await ownKeyProblem(pass, target, config);
-    } catch (err) {
-      logger.warn('Model move: an org’s own key could not be read', {
-        orgId: pass.orgId,
-        error: describeError(err),
-      });
-      problem = 'Its own key for this provider could not be read, so it could not be tested.';
+    if (keyProblem) {
+      return { ...base, status: 'skipped', reason: keyProblem, agents: 0, workflows: 0 };
     }
-    if (problem) return { ...base, status: 'skipped', reason: problem, agents: 0, workflows: 0 };
     let writes: OrgWrites;
     try {
       writes = await writeOrg(pass, target, uses, actor);
@@ -704,57 +741,45 @@ async function moveOrg(
 }
 
 /**
- * Write the install settings' moved slots. The task defaults are merged into
- * what is stored, as the settings route merges a save, and only the slots
- * the plan names change; a slot changed since the plan was made is left and
- * reported (`changed_since`).
+ * Write the install settings' moved slots, planned from the row as read
+ * under its lock, so neither a settings save nor this process's settings
+ * cache can make it miss or overwrite a slot. The task defaults are merged
+ * into what is stored, as the settings route merges a save.
+ *
+ * When some org's own key failed its test against the replacement
+ * (`keyFailures` > 0), nothing is written: agents with no model of their own
+ * follow these settings, so moving them would move that org's agents onto a
+ * model its key cannot use. Every slot that would have moved is reported as
+ * left (`own_key_refused`).
  */
 async function moveSettings(
   target: MoveTarget,
-  plan: SettingsMovePlan,
+  keyFailures: number,
   actor: MoveActor
 ): Promise<SettingsMovePlan> {
-  if (plan.moved.length === 0) return plan;
-  const written = await prisma.$transaction(async (tx) => {
-    // Locked, so a settings save cannot commit between this read and the
-    // write below and be overwritten by it.
+  const pins = movePins(target);
+  const plan = await prisma.$transaction(async (tx) => {
     await lockSettingsRow(tx, 'global');
     const row = await tx.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
-    if (!row)
+    if (!row) return { moved: [], left: [] };
+    const current = hydrateSettings(row);
+    const planned = planSettingsMove(settingsPinsFor(target.model, current), current, pins);
+    if (planned.moved.length === 0) return planned;
+    if (keyFailures > 0) {
       return {
-        done: [],
-        changed: plan.moved.map((m) => ({ slot: m.slot, reason: 'changed_since' as const })),
+        moved: [],
+        left: [
+          ...planned.left,
+          ...planned.moved.map((m) => ({ slot: m.slot, reason: 'own_key_refused' as const })),
+        ],
       };
-    const stored = parseStoredDefaults(row.defaultModels);
-    const defaults: Partial<Record<TaskType, string>> = { ...stored };
-    let confidential: string | null = null;
-    const done: SettingsMovePlan['moved'] = [];
-    const changed: SettingsMovePlan['left'] = [];
-    for (const slot of plan.moved) {
-      if (slot.slot === 'confidential') {
-        if (
-          row.confidentialModelProvider === target.model.providerSlug &&
-          row.confidentialModel === slot.from
-        ) {
-          confidential = slot.to;
-          done.push(slot);
-        } else {
-          changed.push({ slot: slot.slot, reason: 'changed_since' });
-        }
-        continue;
-      }
-      if (slot.slot === 'active_embedding') continue;
-      // A saved slot must still hold what the plan read; a suggested one must
-      // still be unsaved.
-      const now = stored[slot.slot];
-      if (slot.source === 'saved' ? now !== slot.from : now !== undefined && now !== '') {
-        changed.push({ slot: slot.slot, reason: 'changed_since' });
-        continue;
-      }
-      defaults[slot.slot] = slot.to;
-      done.push(slot);
     }
-    if (done.length === 0) return { done, changed };
+    const defaults: Partial<Record<TaskType, string>> = parseStoredDefaults(row.defaultModels);
+    let confidential: string | null = null;
+    for (const slot of planned.moved) {
+      if (slot.slot === 'confidential') confidential = slot.to;
+      else if (slot.slot !== 'active_embedding') defaults[slot.slot] = slot.to;
+    }
     await tx.aiOrchestrationSettings.update({
       where: { slug: 'global' },
       data: {
@@ -762,22 +787,22 @@ async function moveSettings(
         ...(confidential !== null ? { confidentialModel: confidential } : {}),
       },
     });
-    return { done, changed };
+    return planned;
   });
   invalidateSettingsCache();
   invalidateOrchestrationSettingsCache();
-  if (written.done.length > 0) {
+  if (plan.moved.length > 0) {
     logAdminAction({
       userId: actor.userId,
       action: 'settings.model_moved',
       entityType: 'settings',
       entityId: 'global',
-      changes: Object.fromEntries(written.done.map((s) => [s.slot, { from: s.from, to: s.to }])),
+      changes: Object.fromEntries(plan.moved.map((s) => [s.slot, { from: s.from, to: s.to }])),
       metadata: { providerModelId: target.model.id, replacementId: target.replacement.id },
       clientIp: actor.clientIp,
     });
   }
-  return { moved: written.done, left: [...plan.left, ...written.changed] };
+  return plan;
 }
 
 /**
@@ -793,12 +818,21 @@ export async function moveModelUses(
     orgPasses(),
     providerConfigFor(target.model.providerSlug),
   ]);
-  // The install settings first: one quick write, which then holds even if a
-  // long walk over the orgs is cut off.
-  const settings = await moveSettings(target, await settingsPlan(target), actor);
+  // Every org's own key first (§137), whether or not it uses the model
+  // directly: its agents with no model of their own follow the settings.
+  const keyProblems = new Map<string, string>();
+  if (isMultiTenant() && config) {
+    for (const pass of passes) {
+      const problem = await testOrgKey(pass, target, config);
+      if (problem) keyProblems.set(pass.orgId, problem);
+    }
+  }
+  // The install settings next: one quick write, which then holds even if a
+  // long walk over the orgs is cut off. Left when any org's key failed.
+  const settings = await moveSettings(target, keyProblems.size, actor);
   const orgs: OrgMoveResult[] = [];
   for (const pass of passes) {
-    const result = await moveOrg(pass, target, config, actor);
+    const result = await moveOrg(pass, target, keyProblems.get(pass.orgId) ?? null, actor);
     if (result) orgs.push(result);
   }
   const totals = {
@@ -820,8 +854,14 @@ export async function moveModelUses(
       ...totals,
       suspendedOrgs: suspended,
       skippedOrgs: orgs
-        .filter((o) => o.status === 'skipped' || o.status === 'failed')
-        .map((o) => ({ orgId: o.orgId, status: o.status, reason: o.reason })),
+        .filter((o) => o.status === 'skipped')
+        .map((o) => ({ orgId: o.orgId, reason: o.reason })),
+      failedOrgs: orgs
+        .filter((o) => o.status === 'failed')
+        .map((o) => ({ orgId: o.orgId, reason: o.reason })),
+      // Every org whose key failed, those with nothing of their own to move
+      // included: why the settings were left.
+      keyFailedOrgs: [...keyProblems.keys()],
     },
     clientIp: actor.clientIp,
   });

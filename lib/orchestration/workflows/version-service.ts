@@ -584,8 +584,12 @@ export async function createInitialVersion(
 
 /**
  * Take the erasure locks for everyone the given workflows name, in their
- * drafts and published snapshots, and answer the definition version each was
- * read at (§136 t-1066). The model move calls this first in each org's
+ * drafts and published snapshots, for their creators, and for `alsoUserIds`,
+ * and answer the definition version each was read at (§136 t-1066).
+ * Creators, because an erasure takes the person's lock and then its delete
+ * cascades onto every row they created (`createdBy` is `SetNull`): the move's
+ * rows among them. The caller adds the other rows it will lock (its agents'
+ * creators) and the acting admin. The model move calls this first in each org's
  * transaction, before any row lock: every definition writer takes erasure's
  * locks before the workflow's row (`lockWorkflowRow`), and one that took a
  * row first could deadlock with an erasure holding a subject's lock and
@@ -596,15 +600,17 @@ export async function createInitialVersion(
  */
 export async function lockRepinSubjects(
   tx: Prisma.TransactionClient,
-  workflowIds: readonly string[]
+  workflowIds: readonly string[],
+  alsoUserIds: readonly string[] = []
 ): Promise<Map<string, string>> {
   const rows = await tx.aiWorkflow.findMany({
     where: { id: { in: [...workflowIds] } },
-    select: { id: true, ...WORKFLOW_DEFINITION_VERSION_SELECT },
+    select: { id: true, createdBy: true, ...WORKFLOW_DEFINITION_VERSION_SELECT },
   });
   const addresses: string[] = [];
-  const userIds: string[] = [];
+  const userIds: string[] = [...alsoUserIds];
   for (const row of rows) {
+    if (row.createdBy) userIds.push(row.createdBy);
     for (const definition of [row.draftDefinition, row.publishedVersion?.snapshot]) {
       const named = definitionRecipients(definition ?? null);
       addresses.push(...named.addresses);

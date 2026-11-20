@@ -41,7 +41,7 @@ import type { TaskType } from '@/types/orchestration';
 
 /** Why a pin naming the model is left where it is. */
 export type LeftReason =
-  'shared_id' | 'chat_turn_by_id' | 'embedding_switch' | 'published_invalid' | 'changed_since';
+  'shared_id' | 'chat_turn_by_id' | 'embedding_switch' | 'published_invalid' | 'own_key_refused';
 
 /** How many uses were left, by reason: steps, or whole workflows for `published_invalid`. */
 export type LeftCounts = Partial<Record<LeftReason, number>>;
@@ -56,8 +56,8 @@ export const LEFT_REASON_TEXT: Record<LeftReason, string> = {
     'Changing the embedding model means re-embedding every document, so it is not moved with the rest.',
   published_invalid:
     'Its published version no longer passes the workflow checks, so nothing in the workflow was moved. Fix and publish it in the builder, then run the move again.',
-  changed_since:
-    'It was changed after the move read it, so it was left as it is now. Check it, then run the move again if it still names the model.',
+  own_key_refused:
+    'An organisation pays for this provider with its own key, which failed its test against the replacement. Agents with no model of their own follow this setting, so it was left. Fix that key, or choose another replacement, then run the move again.',
 };
 
 /** The model whose uses move, and the replacement's model id on the same provider. */

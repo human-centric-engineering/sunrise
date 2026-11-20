@@ -66,6 +66,7 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({ invalidateSettings
 vi.mock('@/lib/orchestration/settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/settings')>()),
   getOrchestrationSettings: vi.fn(),
+  hydrateSettings: vi.fn(),
   invalidateOrchestrationSettingsCache: vi.fn(),
 }));
 vi.mock('@/lib/logging', () => ({
@@ -83,7 +84,7 @@ import { logAdminAction, type AdminAuditEntry } from '@/lib/orchestration/audit/
 import { openOrgProviderKey } from '@/lib/orchestration/llm/org-provider-keys';
 import { testProviderKeyOnModel } from '@/lib/orchestration/llm/provider-manager';
 import { logger } from '@/lib/logging';
-import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { getOrchestrationSettings, hydrateSettings } from '@/lib/orchestration/settings';
 import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
 import {
   loadMoveTarget,
@@ -138,6 +139,7 @@ interface Agent {
   isActive: boolean;
   deletedAt: Date | null;
   bindingOwner?: string | null;
+  createdBy?: string | null;
 }
 
 interface Workflow {
@@ -383,7 +385,13 @@ function installFakes(): void {
             a.model === args.where.model &&
             a.deletedAt === null
         )
-        .map((a) => ({ ...a, isSystem: false, slug: a.id, bindingOwner: a.bindingOwner ?? null }))
+        .map((a) => ({
+          ...a,
+          isSystem: false,
+          slug: a.id,
+          bindingOwner: a.bindingOwner ?? null,
+          createdBy: a.createdBy ?? null,
+        }))
     );
   }) as never);
   vi.mocked(prisma.aiWorkflow.findMany).mockImplementation(((args: {
@@ -489,26 +497,28 @@ function installFakes(): void {
     );
   });
   vi.mocked(testProviderKeyOnModel).mockResolvedValue({ ok: true });
-  vi.mocked(getOrchestrationSettings).mockImplementation(() =>
-    Promise.resolve({
+  // The settings as hydrated from a row: unsaved task slots get the
+  // system's suggestion (`chat` suggests the retiring model).
+  const hydrate = (row: SettingsRow) =>
+    ({
       defaultModels: {
-        routing: world.settings.defaultModels.routing ?? 'x',
-        chat: world.settings.defaultModels.chat ?? 'gpt-4o',
-        reasoning: world.settings.defaultModels.reasoning ?? 'anthropic::claude-opus',
-        embeddings: world.settings.defaultModels.embeddings ?? 'x',
-        audio: world.settings.defaultModels.audio ?? 'openai::whisper-1',
+        routing: row.defaultModels.routing ?? 'x',
+        chat: row.defaultModels.chat ?? 'gpt-4o',
+        reasoning: row.defaultModels.reasoning ?? 'anthropic::claude-opus',
+        embeddings: row.defaultModels.embeddings ?? 'x',
+        audio: row.defaultModels.audio ?? 'openai::whisper-1',
       },
-      defaultModelsStored: world.settings.defaultModels,
+      defaultModelsStored: row.defaultModels,
       confidentialModel:
-        world.settings.confidentialModelProvider && world.settings.confidentialModel
-          ? {
-              providerSlug: world.settings.confidentialModelProvider,
-              model: world.settings.confidentialModel,
-            }
+        row.confidentialModelProvider && row.confidentialModel
+          ? { providerSlug: row.confidentialModelProvider, model: row.confidentialModel }
           : null,
       activeEmbeddingModelId: null,
-    } as never)
+    }) as never;
+  vi.mocked(getOrchestrationSettings).mockImplementation(() =>
+    Promise.resolve(hydrate(world.settings))
   );
+  vi.mocked(hydrateSettings).mockImplementation((row) => hydrate(row as never));
 }
 
 const ACTOR = { userId: 'admin-1', clientIp: '203.0.113.9' };
@@ -781,7 +791,9 @@ describe('moveModelUses', () => {
       detail: 'model not allowed for key [key]',
     });
     expect(audit.at(-1)?.metadata).toMatchObject({
-      skippedOrgs: [{ orgId: 'org-b', status: 'skipped', reason: skipped.reason }],
+      skippedOrgs: [{ orgId: 'org-b', reason: skipped.reason }],
+      failedOrgs: [],
+      keyFailedOrgs: ['org-b'],
     });
   });
 
@@ -850,7 +862,7 @@ describe('moveModelUses', () => {
     });
   });
 
-  it('reports an org whose only uses are left, without testing its key or writing', async () => {
+  it('reports an org whose only uses are left, writing nothing in it', async () => {
     world.keyed = ['org-a'];
     world.agents = world.agents.filter((a) => a.orgId !== 'org-a');
     world.workflows = [
@@ -883,7 +895,8 @@ describe('moveModelUses', () => {
         agentsFollowingPlatform: 0,
       },
     ]);
-    expect(testProviderKeyOnModel).not.toHaveBeenCalled();
+    // Tested all the same: its agents with no model of their own follow the settings.
+    expect(testProviderKeyOnModel).toHaveBeenCalledTimes(1);
     expect(repinWorkflow).not.toHaveBeenCalled();
   });
 
@@ -1010,27 +1023,86 @@ describe('moveModelUses', () => {
     expect(vi.mocked(ensureBaselineVersion).mock.calls.map((c) => c[1])).not.toContain('ag-a2');
   });
 
-  it('leaves a settings slot someone changed since the plan was made', async () => {
-    vi.mocked(getOrchestrationSettings).mockResolvedValueOnce({
-      defaultModels: {
-        routing: 'openai::gpt-4o',
-        chat: 'x',
-        reasoning: 'x',
-        embeddings: 'x',
-        audio: 'x',
-      },
-      defaultModelsStored: { routing: 'openai::gpt-4o' },
+  it('plans the settings from the row it locks, not a cached read', async () => {
+    // This process's cache predates a save naming the model for reasoning.
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      defaultModels: { routing: 'x', chat: 'x', reasoning: 'x', embeddings: 'x', audio: 'x' },
+      defaultModelsStored: {},
       confidentialModel: null,
       activeEmbeddingModelId: null,
     } as never);
-    // Saved since: the transaction reads routing as something else.
-    world.settings.defaultModels.routing = 'anthropic::claude-sonnet';
+    world.settings.defaultModels.reasoning = 'openai::gpt-4o';
     const result = await moveModelUses(await target(), ACTOR);
-    expect(world.settings.defaultModels.routing).toBe('anthropic::claude-sonnet');
+    expect(world.settings.defaultModels.reasoning).toBe('openai::gpt-4.1');
+    expect(result.settings.moved.map((m) => m.slot)).toContain('reasoning');
+  });
+
+  it('leaves the settings when any org’s own key fails, its own uses or not', async () => {
+    // Org C is suspended; put B's key on, and give B nothing of its own: its
+    // agents with no model follow the defaults.
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-b');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-b');
+    world.keyed = ['org-b'];
+    vi.mocked(testProviderKeyOnModel).mockResolvedValue({ ok: false, failedAt: 'model' });
+    const before = structuredClone(world.settings);
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(world.settings).toEqual(before);
     expect(result.settings.moved).toEqual([]);
-    // Reported, not dropped.
-    expect(result.settings.left).toContainEqual({ slot: 'routing', reason: 'changed_since' });
+    expect(result.settings.left).toEqual(
+      expect.arrayContaining([
+        { slot: 'routing', reason: 'own_key_refused' },
+        { slot: 'chat', reason: 'own_key_refused' },
+        { slot: 'confidential', reason: 'own_key_refused' },
+        { slot: 'embeddings', reason: 'embedding_switch' },
+      ])
+    );
+    // A's own uses still move; B has none to list.
+    expect(agent('ag-a1').model).toBe('gpt-4.1');
+    expect(result.orgs.map((o) => o.orgId)).toEqual(['org-a']);
+    expect(audit.at(-1)?.metadata).toMatchObject({ keyFailedOrgs: ['org-b'] });
     expect(audit.map((r) => r.action)).not.toContain('settings.model_moved');
+  });
+
+  it('says a workflow removed during the move, without its id', async () => {
+    vi.mocked(repinWorkflow).mockImplementationOnce(() => {
+      throw new NotFoundError('Workflow wf-a1 not found');
+    });
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(result.orgs[0].reason).toBe(
+      'One of its workflows was removed during the move, so nothing in it moved. Run the move again.'
+    );
+    expect(JSON.stringify(result)).not.toContain('wf-a1');
+  });
+
+  it('locks the creators of the rows it writes, and the admin, with the workflows’ subjects', async () => {
+    agent('ag-a1').createdBy = 'creator-a1';
+    await moveModelUses(await target(), ACTOR);
+    const [, ids, users] = vi.mocked(lockRepinSubjects).mock.calls[0];
+    expect(ids).toEqual(['wf-a1']);
+    expect(users).toEqual(['admin-1', 'creator-a1']);
+  });
+
+  it('counts each unnamed step left, once across the draft and the published version', async () => {
+    world.catalogue.push({ ...RETIRING, id: 'm-az-4o', providerSlug: 'microsoft' });
+    const unnamed = (type: string) => ({ ...step('', type, 'gpt-4o') });
+    const def = {
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+      steps: [unnamed('llm_call'), unnamed('guard'), unnamed('plan')],
+    };
+    world.workflows = [
+      {
+        id: 'wf-x',
+        name: 'X',
+        orgId: 'org-a',
+        draftDefinition: def,
+        published: { version: 1, snapshot: def },
+      },
+    ];
+    const preview = await previewModelMove(await target());
+    expect(preview.orgs[0].left).toEqual({ shared_id: 3 });
   });
 
   it('at single, walks the install once, with no org scope, filter or key test', async () => {

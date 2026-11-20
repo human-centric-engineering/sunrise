@@ -24,6 +24,9 @@ import { cuidSchema } from '@/lib/validations/common';
 import { moveModelUsesSchema } from '@/lib/validations/orchestration';
 import { loadMoveTarget, previewModelMove } from '@/lib/orchestration/model-lifecycle/move';
 
+/** It walks every org, as the move does (`move-uses/route.ts`). */
+export const maxDuration = 300;
+
 export const POST = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const log = await getRouteLogger(request);
   const { id: rawId } = await params;

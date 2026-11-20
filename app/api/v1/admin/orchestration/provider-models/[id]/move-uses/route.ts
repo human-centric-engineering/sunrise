@@ -3,11 +3,12 @@
  *
  * POST /api/v1/admin/orchestration/provider-models/:id/move-uses
  *      Body: `{ replacementId }`. Moves every use of the model to the
- *      replacement on the same provider: each active org's agents (a new
- *      version each) and workflows (the draft, and a new published version),
- *      one org at a time in its own scope and transaction, then the install's
- *      settings pins. An org on its own key for the provider has the key
- *      tested against the replacement first, and is skipped when it fails.
+ *      replacement on the same provider. First every org's own key for the
+ *      provider is tested against the replacement (an org whose test fails is
+ *      skipped); then the install's settings pins (left when any key failed);
+ *      then each active org's agents (a new version each) and workflows (the
+ *      draft, and a new published version), one org at a time in its own scope
+ *      and transaction.
  *      `moveModelUses` documents the rules.
  *
  *      200 with every org's outcome (`moved`, `skipped` or `failed`, with a
