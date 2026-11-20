@@ -3,7 +3,7 @@
  *
  * Generated from the source catalogue when it is loaded, never written by
  * hand, so it cannot fall behind `en` or carry a key `en` does not have.
- * "Save" becomes "[Šåvé]": still readable, so a screen can be used in it, and
+ * "Save" becomes "[Šåṽé]": still readable, so a screen can be used in it, and
  * any English left on the page is a string that did not come from the
  * catalogue. The brackets show where a string was cut off.
  *

@@ -97,7 +97,7 @@ export const GET = withAuth(
  * flow began. Changing it also requires `currentPassword` on accounts that have
  * one, and revokes the user's sessions when it finally lands.
  *
- * @param request - Request with JSON body { name?, email?, currentPassword?, bio?, phone?, timezone?, location? }
+ * @param request - Request with JSON body { name?, email?, currentPassword?, bio?, phone?, timezone?, location?, locale? }
  * @returns Updated user profile, plus `emailChangeRequested`
  * @throws UnauthorizedError if not authenticated
  * @throws ValidationError if invalid data
