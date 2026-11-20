@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { OAuthButton } from '@/components/forms/oauth-button';
 
 interface OAuthButtonsProps {
@@ -45,6 +46,7 @@ export function OAuthButtons({
   invitationEmail,
   mode = 'signin',
 }: OAuthButtonsProps) {
+  const t = useTranslations('forms.oauth');
   // Check if OAuth is configured
   // In production, better-auth won't expose providers if not configured
   // For now, we always show the button - better-auth will handle the error
@@ -55,8 +57,8 @@ export function OAuthButtons({
   }
 
   const isInvitationMode = mode === 'invitation';
-  const buttonText = isInvitationMode ? 'Accept with Google' : 'Continue with Google';
-  const dividerText = isInvitationMode ? 'Or set a password' : 'Or continue with email';
+  const buttonText = isInvitationMode ? t('acceptWithGoogle') : t('continueWithGoogle');
+  const dividerText = isInvitationMode ? t('orSetPassword') : t('orContinueWithEmail');
 
   return (
     <div className="space-y-4">

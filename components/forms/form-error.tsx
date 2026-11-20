@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { AlertCircle, Copy, RotateCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -304,6 +305,7 @@ export function SaveError<TField extends string>({
 }
 
 function StaleBody({ what, onReload, onCopyChanges }: StaleSaveProps) {
+  const t = useTranslations('forms.staleSave');
   const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
   // A page passes a new copier when its edits change (the builder's follows
   // its canvas), so an earlier "Copied" no longer covers what is on screen.
@@ -311,20 +313,8 @@ function StaleBody({ what, onReload, onCopyChanges }: StaleSaveProps) {
   return (
     <>
       <div className="flex-1 space-y-1">
-        <p className="font-medium">{what} changed since you opened it. Nothing was saved.</p>
-        {onCopyChanges ? (
-          <p>
-            Someone else saved it, or a person on it had their data erased. Your changes are still
-            here, and reloading discards them: copy them first to keep a record, then reload to see
-            the current version and make them again.
-          </p>
-        ) : (
-          <p>
-            Someone else saved it, or a person on it had their data erased. Your changes are still
-            here: note anything you want to keep, then reload to see the current version and make
-            them again.
-          </p>
-        )}
+        <p className="font-medium">{t('changed', { what })}</p>
+        <p>{onCopyChanges ? t('explainWithCopy') : t('explain')}</p>
       </div>
       {onCopyChanges && (
         <Button
@@ -343,11 +333,7 @@ function StaleBody({ what, onReload, onCopyChanges }: StaleSaveProps) {
           }}
         >
           <Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-          {copy === 'copied'
-            ? 'Copied'
-            : copy === 'failed'
-              ? 'Copy failed: try again'
-              : 'Copy my changes'}
+          {copy === 'copied' ? t('copied') : copy === 'failed' ? t('copyFailed') : t('copy')}
         </Button>
       )}
       <Button
@@ -357,7 +343,7 @@ function StaleBody({ what, onReload, onCopyChanges }: StaleSaveProps) {
         onClick={() => (onReload ? onReload() : window.location.reload())}
       >
         <RotateCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-        Reload
+        {t('reload')}
       </Button>
     </>
   );

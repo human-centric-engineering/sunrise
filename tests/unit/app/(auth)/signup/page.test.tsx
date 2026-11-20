@@ -25,7 +25,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import SignupPage, { metadata } from '@/app/(auth)/signup/page';
+import SignupPage, { generateMetadata } from '@/app/(auth)/signup/page';
 
 // Mock next/navigation (required by SignupForm component)
 vi.mock('next/navigation', async () => {
@@ -63,11 +63,13 @@ describe('SignupPage', () => {
    * Tests that the page exports correct metadata for Next.js.
    */
   describe('metadata', () => {
-    it('should have correct title', () => {
+    it('should have correct title', async () => {
+      const metadata = await generateMetadata();
       expect(metadata.title).toBe('Create Account');
     });
 
-    it('should have correct description', () => {
+    it('should have correct description', async () => {
+      const metadata = await generateMetadata();
       expect(metadata.description).toBe('Create a new Sunrise account');
     });
   });
@@ -283,7 +285,7 @@ describe('SignupPage', () => {
         el.textContent?.includes('Already have an account?')
       );
       expect(loginPromptText).toBeInTheDocument();
-      expect(loginPromptText?.textContent).toBe('Already have an account? ');
+      expect(loginPromptText?.textContent).toBe('Already have an account?');
     });
   });
 

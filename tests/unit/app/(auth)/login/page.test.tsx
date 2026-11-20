@@ -21,7 +21,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import LoginPage, { metadata } from '@/app/(auth)/login/page';
+import LoginPage, { generateMetadata } from '@/app/(auth)/login/page';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
 
 /**
@@ -63,12 +63,14 @@ describe('LoginPage', () => {
    * Tests the page metadata exported for Next.js SEO and browser tab display.
    */
   describe('metadata', () => {
-    it('should have correct title', () => {
+    it('should have correct title', async () => {
+      const metadata = await generateMetadata();
       // Assert: Title is set correctly
       expect(metadata.title).toBe('Sign In');
     });
 
-    it('should have correct description', () => {
+    it('should have correct description', async () => {
+      const metadata = await generateMetadata();
       // Assert: Description is set correctly
       expect(metadata.description).toBe('Sign in to your Sunrise account');
     });

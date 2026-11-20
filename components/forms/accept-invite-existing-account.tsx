@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -43,6 +44,7 @@ export function AcceptInviteExistingAccount({
   orgName,
   accountVerified = true,
 }: AcceptInviteExistingAccountProps) {
+  const t = useTranslations('auth');
   const router = useRouter();
   const schedule = useTimeout();
   const { data: session, isPending } = authClient.useSession();
@@ -50,14 +52,16 @@ export function AcceptInviteExistingAccount({
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [declined, setDeclined] = useState(false);
-  const save = useSaveFailure({ fallback: 'Failed to accept invitation. Please try again.' });
+  const save = useSaveFailure({ fallback: t('shared.acceptFailed') });
   const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
   const verification = useSaveFailure({
-    fallback: 'Failed to send verification email. Please try again.',
+    fallback: t('shared.sendVerificationFailed'),
   });
 
-  const joining = orgName ?? 'the organisation';
+  // The org, for the catalogue's `select`: an invitation that names none says
+  // "the organisation" in the sentence's own language.
+  const org = { named: orgName ? 'yes' : 'no', org: orgName ?? '' };
   const returnTo = `/accept-invite?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`;
 
   const accept = async () => {
@@ -123,7 +127,9 @@ export function AcceptInviteExistingAccount({
     return (
       <div className="space-y-4">
         <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
-        <p className="text-muted-foreground text-center text-sm">Checking your sign-in...</p>
+        <p className="text-muted-foreground text-center text-sm">
+          {t('acceptInvite.existing.checking')}
+        </p>
       </div>
     );
   }
@@ -133,8 +139,8 @@ export function AcceptInviteExistingAccount({
   if (accepted) {
     return (
       <div className="rounded-md bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/10 dark:text-green-400">
-        <p className="font-medium">You have joined {joining}.</p>
-        <p className="mt-1 text-xs">Redirecting to your dashboard...</p>
+        <p className="font-medium">{t('acceptInvite.existing.joined', org)}</p>
+        <p className="mt-1 text-xs">{t('acceptInvite.existing.redirecting')}</p>
       </div>
     );
   }
@@ -146,22 +152,25 @@ export function AcceptInviteExistingAccount({
   return (
     <div className="space-y-4">
       <p className="text-sm">
-        You have been invited to join <strong>{joining}</strong>. You already have an account with{' '}
-        <strong>{email}</strong>, so there is no password to set.
+        {t.rich('acceptInvite.existing.invited', {
+          ...org,
+          email,
+          strong: (chunks) => <strong>{chunks}</strong>,
+        })}
       </p>
 
       {signedInAs === null && (
         <>
           <p className="text-muted-foreground text-sm">
             {accountVerified
-              ? `Sign in as ${email}, and you will come back here to accept.`
-              : `Your account's email address has not been verified yet. When you sign in as ${email}, you will be offered a verification email. Verify your address, then open this invitation link again to accept.`}
+              ? t('acceptInvite.existing.signInToAccept', { email })
+              : t('acceptInvite.existing.signInUnverified', { email })}
           </p>
           <Button
             className="w-full"
             onClick={() => router.push(`/login?callbackUrl=${encodeURIComponent(returnTo)}`)}
           >
-            Sign in to accept
+            {t('acceptInvite.existing.signInButton')}
           </Button>
         </>
       )}
@@ -169,25 +178,24 @@ export function AcceptInviteExistingAccount({
       {signedInAs !== null && !isInvitedAccount && (
         <>
           <div className="rounded-md bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-900/10 dark:text-amber-400">
-            You are signed in as <strong>{signedInAs}</strong>. This invitation was sent to{' '}
-            <strong>{email}</strong>. Sign out, then sign in as {email} to accept it.
+            {t.rich('acceptInvite.existing.wrongAccount', {
+              current: signedInAs,
+              email,
+              strong: (chunks) => <strong>{chunks}</strong>,
+            })}
           </div>
           <Button className="w-full" onClick={() => void signOut()} disabled={isSigningOut}>
-            {isSigningOut ? 'Signing out...' : 'Sign out'}
+            {isSigningOut ? t('shared.signingOut') : t('shared.signOut')}
           </Button>
         </>
       )}
 
       {isInvitedAccount && !accountVerified && (
         <>
-          <p className="text-muted-foreground text-sm">
-            Your account&apos;s email address has not been verified yet, and accepting needs a
-            verified address. Send yourself a verification email, follow its link, then open this
-            invitation link again.
-          </p>
+          <p className="text-muted-foreground text-sm">{t('acceptInvite.existing.unverified')}</p>
           {verificationSent ? (
             <p className="text-sm" role="status">
-              Verification email sent to {email}. Check your inbox.
+              {t('acceptInvite.existing.verificationSent', { email })}
             </p>
           ) : (
             <>
@@ -197,7 +205,7 @@ export function AcceptInviteExistingAccount({
                 onClick={() => void sendVerification()}
                 disabled={isSendingVerification}
               >
-                {isSendingVerification ? 'Sending...' : 'Send verification email'}
+                {isSendingVerification ? t('shared.sending') : t('shared.sendVerificationEmail')}
               </Button>
             </>
           )}
@@ -208,7 +216,9 @@ export function AcceptInviteExistingAccount({
         <>
           <SaveError failure={save.failure} />
           <Button className="w-full" onClick={() => void accept()} disabled={isAccepting}>
-            {isAccepting ? 'Accepting...' : `Join ${joining}`}
+            {isAccepting
+              ? t('acceptInvite.existing.accepting')
+              : t('acceptInvite.existing.join', org)}
           </Button>
         </>
       )}

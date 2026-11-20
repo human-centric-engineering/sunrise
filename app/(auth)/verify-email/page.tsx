@@ -1,10 +1,14 @@
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { VerifyEmailClientContent } from '@/app/(auth)/verify-email/verify-email-content';
 
-export const metadata: Metadata = {
-  title: 'Verify Email',
-  description: 'Verify your email address to complete registration',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('auth.verifyEmail.meta');
+  return {
+    title: t('title'),
+    description: t('description'),
+  };
+}
 
 /**
  * Verify Email Page

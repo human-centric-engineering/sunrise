@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { authClient } from '@/lib/auth/client';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
@@ -46,6 +47,7 @@ export function LogoutButton({
   className,
   redirectTo = '/',
 }: LogoutButtonProps) {
+  const t = useTranslations('auth.logoutButton');
   const [isLoading, setIsLoading] = useState(false);
   const { track, reset } = useAnalytics();
 
@@ -85,7 +87,7 @@ export function LogoutButton({
       onClick={() => void handleLogout()}
       disabled={isLoading}
     >
-      {isLoading ? 'Signing out...' : 'Sign Out'}
+      {isLoading ? t('signingOut') : t('signOut')}
     </Button>
   );
 }

@@ -1,14 +1,18 @@
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { BRAND } from '@/lib/brand';
 
-export const metadata: Metadata = {
-  title: {
-    template: `%s - ${BRAND.name}`,
-    default: `Authentication - ${BRAND.name}`,
-  },
-  description: 'Sign in or create an account',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('auth.layout.meta');
+  return {
+    title: {
+      template: t('titleTemplate', { brand: BRAND.name }),
+      default: t('defaultTitle', { brand: BRAND.name }),
+    },
+    description: t('description'),
+  };
+}
 
 /**
  * Auth Layout
