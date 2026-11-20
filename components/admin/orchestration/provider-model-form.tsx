@@ -563,7 +563,7 @@ export function ProviderModelForm({ model, replacementOptions = [] }: ProviderMo
               Model ID{' '}
               <FieldHelp title="Model ID">
                 The API model identifier sent to the provider (e.g. &quot;gpt-5&quot;,
-                &quot;claude-opus-4&quot;, &quot;voyage-3&quot;).
+                &quot;claude-opus-4-6&quot;, &quot;voyage-3&quot;).
               </FieldHelp>
             </Label>
             <Input id="modelId" {...register('modelId')} placeholder="e.g. gpt-5" />

@@ -14,6 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import providerModelsSeed, {
+  NOT_SERVED_SLUG_SUFFIX,
   RETIRED_SEED_MODELS,
   SEED_RETIREMENT_DAY,
 } from '@/prisma/seeds/009-provider-models';
@@ -37,9 +38,11 @@ interface StoredRow {
   isActive?: boolean;
   isDefault: boolean;
   retiresAt?: Date | null;
+  replacementId?: string | null;
 }
 
 interface LookupWhere {
+  id?: string;
   slug?: string;
   providerSlug_modelId?: { providerSlug: string; modelId: string };
 }
@@ -61,6 +64,11 @@ async function runSeed(
       user: { findFirst: vi.fn().mockResolvedValue({ id: 'system-owner' }) },
       aiProviderModel: {
         findUnique: vi.fn(({ where }: { where: LookupWhere }) => {
+          if (where.id) {
+            return Promise.resolve(
+              Object.values(byModelId).find((row) => row.id === where.id) ?? null
+            );
+          }
           if (where.providerSlug_modelId) {
             const { providerSlug, modelId } = where.providerSlug_modelId;
             return Promise.resolve(byModelId[`${providerSlug}/${modelId}`] ?? null);
@@ -180,6 +188,29 @@ describe('009-provider-models seed — local embedding rows (t-1011)', () => {
 
 describe('009-provider-models seed — model ids the vendors serve (t-1041)', () => {
   const seeded = async () => [...(await runSeed()).rows.values()].map((r) => r.create);
+  const DAY = new Date(`${SEED_RETIREMENT_DAY}T00:00:00.000Z`);
+
+  /** A seed-managed row as an install already has it. */
+  function stored(over: Partial<StoredRow> & { id: string; providerSlug: string }): StoredRow {
+    return {
+      name: over.id,
+      capabilities: ['chat', 'vision', 'documents'],
+      isActive: true,
+      isDefault: true,
+      retiresAt: null,
+      replacementId: null,
+      ...over,
+    };
+  }
+
+  /** The retirement writes, as `{ id → data }`; the move-aside renames are by slug. */
+  function retirements(update: ReturnType<typeof vi.fn>) {
+    return Object.fromEntries(
+      (update.mock.calls as Array<[{ where: { id?: string }; data: Record<string, unknown> }]>)
+        .filter(([args]) => args.where.id)
+        .map(([args]) => [args.where.id, args.data])
+    );
+  }
 
   it('seeds every Anthropic model under an id in the API’s form: hyphens, no dots', async () => {
     const anthropic = (await seeded()).filter((r) => r.providerSlug === 'anthropic');
@@ -190,125 +221,188 @@ describe('009-provider-models seed — model ids the vendors serve (t-1041)', ()
       'claude-haiku-4-5',
     ]);
     for (const row of anthropic) {
-      // `claude-<family>-<major>[-<minor>][-<yyyymmdd>]`: a dotted or
+      // `claude-<family>-<major>-<minor>[-<yyyymmdd>]`: a dotted or
       // unversioned id (`claude-haiku-4.5`, `claude-opus-4`) fails here.
       expect(row.modelId, String(row.modelId)).toMatch(/^claude-[a-z]+-\d+-\d+(-\d{8})?$/);
     }
   });
 
-  it('never seeds a model its vendor has stopped serving', async () => {
-    const slugs = (await seeded()).map((r) => r.slug);
-
-    for (const { slug } of RETIRED_SEED_MODELS) expect(slugs).not.toContain(slug);
-    // And each retired model's replacement is seeded, so a fresh install has it.
+  it('never seeds a model its vendor does not serve, and seeds each one’s replacement', async () => {
     const ids = (await seeded()).map((r) => `${String(r.providerSlug)}/${String(r.modelId)}`);
-    expect(ids).toEqual(
-      expect.arrayContaining([
-        'anthropic/claude-opus-4-6',
-        'anthropic/claude-sonnet-4-6',
-        'openai/o3',
-      ])
-    );
+
+    for (const { providerSlug, modelId, replacementModelId } of RETIRED_SEED_MODELS) {
+      expect(ids).not.toContain(`${providerSlug}/${modelId}`);
+      expect(ids).toContain(`${providerSlug}/${replacementModelId}`);
+    }
   });
 
-  it('leaves a fresh install without the retired rows, writing nothing to them', async () => {
+  it('writes nothing to a fresh install beyond its own rows', async () => {
     const { update } = await runSeed();
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('marks an existing seed-managed retired row retired, with its replacement, and turns it off', async () => {
-    const oldRows: Record<string, StoredRow> = {
-      'anthropic-claude-sonnet-4': {
-        id: 'row-sonnet-4',
-        name: 'Claude Sonnet 4',
-        providerSlug: 'anthropic',
-        capabilities: ['chat', 'vision', 'documents'],
-        isActive: true,
-        isDefault: true,
-        retiresAt: null,
-      },
-    };
-    const replacement: StoredRow = {
+  it('retires an existing seed-managed row with its replacement, turned off', async () => {
+    const replacement = stored({
       id: 'row-sonnet-4-6',
       slug: 'anthropic-claude-sonnet-4-6',
-      name: 'Claude Sonnet 4.6',
       providerSlug: 'anthropic',
-      capabilities: ['chat', 'vision', 'documents'],
-      isActive: true,
-      isDefault: true,
-      retiresAt: null,
-    };
-
-    const { update, logger } = await runSeed((slug) => oldRows[slug] ?? null, {
+    });
+    const { update, logger } = await runSeed(() => null, {
+      'anthropic/claude-sonnet-4': stored({
+        id: 'row-sonnet-4',
+        slug: 'anthropic-claude-sonnet-4',
+        providerSlug: 'anthropic',
+      }),
       'anthropic/claude-sonnet-4-6': replacement,
     });
 
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledWith({
-      where: { slug: 'anthropic-claude-sonnet-4' },
-      data: {
-        retiresAt: new Date(`${SEED_RETIREMENT_DAY}T00:00:00.000Z`),
-        replacementId: 'row-sonnet-4-6',
-        isActive: false,
-      },
+    expect(retirements(update)).toEqual({
+      'row-sonnet-4': { retiresAt: DAY, replacementId: 'row-sonnet-4-6', isActive: false },
     });
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it('retires it with no replacement when the replacement no longer qualifies, and says why', async () => {
-    const { update, logger } = await runSeed(
-      (slug) =>
-        slug === 'openai-o3-mini'
-          ? {
-              id: 'row-o3-mini',
-              name: 'o3-mini',
-              providerSlug: 'openai',
-              capabilities: ['reasoning'],
-              isActive: true,
-              isDefault: true,
-              retiresAt: null,
-            }
-          : null,
-      {
-        // An admin turned o3 off.
-        'openai/o3': {
-          id: 'row-o3',
-          slug: 'openai-o3',
-          name: 'o3',
-          providerSlug: 'openai',
-          capabilities: ['reasoning'],
-          isActive: false,
-          isDefault: false,
-          retiresAt: null,
-        },
-      }
-    );
+  it('moves the dotted Haiku row aside, so the corrected row can take its slug, and retires it', async () => {
+    // Pins still name `claude-haiku-4.5`: renaming the row's id in place would
+    // leave them matching no row, unseen by the model page and the move.
+    const dotted = stored({
+      id: 'row-haiku-dotted',
+      slug: 'anthropic-claude-haiku-4-5',
+      providerSlug: 'anthropic',
+    });
+    const corrected = stored({
+      id: 'row-haiku',
+      slug: 'anthropic-claude-haiku-4-5',
+      providerSlug: 'anthropic',
+    });
 
-    expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { slug: 'openai-o3-mini' },
-        data: expect.objectContaining({ replacementId: null, isActive: false }),
-      })
+    const { update, upsert, rows } = await runSeed(() => null, {
+      'anthropic/claude-haiku-4.5': dotted,
+      'anthropic/claude-haiku-4-5': corrected,
+    });
+
+    expect(update).toHaveBeenNthCalledWith(1, {
+      where: { slug: 'anthropic-claude-haiku-4-5' },
+      data: { slug: `anthropic-claude-haiku-4-5${NOT_SERVED_SLUG_SUFFIX}` },
+    });
+    // Moved aside before the corrected row is written under the slug.
+    const haikuUpsert = (upsert.mock.calls as Array<[UpsertArgs]>).findIndex(
+      ([args]) => args.where.slug === 'anthropic-claude-haiku-4-5'
     );
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
+      upsert.mock.invocationCallOrder[haikuUpsert]
+    );
+    expect(rows.get('anthropic-claude-haiku-4-5')?.create.modelId).toBe('claude-haiku-4-5');
+    expect(retirements(update)['row-haiku-dotted']).toEqual({
+      retiresAt: DAY,
+      replacementId: 'row-haiku',
+      isActive: false,
+    });
+  });
+
+  it('keeps a retirement day and successor already recorded, while the successor qualifies', async () => {
+    // The provider audit recorded the vendor's own day and an admin's row.
+    const vendorDay = new Date('2026-06-15T00:00:00.000Z');
+    const { update } = await runSeed(() => null, {
+      'anthropic/claude-opus-4': stored({
+        id: 'row-opus-4',
+        slug: 'anthropic-claude-opus-4',
+        providerSlug: 'anthropic',
+        retiresAt: vendorDay,
+        replacementId: 'row-opus-4-5',
+      }),
+      'anthropic/claude-opus-4-5': stored({
+        id: 'row-opus-4-5',
+        slug: 'anthropic-claude-opus-4-5',
+        providerSlug: 'anthropic',
+        isDefault: false,
+      }),
+    });
+
+    expect(retirements(update)['row-opus-4']).toEqual({
+      retiresAt: vendorDay,
+      replacementId: 'row-opus-4-5',
+      isActive: false,
+    });
+  });
+
+  it('writes nothing when a row is already retired as it would be', async () => {
+    const { update } = await runSeed(() => null, {
+      'openai/o3-mini': stored({
+        id: 'row-o3-mini',
+        slug: 'openai-o3-mini',
+        providerSlug: 'openai',
+        capabilities: ['reasoning'],
+        isActive: false,
+        retiresAt: DAY,
+        replacementId: 'row-o3',
+      }),
+      'openai/o3': stored({
+        id: 'row-o3',
+        slug: 'openai-o3',
+        providerSlug: 'openai',
+        capabilities: ['reasoning'],
+      }),
+    });
+
+    expect(retirements(update)).toEqual({});
+  });
+
+  it('retires a row with no replacement when the replacement no longer qualifies, and says why', async () => {
+    const { update, logger } = await runSeed(() => null, {
+      'openai/o3-mini': stored({
+        id: 'row-o3-mini',
+        slug: 'openai-o3-mini',
+        providerSlug: 'openai',
+        capabilities: ['reasoning'],
+      }),
+      // An admin turned o3 off.
+      'openai/o3': stored({
+        id: 'row-o3',
+        slug: 'openai-o3',
+        providerSlug: 'openai',
+        capabilities: ['reasoning'],
+        isActive: false,
+        isDefault: false,
+      }),
+    });
+
+    expect(retirements(update)['row-o3-mini']).toEqual({
+      retiresAt: DAY,
+      replacementId: null,
+      isActive: false,
+    });
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('Retiring openai-o3-mini without a replacement: o3')
     );
   });
 
-  it('leaves a retired row an admin has edited as they left it', async () => {
-    const { update } = await runSeed((slug) =>
-      slug === 'anthropic-claude-opus-4' ? { isDefault: false } : null
-    );
+  it('leaves a row an admin has edited as they left it', async () => {
+    const { update } = await runSeed(() => null, {
+      'anthropic/claude-opus-4': stored({
+        id: 'row-opus-4',
+        slug: 'anthropic-claude-opus-4',
+        providerSlug: 'anthropic',
+        isDefault: false,
+      }),
+    });
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('skips a model whose id another row already holds, instead of failing the seed', async () => {
-    // Say an admin added Haiku 4.5 under its own slug from Discover models.
-    const { rows, logger } = await runSeed(() => null, {
-      'anthropic/claude-haiku-4-5': {
+  it('skips a model whose id another row holds, says why, and retires the dotted row onto that row', async () => {
+    // An admin added Haiku 4.5 from Discover models, under its own slug.
+    const { rows, update, logger } = await runSeed(() => null, {
+      'anthropic/claude-haiku-4-5': stored({
+        id: 'row-haiku-admin',
         slug: 'anthropic-haiku-from-discovery',
+        providerSlug: 'anthropic',
         isDefault: false,
-      },
+      }),
+      'anthropic/claude-haiku-4.5': stored({
+        id: 'row-haiku-dotted',
+        slug: 'anthropic-claude-haiku-4-5',
+        providerSlug: 'anthropic',
+      }),
     });
 
     expect(rows.has('anthropic-claude-haiku-4-5')).toBe(false);
@@ -316,5 +410,14 @@ describe('009-provider-models seed — model ids the vendors serve (t-1041)', ()
     expect(logger.warn).toHaveBeenCalledWith(
       'Provider model anthropic-claude-haiku-4-5 not seeded: anthropic-haiku-from-discovery already has anthropic claude-haiku-4-5'
     );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('1 skipped (another row has the model id)')
+    );
+    // The never-served row does not stay on: it is retired onto the admin's row.
+    expect(retirements(update)['row-haiku-dotted']).toEqual({
+      retiresAt: DAY,
+      replacementId: 'row-haiku-admin',
+      isActive: false,
+    });
   });
 });

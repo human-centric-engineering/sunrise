@@ -471,7 +471,7 @@ Each entry in \`newModels\`:
 - \`name\`: Human-readable name (e.g. "Claude Sonnet 4.5")
 - \`slug\`: Lowercase letters / digits / hyphens only, prefixed with the provider (e.g. "anthropic-claude-sonnet-4-5")
 - \`providerSlug\`: Must match an existing provider slug from the registry
-- \`modelId\`: API model identifier in **canonical short form** — the bare id the provider's API accepts, WITHOUT date suffixes. Match the format the registry already uses. Examples: \`claude-opus-4\` (NOT \`claude-opus-4-20250514\`), \`gpt-5\` (NOT \`gpt-5-2026-01-15\`), \`o3-mini\`.
+- \`modelId\`: API model identifier in **canonical short form** — the bare id the provider's API accepts, WITHOUT date suffixes. Match the format the registry already uses. Examples: \`claude-haiku-4-5\` (NOT \`claude-haiku-4-5-20251001\`), \`gpt-5\` (NOT \`gpt-5-2025-08-07\`), \`o3\`.
 - \`description\`: Brief — purpose and strengths in one sentence.
 - \`capabilities\`: array of one or more of: \`chat\`, \`reasoning\`, \`embedding\`, \`audio\`, \`image\`, \`moderation\`, \`vision\`, \`documents\`. Use these exact tokens — do not invent values like \`multimodal\` or \`pdf\`. \`image\` = image generation; \`vision\` = image input to a chat model.
 - \`tierRole\`: one of \`thinking\` / \`worker\` / \`infrastructure\` / \`control_plane\` / \`embedding\` (the model's capability tier).

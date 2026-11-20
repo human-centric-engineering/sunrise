@@ -3,38 +3,66 @@ import { serviceAccountWhere } from '@/lib/auth/account';
 import { checkReplacement, parseRetirementDate } from '@/lib/orchestration/model-lifecycle/state';
 
 /**
- * Seeded models their vendor no longer serves, and what replaces each
- * (t-1041). Found 2026-11-20 against each vendor's models list: every call to
- * them already failed with "model not found".
+ * Seeded models their vendor does not serve, and what replaces each (t-1041).
+ * Found 2026-11-20 against each vendor's models list: every call to them
+ * already failed with "model not found". Claude Opus 4, Claude Sonnet 4 and
+ * o3-mini are no longer served; Claude Haiku 4.5 was seeded under a dotted
+ * id the API never accepted.
  *
- * A fresh install never gets them. On an install that has the row, a re-seed
- * marks it retired on {@link SEED_RETIREMENT_DAY} with its replacement and
- * turns it off, unless an admin has edited it (`isDefault: false`). The
- * replacement is found by provider and model id, so a row an admin added for
- * it serves as well as the seed's own. Whatever
- * still uses it then shows on the model's page and in config health, and
- * moves with Move uses (§136).
+ * A fresh install never gets them. On an install that has one, a re-seed:
+ *
+ * - **moves it aside** when its slug is one the seed now gives its
+ *   replacement (Haiku 4.5's): the slug gains {@link NOT_SERVED_SLUG_SUFFIX}.
+ *   A pin names provider and model id, never a slug, so nothing that uses it
+ *   changes;
+ * - **retires it**: on {@link SEED_RETIREMENT_DAY}, or the day already
+ *   recorded (the provider audit may have recorded the vendor's own); with the
+ *   successor already recorded if it still qualifies, else the replacement
+ *   here, found by provider and model id so a row an admin added for it serves
+ *   as well; and turned off.
+ *
+ * Whatever still uses it then shows on the model's page and in config health,
+ * and moves with Move uses (§136). A row an admin has edited
+ * (`isDefault: false`) is theirs, and left as it is.
  */
-export const RETIRED_SEED_MODELS: ReadonlyArray<{ slug: string; replacementModelId: string }> = [
-  { slug: 'anthropic-claude-opus-4', replacementModelId: 'claude-opus-4-6' },
-  { slug: 'anthropic-claude-sonnet-4', replacementModelId: 'claude-sonnet-4-6' },
-  { slug: 'openai-o3-mini', replacementModelId: 'o3' },
+export const RETIRED_SEED_MODELS: ReadonlyArray<{
+  providerSlug: string;
+  modelId: string;
+  replacementModelId: string;
+}> = [
+  { providerSlug: 'anthropic', modelId: 'claude-opus-4', replacementModelId: 'claude-opus-4-6' },
+  {
+    providerSlug: 'anthropic',
+    modelId: 'claude-sonnet-4',
+    replacementModelId: 'claude-sonnet-4-6',
+  },
+  {
+    providerSlug: 'anthropic',
+    modelId: 'claude-haiku-4.5',
+    replacementModelId: 'claude-haiku-4-5',
+  },
+  { providerSlug: 'openai', modelId: 'o3-mini', replacementModelId: 'o3' },
 ];
 
 /**
- * The retirement day a re-seed records: the day the models were found no
- * longer served. The vendors' own days were earlier and are not recorded.
+ * The retirement day a re-seed records where none is recorded: the day the
+ * models were found not served. The vendors' own days were earlier.
  */
 export const SEED_RETIREMENT_DAY = '2026-11-20';
 
+/** Appended to a not-served row's slug when the seed needs that slug for its replacement. */
+export const NOT_SERVED_SLUG_SUFFIX = '-not-served';
+
 const RETIRE_SELECT = {
   id: true,
+  slug: true,
   name: true,
   providerSlug: true,
   capabilities: true,
   isActive: true,
   isDefault: true,
   retiresAt: true,
+  replacementId: true,
 } as const;
 
 /**
@@ -128,7 +156,9 @@ const unit: SeedUnit = {
       {
         slug: 'anthropic-claude-haiku-4-5',
         providerSlug: 'anthropic',
-        // Anthropic's id is hyphenated; `claude-haiku-4.5` was never served (t-1041).
+        // Anthropic's id is hyphenated. An install's row under this slug with
+        // the dotted `claude-haiku-4.5`, never served, is moved aside and
+        // retired with this as its replacement (t-1041).
         modelId: 'claude-haiku-4-5',
         name: 'Claude Haiku 4.5',
         description:
@@ -952,6 +982,30 @@ const unit: SeedUnit = {
     let created = 0;
     let updated = 0;
     let skipped = 0;
+    let blocked = 0;
+
+    // A not-served row holding a slug the seed now gives its replacement is
+    // moved aside first, so the replacement can take the slug (t-1041).
+    const seededSlugs = new Set(models.map((m) => m.slug));
+    for (const notServed of RETIRED_SEED_MODELS) {
+      const row = await prisma.aiProviderModel.findUnique({
+        where: {
+          providerSlug_modelId: {
+            providerSlug: notServed.providerSlug,
+            modelId: notServed.modelId,
+          },
+        },
+        select: { slug: true, isDefault: true },
+      });
+      if (!row?.isDefault || !seededSlugs.has(row.slug)) continue;
+      await prisma.aiProviderModel.update({
+        where: { slug: row.slug },
+        data: { slug: `${row.slug}${NOT_SERVED_SLUG_SUFFIX}` },
+      });
+      logger.info(
+        `Provider model ${row.slug} (${notServed.modelId}, not served) moved aside to ${row.slug}${NOT_SERVED_SLUG_SUFFIX}`
+      );
+    }
 
     for (const model of models) {
       // Check if an existing row has been customised by an admin
@@ -981,7 +1035,7 @@ const unit: SeedUnit = {
         logger.warn(
           `Provider model ${model.slug} not seeded: ${sameId.slug} already has ${model.providerSlug} ${model.modelId}`
         );
-        skipped++;
+        blocked++;
         continue;
       }
 
@@ -1046,41 +1100,67 @@ const unit: SeedUnit = {
     }
 
     logger.info(
-      `✅ Provider models: ${created} created, ${updated} updated, ${skipped} skipped (admin-customised)`
+      `✅ Provider models: ${created} created, ${updated} updated, ${skipped} skipped (admin-customised)` +
+        (blocked > 0 ? `, ${blocked} skipped (another row has the model id)` : '')
     );
 
-    // Models their vendor no longer serves: retired, with their replacement.
-    const retiresAt = parseRetirementDate(SEED_RETIREMENT_DAY);
-    if (!retiresAt) throw new Error(`Bad SEED_RETIREMENT_DAY ${SEED_RETIREMENT_DAY}`);
+    // Models their vendor does not serve: retired, with their replacement.
+    const seedDay = parseRetirementDate(SEED_RETIREMENT_DAY);
+    if (!seedDay) throw new Error(`Bad SEED_RETIREMENT_DAY ${SEED_RETIREMENT_DAY}`);
     let retired = 0;
-    for (const { slug, replacementModelId } of RETIRED_SEED_MODELS) {
+    for (const notServed of RETIRED_SEED_MODELS) {
       const row = await prisma.aiProviderModel.findUnique({
-        where: { slug },
+        where: {
+          providerSlug_modelId: {
+            providerSlug: notServed.providerSlug,
+            modelId: notServed.modelId,
+          },
+        },
         select: RETIRE_SELECT,
       });
       // Absent on a fresh install; an admin's own edit is theirs to keep.
       if (!row || !row.isDefault) continue;
-      const replacement = await prisma.aiProviderModel.findUnique({
-        where: {
-          providerSlug_modelId: { providerSlug: row.providerSlug, modelId: replacementModelId },
-        },
-        select: RETIRE_SELECT,
-      });
-      // Checked as the model page and the move check it: an admin may have
-      // turned the replacement off. Then the row is retired with none named.
-      const problem = replacement
-        ? checkReplacement(row, replacement)
-        : 'it is not in the catalogue';
-      if (problem) {
-        logger.warn(`Retiring ${slug} without a replacement: ${replacementModelId} — ${problem}`);
+      // A successor already recorded (the provider audit's, say) is kept
+      // while it still qualifies, checked as the model page and the move
+      // check it.
+      const recorded = row.replacementId
+        ? await prisma.aiProviderModel.findUnique({
+            where: { id: row.replacementId },
+            select: RETIRE_SELECT,
+          })
+        : null;
+      let replacementId: string | null =
+        recorded && !checkReplacement(row, recorded) ? recorded.id : null;
+      if (!replacementId) {
+        const candidate = await prisma.aiProviderModel.findUnique({
+          where: {
+            providerSlug_modelId: {
+              providerSlug: row.providerSlug,
+              modelId: notServed.replacementModelId,
+            },
+          },
+          select: RETIRE_SELECT,
+        });
+        // An admin may have turned the replacement off: then none is named.
+        const problem = candidate ? checkReplacement(row, candidate) : 'it is not in the catalogue';
+        if (candidate && !problem) replacementId = candidate.id;
+        else {
+          logger.warn(
+            `Retiring ${row.slug} without a replacement: ${notServed.replacementModelId} — ${problem}`
+          );
+        }
+      }
+      const retiresAt = row.retiresAt ?? seedDay;
+      if (
+        row.retiresAt?.getTime() === retiresAt.getTime() &&
+        row.replacementId === replacementId &&
+        !row.isActive
+      ) {
+        continue; // Already retired as it would be: nothing to write.
       }
       await prisma.aiProviderModel.update({
-        where: { slug },
-        data: {
-          retiresAt,
-          replacementId: replacement && !problem ? replacement.id : null,
-          isActive: false,
-        },
+        where: { id: row.id },
+        data: { retiresAt, replacementId, isActive: false },
       });
       retired++;
     }

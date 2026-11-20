@@ -768,16 +768,6 @@ function buildFallbackMap(): Map<string, ModelInfo> {
       supportsTools: true,
     },
     {
-      id: 'o3-mini',
-      name: 'o3-mini',
-      provider: 'openai',
-      tier: 'mid',
-      inputCostPerMillion: 1.1,
-      outputCostPerMillion: 4.4,
-      maxContext: 200_000,
-      supportsTools: true,
-    },
-    {
       id: 'o4-mini',
       name: 'o4-mini',
       provider: 'openai',
