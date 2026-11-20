@@ -22,6 +22,12 @@
  * severe of their states, since it runs on one of them and that is the best
  * case.
  *
+ * **An app's own pins** (§136 t-1067). An app may report the models it names
+ * in its own code and tables (`app-pins.ts`, the `lib/app/model-pins.ts`
+ * seam). They are counted here as this model's uses, the caller's org's named
+ * and every other org's counted, like the rest. A report that fails is marked
+ * (`appPinsUnavailable`), never guessed.
+ *
  * Platform-agnostic: no Next.js imports.
  */
 
@@ -37,7 +43,13 @@ import {
   type SettingsPin,
 } from '@/lib/orchestration/model-lifecycle/settings-pins';
 import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
+import {
+  reportAppModelPins,
+  type AppModelPin,
+  type AppPinModel,
+} from '@/lib/orchestration/model-lifecycle/app-pins';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 
 export interface ModelUses extends ProviderModelUsage {
   /** The install settings that name the model. */
@@ -48,6 +60,38 @@ export interface ModelUses extends ProviderModelUsage {
    * model's use.
    */
   sharedWith: string[];
+  /** The app's own uses in the caller's org, as its reporter names them (§136 t-1067). */
+  appPins: AppModelPin[];
+  /** The app's uses in other orgs, counted. */
+  otherOrgAppPins: number;
+  /** Some org's report of the app's uses failed: they may be undercounted. */
+  appPinsUnavailable: boolean;
+}
+
+/** A catalogue row with what the app's reporter is told about it. */
+export type UsesModel = PinnedModelRef & Pick<AppPinModel, 'id' | 'name'>;
+
+/**
+ * The app's uses of `model`, split into the caller's (named) and every other
+ * org's (counted), by the rule `providerModelUsage` keeps: every pin is the
+ * caller's at `single`, the entered org's alone at `multi`.
+ */
+async function appUses(
+  model: UsesModel,
+  options: CountScope
+): Promise<Pick<ModelUses, 'appPins' | 'otherOrgAppPins' | 'appPinsUnavailable'>> {
+  const current = isMultiTenant() ? (getTenantContext()?.orgId ?? null) : null;
+  const report = await reportAppModelPins(
+    { id: model.id, name: model.name, providerSlug: model.providerSlug, modelId: model.modelId },
+    options
+  );
+  const isCallers = (orgId: string) => !isMultiTenant() || orgId === current;
+  const own = report.pins.filter((pin) => isCallers(pin.orgId));
+  return {
+    appPins: own.map(({ label, where }) => ({ label, where })),
+    otherOrgAppPins: report.pins.length - own.length,
+    appPinsUnavailable: report.failed,
+  };
 }
 
 /**
@@ -64,19 +108,18 @@ function siblings(model: PinnedModelRef) {
 }
 
 /** Everything that uses `model`. `options` as `providerModelUsage`'s. */
-export async function modelUses(
-  model: PinnedModelRef,
-  options: CountScope = {}
-): Promise<ModelUses> {
-  const [usage, settings, others] = await Promise.all([
+export async function modelUses(model: UsesModel, options: CountScope = {}): Promise<ModelUses> {
+  const [usage, settings, others, app] = await Promise.all([
     providerModelUsage(model.providerSlug, model.modelId, options),
     getOrchestrationSettings(),
     siblings(model),
+    appUses(model, options),
   ]);
   return {
     ...usage,
     settings: settingsPinsFor(model, settings),
     sharedWith: others.map((o) => o.providerSlug),
+    ...app,
   };
 }
 
@@ -94,7 +137,7 @@ export interface RetiringModelsInUse {
 export async function retiringModelsInUse(now: Date = new Date()): Promise<RetiringModelsInUse> {
   const dated = await prisma.aiProviderModel.findMany({
     where: { retiresAt: { not: null } },
-    select: { id: true, providerSlug: true, modelId: true, retiresAt: true },
+    select: { id: true, name: true, providerSlug: true, modelId: true, retiresAt: true },
   });
   const counts: RetiringModelsInUse = { retiring: 0, retired: 0 };
   if (dated.length === 0) return counts;
@@ -102,9 +145,10 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
   for (const model of dated) {
     const state = modelLifecycleState(model, now);
     if (state === 'current') continue;
-    const [usage, others] = await Promise.all([
+    const [usage, others, app] = await Promise.all([
       providerModelUsage(model.providerSlug, model.modelId),
       siblings(model),
+      reportAppModelPins(model),
     ]);
     const pins = settingsPinsFor(model, settings);
     // Agents, and the pins that name the provider, are this model's own uses.
@@ -114,7 +158,9 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
       usage.otherOrgAgents +
       (usage.workflows.length - ownWorkflowsByIdOnly) +
       (usage.otherOrgWorkflows - usage.otherOrgWorkflowsByIdOnly) +
-      pins.filter((p) => !p.byIdOnly).length;
+      pins.filter((p) => !p.byIdOnly).length +
+      // The app reports its uses of this row, so each is exact.
+      app.pins.length;
     if (exact > 0) {
       counts[state]++;
       continue;

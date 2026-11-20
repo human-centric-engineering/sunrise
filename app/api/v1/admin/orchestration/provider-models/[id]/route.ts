@@ -286,7 +286,12 @@ export const DELETE = withAdminAuth<{ id: string }>(
       (pin) => pin.source === 'saved' && !(pin.byIdOnly && usage.sharedWith.length > 0)
     );
 
-    if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0) {
+    // And while the app reports a use of it (§136 t-1067): its own code or
+    // tables would name a row that no longer exists. A report that failed
+    // does not block: the reporter is informational, and the page says so.
+    const appCount = usage.appPins.length + usage.otherOrgAppPins;
+
+    if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0 || appCount > 0) {
       log.info('Provider model delete refused — model in use', {
         modelId: id,
         slug: current.slug,
@@ -295,8 +300,9 @@ export const DELETE = withAdminAuth<{ id: string }>(
         otherOrgAgentCount: usage.otherOrgAgents,
         otherOrgWorkflowCount: usage.otherOrgWorkflows,
         savedSettings: savedSettings.map((pin) => pin.slot),
+        appCount,
       });
-      return errorResponse(buildInUseMessage(current.name, usage, savedSettings.length), {
+      return errorResponse(buildInUseMessage(current.name, usage, savedSettings.length, appCount), {
         code: 'MODEL_IN_USE',
         status: 409,
         details: {
@@ -305,6 +311,11 @@ export const DELETE = withAdminAuth<{ id: string }>(
           otherOrgAgentCount: usage.otherOrgAgents,
           otherOrgWorkflowCount: usage.otherOrgWorkflows,
           settings: savedSettings.map((pin) => pin.slot),
+          // Only when the app reports a use: with nothing registered the
+          // answer is as it was before the seam.
+          ...(appCount > 0
+            ? { appPins: usage.appPins, otherOrgAppPinCount: usage.otherOrgAppPins }
+            : {}),
         },
       });
     }
@@ -355,7 +366,8 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
 function buildInUseMessage(
   modelName: string,
   usage: ProviderModelUsage,
-  savedSettings: number
+  savedSettings: number,
+  appUses: number = 0
 ): string {
   const agents = usage.agents.length + usage.otherOrgAgents;
   const workflows = usage.workflows.length + usage.otherOrgWorkflows;
@@ -368,7 +380,8 @@ function buildInUseMessage(
   if (savedSettings > 0) {
     parts.push(`${savedSettings} saved setting${savedSettings === 1 ? '' : 's'}`);
   }
+  if (appUses > 0) parts.push(`${appUses} use${appUses === 1 ? '' : 's'} the app reports`);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
-  const one = agents + workflows + savedSettings === 1;
+  const one = agents + workflows + savedSettings + appUses === 1;
   return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.`;
 }

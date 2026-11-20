@@ -55,6 +55,15 @@
  * same-provider move never changes which providers an org may use. The test is
  * run by the move, not the preview, since it is billed to the org's key.
  *
+ * ## The app's own pins and its check (§136 t-1067)
+ *
+ * An app may report the models it names itself, and register a check on a
+ * move (`app-pins.ts`, the `lib/app/model-pins.ts` seam). The preview counts
+ * the app's pins per org and shows the check's verdict. The move asks the
+ * check again, first of all, and a refusal throws `ConflictError` with the
+ * app's reason before any key is tested or anything is written. The app's
+ * pins are never written here: the app moves them itself.
+ *
  * ## The audit trail
  *
  * One row per agent and per workflow moved, in its org, written once the org
@@ -64,7 +73,13 @@
  * Platform-agnostic: no Next.js imports.
  */
 
-import { APIError, NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
+import {
+  APIError,
+  ConflictError,
+  NotFoundError,
+  StaleRecordError,
+  ValidationError,
+} from '@/lib/api/errors';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { workflowsMayPinWhere } from '@/lib/orchestration/admin/global-config-usage';
@@ -88,6 +103,14 @@ import {
   type MovePins,
   type SettingsMovePlan,
 } from '@/lib/orchestration/model-lifecycle/move-plan';
+import {
+  appModelPinsRegistered,
+  checkAppModelMove,
+  reportAppModelPins,
+  type AppModelPinReport,
+  type AppMoveVerdict,
+  type AppPinModel,
+} from '@/lib/orchestration/model-lifecycle/app-pins';
 import { settingsPinsFor } from '@/lib/orchestration/model-lifecycle/settings-pins';
 import { checkReplacement } from '@/lib/orchestration/model-lifecycle/state';
 import {
@@ -171,6 +194,29 @@ export async function loadMoveTarget(
     orderBy: { providerSlug: 'asc' },
   });
   return { model, replacement, sharedWith: siblings.map((s) => s.providerSlug) };
+}
+
+/** A catalogue row as the app's reporter and check are told it. */
+function appPinModel(model: MoveModel): AppPinModel {
+  return {
+    id: model.id,
+    name: model.name,
+    providerSlug: model.providerSlug,
+    modelId: model.modelId,
+  };
+}
+
+/** The app's pins in every org, and its check's verdict on this move. */
+async function askApp(target: MoveTarget) {
+  const report: AppModelPinReport = await reportAppModelPins(appPinModel(target.model));
+  const verdict = await checkAppModelMove(
+    appPinModel(target.model),
+    appPinModel(target.replacement),
+    report
+  );
+  const perOrg = new Map<string, number>();
+  for (const pin of report.pins) perOrg.set(pin.orgId, (perOrg.get(pin.orgId) ?? 0) + 1);
+  return { report, verdict, perOrg };
 }
 
 function movePins(target: MoveTarget): MovePins {
@@ -364,6 +410,16 @@ export interface OrgMovePreview {
   left: LeftCounts;
   /** The org pays for the provider with its own key, which the move tests first. */
   ownKey: boolean;
+  /** The app's own uses in the org (§136 t-1067): the app moves them, not the move. */
+  appPins: number;
+}
+
+/** What the app said about the move (§136 t-1067). */
+export interface AppMovePreview {
+  /** Some org's report of the app's uses failed: the counts may be short. */
+  pinsUnavailable: boolean;
+  /** Why the app refuses the move, or `null` when it allows it (or has no check). */
+  refused: string | null;
 }
 
 /** What {@link previewModelMove} answers. */
@@ -375,6 +431,7 @@ export interface ModelMovePreview {
   settings: SettingsMovePlan;
   suspendedOrgs: number;
   sharedWith: string[];
+  app: AppMovePreview;
 }
 
 function modelSummary(target: MoveTarget): Pick<ModelMovePreview, 'model' | 'replacement'> {
@@ -397,15 +454,17 @@ async function settingsPlan(target: MoveTarget): Promise<SettingsMovePlan> {
 
 /** What moving the model's uses to the replacement would do. Changes nothing. */
 export async function previewModelMove(target: MoveTarget): Promise<ModelMovePreview> {
-  const [{ passes, suspended }, config] = await Promise.all([
+  const [{ passes, suspended }, config, app] = await Promise.all([
     orgPasses(),
     providerConfigFor(target.model.providerSlug),
+    askApp(target),
   ]);
   const orgs: OrgMovePreview[] = [];
   for (const pass of passes) {
+    const appPins = app.perOrg.get(pass.orgId) ?? 0;
     const preview = await inOrg(pass, async () => {
       const uses = await readOrgUses(pass, target);
-      if (!usesSomething(uses)) return null;
+      if (!usesSomething(uses) && appPins === 0) return null;
       const ownKey =
         isMultiTenant() && config
           ? (await prisma.aiOrgProviderKey.count({
@@ -421,6 +480,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
         workflows: uses.workflows.length,
         left: countLeft(uses.left),
         ownKey,
+        appPins,
       };
     });
     if (preview) orgs.push(preview);
@@ -431,6 +491,10 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
     settings: await settingsPlan(target),
     suspendedOrgs: suspended,
     sharedWith: target.sharedWith,
+    app: {
+      pinsUnavailable: app.report.failed,
+      refused: app.verdict.allowed ? null : app.verdict.reason,
+    },
   };
 }
 
@@ -809,11 +873,27 @@ async function moveSettings(
  * Move every use of `target.model` to `target.replacement`: the install
  * settings, then each active org's agents and workflows, one org at a time in
  * its own scope and its own transaction. See the module header.
+ *
+ * @throws ConflictError when the app's check refuses the move (§136 t-1067),
+ *   before anything is tested or written.
  */
 export async function moveModelUses(
   target: MoveTarget,
   actor: MoveActor
 ): Promise<ModelMoveResult> {
+  // The app first: a refusal stops the move before any key is billed or any
+  // row is written. Its pins are read only for its check, which they inform.
+  const app = appModelPinsRegistered();
+  const verdict: AppMoveVerdict =
+    app.check || app.failed ? (await askApp(target)).verdict : { allowed: true };
+  if (!verdict.allowed) {
+    logger.warn('Model move refused by the app', {
+      providerModelId: target.model.id,
+      replacementId: target.replacement.id,
+      userId: actor.userId,
+    });
+    throw new ConflictError(verdict.reason, { refusedBy: 'app' });
+  }
   const [{ passes, suspended }, config] = await Promise.all([
     orgPasses(),
     providerConfigFor(target.model.providerSlug),
