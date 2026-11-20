@@ -59,7 +59,9 @@ const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as c
  * about 5% out under the MB label.
  */
 function formatMemory(format: Formatter, bytes: number): string {
-  const i = bytes > 0 ? Math.min(Math.floor(Math.log10(bytes) / 3), BYTE_UNITS.length - 1) : 0;
+  let i = bytes > 0 ? Math.min(Math.floor(Math.log10(bytes) / 3), BYTE_UNITS.length - 1) : 0;
+  // 999,999 bytes rounds to 1,000 kB at two decimals: show it as 1 MB.
+  if (i < BYTE_UNITS.length - 1 && Math.round((bytes / Math.pow(1000, i)) * 100) >= 100_000) i++;
   return format.number(bytes / Math.pow(1000, i), {
     style: 'unit',
     unit: BYTE_UNITS[i],

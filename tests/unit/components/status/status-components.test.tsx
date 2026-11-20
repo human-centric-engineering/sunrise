@@ -146,6 +146,18 @@ describe('StatusPage', () => {
     expect(screen.getByText('12.5 MB')).toBeInTheDocument();
     expect(screen.getByText('64 MB')).toBeInTheDocument();
     expect(screen.getByText('128 MB')).toBeInTheDocument();
+  });
+
+  it('moves up a unit when rounding reaches 1,000', () => {
+    health.current = hook({
+      data: response({
+        memory: { heapUsed: 999_999, heapTotal: 64 * MB, rss: 128 * MB, percentage: 19.53 },
+      }),
+    });
+    render(<StatusPage />);
+
+    expect(screen.getByText('1 MB')).toBeInTheDocument();
+    expect(screen.queryByText('1,000 kB')).not.toBeInTheDocument();
     expect(screen.getByText('20%')).toBeInTheDocument();
   });
 

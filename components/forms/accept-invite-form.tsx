@@ -73,9 +73,10 @@ function parseOAuthError(error: string): LoadError {
 
   // Check for email mismatch error (our custom error from before hook)
   if (decoded.includes('invitation was sent to')) {
-    // The address runs to the full stop that ends the sentence, so the dots
-    // inside it ("jane.doe@acme.com") stay part of it.
-    const emailMatch = decoded.match(/sent to (\S+?)\.?(?:\s|$)/);
+    // Matched before underscores become spaces, so an address keeps its own
+    // ("john_doe@acme.com"). It runs to the full stop that ends the sentence,
+    // so the dots inside it ("jane.doe@acme.com") stay part of it too.
+    const emailMatch = decodeURIComponent(error).match(/sent[ _]to[ _](\S+?)\.(?:[\s_]|$)/);
     return emailMatch
       ? { key: 'oauthWrongEmail', email: emailMatch[1] }
       : { key: 'oauthWrongEmailUnknown' };

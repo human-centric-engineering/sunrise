@@ -38,7 +38,8 @@ release process.
   written into the JSX of those paths (`react/jsx-no-literals`).
   **Fork impact:** a fork that edited one of these screens conflicts on the
   text, which moved to `lib/i18n/messages/en.json`; to change wording, use
-  `overridePlatformMessages('en', …)` rather than editing the component. A
+  `overridePlatformMessages('en', …)` rather than editing the component (for
+  `validation.*` that changes the forms, not the text an API route returns). A
   fork test rendering one of these components needs `next-intl` mocked, as
   `tests/setup.ts` now does with the real catalogue. `authLandingLabel(default)`
   (`lib/auth-landing/route.ts`) gives `AUTH_LANDING_LABEL` in the viewer's
