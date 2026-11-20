@@ -10,6 +10,7 @@
  */
 
 import { useState, useRef, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { Upload, Loader2, Camera, Trash2 } from 'lucide-react';
 import { authClient } from '@/lib/auth/client';
@@ -41,6 +42,7 @@ interface AvatarUploadProps {
 }
 
 export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUploadProps) {
+  const t = useTranslations('account.avatar');
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { track } = useAnalytics();
@@ -48,7 +50,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const save = useSaveFailure({
-    fallback: 'Could not update your avatar. Try again in a moment.',
+    fallback: t('saveFailed'),
     fields: NO_SERVER_FIELDS,
   });
   const { clear: clearFailure, show: showFailure, report: reportFailure } = save;
@@ -59,15 +61,18 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
   const [showCropDialog, setShowCropDialog] = useState(false);
 
   // Validate file before showing cropper
-  const validateFile = (file: File): string | null => {
-    if (!(SUPPORTED_IMAGE_TYPES as readonly string[]).includes(file.type)) {
-      return 'Invalid file type. Supported: JPEG, PNG, WebP, GIF';
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      return `File too large. Maximum size: ${MAX_FILE_SIZE_MB} MB`;
-    }
-    return null;
-  };
+  const validateFile = useCallback(
+    (file: File): string | null => {
+      if (!(SUPPORTED_IMAGE_TYPES as readonly string[]).includes(file.type)) {
+        return t('invalidType');
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        return t('tooLarge', { max: MAX_FILE_SIZE_MB });
+      }
+      return null;
+    },
+    [t]
+  );
 
   // Handle file selection - show crop dialog
   const handleFileSelect = useCallback(
@@ -85,7 +90,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
       setCropImageSrc(imageUrl);
       setShowCropDialog(true);
     },
-    [clearFailure, showFailure]
+    [clearFailure, showFailure, validateFile]
   );
 
   // Handle crop confirmation - upload the cropped blob
@@ -223,7 +228,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
         <div
           role="button"
           tabIndex={0}
-          aria-label="Upload avatar"
+          aria-label={t('uploadAria')}
           className={`relative cursor-pointer ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
           onClick={handleClick}
           onKeyDown={handleKeyDown}
@@ -277,12 +282,12 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
               {isUploading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Uploading...
+                  {t('uploading')}
                 </>
               ) : (
                 <>
                   <Upload className="mr-2 h-4 w-4" />
-                  Upload
+                  {t('upload')}
                 </>
               )}
             </Button>
@@ -306,9 +311,7 @@ export function AvatarUpload({ currentAvatar, userName, initials }: AvatarUpload
           </div>
 
           {/* File type hint */}
-          <p className="text-muted-foreground text-xs">
-            JPEG, PNG, WebP or GIF. Max {MAX_FILE_SIZE_MB}MB.
-          </p>
+          <p className="text-muted-foreground text-xs">{t('hint', { max: MAX_FILE_SIZE_MB })}</p>
 
           {/* Beside Upload and Remove */}
           <SaveError failure={save.failure} />

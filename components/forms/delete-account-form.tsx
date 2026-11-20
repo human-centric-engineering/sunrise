@@ -10,6 +10,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { z } from 'zod';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -39,18 +40,22 @@ import {
  */
 const pendingDeletionSchema = z.object({ pending: z.literal(true) });
 
+/** The word the person types to confirm. A fixed token the route checks, so never translated. */
+const CONFIRM_WORD = 'DELETE';
+
 export function DeleteAccountForm() {
+  const t = useTranslations('account.deleteAccount');
   const [isOpen, setIsOpen] = useState(false);
   const [confirmation, setConfirmation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const save = useSaveFailure({
-    fallback: 'Could not delete your account. Try again in a moment.',
+    fallback: t('saveFailed'),
     fields: NO_SERVER_FIELDS,
   });
   const [isPending, setIsPending] = useState(false);
   const { reset } = useAnalytics();
 
-  const isConfirmed = confirmation === 'DELETE';
+  const isConfirmed = confirmation === CONFIRM_WORD;
 
   const handleDelete = async () => {
     if (!isConfirmed) return;
@@ -60,7 +65,7 @@ export function DeleteAccountForm() {
       save.clear();
 
       const result = await apiClient.delete<unknown>(API.USERS.ME, {
-        body: { confirmation: 'DELETE' },
+        body: { confirmation: CONFIRM_WORD },
       });
 
       // Reset analytics identity (event tracked server-side in DELETE /api/v1/users/me)
@@ -120,54 +125,48 @@ export function DeleteAccountForm() {
         <AlertTriangle className="mt-0.5 h-5 w-5 text-red-600 dark:text-red-400" />
         <div className="flex-1 space-y-3">
           <div>
-            <h3 className="font-medium text-red-900 dark:text-red-100">Delete Account</h3>
-            <p className="text-sm text-red-700 dark:text-red-300">
-              Permanently delete your account and all associated data. This action cannot be undone.
-            </p>
+            <h3 className="font-medium text-red-900 dark:text-red-100">{t('title')}</h3>
+            <p className="text-sm text-red-700 dark:text-red-300">{t('description')}</p>
           </div>
 
           <AlertDialog open={isOpen} onOpenChange={dialog.onOpenChange}>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" size="sm">
-                Delete Account
+                {t('open')}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               {isPending ? (
                 <>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Deletion in progress</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Your account is closed and you have been signed out. We are still removing
-                      your data, which usually finishes within a few minutes. You do not need to do
-                      anything else.
-                    </AlertDialogDescription>
+                    <AlertDialogTitle>{t('pendingTitle')}</AlertDialogTitle>
+                    <AlertDialogDescription>{t('pendingDescription')}</AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     {/* Closing the dialog leaves the page (`onClose`). */}
-                    <AlertDialogAction>Continue</AlertDialogAction>
+                    <AlertDialogAction>{t('continue')}</AlertDialogAction>
                   </AlertDialogFooter>
                 </>
               ) : (
                 <>
                   <AlertDialogHeader>
-                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This action cannot be undone. This will permanently delete your account and
-                      remove all of your data from our servers.
-                    </AlertDialogDescription>
+                    <AlertDialogTitle>{t('confirmTitle')}</AlertDialogTitle>
+                    <AlertDialogDescription>{t('confirmDescription')}</AlertDialogDescription>
                   </AlertDialogHeader>
 
                   <div className="space-y-4 py-4">
                     <div className="space-y-2">
                       <Label htmlFor="confirmation">
-                        Type <span className="font-mono font-bold">DELETE</span> to confirm
+                        {t.rich('typeToConfirm', {
+                          word: CONFIRM_WORD,
+                          mono: (chunks) => <span className="font-mono font-bold">{chunks}</span>,
+                        })}
                       </Label>
                       <Input
                         id="confirmation"
                         value={confirmation}
                         onChange={(e) => setConfirmation(e.target.value)}
-                        placeholder="DELETE"
+                        placeholder={CONFIRM_WORD}
                         disabled={isLoading}
                         autoComplete="off"
                       />
@@ -177,7 +176,7 @@ export function DeleteAccountForm() {
                   </div>
 
                   <AlertDialogFooter>
-                    <AlertDialogCancel {...dialog.cancelProps}>Cancel</AlertDialogCancel>
+                    <AlertDialogCancel {...dialog.cancelProps}>{t('cancel')}</AlertDialogCancel>
                     <AlertDialogAction
                       // Kept open while the request runs: it shows the answer
                       // (an error, or a pending deletion).
@@ -188,10 +187,10 @@ export function DeleteAccountForm() {
                       {isLoading ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Deleting...
+                          {t('deleting')}
                         </>
                       ) : (
-                        'Delete Account'
+                        t('confirm')
                       )}
                     </AlertDialogAction>
                   </AlertDialogFooter>

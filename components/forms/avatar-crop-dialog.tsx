@@ -8,6 +8,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useTranslations } from 'next-intl';
 import Cropper from 'react-easy-crop';
 import type { Area } from 'react-easy-crop';
 import {
@@ -88,6 +89,7 @@ async function getCroppedBlob(imageSrc: string, pixelCrop: Area): Promise<Blob> 
 }
 
 export function AvatarCropDialog({ open, imageSrc, onConfirm, onCancel }: AvatarCropDialogProps) {
+  const t = useTranslations('account.avatar.crop');
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
@@ -119,10 +121,8 @@ export function AvatarCropDialog({ open, imageSrc, onConfirm, onCancel }: Avatar
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Crop Avatar</DialogTitle>
-          <DialogDescription>
-            Drag to reposition and use the slider to zoom in or out.
-          </DialogDescription>
+          <DialogTitle>{t('title')}</DialogTitle>
+          <DialogDescription>{t('description')}</DialogDescription>
         </DialogHeader>
 
         {/* Cropper area */}
@@ -146,7 +146,7 @@ export function AvatarCropDialog({ open, imageSrc, onConfirm, onCancel }: Avatar
             type="button"
             onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - ZOOM_STEP))}
             className="text-muted-foreground hover:text-foreground shrink-0 rounded p-1 transition-colors"
-            aria-label="Zoom out"
+            aria-label={t('zoomOut')}
           >
             <ZoomOut className="h-4 w-4" />
           </button>
@@ -156,13 +156,13 @@ export function AvatarCropDialog({ open, imageSrc, onConfirm, onCancel }: Avatar
             max={MAX_ZOOM}
             step={ZOOM_STEP}
             onValueChange={handleZoomChange}
-            aria-label="Zoom"
+            aria-label={t('zoom')}
           />
           <button
             type="button"
             onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))}
             className="text-muted-foreground hover:text-foreground shrink-0 rounded p-1 transition-colors"
-            aria-label="Zoom in"
+            aria-label={t('zoomIn')}
           >
             <ZoomIn className="h-4 w-4" />
           </button>
@@ -170,10 +170,10 @@ export function AvatarCropDialog({ open, imageSrc, onConfirm, onCancel }: Avatar
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button type="button" variant="outline" onClick={onCancel} disabled={isProcessing}>
-            Cancel
+            {t('cancel')}
           </Button>
           <Button type="button" onClick={() => void handleConfirm()} disabled={isProcessing}>
-            {isProcessing ? 'Processing...' : 'Apply'}
+            {isProcessing ? t('processing') : t('apply')}
           </Button>
         </DialogFooter>
       </DialogContent>

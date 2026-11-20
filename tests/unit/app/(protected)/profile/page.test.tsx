@@ -46,7 +46,7 @@ vi.mock('@/lib/db/client', () => ({
 /** The account-section fork seam ships empty; one test below fills it. */
 vi.mock('@/lib/app/account-sections', () => ({ initAppAccountSections: vi.fn() }));
 
-import ProfilePage, { metadata } from '@/app/(protected)/profile/page';
+import ProfilePage, { generateMetadata } from '@/app/(protected)/profile/page';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { prisma } from '@/lib/db/client';
@@ -109,8 +109,10 @@ describe('ProfilePage', () => {
     __resetAccountSectionRegistryForTests();
   });
 
-  it('declares its own page metadata', () => {
+  it('declares its own page metadata', async () => {
+    const metadata = await generateMetadata();
     expect(metadata.title).toBe('Profile');
+    expect(metadata.description).toBe('View your profile');
   });
 
   it('clears the session and redirects when there is no session', async () => {

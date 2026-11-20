@@ -10,6 +10,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { Loader2, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { apiClient } from '@/lib/api/client';
@@ -29,10 +30,11 @@ interface PreferencesFormProps {
 }
 
 export function PreferencesForm({ preferences }: PreferencesFormProps) {
+  const t = useTranslations('account.preferences');
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const save = useSaveFailure({
-    fallback: 'Could not save your preferences. Try again in a moment.',
+    fallback: t('saveFailed'),
     fields: NO_SERVER_FIELDS,
   });
   const [success, setSuccess] = useState(false);
@@ -80,14 +82,10 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <Label htmlFor="marketing" className="flex items-center gap-1 text-base">
-            Marketing Emails
-            <FieldHelp title="Marketing emails">
-              Newsletters, promotions, and product announcements. Typically 1–2 per month.
-            </FieldHelp>
+            {t('marketing')}
+            <FieldHelp title={t('marketingHelpTitle')}>{t('marketingHelp')}</FieldHelp>
           </Label>
-          <p className="text-muted-foreground text-sm">
-            Receive newsletters, promotions, and product news.
-          </p>
+          <p className="text-muted-foreground text-sm">{t('marketingHint')}</p>
         </div>
         <Switch
           id="marketing"
@@ -101,15 +99,10 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
           <Label htmlFor="productUpdates" className="flex items-center gap-1 text-base">
-            Product Updates
-            <FieldHelp title="Product update emails">
-              Notifications about new features, improvements, and changes that may affect your
-              workflow.
-            </FieldHelp>
+            {t('productUpdates')}
+            <FieldHelp title={t('productUpdatesHelpTitle')}>{t('productUpdatesHelp')}</FieldHelp>
           </Label>
-          <p className="text-muted-foreground text-sm">
-            Get notified about new features and improvements.
-          </p>
+          <p className="text-muted-foreground text-sm">{t('productUpdatesHint')}</p>
         </div>
         <Switch
           id="productUpdates"
@@ -124,29 +117,22 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
             <Label htmlFor="securityAlerts" className="flex items-center gap-1 text-base">
-              Security Alerts
-              <FieldHelp title="Security alerts">
-                Critical notifications about login attempts, password changes, and account security
-                events. Cannot be disabled.
-              </FieldHelp>
+              {t('securityAlerts')}
+              <FieldHelp title={t('securityAlertsHelpTitle')}>{t('securityAlertsHelp')}</FieldHelp>
             </Label>
             <ShieldCheck className="text-primary h-4 w-4" />
           </div>
-          <p className="text-muted-foreground text-sm">
-            Important security notifications about your account.
-          </p>
+          <p className="text-muted-foreground text-sm">{t('securityAlertsHint')}</p>
         </div>
         <Switch
           id="securityAlerts"
           checked={true}
           disabled={true}
-          aria-label="Security alerts are always enabled"
+          aria-label={t('securityAlertsAria')}
         />
       </div>
 
-      <p className="text-muted-foreground text-xs">
-        Security alerts cannot be disabled for your protection.
-      </p>
+      <p className="text-muted-foreground text-xs">{t('securityNote')}</p>
 
       <SaveError failure={save.failure} />
 
@@ -154,7 +140,7 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
       {success && (
         <div className="flex items-center gap-2 rounded-md bg-green-50 p-3 text-sm text-green-900 dark:bg-green-950/50 dark:text-green-300">
           <CheckCircle2 className="h-4 w-4" />
-          Preferences saved successfully
+          {t('success')}
         </div>
       )}
 
@@ -163,10 +149,10 @@ export function PreferencesForm({ preferences }: PreferencesFormProps) {
         {isLoading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Saving...
+            {t('saving')}
           </>
         ) : (
-          'Save Preferences'
+          t('save')
         )}
       </Button>
     </div>
