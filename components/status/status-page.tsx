@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { StatusIndicator } from '@/components/status/status-indicator';
 import { ServiceStatusCard } from '@/components/status/service-status-card';
 import { useHealthCheck, type UseHealthCheckOptions } from '@/components/status/use-health-check';
-import { formatBytes } from '@/lib/monitoring';
 import { RefreshCw, Clock, Server, Database, MemoryStick } from 'lucide-react';
 
 /**
@@ -36,19 +35,34 @@ const TIME_WITH_SECONDS = { hour: '2-digit', minute: '2-digit', second: '2-digit
 /**
  * Format uptime for display
  */
-function formatUptime(seconds: number): string {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
+type Formatter = ReturnType<typeof useFormatter>;
 
-  const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
-
+/** `2d 3h 4m 5s`: each unit's narrow form in the viewer's language. */
+function formatUptime(format: Formatter, seconds: number): string {
+  const units = [
+    ['day', Math.floor(seconds / 86400)],
+    ['hour', Math.floor((seconds % 86400) / 3600)],
+    ['minute', Math.floor((seconds % 3600) / 60)],
+    ['second', seconds % 60],
+  ] as const;
+  const parts = units
+    .filter(([unit, n]) => n > 0 || (unit === 'second' && seconds < 60))
+    .map(([unit, n]) => format.number(n, { style: 'unit', unit, unitDisplay: 'narrow' }));
   return parts.join(' ');
+}
+
+const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as const;
+
+/** `12.5 MB`, in 1024 steps like `formatBytes`, with the unit in the viewer's language. */
+function formatMemory(format: Formatter, bytes: number): string {
+  const i =
+    bytes > 0 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1) : 0;
+  return format.number(bytes / Math.pow(1024, i), {
+    style: 'unit',
+    unit: BYTE_UNITS[i],
+    unitDisplay: 'short',
+    maximumFractionDigits: 2,
+  });
 }
 
 /**
@@ -166,7 +180,7 @@ export function StatusPage({
                   <Clock className="text-muted-foreground h-4 w-4" />
                   <div>
                     <p className="text-muted-foreground text-xs">{t('uptime')}</p>
-                    <p className="font-mono text-sm">{formatUptime(data.uptime)}</p>
+                    <p className="font-mono text-sm">{formatUptime(format, data.uptime)}</p>
                   </div>
                 </div>
                 {/* Timestamp */}
@@ -212,15 +226,19 @@ export function StatusPage({
                 <div className="grid gap-4 sm:grid-cols-4">
                   <div>
                     <p className="text-muted-foreground text-xs">{t('heapUsed')}</p>
-                    <p className="font-mono text-sm">{formatBytes(data.memory.heapUsed)}</p>
+                    <p className="font-mono text-sm">
+                      {formatMemory(format, data.memory.heapUsed)}
+                    </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground text-xs">{t('heapTotal')}</p>
-                    <p className="font-mono text-sm">{formatBytes(data.memory.heapTotal)}</p>
+                    <p className="font-mono text-sm">
+                      {formatMemory(format, data.memory.heapTotal)}
+                    </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground text-xs">{t('rss')}</p>
-                    <p className="font-mono text-sm">{formatBytes(data.memory.rss)}</p>
+                    <p className="font-mono text-sm">{formatMemory(format, data.memory.rss)}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground text-xs">{t('usage')}</p>
