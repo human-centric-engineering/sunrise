@@ -17,79 +17,73 @@ import {
 import { Hero, Section, Features, CTA } from '@/components/marketing';
 import { Card, CardContent } from '@/components/ui/card';
 import { BRAND } from '@/lib/brand';
+import { getTranslations } from 'next-intl/server';
 
-// Metadata, not body copy — this const feeds `description`, `openGraph` and
+// Metadata, not body copy — this feeds `description`, `openGraph` and
 // `twitter` and is never rendered on the page, so the fork-owned-copy exemption
 // does not apply to it (#519).
-const aboutDescription = `Learn about ${BRAND.name}.`;
-
-export const metadata: Metadata = {
-  title: 'About',
-  description: aboutDescription,
-  openGraph: {
-    title: `About - ${BRAND.name}`,
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('marketing.about.meta');
+  const aboutDescription = t('description', { brand: BRAND.name });
+  const socialTitle = t('socialTitle', { brand: BRAND.name });
+  return {
+    title: t('title'),
     description: aboutDescription,
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: `About - ${BRAND.name}`,
-    description: aboutDescription,
-  },
-};
+    openGraph: {
+      title: socialTitle,
+      description: aboutDescription,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: socialTitle,
+      description: aboutDescription,
+    },
+  };
+}
 
-const principles = [
-  {
-    icon: Rocket,
-    title: 'Production-Ready',
-    description: 'Every feature is battle-tested and ready for production deployment from day one.',
-  },
-  {
-    icon: Brain,
-    title: 'AI-Optimized',
-    description:
-      'Comprehensive documentation and clear patterns enable AI assistants to generate high-quality code.',
-  },
-  {
-    icon: Bot,
-    title: 'Agent-Ready',
-    description:
-      'Full agent orchestration built in: providers, agents, capabilities, workflows, knowledge bases.',
-  },
-  {
-    icon: Network,
-    title: 'API-First',
-    description:
-      'Every action is accessible via versioned APIs, an MCP server, and agent capabilities — ready for integrations.',
-  },
-  {
-    icon: Package,
-    title: 'Docker-First',
-    description:
-      'Multi-stage Docker builds ensure consistent, portable deployments across any environment.',
-  },
-  {
-    icon: BookOpen,
-    title: 'Well-Documented',
-    description:
-      'Detailed guides for every domain help developers and AI assistants understand the codebase.',
-  },
-];
+const PRINCIPLES = [
+  { key: 'productionReady', icon: Rocket },
+  { key: 'aiOptimized', icon: Brain },
+  { key: 'agentReady', icon: Bot },
+  { key: 'apiFirst', icon: Network },
+  { key: 'dockerFirst', icon: Package },
+  { key: 'wellDocumented', icon: BookOpen },
+] as const;
 
-const techStack = [
-  { name: 'Next.js 16', category: 'Framework', icon: Code },
-  { name: 'TypeScript', category: 'Language', icon: Code },
-  { name: 'PostgreSQL', category: 'Database', icon: Database },
-  { name: 'Prisma', category: 'ORM', icon: Database },
-  { name: 'pgvector', category: 'Vector Search', icon: Search },
-  { name: 'better-auth', category: 'Authentication', icon: Shield },
-  { name: 'Tailwind CSS', category: 'Styling', icon: Paintbrush },
-  { name: 'shadcn/ui', category: 'Components', icon: Paintbrush },
-  { name: 'React Email', category: 'Email', icon: Mail },
-  { name: 'Agent Orchestration', category: 'AI', icon: Brain },
-  { name: 'MCP Server', category: 'AI', icon: Network },
-  { name: 'Docker', category: 'Deployment', icon: Package },
-  { name: 'Sentry', category: 'Monitoring', icon: Shield },
-];
+/**
+ * Product names stay literal; a `nameKey` marks the two entries that are
+ * descriptions rather than names, so they are translated.
+ */
+const TECH_STACK = [
+  { name: 'Next.js 16', category: 'framework', icon: Code },
+  { name: 'TypeScript', category: 'language', icon: Code },
+  { name: 'PostgreSQL', category: 'database', icon: Database },
+  { name: 'Prisma', category: 'orm', icon: Database },
+  { name: 'pgvector', category: 'vectorSearch', icon: Search },
+  { name: 'better-auth', category: 'authentication', icon: Shield },
+  { name: 'Tailwind CSS', category: 'styling', icon: Paintbrush },
+  { name: 'shadcn/ui', category: 'components', icon: Paintbrush },
+  { name: 'React Email', category: 'email', icon: Mail },
+  { nameKey: 'agentOrchestration', category: 'ai', icon: Brain },
+  { nameKey: 'mcpServer', category: 'ai', icon: Network },
+  { name: 'Docker', category: 'deployment', icon: Package },
+  { name: 'Sentry', category: 'monitoring', icon: Shield },
+] as const;
+
+const WHY_ITEMS = [
+  'auth',
+  'database',
+  'email',
+  'docker',
+  'security',
+  'logging',
+  'monitoring',
+  'aiDocs',
+  'orchestration',
+  'knowledge',
+  'mcp',
+  'license',
+] as const;
 
 /**
  * About Page
@@ -98,13 +92,25 @@ const techStack = [
  *
  * Phase 3.5: Landing Page & Marketing
  */
-export default function AboutPage() {
+export default async function AboutPage() {
+  const t = await getTranslations('marketing.about');
+  const principles = PRINCIPLES.map(({ key, icon }) => ({
+    icon,
+    title: t(`principles.items.${key}.title`),
+    description: t(`principles.items.${key}.description`),
+  }));
+  const techStack = TECH_STACK.map((tech) => ({
+    name: 'nameKey' in tech ? t(`techStack.names.${tech.nameKey}`) : tech.name,
+    category: t(`techStack.categories.${tech.category}`),
+    icon: tech.icon,
+  }));
+
   return (
     <>
       {/* Hero Section */}
       <Hero
-        title="About Sunrise"
-        description="A production-ready Next.js starter template built to help developers ship faster while maintaining high standards for code quality, security, and maintainability — including a complete AI agent orchestration layer."
+        title={t('hero.title')}
+        description={t('hero.description')}
         variant="centered"
         className="py-12 md:py-16"
       />
@@ -112,39 +118,28 @@ export default function AboutPage() {
       {/* Mission Section */}
       <Section variant="muted">
         <div className="mx-auto max-w-3xl text-center">
-          <h2 className="mb-6 text-3xl font-bold tracking-tight">Our Mission</h2>
+          <h2 className="mb-6 text-3xl font-bold tracking-tight">{t('mission.title')}</h2>
           <p className="text-muted-foreground mb-6 text-lg leading-relaxed">
-            Modern web development involves countless decisions — frameworks, authentication,
-            databases, deployment, testing, and more. Each choice requires research, implementation,
-            and debugging. This takes time away from building the features that matter most.
+            {t('mission.problem')}
           </p>
           <p className="text-muted-foreground mb-6 text-lg leading-relaxed">
-            <strong className="text-foreground">Sunrise solves this problem</strong> by providing a
-            complete, production-ready foundation. We&apos;ve made the hard decisions, implemented
-            best practices, and documented everything thoroughly. You get a head start measured in
-            weeks, not hours.
+            {t.rich('mission.solution', {
+              strong: (chunks) => <strong className="text-foreground">{chunks}</strong>,
+            })}
           </p>
-          <p className="text-muted-foreground text-lg leading-relaxed">
-            And because modern apps increasingly include AI agents, Sunrise ships with a complete
-            orchestration layer too: providers, agents, capabilities, workflows, knowledge bases,
-            and observability. The boring stuff done well — plus the modern agentic primitives so
-            your app can include AI agents from day one.
-          </p>
+          <p className="text-muted-foreground text-lg leading-relaxed">{t('mission.agents')}</p>
         </div>
       </Section>
 
       {/* Principles Section */}
-      <Section
-        title="Design Principles"
-        description="The guiding principles that shape every decision in Sunrise."
-      >
+      <Section title={t('principles.title')} description={t('principles.description')}>
         <Features features={principles} columns={3} variant="card" />
       </Section>
 
       {/* Tech Stack Section */}
       <Section
-        title="Technology Stack"
-        description="Built with modern, proven technologies that scale."
+        title={t('techStack.title')}
+        description={t('techStack.description')}
         variant="muted"
       >
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
@@ -166,25 +161,12 @@ export default function AboutPage() {
       </Section>
 
       {/* Why Sunrise Section */}
-      <Section title="Why Choose Sunrise?" description="What makes Sunrise different.">
+      <Section title={t('why.title')} description={t('why.description')}>
         <div className="mx-auto max-w-2xl space-y-4">
-          {[
-            'Complete authentication system with email/password and OAuth support',
-            'Database schema and migrations ready for user management',
-            'Transactional email with beautiful React templates',
-            'Docker configuration for development and production',
-            'Comprehensive security: rate limiting, CORS, CSP, input sanitization',
-            'Structured logging with environment-aware output',
-            'Error monitoring with Sentry integration',
-            'AI-friendly documentation in CLAUDE.md and .context/ substrate',
-            'AI agent orchestration: providers, agents, capabilities, workflows',
-            'Knowledge base with document ingestion and pgvector semantic search',
-            'MCP server for Claude Code integration and AI-assisted development',
-            'MIT licensed for commercial and personal use',
-          ].map((item) => (
-            <div key={item} className="flex items-start gap-3">
+          {WHY_ITEMS.map((key) => (
+            <div key={key} className="flex items-start gap-3">
               <CheckCircle2 className="text-primary mt-0.5 h-5 w-5 shrink-0" />
-              <span>{item}</span>
+              <span>{t(`why.items.${key}`)}</span>
             </div>
           ))}
         </div>
@@ -192,11 +174,11 @@ export default function AboutPage() {
 
       {/* CTA Section */}
       <CTA
-        title="Ready to Get Started?"
-        description="Join developers building production applications faster with Sunrise."
-        primaryAction={{ label: 'Start Building', href: '/signup' }}
+        title={t('cta.title')}
+        description={t('cta.description')}
+        primaryAction={{ label: t('cta.primaryAction'), href: '/signup' }}
         secondaryAction={{
-          label: 'View Source',
+          label: t('cta.secondaryAction'),
           href: 'https://github.com/human-centric-engineering/sunrise',
           variant: 'outline',
         }}

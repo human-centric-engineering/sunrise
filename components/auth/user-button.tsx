@@ -12,6 +12,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { User, LogOut, Settings, UserCircle, Shield } from 'lucide-react';
 import { authClient, useSession } from '@/lib/auth/client';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
@@ -29,6 +30,7 @@ import { getInitials } from '@/lib/utils/initials';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 
 export function UserButton() {
+  const t = useTranslations('auth');
   const { data: session, isPending } = useSession();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const { track, reset } = useAnalytics();
@@ -49,20 +51,20 @@ export function UserButton() {
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="h-9 w-9">
             <User className="h-5 w-5" />
-            <span className="sr-only">User menu</span>
+            <span className="sr-only">{t('userButton.menu')}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-48">
           <DropdownMenuItem asChild>
             <Link href="/login" className="cursor-pointer">
               <UserCircle className="mr-2 h-4 w-4" />
-              Log in
+              {t('userButton.logIn')}
             </Link>
           </DropdownMenuItem>
           <DropdownMenuItem asChild>
             <Link href="/signup" className="cursor-pointer">
               <User className="mr-2 h-4 w-4" />
-              Create account
+              {t('userButton.createAccount')}
             </Link>
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -103,7 +105,10 @@ export function UserButton() {
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-9 w-9 rounded-full p-0">
           <Avatar className="h-8 w-8">
-            <AvatarImage src={user.image || undefined} alt={user.name || 'User'} />
+            <AvatarImage
+              src={user.image || undefined}
+              alt={user.name || t('userButton.avatarFallback')}
+            />
             <AvatarFallback className="text-xs">{initials}</AvatarFallback>
           </Avatar>
         </Button>
@@ -119,13 +124,13 @@ export function UserButton() {
         <DropdownMenuItem asChild>
           <Link href="/profile" className="cursor-pointer">
             <User className="mr-2 h-4 w-4" />
-            View profile
+            {t('userButton.viewProfile')}
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link href="/settings" className="cursor-pointer">
             <Settings className="mr-2 h-4 w-4" />
-            Settings
+            {t('userButton.settings')}
           </Link>
         </DropdownMenuItem>
         {isPlatformAdmin(user) && (
@@ -134,7 +139,7 @@ export function UserButton() {
             <DropdownMenuItem asChild>
               <Link href="/admin" className="cursor-pointer">
                 <Shield className="mr-2 h-4 w-4" />
-                Admin Dashboard
+                {t('userButton.adminDashboard')}
               </Link>
             </DropdownMenuItem>
           </>
@@ -146,7 +151,7 @@ export function UserButton() {
           className="cursor-pointer"
         >
           <LogOut className="mr-2 h-4 w-4" />
-          {isSigningOut ? 'Signing out...' : 'Sign out'}
+          {isSigningOut ? t('shared.signingOut') : t('shared.signOut')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

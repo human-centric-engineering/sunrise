@@ -23,7 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import ResetPasswordPage, { metadata } from '@/app/(auth)/reset-password/page';
+import ResetPasswordPage, { generateMetadata } from '@/app/(auth)/reset-password/page';
 
 // Mock the ResetPasswordForm component
 vi.mock('@/components/forms/reset-password-form', () => ({
@@ -56,11 +56,13 @@ describe('ResetPasswordPage', () => {
    * Tests the page metadata (title, description).
    */
   describe('metadata', () => {
-    it('should have correct page title', () => {
+    it('should have correct page title', async () => {
+      const metadata = await generateMetadata();
       expect(metadata.title).toBe('Reset Password');
     });
 
-    it('should have correct page description', () => {
+    it('should have correct page description', async () => {
+      const metadata = await generateMetadata();
       expect(metadata.description).toBe('Reset your Sunrise account password');
     });
   });

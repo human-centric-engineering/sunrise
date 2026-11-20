@@ -219,6 +219,26 @@ describe('components/forms/password-form', () => {
       });
     });
 
+    it('refuses a new password that is the same as the current one', async () => {
+      // The shared changePasswordSchema's rule, which the form now uses (t-1073).
+      const user = userEvent.setup({ delay: null });
+      const { authClient } = await import('@/lib/auth/client');
+      render(<PasswordForm />);
+
+      await user.type(screen.getByLabelText('Current Password'), 'SamePassword123!');
+      await user.type(
+        screen.getByLabelText(/^new password/i, { selector: 'input' }),
+        'SamePassword123!'
+      );
+      await user.type(screen.getByLabelText('Confirm New Password'), 'SamePassword123!');
+      await user.click(screen.getByRole('button', { name: /change password/i }));
+
+      expect(
+        await screen.findByText('New password must be different from current password')
+      ).toBeInTheDocument();
+      expect(authClient.changePassword).not.toHaveBeenCalled();
+    });
+
     it('should show error for weak new password', async () => {
       // Arrange
       const user = userEvent.setup({ delay: null });

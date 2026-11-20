@@ -19,6 +19,7 @@ import userEvent from '@testing-library/user-event';
 import { SettingsTabs } from '@/components/settings/settings-tabs';
 import type { UserPreferences } from '@/types';
 import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
+import { BRAND } from '@/lib/brand';
 
 // Mock next/navigation
 vi.mock('next/navigation', async () => {
@@ -60,6 +61,18 @@ vi.mock('@/components/forms/delete-account-form', () => ({
   DeleteAccountForm: vi.fn(() => <div data-testid="delete-account-form">DeleteAccountForm</div>),
 }));
 
+vi.mock('@/components/settings/language-form', () => ({
+  LanguageForm: vi.fn(
+    ({ locale, options }: { locale: string | null; options: { tag: string }[] }) => (
+      <div
+        data-testid="language-form"
+        data-locale={String(locale)}
+        data-options={options.map((o) => o.tag).join(',')}
+      />
+    )
+  ),
+}));
+
 // Test fixtures
 const mockUser = {
   name: 'Test User',
@@ -88,6 +101,13 @@ const defaultProps = {
   hasPasswordAccount: true,
   oauthProviders: [] as string[],
   initials: 'TU',
+  language: {
+    locale: 'fr' as string | null,
+    options: [
+      { tag: 'en', name: 'English' },
+      { tag: 'fr', name: 'Français' },
+    ],
+  },
 };
 
 /**
@@ -359,6 +379,44 @@ describe('components/settings/settings-tabs', () => {
       expect(screen.getByTestId('delete-account-form')).toBeInTheDocument();
     });
 
+    it('should render the language picker with the stored language and the options', async () => {
+      // Arrange
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=account') as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      // Act
+      render(<SettingsTabs {...defaultProps} />);
+
+      // Assert
+      expect(screen.getByRole('heading', { name: 'Language' })).toBeInTheDocument();
+      const picker = screen.getByTestId('language-form');
+      expect(picker).toHaveAttribute('data-locale', 'fr');
+      expect(picker).toHaveAttribute('data-options', 'en,fr');
+    });
+
+    it.each([
+      ['hides', 'only one language and nothing stored', null, false],
+      ['hides', 'only one language, which is the stored one', 'en', false],
+      ['shows', 'a stored language the install no longer offers', 'de', true],
+    ] as const)('%s the language picker with %s', async (_v, _case, locale, shown) => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=account') as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(
+        <SettingsTabs
+          {...defaultProps}
+          language={{ locale, options: [{ tag: 'en', name: 'English' }] }}
+        />
+      );
+
+      expect(screen.queryByTestId('language-form') !== null).toBe(shown);
+      expect(screen.queryByRole('heading', { name: 'Language' }) !== null).toBe(shown);
+    });
+
     it('should show Danger Zone heading', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');
@@ -371,6 +429,22 @@ describe('components/settings/settings-tabs', () => {
 
       // Assert
       expect(screen.getByText('Danger Zone')).toBeInTheDocument();
+    });
+  });
+
+  describe('document title', () => {
+    it('names the active tab, the page and the brand', async () => {
+      // Arrange
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=security') as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      // Act
+      render(<SettingsTabs {...defaultProps} />);
+
+      // Assert
+      expect(document.title).toBe(`Security - Settings - ${BRAND.name}`);
     });
   });
 

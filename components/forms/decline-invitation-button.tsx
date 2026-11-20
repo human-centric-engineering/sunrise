@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
@@ -29,9 +30,10 @@ export function DeclineInvitationButton({
   email,
   onDeclined,
 }: DeclineInvitationButtonProps) {
+  const t = useTranslations('auth.acceptInvite.decline');
   const [confirming, setConfirming] = useState(false);
   const [isDeclining, setIsDeclining] = useState(false);
-  const save = useSaveFailure({ fallback: 'Failed to decline invitation. Please try again.' });
+  const save = useSaveFailure({ fallback: t('failed') });
 
   const decline = async () => {
     save.clear();
@@ -49,7 +51,7 @@ export function DeclineInvitationButton({
     return (
       <div className="text-center">
         <Button variant="link" size="sm" onClick={() => setConfirming(true)}>
-          Decline invitation
+          {t('button')}
         </Button>
       </div>
     );
@@ -57,7 +59,7 @@ export function DeclineInvitationButton({
 
   return (
     <div className="space-y-2 rounded-md border p-3 text-sm">
-      <p>Decline this invitation? The link stops working, and you would need a new invitation.</p>
+      <p>{t('confirm')}</p>
       <SaveError failure={save.failure} />
       <div className="flex gap-2">
         <Button
@@ -66,10 +68,10 @@ export function DeclineInvitationButton({
           onClick={() => void decline()}
           disabled={isDeclining}
         >
-          {isDeclining ? 'Declining...' : 'Decline'}
+          {isDeclining ? t('declining') : t('decline')}
         </Button>
         <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
-          Keep it
+          {t('keep')}
         </Button>
       </div>
     </div>
@@ -78,9 +80,10 @@ export function DeclineInvitationButton({
 
 /** What the accept page shows in place of everything once the invitation is declined. */
 export function InvitationDeclined() {
+  const t = useTranslations('auth.acceptInvite.decline');
   return (
     <p className="text-muted-foreground text-center text-sm" role="status">
-      Invitation declined. This link no longer works.
+      {t('declined')}
     </p>
   );
 }

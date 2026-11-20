@@ -183,6 +183,60 @@ export default tseslint.config(
     },
   },
 
+  // ── Screens on the string catalogue (§138 t-1073) ────────────────────────
+  // The user and public screens read every string from the catalogue
+  // (`lib/i18n/messages/en.json`, `.context/ui/i18n.md`), so text written into
+  // the JSX would show in English whatever the viewer's language. This rejects
+  // it, wrapped (`{'Save'}`) or not. Props are not checked: the rule cannot
+  // tell an `aria-label` from a `className`.
+  //
+  // Scoped to the converted paths on purpose. The staff admin is not on the
+  // catalogue yet, and a fork's own components are the fork's call, so an
+  // install-wide rule would fail code nobody here converted.
+  // `app/global-error.tsx` is English by design and is not listed.
+  {
+    files: [
+      'app/(auth)/**/*.tsx',
+      'app/(public)/**/*.tsx',
+      'app/(protected)/**/*.tsx',
+      'app/not-found.tsx',
+      'app/error.tsx',
+      'components/{auth,forms,settings,account,waitlist,cookie-consent,layouts,errors,marketing,dashboard,status}/**/*.tsx',
+      'components/{theme-toggle,maintenance-page,maintenance-wrapper,error-boundary}.tsx',
+    ],
+    rules: {
+      'react/jsx-no-literals': [
+        'error',
+        {
+          noStrings: true,
+          ignoreProps: true,
+          // Separators and symbols that read the same in every language.
+          allowedStrings: [
+            '·',
+            '•',
+            '—',
+            '–',
+            '|',
+            '/',
+            '-',
+            ':',
+            '*',
+            '(',
+            ')',
+            ',',
+            '.',
+            '…',
+            '→',
+            '←',
+            '×',
+            '&nbsp;',
+            '©',
+          ],
+        },
+      ],
+    },
+  },
+
   // ── App-extension boundary (fork-readiness seam 5) ───────────────────────
   // `lib/app/**` is the supported surface where downstream forks/apps add
   // their own code. It must stay framework-agnostic so it survives Next.js

@@ -1,11 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import type { ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { useConsent } from '@/lib/consent';
 import { BRAND } from '@/lib/brand';
 import { resolveFooterCopyright } from '@/lib/footer/copyright';
 import { footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
 import { DEFAULT_FOOTER_NAV, DEFAULT_FOOTER_LEGAL } from '@/lib/public-nav/types';
+import { defaultNavLabelKey } from '@/components/layouts/default-nav-label';
 
 /**
  * Public Footer Component
@@ -20,8 +23,24 @@ import { DEFAULT_FOOTER_NAV, DEFAULT_FOOTER_LEGAL } from '@/lib/public-nav/types
 // Fork overrides (non-null arrays) replace the platform defaults wholesale.
 const navigationLinks = footerNavItems ?? DEFAULT_FOOTER_NAV;
 const legalLinks = footerLegalItems ?? DEFAULT_FOOTER_LEGAL;
+// Only the platform's own labels come from the catalogue; a fork's are its text.
+const isDefaultNavigation = footerNavItems == null;
+const isDefaultLegal = footerLegalItems == null;
 
-export function PublicFooter() {
+interface PublicFooterProps {
+  /**
+   * The visitor's language switch, built by the public layout (which knows
+   * the languages and whether anyone is signed in). Omitted, nothing renders.
+   */
+  languageSwitch?: ReactNode;
+}
+
+export function PublicFooter({ languageSwitch }: PublicFooterProps = {}) {
+  const t = useTranslations('layout');
+  const labelFor = (href: string, label: string, isDefault: boolean): string => {
+    const key = isDefault ? defaultNavLabelKey(href) : null;
+    return key ? t(`nav.${key}`) : label;
+  };
   const currentYear = new Date().getFullYear();
   const { openPreferences } = useConsent();
   const copyright = resolveFooterCopyright(currentYear, BRAND.legalName);
@@ -38,7 +57,7 @@ export function PublicFooter() {
                 href={link.href}
                 className="text-muted-foreground hover:text-foreground text-sm transition-colors"
               >
-                {link.label}
+                {labelFor(link.href, link.label, isDefaultNavigation)}
               </Link>
             ))}
           </nav>
@@ -53,16 +72,18 @@ export function PublicFooter() {
                 href={link.href}
                 className="text-muted-foreground hover:text-foreground text-sm transition-colors"
               >
-                {link.label}
+                {labelFor(link.href, link.label, isDefaultLegal)}
               </Link>
             ))}
             <button
               onClick={openPreferences}
               className="text-muted-foreground hover:text-foreground text-sm transition-colors"
             >
-              Cookie Preferences
+              {t('footer.cookiePreferences')}
             </button>
           </nav>
+
+          {languageSwitch}
 
           {/* Attribution — last in the DOM, and last visually in both layouts
               (#561). It used to sit on a dedicated centred row below, costing

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useState, type BaseSyntheticEvent } from 'react';
+import { useCallback, useMemo, useState, type BaseSyntheticEvent } from 'react';
+import { useTranslations } from 'next-intl';
 import type { FieldErrors, FieldValues } from 'react-hook-form';
 
 import {
@@ -9,6 +10,7 @@ import {
   invalidSave,
   readSaveError,
   unreadableNumbers,
+  type SaveErrorText,
   type SaveFailure,
 } from '@/lib/errors/save-error';
 
@@ -143,7 +145,23 @@ export function useSaveFailure<TField extends string>(
       setState({ failure, key: fromValidation && failure ? failureKey(failure) : null }),
     []
   );
-  const { fallback, errors, summarise = invalidSave } = options;
+  const t = useTranslations('forms.saveError');
+  const text = useMemo<SaveErrorText>(
+    () => ({
+      fieldsNeedFixing: (count) => t('fieldsNeedFixing', { count }),
+      checkForm: t('checkForm'),
+      checkField: t('checkField'),
+      enterNumber: t('enterNumber'),
+      fieldsNeedNumber: (count) => t('fieldsNeedNumber', { count }),
+      tryAgain: t('tryAgain'),
+    }),
+    [t]
+  );
+  const ownSummary = useCallback(
+    <TValues extends FieldValues>(blocked: FieldErrors<TValues>) => invalidSave(blocked, text),
+    [text]
+  );
+  const { fallback, errors, summarise = ownSummary } = options;
   const fields = 'fields' in options ? options.fields : undefined;
   const setError = 'fields' in options ? options.setError : undefined;
 
@@ -162,13 +180,13 @@ export function useSaveFailure<TField extends string>(
       if (context) {
         // With nothing from the server, the context says it all: the page's
         // fallback would repeat it ("Couldn't update "X": Could not update…").
-        const said = next.message === fallback ? 'Try again.' : null;
+        const said = next.message === fallback ? text.tryAgain : null;
         next = { ...next, message: said ? `${context}. ${said}` : `${context}: ${next.message}` };
       }
       setFailure(next);
       return next;
     },
-    [fallback, fields, setError, setFailure]
+    [fallback, fields, setError, setFailure, text]
   );
 
   const show = useCallback(
@@ -196,7 +214,7 @@ export function useSaveFailure<TField extends string>(
 
   const submit = useCallback(
     (handler: (e?: BaseSyntheticEvent) => Promise<void> | void) => (e: BaseSyntheticEvent) => {
-      const unreadable = unreadableNumbers(e.currentTarget);
+      const unreadable = unreadableNumbers(e.currentTarget, text);
       if (unreadable) {
         e.preventDefault();
         setFailure(unreadable);
@@ -205,7 +223,7 @@ export function useSaveFailure<TField extends string>(
       setFailure(null);
       void handler(e);
     },
-    [setFailure]
+    [setFailure, text]
   );
 
   // A blocked save follows the live field errors (t-1013), as derived state

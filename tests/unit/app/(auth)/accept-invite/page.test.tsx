@@ -221,7 +221,7 @@ describe('AcceptInvitePage', () => {
   describe('metadata', () => {
     it('should have correct title in metadata', async () => {
       // Import the metadata separately
-      const { metadata } = await import('@/app/(auth)/accept-invite/page');
+      const metadata = await (await import('@/app/(auth)/accept-invite/page')).generateMetadata();
 
       // Assert: Metadata title is correct
       expect(metadata.title).toBe('Accept Invitation');
@@ -229,7 +229,7 @@ describe('AcceptInvitePage', () => {
 
     it('should have correct description in metadata', async () => {
       // Import the metadata separately
-      const { metadata } = await import('@/app/(auth)/accept-invite/page');
+      const metadata = await (await import('@/app/(auth)/accept-invite/page')).generateMetadata();
 
       // Assert: Metadata description is correct
       expect(metadata.description).toBe('Accept your invitation to join Sunrise');

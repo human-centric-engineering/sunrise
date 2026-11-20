@@ -1,6 +1,19 @@
 'use client';
 
-import { calculatePasswordStrength } from '@/lib/utils/password-strength';
+import { useTranslations } from 'next-intl';
+import {
+  calculatePasswordStrength,
+  type PasswordStrength as Strength,
+} from '@/lib/utils/password-strength';
+
+/** The catalogue key for each strength the calculator returns. */
+const LEVEL_KEYS = {
+  Weak: 'weak',
+  Fair: 'fair',
+  Good: 'good',
+  Strong: 'strong',
+  'Very Strong': 'veryStrong',
+} as const satisfies Record<Strength['label'], string>;
 
 interface PasswordStrengthProps {
   password: string;
@@ -20,6 +33,7 @@ interface PasswordStrengthProps {
  * ```
  */
 export function PasswordStrength({ password }: PasswordStrengthProps) {
+  const t = useTranslations('forms.passwordStrength');
   const strength = calculatePasswordStrength(password);
 
   if (!password) {
@@ -38,7 +52,10 @@ export function PasswordStrength({ password }: PasswordStrengthProps) {
 
       {/* Strength label */}
       <p className="text-muted-foreground text-xs">
-        Password strength: <span className="font-medium">{strength.label}</span>
+        {t.rich('label', {
+          level: t(`levels.${LEVEL_KEYS[strength.label]}`),
+          value: (chunks) => <span className="font-medium">{chunks}</span>,
+        })}
       </p>
     </div>
   );

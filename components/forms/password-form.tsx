@@ -9,13 +9,13 @@
  * Phase 3.2: User Management
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { authClient } from '@/lib/auth/client';
-import { passwordSchema } from '@/lib/validations/auth';
+import { createChangePasswordSchema, type ChangePasswordInput } from '@/lib/validations/auth';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -26,25 +26,12 @@ import { FormError, SaveError } from '@/components/forms/form-error';
 import { NoScriptNotice } from '@/components/forms/no-script-notice';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
-import { fieldCount } from '@/lib/errors/save-error';
-
-// Password change schema with confirmation
-const changePasswordSchema = z
-  .object({
-    currentPassword: z.string().min(1, 'Current password is required'),
-    newPassword: passwordSchema,
-    confirmPassword: z.string(),
-  })
-  .refine((data) => data.newPassword === data.confirmPassword, {
-    message: "Passwords don't match",
-    path: ['confirmPassword'],
-  });
-
-type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
-
-const WRONG_PASSWORD = 'Current password is incorrect';
 
 export function PasswordForm() {
+  const t = useTranslations('account.password');
+  const tv = useTranslations('validation');
+  const tSave = useTranslations('forms.saveError');
+  const changePasswordSchema = useMemo(() => createChangePasswordSchema(tv), [tv]);
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const schedule = useTimeout();
@@ -68,7 +55,7 @@ export function PasswordForm() {
   });
 
   const save = useSaveFailure({
-    fallback: 'Could not change your password. Try again in a moment.',
+    fallback: t('saveFailed'),
     errors,
   });
 
@@ -89,10 +76,13 @@ export function PasswordForm() {
         if (error.code === 'INVALID_PASSWORD') {
           // The one field it is about: its message goes under it, and it takes
           // focus. By Save, the summary every form shows for a named field.
-          setError('currentPassword', { type: 'server', message: WRONG_PASSWORD });
-          save.show(fieldCount(1), [{ field: 'currentPassword', message: WRONG_PASSWORD }]);
+          const wrongPassword = t('wrongPassword');
+          setError('currentPassword', { type: 'server', message: wrongPassword });
+          save.show(tSave('fieldsNeedFixing', { count: 1 }), [
+            { field: 'currentPassword', message: wrongPassword },
+          ]);
         } else {
-          save.show(error.message || 'Could not change your password. Try again in a moment.');
+          save.show(error.message || t('saveFailed'));
         }
         return;
       }
@@ -118,10 +108,8 @@ export function PasswordForm() {
       <div className="flex flex-col items-center gap-4 rounded-md bg-green-50 p-6 text-center text-green-900 dark:bg-green-950/50 dark:text-green-300">
         <CheckCircle2 className="h-8 w-8" />
         <div>
-          <p className="font-medium">Password changed successfully</p>
-          <p className="mt-1 text-sm opacity-80">
-            Other sessions have been logged out for security.
-          </p>
+          <p className="font-medium">{t('success')}</p>
+          <p className="mt-1 text-sm opacity-80">{t('successHint')}</p>
         </div>
       </div>
     );
@@ -137,10 +125,10 @@ export function PasswordForm() {
       <NoScriptNotice />
       {/* Current Password */}
       <div className="space-y-2">
-        <Label htmlFor="currentPassword">Current Password</Label>
+        <Label htmlFor="currentPassword">{t('current')}</Label>
         <PasswordInput
           id="currentPassword"
-          placeholder="Enter your current password"
+          placeholder={t('currentPlaceholder')}
           disabled={isLoading}
           {...register('currentPassword')}
         />
@@ -150,15 +138,12 @@ export function PasswordForm() {
       {/* New Password */}
       <div className="space-y-2">
         <Label htmlFor="newPassword" className="flex items-center gap-1">
-          New Password
-          <FieldHelp title="Password requirements">
-            Must be at least 8 characters with a mix of uppercase, lowercase, numbers, and special
-            characters. All other sessions will be logged out when you change your password.
-          </FieldHelp>
+          {t('new')}
+          <FieldHelp title={t('helpTitle')}>{t('help')}</FieldHelp>
         </Label>
         <PasswordInput
           id="newPassword"
-          placeholder="Enter a new password"
+          placeholder={t('newPlaceholder')}
           disabled={isLoading}
           {...register('newPassword')}
         />
@@ -168,10 +153,10 @@ export function PasswordForm() {
 
       {/* Confirm New Password */}
       <div className="space-y-2">
-        <Label htmlFor="confirmPassword">Confirm New Password</Label>
+        <Label htmlFor="confirmPassword">{t('confirm')}</Label>
         <PasswordInput
           id="confirmPassword"
-          placeholder="Confirm your new password"
+          placeholder={t('confirmPlaceholder')}
           disabled={isLoading}
           {...register('confirmPassword')}
         />
@@ -185,10 +170,10 @@ export function PasswordForm() {
         {isLoading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Changing Password...
+            {t('changing')}
           </>
         ) : (
-          'Change Password'
+          t('submit')
         )}
       </Button>
     </form>

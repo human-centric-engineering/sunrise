@@ -129,25 +129,23 @@ The consent system uses two categories defined in `lib/consent/config.ts`:
 
 Essential cookies are always enabled and cannot be disabled by users. Optional cookies require explicit consent and default to disabled.
 
-**Customizing Categories:**
+**Customizing Categories:** change the words in the catalogue.
 
 ```typescript
-// lib/consent/config.ts
-export const COOKIE_CATEGORIES: CookieCategory[] = [
-  {
-    id: 'essential',
-    name: 'Essential',
-    description: 'Your custom description...',
-    required: true,
+// lib/app/messages.ts, inside initAppMessages()
+overridePlatformMessages('en', {
+  cookies: {
+    categories: {
+      essential: { description: 'Your custom description...' },
+      optional: { name: 'Analytics', description: 'Your custom description...' },
+    },
   },
-  {
-    id: 'optional',
-    name: 'Analytics & Marketing',
-    description: 'Your custom description...',
-    required: false,
-  },
-];
+});
 ```
+
+`COOKIE_CATEGORIES` in `lib/consent/config.ts` holds only each category's `id`
+and whether it is `required`; the words are in the catalogue under
+`cookies.categories.<id>` (see `.context/ui/i18n.md`).
 
 ## Analytics Integration
 

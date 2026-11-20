@@ -3,8 +3,9 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
-import { acceptInvitationSchema, type AcceptInvitationInput } from '@/lib/validations/user';
+import { useState, useEffect, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
+import { createAcceptInvitationSchema, type AcceptInvitationInput } from '@/lib/validations/user';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { authClient } from '@/lib/auth/client';
@@ -42,25 +43,54 @@ const SERVER_FIELDS: Partial<Record<string, keyof AcceptInvitationInput>> = {
 type InvitationStatus = 'loading' | 'valid' | 'expired' | 'invalid';
 
 /**
+ * Why the invitation can't be used, or the OAuth sign-in that failed: a
+ * catalogue message (looked up as the page renders, so it follows the
+ * viewer's language), or the server's own text.
+ */
+type LoadError =
+  | {
+      key:
+        | 'oauthWrongEmailUnknown'
+        | 'oauthFailed'
+        | 'invalidLink'
+        | 'accountExists'
+        | 'expired'
+        | 'notFound'
+        | 'loadFailed';
+    }
+  | { key: 'oauthWrongEmail'; email: string }
+  | { text: string };
+
+/**
  * Parse OAuth error from URL parameter into user-friendly message
  *
  * OAuth errors come URL-encoded with underscores replacing spaces.
  * We detect specific error patterns and return friendly messages.
  */
-function parseOAuthError(error: string): string {
-  // Decode and normalize the error message
-  const decoded = decodeURIComponent(error).replace(/_/g, ' ');
+function parseOAuthError(error: string): LoadError {
+  // useSearchParams has decoded it already. Decoding again catches a message
+  // encoded twice, and a stray '%' leaves it as it is rather than throwing.
+  let raw = error;
+  try {
+    raw = decodeURIComponent(error);
+  } catch {
+    // Not encoded again: use it as given.
+  }
+  const decoded = raw.replace(/_/g, ' ');
 
   // Check for email mismatch error (our custom error from before hook)
   if (decoded.includes('invitation was sent to')) {
-    // Extract the email from the message
-    const emailMatch = decoded.match(/sent to ([^\s.]+)/);
-    const invitedEmail = emailMatch ? emailMatch[1] : 'a different email';
-    return `This invitation was sent to ${invitedEmail}. Please use an account with that email address, or set a password instead.`;
+    // Matched before underscores become spaces, so an address keeps its own
+    // ("john_doe@acme.com"). It runs to the full stop that ends the sentence,
+    // so the dots inside it ("jane.doe@acme.com") stay part of it too.
+    const emailMatch = raw.match(/sent[ _]to[ _](\S+?)\.(?:[\s_]|$)/);
+    return emailMatch
+      ? { key: 'oauthWrongEmail', email: emailMatch[1] }
+      : { key: 'oauthWrongEmailUnknown' };
   }
 
   // Generic OAuth error fallback
-  return 'Unable to sign in. Please try again or set a password instead.';
+  return { key: 'oauthFailed' };
 }
 
 /**
@@ -87,6 +117,9 @@ export function AcceptInviteForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const schedule = useTimeout();
+  const t = useTranslations('auth');
+  const tv = useTranslations('validation');
+  const acceptInvitationSchema = useMemo(() => createAcceptInvitationSchema(tv), [tv]);
 
   // Read token, email, and error from URL
   const token = searchParams.get('token') || '';
@@ -97,7 +130,7 @@ export function AcceptInviteForm() {
   const [isLoading, setIsLoading] = useState(false);
   // Why the invitation can't be used, or the OAuth sign-in that failed: what
   // the page found as it loaded. A failed activation is `save` below.
-  const [loadError, setLoadError] = useState<string | null>(
+  const [loadError, setLoadError] = useState<LoadError | null>(
     // Parse OAuth error from URL if present
     oauthError ? parseOAuthError(oauthError) : null
   );
@@ -135,7 +168,7 @@ export function AcceptInviteForm() {
   });
 
   const save = useSaveFailure({
-    fallback: 'Failed to accept invitation. Please try again.',
+    fallback: t('shared.acceptFailed'),
     fields: SERVER_FIELDS,
     setError,
     errors,
@@ -149,7 +182,7 @@ export function AcceptInviteForm() {
     async function fetchInvitation() {
       if (!token || !emailFromUrl) {
         setInvitationStatus('invalid');
-        setLoadError('Invalid invitation link');
+        setLoadError({ key: 'invalidLink' });
         return;
       }
 
@@ -171,9 +204,7 @@ export function AcceptInviteForm() {
         // already has one: nothing on this page can redeem it (#1199).
         if (response.accountExists && response.newAccountOnly) {
           setInvitationStatus('invalid');
-          setLoadError(
-            'You already have an account with this address, so this invitation cannot be used. Sign in to your account, or ask the person who invited you to send an invitation to your existing account.'
-          );
+          setLoadError({ key: 'accountExists' });
           return;
         }
 
@@ -194,19 +225,17 @@ export function AcceptInviteForm() {
           // Check error code for specific handling
           if (err.code === 'INVITATION_EXPIRED') {
             setInvitationStatus('expired');
-            setLoadError(
-              'This invitation has expired. Please contact your administrator for a new invitation.'
-            );
+            setLoadError({ key: 'expired' });
           } else if (err.code === 'NOT_FOUND') {
             setInvitationStatus('invalid');
-            setLoadError('Invitation not found. Please check your email for the correct link.');
+            setLoadError({ key: 'notFound' });
           } else {
             setInvitationStatus('invalid');
-            setLoadError(err.message || 'Failed to load invitation details');
+            setLoadError(err.message ? { text: err.message } : { key: 'loadFailed' });
           }
         } else {
           setInvitationStatus('invalid');
-          setLoadError('Failed to load invitation details');
+          setLoadError({ key: 'loadFailed' });
         }
       }
     }
@@ -268,6 +297,14 @@ export function AcceptInviteForm() {
     }
   };
 
+  const loadErrorMessage = !loadError
+    ? null
+    : 'text' in loadError
+      ? loadError.text
+      : loadError.key === 'oauthWrongEmail'
+        ? t('acceptInvite.form.oauthWrongEmail', { email: loadError.email })
+        : t(`acceptInvite.form.${loadError.key}`);
+
   // Loading state - show skeleton
   if (invitationStatus === 'loading') {
     return (
@@ -278,7 +315,9 @@ export function AcceptInviteForm() {
         <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
         <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
         <div className="bg-muted h-10 w-full animate-pulse rounded-md" />
-        <p className="text-muted-foreground text-center text-sm">Loading invitation...</p>
+        <p className="text-muted-foreground text-center text-sm">
+          {t('acceptInvite.form.loading')}
+        </p>
       </div>
     );
   }
@@ -288,15 +327,12 @@ export function AcceptInviteForm() {
     return (
       <div className="space-y-4">
         <div className="rounded-md bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-900/10 dark:text-amber-400">
-          <p className="font-medium">Invitation Expired</p>
-          <p className="mt-2">
-            This invitation link has expired. Please contact your administrator to request a new
-            invitation.
-          </p>
+          <p className="font-medium">{t('acceptInvite.form.expiredTitle')}</p>
+          <p className="mt-2">{t('acceptInvite.form.expiredBody')}</p>
         </div>
         <div className="text-center text-sm">
           <a href="/login" className="text-primary font-medium hover:underline">
-            Back to login
+            {t('shared.backToLogin')}
           </a>
         </div>
       </div>
@@ -308,15 +344,12 @@ export function AcceptInviteForm() {
     return (
       <div className="space-y-4">
         <div className="bg-destructive/10 text-destructive rounded-md p-4 text-sm">
-          <p className="font-medium">Invalid Invitation</p>
-          <p className="mt-2">
-            {loadError ||
-              'This invitation link is invalid. Please check your email for the correct invitation link.'}
-          </p>
+          <p className="font-medium">{t('acceptInvite.form.invalidTitle')}</p>
+          <p className="mt-2">{loadErrorMessage || t('acceptInvite.form.invalidBody')}</p>
         </div>
         <div className="text-center text-sm">
           <a href="/login" className="text-primary font-medium hover:underline">
-            Back to login
+            {t('shared.backToLogin')}
           </a>
         </div>
       </div>
@@ -345,8 +378,8 @@ export function AcceptInviteForm() {
       {success ? (
         <div className="space-y-4">
           <div className="rounded-md bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/10 dark:text-green-400">
-            <p className="font-medium">Account activated successfully!</p>
-            <p className="mt-1 text-xs">Redirecting to dashboard...</p>
+            <p className="font-medium">{t('acceptInvite.form.activated')}</p>
+            <p className="mt-1 text-xs">{t('acceptInvite.form.redirecting')}</p>
           </div>
         </div>
       ) : (
@@ -379,7 +412,7 @@ export function AcceptInviteForm() {
             {/* Name Field (Disabled, Pre-filled from invitation) */}
             {invitationName && (
               <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
+                <Label htmlFor="name">{t('fields.name')}</Label>
                 <Input
                   id="name"
                   type="text"
@@ -392,7 +425,7 @@ export function AcceptInviteForm() {
 
             {/* Email Field (Disabled, Pre-filled) */}
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t('fields.email')}</Label>
               <Input
                 id="email"
                 type="email"
@@ -407,7 +440,7 @@ export function AcceptInviteForm() {
 
             {/* Password Field */}
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t('fields.password')}</Label>
               <PasswordInput
                 id="password"
                 placeholder="••••••••"
@@ -417,15 +450,12 @@ export function AcceptInviteForm() {
               />
               <FormError message={errors.password?.message} />
               <PasswordStrength password={password} />
-              <p className="text-muted-foreground text-xs">
-                Must be at least 8 characters with uppercase, lowercase, number, and special
-                character
-              </p>
+              <p className="text-muted-foreground text-xs">{t('fields.passwordHint')}</p>
             </div>
 
             {/* Confirm Password Field */}
             <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
+              <Label htmlFor="confirmPassword">{t('fields.confirmPassword')}</Label>
               <PasswordInput
                 id="confirmPassword"
                 placeholder="••••••••"
@@ -438,11 +468,11 @@ export function AcceptInviteForm() {
 
             {/* A failed activation, beside Activate Account */}
             <SaveError failure={save.failure} />
-            {!save.failure && loadError && <FormError message={loadError} />}
+            {!save.failure && loadErrorMessage && <FormError message={loadErrorMessage} />}
 
             {/* Submit Button */}
             <Button type="submit" className="w-full" disabled={isLoading || success}>
-              {isLoading ? 'Activating account...' : 'Activate Account'}
+              {isLoading ? t('acceptInvite.form.activating') : t('acceptInvite.form.submit')}
             </Button>
           </form>
         </>
@@ -451,10 +481,14 @@ export function AcceptInviteForm() {
       {/* Login Link */}
       {!success && (
         <div className="mt-4 text-center text-sm">
-          <span className="text-muted-foreground">Already have an account? </span>
-          <a href="/login" className="text-primary font-medium hover:underline">
-            Sign in
-          </a>
+          {t.rich('shared.signInPrompt', {
+            muted: (chunks) => <span className="text-muted-foreground">{chunks}</span>,
+            link: (chunks) => (
+              <a href="/login" className="text-primary font-medium hover:underline">
+                {chunks}
+              </a>
+            ),
+          })}
         </div>
       )}
 

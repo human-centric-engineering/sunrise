@@ -13,7 +13,11 @@ import {
   Search,
 } from 'lucide-react';
 import { Hero, Section, Features, Pricing, FAQ, CTA } from '@/components/marketing';
+import type { Feature, FAQItem, PricingTier } from '@/components/marketing';
 import { BRAND } from '@/lib/brand';
+import { getTranslations } from 'next-intl/server';
+
+const GITHUB_URL = 'https://github.com/human-centric-engineering/sunrise';
 
 // Placeholder copy, like the rest of this page — you are expected to rewrite or
 // delete it. It reads `BRAND.name` rather than naming the product, so a fork
@@ -22,176 +26,157 @@ import { BRAND } from '@/lib/brand';
 // `BRAND.description`, whose fallback is the bare product name: that is the
 // right trade for the root layout and the wrong one here, where this string is
 // the search-result snippet and the shared-link card.
-const homeDescription = `Build production-ready applications faster with ${BRAND.name}.`;
-
-export const metadata: Metadata = {
-  // `(public)/layout.tsx` supplies the template `%s - ${BRAND.name}`, so this
-  // declares the bare segment and the brand is appended once. The cards below
-  // set no title of their own, so Next copies the resolved "Home - <brand>"
-  // into both — one string to keep correct rather than three.
-  title: 'Home',
-  description: homeDescription,
-  openGraph: {
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('marketing.home.meta');
+  const homeDescription = t('description', { brand: BRAND.name });
+  return {
+    // `(public)/layout.tsx` supplies the template `%s - ${BRAND.name}`, so this
+    // declares the bare segment and the brand is appended once. The cards below
+    // set no title of their own, so Next copies the resolved "Home - <brand>"
+    // into both — one string to keep correct rather than three.
+    title: t('title'),
     description: homeDescription,
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    description: homeDescription,
-  },
-};
+    openGraph: {
+      description: homeDescription,
+      type: 'website',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      description: homeDescription,
+    },
+  };
+}
 
-const features = [
-  {
-    icon: Zap,
-    title: 'Next.js 16',
-    description:
-      'Built with the latest App Router and React Server Components for optimal performance.',
-  },
-  {
-    icon: FileCode,
-    title: 'TypeScript',
-    description: 'Full type safety with strict mode enabled throughout the entire codebase.',
-  },
-  {
-    icon: Shield,
-    title: 'Authentication',
-    description:
-      'Secure authentication with better-auth, supporting email/password and OAuth providers.',
-  },
-  {
-    icon: Database,
-    title: 'PostgreSQL + Prisma',
-    description: 'Production-ready database setup with Prisma ORM for type-safe data access.',
-  },
-  {
-    icon: Mail,
-    title: 'Email System',
-    description: 'Transactional email support with React Email templates and Resend integration.',
-  },
-  {
-    icon: Package,
-    title: 'Docker-Ready',
-    description: 'Multi-stage Docker builds for optimized production deployments anywhere.',
-  },
-  {
-    icon: Brain,
-    title: 'Agent Orchestration',
-    description:
-      'Design, deploy, and monitor AI agents with capabilities, workflows, and provider fallback — all admin-configured.',
-  },
-  {
-    icon: Search,
-    title: 'Knowledge Base & RAG',
-    description:
-      'Upload documents, chunk, embed (pgvector), and let agents answer grounded questions via semantic search.',
-  },
-];
+type HomeT = Awaited<ReturnType<typeof getTranslations<'marketing.home'>>>;
 
-const howItWorks = [
-  {
-    icon: Code,
-    title: 'Fork & Clone',
-    description: 'Start by forking the repository and cloning it to your local machine.',
-  },
-  {
-    icon: Settings,
-    title: 'Configure',
-    description: 'Set up your environment variables and customize to your needs.',
-  },
-  {
-    icon: Rocket,
-    title: 'Deploy',
-    description: 'Deploy with Docker, Vercel, or your preferred platform.',
-  },
-];
+function features(t: HomeT): Feature[] {
+  const items = 'features.items';
+  return [
+    {
+      icon: Zap,
+      title: 'Next.js 16',
+      description: t(`${items}.nextjs.description`),
+    },
+    {
+      icon: FileCode,
+      title: 'TypeScript',
+      description: t(`${items}.typescript.description`),
+    },
+    {
+      icon: Shield,
+      title: t(`${items}.authentication.title`),
+      description: t(`${items}.authentication.description`),
+    },
+    {
+      icon: Database,
+      title: 'PostgreSQL + Prisma',
+      description: t(`${items}.database.description`),
+    },
+    { icon: Mail, title: t(`${items}.email.title`), description: t(`${items}.email.description`) },
+    {
+      icon: Package,
+      title: t(`${items}.docker.title`),
+      description: t(`${items}.docker.description`),
+    },
+    {
+      icon: Brain,
+      title: t(`${items}.orchestration.title`),
+      description: t(`${items}.orchestration.description`),
+    },
+    {
+      icon: Search,
+      title: t(`${items}.knowledge.title`),
+      description: t(`${items}.knowledge.description`),
+    },
+  ];
+}
 
-const pricingTiers = [
-  {
-    name: 'Open Source',
-    description: 'Free forever for everyone',
-    price: '$0',
-    priceDetail: 'forever',
-    features: [
-      'Full source code access',
-      'All core features included',
-      'MIT License',
-      'Community support via GitHub',
-      'Regular updates',
-    ],
-    ctaText: 'Get Started',
-    ctaHref: 'https://github.com/human-centric-engineering/sunrise',
-  },
-  {
-    name: 'Pro Support',
-    description: 'For teams that need extra help',
-    price: '$499',
-    priceDetail: 'one-time',
-    features: [
-      'Everything in Open Source',
-      '3 months email support',
-      'Priority bug fixes',
-      'Architecture review session',
-      'Custom feature guidance',
-    ],
-    ctaText: 'Contact Us',
-    ctaHref: '/contact',
-    featured: true,
-    badge: 'Popular',
-  },
-  {
-    name: 'Enterprise',
-    description: 'For large-scale deployments',
-    price: 'Custom',
-    features: [
-      'Everything in Pro Support',
-      'Dedicated support channel',
-      'Custom feature development',
-      'On-boarding assistance',
-      'SLA guarantee',
-    ],
-    ctaText: 'Contact Sales',
-    ctaHref: '/contact',
-  },
-];
+const HOW_IT_WORKS = [
+  { key: 'fork', icon: Code },
+  { key: 'configure', icon: Settings },
+  { key: 'deploy', icon: Rocket },
+] as const;
 
-const faqItems = [
-  {
-    question: 'What is Sunrise?',
-    answer:
-      'Sunrise is a production-ready Next.js starter template designed for rapid application development. It includes authentication, database setup, email integration, Docker deployment, and follows best practices for AI-assisted development.',
-  },
-  {
-    question: 'Is Sunrise really free?',
-    answer:
-      'Yes! Sunrise is open source under the MIT License. You can use it for personal and commercial projects without any restrictions. We offer paid support packages for teams that want additional assistance.',
-  },
-  {
-    question: 'What technologies does Sunrise use?',
-    answer:
-      'Sunrise is built with Next.js 16, TypeScript, PostgreSQL with Prisma ORM, better-auth for authentication, Tailwind CSS with shadcn/ui components, React Email with Resend, and Docker for deployment.',
-  },
-  {
-    question: 'How is Sunrise optimized for AI development?',
-    answer:
-      'Two ways. First, AI-assisted development: comprehensive documentation in CLAUDE.md and the .context/ substrate helps AI assistants understand the codebase and follow established patterns when generating code. Second, AI agent capabilities for the apps you build: a complete orchestration layer for designing, deploying, and monitoring AI agents.',
-  },
-  {
-    question: 'Can I build AI agents with Sunrise?',
-    answer:
-      'Yes. Sunrise ships with a full agent orchestration layer at /admin/orchestration: configure LLM providers, define agents with system instructions and budgets, create custom capabilities (tools), build multi-step workflows as DAGs, ingest documents into pgvector-backed knowledge bases for RAG, expose agents via an MCP server or embed widget, and monitor everything with execution tracing, evaluations, and an audit log. Built on the 21 agentic design patterns from Antonio Gullí.',
-  },
-  {
-    question: 'Can I use Sunrise for commercial projects?',
-    answer:
-      'Absolutely! Sunrise is released under the MIT License, which allows commercial use, modification, and distribution. You just need to include the original license in any copies of the software.',
-  },
-  {
-    question: 'How do I get support?',
-    answer:
-      'For free support, you can open issues on GitHub or participate in community discussions. For priority support, architecture reviews, or custom development, check out our Pro Support and Enterprise packages.',
-  },
-];
+function howItWorks(t: HomeT): Feature[] {
+  return HOW_IT_WORKS.map(({ key, icon }) => ({
+    icon,
+    title: t(`howItWorks.items.${key}.title`),
+    description: t(`howItWorks.items.${key}.description`),
+  }));
+}
+
+const OPEN_SOURCE_FEATURES = [
+  'sourceAccess',
+  'coreFeatures',
+  'license',
+  'community',
+  'updates',
+] as const;
+const PRO_FEATURES = [
+  'everythingOpenSource',
+  'emailSupport',
+  'priorityFixes',
+  'architectureReview',
+  'featureGuidance',
+] as const;
+const ENTERPRISE_FEATURES = [
+  'everythingPro',
+  'dedicatedChannel',
+  'customDevelopment',
+  'onboarding',
+  'sla',
+] as const;
+
+function pricingTiers(t: HomeT): PricingTier[] {
+  const tiers = 'pricing.tiers';
+  return [
+    {
+      name: t(`${tiers}.openSource.name`),
+      description: t(`${tiers}.openSource.description`),
+      price: '$0',
+      priceDetail: t(`${tiers}.openSource.priceDetail`),
+      features: OPEN_SOURCE_FEATURES.map((key) => t(`${tiers}.openSource.features.${key}`)),
+      ctaText: t(`${tiers}.openSource.cta`),
+      ctaHref: GITHUB_URL,
+    },
+    {
+      name: t(`${tiers}.pro.name`),
+      description: t(`${tiers}.pro.description`),
+      price: '$499',
+      priceDetail: t(`${tiers}.pro.priceDetail`),
+      features: PRO_FEATURES.map((key) => t(`${tiers}.pro.features.${key}`)),
+      ctaText: t(`${tiers}.pro.cta`),
+      ctaHref: '/contact',
+      featured: true,
+      badge: t(`${tiers}.pro.badge`),
+    },
+    {
+      name: t(`${tiers}.enterprise.name`),
+      description: t(`${tiers}.enterprise.description`),
+      price: t(`${tiers}.enterprise.price`),
+      features: ENTERPRISE_FEATURES.map((key) => t(`${tiers}.enterprise.features.${key}`)),
+      ctaText: t(`${tiers}.enterprise.cta`),
+      ctaHref: '/contact',
+    },
+  ];
+}
+
+const FAQ_KEYS = [
+  'what',
+  'free',
+  'technologies',
+  'aiOptimized',
+  'agents',
+  'commercial',
+  'support',
+] as const;
+
+function faqItems(t: HomeT): FAQItem[] {
+  return FAQ_KEYS.map((key) => ({
+    question: t(`faq.items.${key}.question`),
+    answer: t(`faq.items.${key}.answer`),
+  }));
+}
 
 /**
  * Landing Page
@@ -215,18 +200,20 @@ const faqItems = [
  *
  * Phase 3.5: Landing Page & Marketing
  */
-export default function LandingPage() {
+export default async function LandingPage() {
+  const t = await getTranslations('marketing.home');
+
   return (
     <>
       {/* Hero Section */}
       <Hero
-        badge="Next.js 16 Ready"
-        title="Build Production Apps Faster"
-        description="Sunrise is a production-ready Next.js starter template designed for rapid application development. Authentication, database, email, Docker — all pre-configured and ready to go, plus a production AI agent orchestration layer for building agents, workflows, and knowledge bases."
-        primaryAction={{ label: 'Get Started', href: '/signup' }}
+        badge={t('hero.badge')}
+        title={t('hero.title')}
+        description={t('hero.description')}
+        primaryAction={{ label: t('hero.primaryAction'), href: '/signup' }}
         secondaryAction={{
-          label: 'View on GitHub',
-          href: 'https://github.com/human-centric-engineering/sunrise',
+          label: t('hero.secondaryAction'),
+          href: GITHUB_URL,
           variant: 'outline',
         }}
       />
@@ -234,49 +221,45 @@ export default function LandingPage() {
       {/* Features Section */}
       <Section
         id="features"
-        title="Everything You Need"
-        description="Sunrise comes with all the essential features pre-configured so you can focus on building your application."
+        title={t('features.title')}
+        description={t('features.description')}
         variant="muted"
       >
-        <Features features={features} columns={3} variant="card" />
+        <Features features={features(t)} columns={3} variant="card" />
       </Section>
 
       {/* How It Works Section */}
       <Section
         id="how-it-works"
-        title="Get Started in Minutes"
-        description="Three simple steps to go from zero to production-ready."
+        title={t('howItWorks.title')}
+        description={t('howItWorks.description')}
       >
-        <Features features={howItWorks} columns={3} variant="icon-top" />
+        <Features features={howItWorks(t)} columns={3} variant="icon-top" />
       </Section>
 
       {/* Pricing Section */}
       <Section
         id="pricing"
-        title="Simple, Transparent Pricing"
-        description="Start for free with open source. Upgrade for priority support and custom development."
+        title={t('pricing.title')}
+        description={t('pricing.description')}
         variant="muted"
       >
-        <Pricing tiers={pricingTiers} />
+        <Pricing tiers={pricingTiers(t)} />
       </Section>
 
       {/* FAQ Section */}
-      <Section
-        id="faq"
-        title="Frequently Asked Questions"
-        description="Got questions? We have answers."
-      >
-        <FAQ items={faqItems} />
+      <Section id="faq" title={t('faq.title')} description={t('faq.description')}>
+        <FAQ items={faqItems(t)} />
       </Section>
 
       {/* CTA Section */}
       <CTA
-        title="Ready to Build Something Great?"
-        description="Join developers who are building production applications faster with Sunrise."
-        primaryAction={{ label: 'Get Started Free', href: '/signup' }}
+        title={t('cta.title')}
+        description={t('cta.description')}
+        primaryAction={{ label: t('cta.primaryAction'), href: '/signup' }}
         secondaryAction={{
-          label: 'View Documentation',
-          href: 'https://github.com/human-centric-engineering/sunrise',
+          label: t('cta.secondaryAction'),
+          href: GITHUB_URL,
           variant: 'outline',
         }}
         variant="gradient"

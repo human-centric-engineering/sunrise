@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { AppHeader } from '@/components/layouts/app-header';
 import { ProtectedNav } from '@/components/layouts/protected-nav';
 import { ProtectedFooter } from '@/components/layouts/protected-footer';
@@ -6,13 +7,17 @@ import { MaintenanceWrapperWithAdminNotice } from '@/components/maintenance-wrap
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
-export const metadata: Metadata = {
-  title: {
-    template: `%s - ${BRAND.name}`,
-    default: `Dashboard - ${BRAND.name}`,
-  },
-  description: 'Your dashboard',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('account.layout.meta');
+  return {
+    title: {
+      // No words to translate, and `%s` must reach Next intact.
+      template: `%s - ${BRAND.name}`,
+      default: t('titleDefault', { brand: BRAND.name }),
+    },
+    description: t('description'),
+  };
+}
 
 /**
  * Protected Layout

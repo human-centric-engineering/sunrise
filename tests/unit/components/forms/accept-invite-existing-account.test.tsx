@@ -144,6 +144,24 @@ describe('AcceptInviteExistingAccount', () => {
     });
   });
 
+  it('an invitation that names no org says "the organisation" in the invite and the Join button', () => {
+    // The org is a `select` in the catalogue (t-1073), so the sentence stays
+    // whole for a translator whether or not the invitation names one.
+    signedInAs('pat@example.com');
+    render(<AcceptInviteExistingAccount {...props} orgName={null} />);
+
+    expect(screen.getByText('the organisation')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Join the organisation' })).toBeInTheDocument();
+  });
+
+  it('names the org in the invite and the Join button when the invitation has one', () => {
+    signedInAs('pat@example.com');
+    render(<AcceptInviteExistingAccount {...props} />);
+
+    expect(screen.getByText('Acme')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Join Acme' })).toBeInTheDocument();
+  });
+
   it('shows a loading state while the session is being read, and no action', () => {
     mockUseSession.mockReturnValue({ data: null, isPending: true });
     render(<AcceptInviteExistingAccount {...props} />);

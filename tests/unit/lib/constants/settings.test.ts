@@ -4,8 +4,9 @@
  * Settings Constants Tests
  *
  * Test Coverage:
- * - SETTINGS_TAB_TITLES has a title for every tab value
- * - Titles carry the brand seam rather than a hardcoded "Sunrise" (#432)
+ * - settingsTabTitles gives a title for every tab value, from the catalogue
+ *
+ * The brand case is in tests/unit/brand-fork-surfaces.test.tsx.
  *
  * @see lib/constants/settings.ts
  */
@@ -14,27 +15,29 @@ import { describe, it, expect } from 'vitest';
 
 import {
   SETTINGS_TAB_VALUES,
-  SETTINGS_TAB_TITLES,
   DEFAULT_SETTINGS_TAB,
+  settingsTabTitles,
 } from '@/lib/constants/settings';
+import { BRAND } from '@/lib/brand';
+import { createTranslator } from 'next-intl';
+import en from '@/lib/i18n/messages/en.json';
 
-describe('SETTINGS_TAB_TITLES', () => {
-  it('has a non-empty title for every tab value', () => {
-    for (const tab of SETTINGS_TAB_VALUES) {
-      expect(SETTINGS_TAB_TITLES[tab].length).toBeGreaterThan(0);
-    }
+describe('settingsTabTitles', () => {
+  const titles = settingsTabTitles(
+    createTranslator({ locale: 'en', messages: en, namespace: 'account.settings' })
+  );
+
+  it("builds each title from the catalogue template and that tab's name", () => {
+    expect(titles).toEqual({
+      profile: `Profile - Settings - ${BRAND.name}`,
+      security: `Security - Settings - ${BRAND.name}`,
+      notifications: `Notifications - Settings - ${BRAND.name}`,
+      account: `Account - Settings - ${BRAND.name}`,
+    });
   });
 
-  it('all titles contain "Settings"', () => {
-    for (const tab of SETTINGS_TAB_VALUES) {
-      expect(SETTINGS_TAB_TITLES[tab]).toContain('Settings');
-    }
+  it('has a title for every tab value, including the default', () => {
+    expect(Object.keys(titles).sort()).toEqual([...SETTINGS_TAB_VALUES].sort());
+    expect(titles[DEFAULT_SETTINGS_TAB]).toContain('Settings');
   });
-
-  it('defaults to a tab that has a title', () => {
-    expect(SETTINGS_TAB_TITLES[DEFAULT_SETTINGS_TAB]).toBeDefined();
-  });
-
-  // The brand case moved to tab-titles-brand.test.ts — it needs a hoisted mock,
-  // which cannot work in a file that statically imports the module under test.
 });

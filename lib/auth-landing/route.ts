@@ -89,6 +89,16 @@ export const AUTH_LANDING_ROUTE = resolveAuthLandingRoute();
 export const AUTH_LANDING_LABEL = resolveAuthLandingLabel();
 
 /**
+ * {@link AUTH_LANDING_LABEL} in the viewer's language, for a screen that reads
+ * its text from the catalogue. Pass the catalogue's `layout.nav.dashboard`: it
+ * is used while the fork seam is `null`. A fork's own label is display copy the
+ * fork wrote, so it is used as given.
+ */
+export function authLandingLabel(translatedDefault: string): string {
+  return appAuthLandingLabel === null ? translatedDefault : AUTH_LANDING_LABEL;
+}
+
+/**
  * The path part of a root-relative route, without its query, fragment or a
  * trailing slash: `/app/?x=1` and `/app` are the same page to the router.
  */

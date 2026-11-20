@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { getFormatter, getTranslations } from 'next-intl/server';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { getVerificationStatus } from '@/lib/auth/verification-status';
@@ -47,6 +48,9 @@ export default async function DashboardPage() {
     clearInvalidSession('/dashboard');
   }
 
+  const t = await getTranslations('account.dashboard');
+  const format = await getFormatter();
+
   // Get email verification status
   const verificationStatus = await getVerificationStatus(user.email, user.emailVerified);
 
@@ -74,7 +78,7 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <h1 className="text-3xl font-bold">Dashboard</h1>
+      <h1 className="text-3xl font-bold">{t('title')}</h1>
 
       {/* Welcome Card */}
       <Card>
@@ -85,7 +89,9 @@ export default async function DashboardPage() {
               <AvatarFallback className="text-lg">{initials}</AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <h2 className="text-2xl font-bold">Hello, {user.name.split(' ')[0]}!</h2>
+              <h2 className="text-2xl font-bold">
+                {t('hello', { name: user.name.split(' ')[0] })}
+              </h2>
               <p className="text-muted-foreground">{user.email}</p>
             </div>
           </div>
@@ -97,13 +103,15 @@ export default async function DashboardPage() {
         {/* Profile Completion */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Profile Completion</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('profileCompletion')}</CardTitle>
             <User className="text-muted-foreground h-4 w-4" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{profileCompletion}%</div>
+            <div className="text-2xl font-bold">
+              {format.number(profileCompletion / 100, 'percent')}
+            </div>
             <p className="text-muted-foreground text-xs">
-              {completedFields} of {profileFields.length} fields completed
+              {t('fieldsCompleted', { completed: completedFields, total: profileFields.length })}
             </p>
             <div className="bg-muted mt-2 h-2 w-full overflow-hidden rounded-full">
               <div
@@ -120,14 +128,14 @@ export default async function DashboardPage() {
         {/* Account Status */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Account Status</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('accountStatus')}</CardTitle>
             <Shield className="text-muted-foreground h-4 w-4" />
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2">
               <Badge variant="secondary">{user.role || DEFAULT_USER_ROLE}</Badge>
             </div>
-            <p className="text-muted-foreground mt-1 text-xs">Your account role</p>
+            <p className="text-muted-foreground mt-1 text-xs">{t('accountRole')}</p>
           </CardContent>
         </Card>
       </div>
@@ -135,20 +143,20 @@ export default async function DashboardPage() {
       {/* Quick Actions */}
       <Card>
         <CardHeader>
-          <CardTitle>Quick Actions</CardTitle>
-          <CardDescription>Manage your account</CardDescription>
+          <CardTitle>{t('quickActions')}</CardTitle>
+          <CardDescription>{t('quickActionsDescription')}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-4">
           <Button asChild variant="outline">
             <Link href="/profile">
               <User className="mr-2 h-4 w-4" />
-              View Profile
+              {t('viewProfile')}
             </Link>
           </Button>
           <Button asChild variant="outline">
             <Link href="/settings">
               <Settings className="mr-2 h-4 w-4" />
-              Account Settings
+              {t('accountSettings')}
             </Link>
           </Button>
         </CardContent>

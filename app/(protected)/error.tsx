@@ -10,8 +10,9 @@
  */
 
 import { LayoutDashboard } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { RouteErrorBoundary } from '@/components/errors/route-error-boundary';
-import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { authLandingLabel, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
 export default function ProtectedError({
   error,
@@ -20,17 +21,19 @@ export default function ProtectedError({
   error: Error & { digest?: string };
   retry: () => void;
 }): React.ReactElement {
+  const t = useTranslations('account.error');
+  const tNav = useTranslations('layout.nav');
   return (
     <RouteErrorBoundary
       error={error}
       retry={retry}
       boundaryName="ProtectedError"
       tag="protected"
-      title="Something went wrong"
-      description="An error occurred while loading this page. This has been logged."
+      title={t('title')}
+      description={t('description')}
       checkSession
       fallback={{
-        label: AUTH_LANDING_LABEL,
+        label: authLandingLabel(tNav('dashboard')),
         href: AUTH_LANDING_ROUTE,
         icon: <LayoutDashboard className="mr-2 h-4 w-4" />,
       }}

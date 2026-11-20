@@ -5,7 +5,7 @@
  * - Profile: Edit profile information
  * - Security: Change password
  * - Notifications: Email preferences
- * - Account: Account info and deletion
+ * - Account: Account info, interface language and deletion
  *
  * URL-persistent tabs: Each tab has its own URL (/settings?tab=security)
  * for shareable links and browser history support.
@@ -14,6 +14,7 @@
  */
 
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { prisma } from '@/lib/db/client';
@@ -21,11 +22,12 @@ import { parseUserPreferences } from '@/lib/validations/user';
 import { SettingsTabs } from '@/components/settings/settings-tabs';
 import { getInitials } from '@/lib/utils/initials';
 import { AccountSections } from '@/components/account/account-sections';
+import { localeOptions } from '@/lib/i18n/locale-options';
 
-export const metadata: Metadata = {
-  title: 'Settings',
-  description: 'Manage your account settings and preferences',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('account.settings.meta');
+  return { title: t('title'), description: t('description') };
+}
 
 export default async function SettingsPage() {
   const session = await getServerSession();
@@ -48,6 +50,7 @@ export default async function SettingsPage() {
       bio: true,
       phone: true,
       timezone: true,
+      locale: true,
       location: true,
       preferences: true,
       accounts: {
@@ -77,12 +80,14 @@ export default async function SettingsPage() {
   // Get user initials for avatar fallback
   const initials = getInitials(user.name);
 
+  const t = await getTranslations('account.settings');
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-muted-foreground">Manage your account settings and preferences</p>
+        <h1 className="text-2xl font-bold">{t('title')}</h1>
+        <p className="text-muted-foreground">{t('description')}</p>
       </div>
 
       {/* Settings Tabs with URL persistence */}
@@ -103,6 +108,7 @@ export default async function SettingsPage() {
         hasPasswordAccount={hasPasswordAccount}
         oauthProviders={oauthProviders}
         initials={initials}
+        language={{ locale: user.locale, options: localeOptions() }}
       />
 
       {/* Fork-registered sections (#595). Renders nothing in vanilla Sunrise.

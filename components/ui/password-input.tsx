@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
@@ -36,6 +37,7 @@ export interface PasswordInputProps extends Omit<React.ComponentProps<'input'>, 
  */
 const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
   ({ className, wrapperClassName, disabled, ...props }, ref) => {
+    const t = useTranslations('ui.passwordInput');
     const [showPassword, setShowPassword] = useState(false);
 
     return (
@@ -57,7 +59,7 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
             'focus-visible:ring-ring rounded focus-visible:ring-1 focus-visible:outline-none',
             disabled && 'pointer-events-none opacity-50'
           )}
-          aria-label={showPassword ? 'Hide password' : 'Show password'}
+          aria-label={showPassword ? t('hide') : t('show')}
           tabIndex={-1}
         >
           {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

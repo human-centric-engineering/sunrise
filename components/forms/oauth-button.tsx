@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { authClient } from '@/lib/auth/client';
 import { Button } from '@/components/ui/button';
@@ -55,6 +56,7 @@ export function OAuthButton({
   invitationToken,
   invitationEmail,
 }: OAuthButtonProps) {
+  const t = useTranslations('forms.oauth');
   const [isLoading, setIsLoading] = useState(false);
   const searchParams = useSearchParams();
   const redirect = safeCallbackUrl(
@@ -122,7 +124,7 @@ export function OAuthButton({
       disabled={isLoading}
       onClick={() => void handleOAuthSignIn()}
     >
-      {isLoading ? 'Redirecting...' : children}
+      {isLoading ? t('redirecting') : children}
     </Button>
   );
 }

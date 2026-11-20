@@ -77,6 +77,7 @@ vi.mock('@/components/settings/settings-tabs', () => ({
     hasPasswordAccount,
     oauthProviders,
     initials,
+    language,
   }: {
     user: { name: string; email: string };
     preferences: {
@@ -85,6 +86,7 @@ vi.mock('@/components/settings/settings-tabs', () => ({
     hasPasswordAccount: boolean;
     oauthProviders: string[];
     initials: string;
+    language: { locale: string | null; options: { tag: string; name: string }[] };
   }) => (
     <div
       data-testid="settings-tabs"
@@ -94,11 +96,13 @@ vi.mock('@/components/settings/settings-tabs', () => ({
       data-providers={JSON.stringify(oauthProviders)}
       data-initials={initials}
       data-preferences={JSON.stringify(preferences)}
+      data-locale={String(language.locale)}
+      data-language-options={JSON.stringify(language.options)}
     />
   ),
 }));
 
-import SettingsPage, { metadata } from '@/app/(protected)/settings/page';
+import SettingsPage, { generateMetadata } from '@/app/(protected)/settings/page';
 import {
   registerAccountSection,
   __resetAccountSectionRegistryForTests,
@@ -146,6 +150,7 @@ const VALID_PREFERENCES = {
 function makeFullUser(
   overrides: Partial<{
     preferences: unknown;
+    locale: string | null;
     accounts: Array<{ providerId: string; password: string | null }>;
   }> = {}
 ) {
@@ -160,6 +165,7 @@ function makeFullUser(
     bio: 'Hello world',
     phone: '+1234567890',
     timezone: 'UTC',
+    locale: null,
     location: 'London',
     preferences: VALID_PREFERENCES,
     accounts: [
@@ -184,11 +190,13 @@ describe('SettingsPage', () => {
   // -------------------------------------------------------------------------
 
   describe('metadata', () => {
-    it('has the correct title', () => {
+    it('has the correct title', async () => {
+      const metadata = await generateMetadata();
       expect(metadata.title).toBe('Settings');
     });
 
-    it('has the correct description', () => {
+    it('has the correct description', async () => {
+      const metadata = await generateMetadata();
       expect(metadata.description).toBe('Manage your account settings and preferences');
     });
   });
@@ -509,6 +517,47 @@ describe('SettingsPage', () => {
         tabs.getAttribute('data-providers') ?? '["non-empty"]'
       );
       expect(providers).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Interface language (§138 t-1073)
+  // -------------------------------------------------------------------------
+
+  describe('language picker', () => {
+    it('reads the stored locale and passes it to SettingsTabs', async () => {
+      vi.mocked(getServerSession).mockResolvedValue(MOCK_SESSION);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(
+        makeFullUser({ locale: 'en-XA' }) as never
+      );
+
+      render(await SettingsPage());
+
+      expect(prisma.user.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ locale: true }) })
+      );
+      expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-locale', 'en-XA');
+    });
+
+    it('passes null through when the user follows their org', async () => {
+      vi.mocked(getServerSession).mockResolvedValue(MOCK_SESSION);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(makeFullUser() as never);
+
+      render(await SettingsPage());
+
+      expect(screen.getByTestId('settings-tabs')).toHaveAttribute('data-locale', 'null');
+    });
+
+    it('offers each supported language named in itself', async () => {
+      vi.mocked(getServerSession).mockResolvedValue(MOCK_SESSION);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(makeFullUser() as never);
+
+      render(await SettingsPage());
+
+      const options: unknown = JSON.parse(
+        screen.getByTestId('settings-tabs').getAttribute('data-language-options') ?? '[]'
+      );
+      expect(options).toContainEqual({ tag: 'en', name: 'English' });
     });
   });
 

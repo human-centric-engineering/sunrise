@@ -9,6 +9,7 @@
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { getFormatter, getTranslations } from 'next-intl/server';
 import { getServerSession } from '@/lib/auth/utils';
 import { clearInvalidSession } from '@/lib/auth/clear-session';
 import { prisma } from '@/lib/db/client';
@@ -21,10 +22,10 @@ import { Mail, MapPin, Clock, Calendar, Pencil } from 'lucide-react';
 import { AccountSections } from '@/components/account/account-sections';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
-export const metadata: Metadata = {
-  title: 'Profile',
-  description: 'View your profile',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('account.profile.meta');
+  return { title: t('title'), description: t('description') };
+}
 
 export default async function ProfilePage() {
   const session = await getServerSession();
@@ -54,6 +55,9 @@ export default async function ProfilePage() {
   if (!user) {
     clearInvalidSession('/profile');
   }
+
+  const t = await getTranslations('account.profile');
+  const format = await getFormatter();
 
   // Get user initials for avatar fallback
   const initials = user.name
@@ -86,7 +90,7 @@ export default async function ProfilePage() {
                 <Badge variant="secondary">{user.role || DEFAULT_USER_ROLE}</Badge>
                 {user.emailVerified && (
                   <Badge variant="outline" className="text-green-600 dark:text-green-400">
-                    Verified
+                    {t('verified')}
                   </Badge>
                 )}
               </div>
@@ -96,7 +100,7 @@ export default async function ProfilePage() {
             <Button asChild variant="outline">
               <Link href="/settings">
                 <Pencil className="mr-2 h-4 w-4" />
-                Edit Profile
+                {t('editProfile')}
               </Link>
             </Button>
           </div>
@@ -106,7 +110,7 @@ export default async function ProfilePage() {
             <>
               <Separator className="my-6" />
               <div>
-                <h2 className="mb-2 font-medium">About</h2>
+                <h2 className="mb-2 font-medium">{t('about')}</h2>
                 <p className="text-muted-foreground whitespace-pre-wrap">{user.bio}</p>
               </div>
             </>
@@ -117,7 +121,7 @@ export default async function ProfilePage() {
       {/* Profile Details */}
       <Card>
         <CardHeader>
-          <CardTitle>Profile Details</CardTitle>
+          <CardTitle>{t('details')}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-6 sm:grid-cols-2">
@@ -125,7 +129,7 @@ export default async function ProfilePage() {
             <div className="flex items-start gap-3">
               <Mail className="text-muted-foreground mt-0.5 h-5 w-5" />
               <div>
-                <p className="text-muted-foreground text-sm">Email</p>
+                <p className="text-muted-foreground text-sm">{t('email')}</p>
                 <p className="font-medium">{user.email}</p>
               </div>
             </div>
@@ -134,8 +138,8 @@ export default async function ProfilePage() {
             <div className="flex items-start gap-3">
               <MapPin className="text-muted-foreground mt-0.5 h-5 w-5" />
               <div>
-                <p className="text-muted-foreground text-sm">Location</p>
-                <p className="font-medium">{user.location || 'Not set'}</p>
+                <p className="text-muted-foreground text-sm">{t('location')}</p>
+                <p className="font-medium">{user.location || t('notSet')}</p>
               </div>
             </div>
 
@@ -143,7 +147,7 @@ export default async function ProfilePage() {
             <div className="flex items-start gap-3">
               <Clock className="text-muted-foreground mt-0.5 h-5 w-5" />
               <div>
-                <p className="text-muted-foreground text-sm">Timezone</p>
+                <p className="text-muted-foreground text-sm">{t('timezone')}</p>
                 <p className="font-medium">{timezoneDisplay}</p>
               </div>
             </div>
@@ -152,14 +156,8 @@ export default async function ProfilePage() {
             <div className="flex items-start gap-3">
               <Calendar className="text-muted-foreground mt-0.5 h-5 w-5" />
               <div>
-                <p className="text-muted-foreground text-sm">Member Since</p>
-                <p className="font-medium">
-                  {new Date(user.createdAt).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                  })}
-                </p>
+                <p className="text-muted-foreground text-sm">{t('memberSince')}</p>
+                <p className="font-medium">{format.dateTime(user.createdAt, 'long')}</p>
               </div>
             </div>
           </div>

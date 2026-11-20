@@ -7,7 +7,8 @@
  */
 
 import { z } from 'zod';
-import { emailSchema, passwordSchema } from '@/lib/validations/auth';
+import { createEmailSchema, createPasswordSchema, emailSchema } from '@/lib/validations/auth';
+import { englishValidation, type ValidationT } from '@/lib/validations/messages';
 import { paginationQuerySchema, sortingQuerySchema, cuidSchema } from '@/lib/validations/common';
 import { USER_ROLES, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import { ORG_ROLES } from '@/lib/tenancy/roles';
@@ -21,57 +22,65 @@ import { isLanguageTag, MAX_LOCALE_TAG_LENGTH } from '@/lib/i18n/tags';
  *
  * Extended in Phase 3.2 to include bio, phone, timezone, location.
  */
-export const updateUserSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Name cannot be empty')
-    .max(100, 'Name must be less than 100 characters')
-    .optional(),
-  email: emailSchema.optional(),
+type OptionalText = z.ZodOptional<z.ZodString>;
+/** `.optional().nullable()` */
+type NullableText = z.ZodNullable<z.ZodOptional<z.ZodString>>;
+/** `.nullable().optional()` */
+type OptionalNullableText = z.ZodOptional<z.ZodNullable<z.ZodString>>;
 
-  /**
-   * Required alongside `email` for accounts that have a password (#489).
-   *
-   * Re-authentication for the identity mutation, mirroring what better-auth
-   * already demands of `changePassword`. Not validated against `passwordSchema`
-   * — that schema enforces the rules for a NEW password, and applying them here
-   * would reject a correct existing password that predates a rules change, or
-   * leak the current policy to a caller guessing at it.
-   *
-   * The route enforces the pairing (and exempts OAuth-only accounts, which have
-   * no password to confirm); the schema only has to accept the field.
-   */
-  currentPassword: z.string().min(1, 'Current password is required').optional(),
+export function createUpdateUserSchema(t: ValidationT): z.ZodObject<{
+  name: OptionalText;
+  email: OptionalText;
+  currentPassword: OptionalText;
+  bio: NullableText;
+  phone: NullableText;
+  timezone: OptionalText;
+  locale: OptionalNullableText;
+  location: NullableText;
+}> {
+  return z.object({
+    name: z.string().trim().min(1, t('nameEmpty')).max(100, t('nameTooLong')).optional(),
+    email: createEmailSchema(t).optional(),
 
-  // Extended profile fields (Phase 3.2)
-  bio: z.string().trim().max(500, 'Bio must be less than 500 characters').optional().nullable(),
-  phone: z
-    .string()
-    .max(20, 'Phone number must be less than 20 characters')
-    .regex(/^[\d\s\-+()]*$/, 'Invalid phone number format')
-    .optional()
-    .nullable(),
-  timezone: z.string().max(50, 'Timezone must be less than 50 characters').optional(),
-  // The interface language (§138 t-1071); null follows the org default. Only
-  // the tag's shape is checked here, because client forms import this schema
-  // and the supported list lives in the catalogue (`lib/i18n/tags.ts`).
-  // `PATCH /api/v1/users/me` swaps in `localeChoiceSchema`, which checks the
-  // locale is supported and canonicalises it.
-  locale: z
-    .string()
-    .trim()
-    .max(MAX_LOCALE_TAG_LENGTH)
-    .refine(isLanguageTag, 'Language must be a language tag, like "en" or "pt-BR"')
-    .nullable()
-    .optional(),
-  location: z
-    .string()
-    .trim()
-    .max(100, 'Location must be less than 100 characters')
-    .optional()
-    .nullable(),
-});
+    /**
+     * Required alongside `email` for accounts that have a password (#489).
+     *
+     * Re-authentication for the identity mutation, mirroring what better-auth
+     * already demands of `changePassword`. Not validated against `passwordSchema`
+     * — that schema enforces the rules for a NEW password, and applying them here
+     * would reject a correct existing password that predates a rules change, or
+     * leak the current policy to a caller guessing at it.
+     *
+     * The route enforces the pairing (and exempts OAuth-only accounts, which have
+     * no password to confirm); the schema only has to accept the field.
+     */
+    currentPassword: z.string().min(1, t('currentPasswordRequired')).optional(),
+
+    // Extended profile fields (Phase 3.2)
+    bio: z.string().trim().max(500, t('bioTooLong')).optional().nullable(),
+    phone: z
+      .string()
+      .max(20, t('phoneTooLong'))
+      .regex(/^[\d\s\-+()]*$/, t('phoneInvalid'))
+      .optional()
+      .nullable(),
+    timezone: z.string().max(50, t('timezoneTooLong')).optional(),
+    // The interface language (§138 t-1071); null follows the org default. Only
+    // the tag's shape is checked here, because client forms import this schema
+    // and the supported list lives in the catalogue (`lib/i18n/tags.ts`).
+    // `PATCH /api/v1/users/me` swaps in `localeChoiceSchema`, which checks the
+    // locale is supported and canonicalises it.
+    locale: z
+      .string()
+      .trim()
+      .max(MAX_LOCALE_TAG_LENGTH)
+      .refine(isLanguageTag, t('localeInvalid'))
+      .nullable()
+      .optional(),
+    location: z.string().trim().max(100, t('locationTooLong')).optional().nullable(),
+  });
+}
+export const updateUserSchema = createUpdateUserSchema(englishValidation);
 
 /**
  * Email preferences schema
@@ -233,24 +242,32 @@ export const inviteUserSchema = z.object({
  * User provides token from email, their email, and sets their password.
  * Includes password confirmation to prevent typos.
  */
-export const acceptInvitationSchema = z
-  .object({
-    /** Invitation token from email */
-    token: z.string().min(1, 'Token is required'),
+export function createAcceptInvitationSchema(t: ValidationT): z.ZodObject<{
+  token: z.ZodString;
+  email: z.ZodString;
+  password: z.ZodString;
+  confirmPassword: z.ZodString;
+}> {
+  return z
+    .object({
+      /** Invitation token from email */
+      token: z.string().min(1, t('tokenRequired')),
 
-    /** User's email address (must match invitation) */
-    email: emailSchema,
+      /** User's email address (must match invitation) */
+      email: createEmailSchema(t),
 
-    /** User's chosen password */
-    password: passwordSchema,
+      /** User's chosen password */
+      password: createPasswordSchema(t),
 
-    /** Password confirmation (must match password) */
-    confirmPassword: z.string(),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords don't match",
-    path: ['confirmPassword'],
-  });
+      /** Password confirmation (must match password) */
+      confirmPassword: z.string(),
+    })
+    .refine((data) => data.password === data.confirmPassword, {
+      message: t('passwordsDontMatch'),
+      path: ['confirmPassword'],
+    });
+}
+export const acceptInvitationSchema = createAcceptInvitationSchema(englishValidation);
 
 /**
  * An invitation link's two halves — what accepting as an existing account

@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { useTranslations } from 'next-intl';
+import { getTranslations } from 'next-intl/server';
 import Link from 'next/link';
 import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,10 +9,13 @@ import { WaitlistLoginNotice } from '@/components/waitlist/waitlist-login-notice
 import { BRAND } from '@/lib/brand';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
 
-export const metadata: Metadata = {
-  title: 'Sign In',
-  description: `Sign in to your ${BRAND.name} account`,
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('auth.login.meta');
+  return {
+    title: t('title'),
+    description: t('description', { brand: BRAND.name }),
+  };
+}
 
 /**
  * Login Page
@@ -19,14 +24,15 @@ export const metadata: Metadata = {
  * Protected by proxy - authenticated users are redirected to /dashboard
  */
 export default function LoginPage() {
+  const t = useTranslations('auth');
   return (
     <Card>
       <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
-        <CardDescription>Enter your email and password to sign in to your account</CardDescription>
+        <CardTitle className="text-2xl font-bold">{t('login.title')}</CardTitle>
+        <CardDescription>{t('login.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Suspense fallback={<div>Loading...</div>}>
+        <Suspense fallback={<div>{t('shared.loading')}</div>}>
           <LoginForm />
         </Suspense>
 
@@ -34,10 +40,14 @@ export default function LoginPage() {
             redirects straight back here and self-signup cannot succeed. */}
         {!isInviteOnly() && (
           <div className="text-center text-sm">
-            <span className="text-muted-foreground">Don&apos;t have an account? </span>
-            <Link href="/signup" className="text-primary font-medium hover:underline">
-              Sign up
-            </Link>
+            {t.rich('login.signUpPrompt', {
+              muted: (chunks) => <span className="text-muted-foreground">{chunks}</span>,
+              link: (chunks) => (
+                <Link href="/signup" className="text-primary font-medium hover:underline">
+                  {chunks}
+                </Link>
+              ),
+            })}
           </div>
         )}
         {/* Under invite_only, the way in is the waitlist, when the app has one. */}
@@ -49,7 +59,7 @@ export default function LoginPage() {
             href="/reset-password"
             className="text-muted-foreground hover:text-primary hover:underline"
           >
-            Forgot your password?
+            {t('login.forgotPassword')}
           </Link>
         </div>
       </CardContent>

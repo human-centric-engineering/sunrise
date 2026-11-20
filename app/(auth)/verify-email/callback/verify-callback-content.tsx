@@ -3,13 +3,14 @@
 import { Suspense, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { authLandingLabel, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { SaveError } from '@/components/forms/form-error';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { isRecord } from '@/lib/utils';
@@ -27,6 +28,9 @@ import { isRecord } from '@/lib/utils';
  * when a verification link has expired.
  */
 function VerifyEmailCallbackContent() {
+  const t = useTranslations('auth');
+  const tNav = useTranslations('layout.nav');
+  const landing = authLandingLabel(tNav('dashboard'));
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -37,7 +41,7 @@ function VerifyEmailCallbackContent() {
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
   const resend = useSaveFailure({
-    fallback: 'Failed to resend verification email. Please try again.',
+    fallback: t('shared.resendVerificationFailed'),
   });
 
   // If no error, verification succeeded - redirect to dashboard
@@ -59,12 +63,16 @@ function VerifyEmailCallbackContent() {
               <CheckCircle2 className="h-6 w-6" />
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold">Email address changed</CardTitle>
-          <CardDescription>If you&apos;re asked to sign in, use your new address.</CardDescription>
+          <CardTitle className="text-2xl font-bold">
+            {t('verifyEmail.callback.emailChangedTitle')}
+          </CardTitle>
+          <CardDescription>{t('verifyEmail.callback.emailChangedDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
           <Button asChild className="w-full">
-            <Link href={AUTH_LANDING_ROUTE}>Continue to {AUTH_LANDING_LABEL}</Link>
+            <Link href={AUTH_LANDING_ROUTE}>
+              {t('verifyEmail.callback.continueTo', { destination: landing })}
+            </Link>
           </Button>
         </CardContent>
       </Card>
@@ -81,8 +89,12 @@ function VerifyEmailCallbackContent() {
               <CheckCircle2 className="h-6 w-6" />
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold">Email Verified!</CardTitle>
-          <CardDescription>Redirecting to {AUTH_LANDING_LABEL}...</CardDescription>
+          <CardTitle className="text-2xl font-bold">
+            {t('verifyEmail.callback.verifiedTitle')}
+          </CardTitle>
+          <CardDescription>
+            {t('verifyEmail.callback.redirectingTo', { destination: landing })}
+          </CardDescription>
         </CardHeader>
       </Card>
     );
@@ -90,7 +102,7 @@ function VerifyEmailCallbackContent() {
 
   async function handleResend() {
     if (!email) {
-      resend.show('Please enter your email address');
+      resend.show(t('verifyEmail.callback.enterEmail'));
       return;
     }
 
@@ -110,7 +122,7 @@ function VerifyEmailCallbackContent() {
         resend.show(
           isRecord(data) && typeof data.message === 'string'
             ? data.message
-            : 'Failed to resend verification email. Please try again.'
+            : t('shared.resendVerificationFailed')
         );
         return;
       }
@@ -133,16 +145,16 @@ function VerifyEmailCallbackContent() {
             <AlertCircle className="h-6 w-6" />
           </div>
         </div>
-        <CardTitle className="text-2xl font-bold">Verification Link Expired</CardTitle>
-        <CardDescription>
-          This verification link has expired or is invalid. Please request a new one.
-        </CardDescription>
+        <CardTitle className="text-2xl font-bold">
+          {t('verifyEmail.callback.expiredTitle')}
+        </CardTitle>
+        <CardDescription>{t('verifyEmail.callback.expiredDescription')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {!resent ? (
           <>
             <div className="space-y-2">
-              <Label htmlFor="email">Email Address</Label>
+              <Label htmlFor="email">{t('fields.emailAddress')}</Label>
               <Input
                 id="email"
                 type="email"
@@ -161,10 +173,10 @@ function VerifyEmailCallbackContent() {
               {resending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Sending...
+                  {t('shared.sending')}
                 </>
               ) : (
-                'Resend Verification Email'
+                t('verifyEmail.callback.resend')
               )}
             </Button>
 
@@ -173,10 +185,8 @@ function VerifyEmailCallbackContent() {
         ) : (
           <div className="space-y-4">
             <div className="rounded-md bg-green-50 p-4 text-sm text-green-800 dark:bg-green-900/20 dark:text-green-400">
-              <p className="font-medium">Verification email sent!</p>
-              <p className="mt-1">
-                Check your inbox for a new verification link. The link will expire in 24 hours.
-              </p>
+              <p className="font-medium">{t('verifyEmail.callback.sentTitle')}</p>
+              <p className="mt-1">{t('verifyEmail.callback.sentBody')}</p>
             </div>
           </div>
         )}
@@ -184,7 +194,7 @@ function VerifyEmailCallbackContent() {
         {/* Back to Login Link */}
         <div className="pt-2 text-center text-sm">
           <a href="/login" className="text-primary font-medium hover:underline">
-            Back to login
+            {t('shared.backToLogin')}
           </a>
         </div>
       </CardContent>
@@ -198,6 +208,7 @@ function VerifyEmailCallbackContent() {
  * Wraps content in Suspense as required by Next.js when using useSearchParams().
  */
 export function VerifyCallbackClientContent() {
+  const t = useTranslations('auth.verifyEmail.callback');
   return (
     <Suspense
       fallback={
@@ -206,7 +217,7 @@ export function VerifyCallbackClientContent() {
             <div className="mb-4 flex justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
             </div>
-            <CardTitle className="text-2xl font-bold">Verifying...</CardTitle>
+            <CardTitle className="text-2xl font-bold">{t('verifying')}</CardTitle>
           </CardHeader>
         </Card>
       }

@@ -106,9 +106,37 @@ export function isStaleSave(err: unknown): boolean {
   return err instanceof APIClientError && err.code === ErrorCodes.STALE_RECORD;
 }
 
+/**
+ * The words a save summary uses, from the catalogue's `forms.saveError`.
+ * `useSaveFailure` passes them in the viewer's language; a function here used
+ * on its own defaults to {@link englishSaveErrorText}.
+ */
+export interface SaveErrorText {
+  fieldsNeedFixing: (count: number) => string;
+  checkForm: string;
+  checkField: string;
+  enterNumber: string;
+  fieldsNeedNumber: (count: number) => string;
+  tryAgain: string;
+}
+
+/**
+ * The source English of `forms.saveError`, written out rather than read from
+ * `en.json` so a page that imports this does not ship the catalogue. A test
+ * holds the two equal.
+ */
+export const englishSaveErrorText: SaveErrorText = {
+  fieldsNeedFixing: (n) => (n === 1 ? '1 field needs fixing.' : `${n} fields need fixing.`),
+  checkForm: 'Check the form and try again.',
+  checkField: 'Check this field.',
+  enterNumber: 'Enter a number.',
+  fieldsNeedNumber: (n) => (n === 1 ? '1 field needs a number.' : `${n} fields need a number.`),
+  tryAgain: 'Try again.',
+};
+
 /** What `<SaveError>` says by Save when `n` named fields need fixing. */
-export function fieldCount(n: number): string {
-  return n === 1 ? '1 field needs fixing.' : `${n} fields need fixing.`;
+export function fieldCount(n: number, text: SaveErrorText = englishSaveErrorText): string {
+  return text.fieldsNeedFixing(n);
 }
 
 /**
@@ -119,13 +147,13 @@ export function fieldCount(n: number): string {
  * its failure itself.
  */
 export function invalidSave<TValues extends FieldValues>(
-  errors: FieldErrors<TValues>
+  errors: FieldErrors<TValues>,
+  text: SaveErrorText = englishSaveErrorText
 ): SaveFailure<string> {
-  const fields = blockedFields(errors);
+  const fields = blockedFields(errors, text);
   const root = errors.root?.message;
   return {
-    message:
-      fields.length > 0 ? fieldCount(fields.length) : (root ?? 'Check the form and try again.'),
+    message: fields.length > 0 ? text.fieldsNeedFixing(fields.length) : (root ?? text.checkForm),
     stale: false,
     fields,
   };
@@ -135,7 +163,7 @@ export function invalidSave<TValues extends FieldValues>(
 export function hasBlockedFields<TValues extends FieldValues>(
   errors: FieldErrors<TValues>
 ): boolean {
-  return blockedFields(errors).length > 0;
+  return blockedFields(errors, englishSaveErrorText).length > 0;
 }
 
 /**
@@ -146,17 +174,19 @@ export function hasBlockedFields<TValues extends FieldValues>(
  * `useSaveFailure().submit` checks this first; a form that holds its failure
  * itself calls it at the top of its submit.
  */
-export function unreadableNumbers(form: unknown): SaveFailure<string> | null {
+export function unreadableNumbers(
+  form: unknown,
+  text: SaveErrorText = englishSaveErrorText
+): SaveFailure<string> | null {
   if (typeof HTMLFormElement === 'undefined' || !(form instanceof HTMLFormElement)) return null;
   const fields = Array.from(form.elements).flatMap((el) =>
     el instanceof HTMLInputElement && el.validity.badInput && (el.name || el.id)
-      ? [{ field: el.name || el.id, message: 'Enter a number.' }]
+      ? [{ field: el.name || el.id, message: text.enterNumber }]
       : []
   );
   if (fields.length === 0) return null;
   return {
-    message:
-      fields.length === 1 ? '1 field needs a number.' : `${fields.length} fields need a number.`,
+    message: text.fieldsNeedNumber(fields.length),
     stale: false,
     fields,
   };
@@ -168,15 +198,19 @@ export function unreadableNumbers(form: unknown): SaveFailure<string> | null {
  * holds them. An entry with a `type` is a field's error; anything else holds
  * more fields. `root` is the form's own key, not a field.
  */
-function blockedFields(errors: object, prefix = ''): Array<{ field: string; message: string }> {
+function blockedFields(
+  errors: object,
+  text: SaveErrorText,
+  prefix = ''
+): Array<{ field: string; message: string }> {
   return Object.entries(errors).flatMap(([key, entry]: [string, unknown]) => {
     if ((!prefix && key === 'root') || !entry || typeof entry !== 'object') return [];
     const field = prefix ? `${prefix}.${key}` : key;
     if ('type' in entry && typeof entry.type === 'string') {
       const message = 'message' in entry && typeof entry.message === 'string' ? entry.message : '';
-      return [{ field, message: message || 'Check this field.' }];
+      return [{ field, message: message || text.checkField }];
     }
-    return blockedFields(entry, field);
+    return blockedFields(entry, text, field);
   });
 }
 

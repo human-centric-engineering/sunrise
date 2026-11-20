@@ -3,14 +3,15 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { authClient } from '@/lib/auth/client';
 import { useFormAnalytics } from '@/lib/analytics/events';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
-  resetPasswordRequestSchema,
-  resetPasswordSchema,
+  createResetPasswordRequestSchema,
+  createResetPasswordSchema,
   type ResetPasswordRequestInput,
   type ResetPasswordInput,
 } from '@/lib/validations/auth';
@@ -46,23 +47,25 @@ export function ResetPasswordForm() {
 }
 
 /**
- * Map URL error codes to user-friendly messages
+ * Map a URL error code to the catalogue key of its user-friendly message
  * These errors come from better-auth when a reset link is invalid/expired
  */
-function getUrlErrorMessage(errorCode: string | null): string | null {
-  if (!errorCode) return null;
-
-  const errorMessages: Record<string, string> = {
-    INVALID_TOKEN:
-      'Your password reset link has expired or is invalid. Please request a new one below.',
-    EXPIRED: 'Your password reset link has expired. Please request a new one below.',
-    USED: 'This password reset link has already been used. Please request a new one if needed.',
-  };
-
-  return (
-    errorMessages[errorCode] ||
-    'There was an issue with your reset link. Please request a new one below.'
-  );
+function getUrlErrorKey(
+  errorCode: string | null
+): 'invalidToken' | 'expired' | 'used' | 'other' | null {
+  switch (errorCode) {
+    case null:
+    case '':
+      return null;
+    case 'INVALID_TOKEN':
+      return 'invalidToken';
+    case 'EXPIRED':
+      return 'expired';
+    case 'USED':
+      return 'used';
+    default:
+      return 'other';
+  }
 }
 
 /**
@@ -74,8 +77,12 @@ function getUrlErrorMessage(errorCode: string | null): string | null {
  */
 function RequestResetForm() {
   const searchParams = useSearchParams();
+  const t = useTranslations('auth');
+  const tv = useTranslations('validation');
+  const resetPasswordRequestSchema = useMemo(() => createResetPasswordRequestSchema(tv), [tv]);
   const urlError = searchParams.get('error');
-  const urlErrorMessage = getUrlErrorMessage(urlError);
+  const urlErrorKey = getUrlErrorKey(urlError);
+  const urlErrorMessage = urlErrorKey ? t(`resetPassword.request.urlErrors.${urlErrorKey}`) : null;
   const { trackFormSubmitted } = useFormAnalytics();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -90,7 +97,7 @@ function RequestResetForm() {
   });
 
   const save = useSaveFailure({
-    fallback: 'Failed to send reset email. Please try again.',
+    fallback: t('resetPassword.request.sendFailed'),
     errors,
   });
   const [success, setSuccess] = useState(false);
@@ -137,30 +144,32 @@ function RequestResetForm() {
         </div>
 
         <div className="rounded-md bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/10 dark:text-green-400">
-          <p className="font-medium">Check your email</p>
+          <p className="font-medium">{t('resetPassword.request.checkEmail')}</p>
           <p className="mt-1">
-            If an account exists with <strong>{submittedEmail}</strong>, we&apos;ve sent password
-            reset instructions.
+            {t.rich('resetPassword.request.sentIfExists', {
+              email: submittedEmail,
+              strong: (chunks) => <strong>{chunks}</strong>,
+            })}
           </p>
         </div>
 
         <div className="bg-muted rounded-md p-4 text-sm">
-          <p className="mb-2">Didn&apos;t receive the email?</p>
+          <p className="mb-2">{t('resetPassword.request.notReceived')}</p>
           <ul className="text-muted-foreground list-inside list-disc space-y-1 text-xs">
-            <li>Check your spam folder</li>
-            <li>Make sure you entered the correct email</li>
-            <li>Wait a few minutes and try again</li>
-            <li>If you signed up using a social login, try signing in with that instead</li>
+            <li>{t('resetPassword.request.tips.spam')}</li>
+            <li>{t('resetPassword.request.tips.correctEmail')}</li>
+            <li>{t('resetPassword.request.tips.wait')}</li>
+            <li>{t('resetPassword.request.tips.socialLogin')}</li>
           </ul>
         </div>
 
         <Button variant="outline" onClick={() => setSuccess(false)} className="w-full">
-          Try another email
+          {t('resetPassword.request.tryAnother')}
         </Button>
 
         <div className="text-center text-sm">
           <Link href="/login" className="text-primary font-medium hover:underline">
-            Back to login
+            {t('shared.backToLogin')}
           </Link>
         </div>
       </div>
@@ -179,13 +188,13 @@ function RequestResetForm() {
       {/* Show contextual message for URL errors (expired/invalid links) */}
       {urlErrorMessage && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/10 dark:text-amber-400">
-          <p className="font-medium">Reset link expired</p>
+          <p className="font-medium">{t('resetPassword.request.linkExpired')}</p>
           <p className="mt-1">{urlErrorMessage}</p>
         </div>
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="email">{t('fields.email')}</Label>
         <Input
           id="email"
           type="email"
@@ -200,12 +209,12 @@ function RequestResetForm() {
       <SaveError failure={save.failure} />
 
       <Button type="submit" className="w-full" disabled={isLoading}>
-        {isLoading ? 'Sending...' : 'Send reset link'}
+        {isLoading ? t('shared.sending') : t('resetPassword.request.submit')}
       </Button>
 
       <div className="text-center text-sm">
         <Link href="/login" className="text-primary font-medium hover:underline">
-          Back to login
+          {t('shared.backToLogin')}
         </Link>
       </div>
     </form>
@@ -221,6 +230,9 @@ function RequestResetForm() {
 function CompleteResetForm({ token }: { token: string }) {
   const router = useRouter();
   const schedule = useTimeout();
+  const t = useTranslations('auth');
+  const tv = useTranslations('validation');
+  const resetPasswordSchema = useMemo(() => createResetPasswordSchema(tv), [tv]);
   const [isLoading, setIsLoading] = useState(false);
   const {
     register,
@@ -238,7 +250,7 @@ function CompleteResetForm({ token }: { token: string }) {
   });
 
   const save = useSaveFailure({
-    fallback: 'An unexpected error occurred. Please try again.',
+    fallback: t('shared.unexpectedError'),
     errors,
   });
   const [success, setSuccess] = useState(false);
@@ -277,8 +289,8 @@ function CompleteResetForm({ token }: { token: string }) {
             setLinkRefused(refused);
             save.show(
               refused
-                ? 'This reset link is invalid or has expired. Please request a new one.'
-                : ctx.error.message || 'Failed to reset password'
+                ? t('resetPassword.complete.invalidLink')
+                : ctx.error.message || t('resetPassword.complete.failed')
             );
 
             setIsLoading(false);
@@ -296,8 +308,8 @@ function CompleteResetForm({ token }: { token: string }) {
     return (
       <div className="space-y-4">
         <div className="rounded-md bg-green-50 p-4 text-sm text-green-900 dark:bg-green-900/10 dark:text-green-400">
-          <p className="font-medium">Password reset successfully!</p>
-          <p className="mt-1 text-xs">Redirecting to login...</p>
+          <p className="font-medium">{t('resetPassword.complete.success')}</p>
+          <p className="mt-1 text-xs">{t('resetPassword.complete.redirecting')}</p>
         </div>
       </div>
     );
@@ -316,7 +328,7 @@ function CompleteResetForm({ token }: { token: string }) {
 
       {/* Password Field */}
       <div className="space-y-2">
-        <Label htmlFor="password">New Password</Label>
+        <Label htmlFor="password">{t('fields.newPassword')}</Label>
         <PasswordInput
           id="password"
           placeholder="••••••••"
@@ -326,14 +338,12 @@ function CompleteResetForm({ token }: { token: string }) {
         />
         <FormError message={errors.password?.message} />
         <PasswordStrength password={password} />
-        <p className="text-muted-foreground text-xs">
-          Must be at least 8 characters with uppercase, lowercase, number, and special character
-        </p>
+        <p className="text-muted-foreground text-xs">{t('fields.passwordHint')}</p>
       </div>
 
       {/* Confirm Password Field */}
       <div className="space-y-2">
-        <Label htmlFor="confirmPassword">Confirm Password</Label>
+        <Label htmlFor="confirmPassword">{t('fields.confirmPassword')}</Label>
         <PasswordInput
           id="confirmPassword"
           placeholder="••••••••"
@@ -347,17 +357,17 @@ function CompleteResetForm({ token }: { token: string }) {
       <SaveError failure={save.failure} />
       {linkExpired && (
         <Button asChild variant="outline" className="w-full">
-          <Link href="/reset-password">Request new reset link</Link>
+          <Link href="/reset-password">{t('resetPassword.complete.requestNew')}</Link>
         </Button>
       )}
 
       <Button type="submit" className="w-full" disabled={isLoading}>
-        {isLoading ? 'Resetting password...' : 'Reset password'}
+        {isLoading ? t('resetPassword.complete.resetting') : t('resetPassword.complete.submit')}
       </Button>
 
       <div className="text-center text-sm">
         <Link href="/login" className="text-primary font-medium hover:underline">
-          Back to login
+          {t('shared.backToLogin')}
         </Link>
       </div>
     </form>

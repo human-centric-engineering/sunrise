@@ -1,109 +1,105 @@
 import type { Metadata } from 'next';
+import { getFormatter, getTranslations } from 'next-intl/server';
 import { BRAND } from '@/lib/brand';
 
-const description = `Terms of Service for ${BRAND.name}. Read our terms and conditions for using the service.`;
+/** When this placeholder was last revised: a calendar date, so it is read in UTC. */
+const LAST_UPDATED = new Date('2026-01-19T00:00:00Z');
+const CONTACT_EMAIL = 'legal@example.com';
 
-export const metadata: Metadata = {
-  title: 'Terms of Service',
-  description,
-  openGraph: {
-    title: `Terms of Service - ${BRAND.name}`,
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('legal.terms.meta');
+  const description = t('description', { brand: BRAND.name });
+  const socialTitle = t('socialTitle', { brand: BRAND.name });
+  return {
+    title: t('title'),
     description,
+    openGraph: {
+      title: socialTitle,
+      description,
+    },
+    twitter: {
+      card: 'summary',
+      title: socialTitle,
+      description,
+    },
+  };
+}
+
+/** The terms' sections in order, with the keys of the list items each one has. */
+const SECTIONS = [
+  { key: 'agreement', items: [] },
+  {
+    key: 'useOfService',
+    items: [
+      'useOfService.items.eligibility',
+      'useOfService.items.registration',
+      'useOfService.items.prohibited',
+      'useOfService.items.userContent',
+    ],
   },
-  twitter: {
-    card: 'summary',
-    title: `Terms of Service - ${BRAND.name}`,
-    description,
+  { key: 'intellectualProperty', items: [] },
+  {
+    key: 'payment',
+    items: [
+      'payment.items.billing',
+      'payment.items.refunds',
+      'payment.items.subscriptions',
+      'payment.items.priceChanges',
+    ],
   },
-};
+  { key: 'liability', items: [] },
+  { key: 'termination', items: [] },
+  { key: 'changes', items: [] },
+] as const;
 
 /**
  * Terms of Service Page
  *
  * Placeholder terms of service page.
- * Replace with your actual terms of service content.
+ * Replace with your actual terms of service content (`legal.terms` in the catalogue).
  *
  * Phase 3.5: Landing Page & Marketing
  */
-export default function TermsOfServicePage() {
+export default async function TermsOfServicePage() {
+  const t = await getTranslations('legal');
+  const ts = await getTranslations('legal.terms.sections');
+  const format = await getFormatter();
+
   return (
     <div className="container mx-auto px-4 py-16 md:py-24">
       <div className="mx-auto max-w-3xl">
-        <h1 className="mb-8 text-4xl font-bold tracking-tight">Terms of Service</h1>
+        <h1 className="mb-8 text-4xl font-bold tracking-tight">{t('terms.title')}</h1>
 
         <div className="prose prose-neutral dark:prose-invert max-w-none">
-          <p className="text-muted-foreground lead">Last updated: January 19, 2026</p>
+          <p className="text-muted-foreground lead">
+            {t('lastUpdated', { date: format.dateTime(LAST_UPDATED, 'long', { timeZone: 'UTC' }) })}
+          </p>
+
+          {SECTIONS.map(({ key, items }) => (
+            <section key={key} className="mt-8">
+              <h2>{ts(`${key}.title`)}</h2>
+              <p>{ts(`${key}.body`)}</p>
+              {items.length > 0 && (
+                <ul>
+                  {items.map((item) => (
+                    <li key={item}>{ts(item)}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
 
           <section className="mt-8">
-            <h2>Agreement to Terms</h2>
+            <h2>{ts('contact.title')}</h2>
             <p>
-              This is a placeholder terms of service. Replace this content with your actual terms
-              that define the legal agreement between you and your users.
-            </p>
-          </section>
-
-          <section className="mt-8">
-            <h2>Use of Service</h2>
-            <p>Define acceptable use of your service:</p>
-            <ul>
-              <li>Eligibility requirements (age, jurisdiction)</li>
-              <li>Account registration and security</li>
-              <li>Prohibited activities</li>
-              <li>User-generated content policies</li>
-            </ul>
-          </section>
-
-          <section className="mt-8">
-            <h2>Intellectual Property</h2>
-            <p>
-              Describe ownership of content, trademarks, and intellectual property rights. Include
-              information about the MIT license if applicable to your open-source components.
-            </p>
-          </section>
-
-          <section className="mt-8">
-            <h2>Payment Terms</h2>
-            <p>If applicable, outline:</p>
-            <ul>
-              <li>Pricing and billing</li>
-              <li>Refund policy</li>
-              <li>Subscription terms</li>
-              <li>Price changes</li>
-            </ul>
-          </section>
-
-          <section className="mt-8">
-            <h2>Limitation of Liability</h2>
-            <p>
-              Include standard limitation of liability clauses appropriate for your jurisdiction and
-              service type. Consult with a legal professional for proper wording.
-            </p>
-          </section>
-
-          <section className="mt-8">
-            <h2>Termination</h2>
-            <p>
-              Explain the conditions under which accounts may be terminated and what happens to user
-              data upon termination.
-            </p>
-          </section>
-
-          <section className="mt-8">
-            <h2>Changes to Terms</h2>
-            <p>
-              Describe how users will be notified of changes to these terms and when changes become
-              effective.
-            </p>
-          </section>
-
-          <section className="mt-8">
-            <h2>Contact Us</h2>
-            <p>
-              If you have questions about these Terms of Service, please contact us at{' '}
-              <a href="mailto:legal@example.com" className="text-primary hover:underline">
-                legal@example.com
-              </a>
-              .
+              {ts.rich('contact.body', {
+                email: CONTACT_EMAIL,
+                link: (chunks) => (
+                  <a href={`mailto:${CONTACT_EMAIL}`} className="text-primary hover:underline">
+                    {chunks}
+                  </a>
+                ),
+              })}
             </p>
           </section>
         </div>

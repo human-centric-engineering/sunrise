@@ -803,6 +803,54 @@ describe('components/forms/accept-invite-form', () => {
       });
     });
 
+    it('names the whole address, dots included, when OAuth used the wrong account', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      const error = encodeURIComponent(
+        'This invitation was sent to jane.doe@acme.co.uk. Please use an account with that email address, or set a password instead.'
+      );
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(
+          `token=abc123&email=test@example.com&error=${error}`
+        ) as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(<AcceptInviteForm />);
+
+      expect(
+        await screen.findByText(
+          'This invitation was sent to jane.doe@acme.co.uk. Please use an account with that email address, or set a password instead.'
+        )
+      ).toBeInTheDocument();
+    });
+
+    it('keeps the underscores in an address that the error encoding did not add', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(
+          'token=abc123&email=test@example.com&error=This_invitation_was_sent_to_john_doe@acme.com._Please_use_an_account_with_that_email_address,_or_set_a_password_instead.'
+        ) as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(<AcceptInviteForm />);
+
+      expect(
+        await screen.findByText(/This invitation was sent to john_doe@acme\.com\. Please use/)
+      ).toBeInTheDocument();
+    });
+
+    it('shows the generic OAuth error for a message with a stray %, rather than crashing', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(
+          'token=abc123&email=test@example.com&error=100%25_failed'
+        ) as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(<AcceptInviteForm />);
+
+      expect(await screen.findByText(/unable to sign in/i)).toBeInTheDocument();
+    });
+
     it('should show generic OAuth error for unknown errors', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');

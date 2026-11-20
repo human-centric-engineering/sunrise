@@ -170,10 +170,15 @@ function flatten(value: unknown, out: string[] = []): string[] {
  * Collected once. The hoisted mock above means every import here is already built
  * with the stub brand, so there is no per-case stubbing and nothing to re-import.
  *
- * KNOWN GAP, stated rather than papered over: the four modules exporting
- * `generateMetadata` instead of a static `metadata` object contribute nothing —
- * calling them needs route params and a live database. The hand-listed version
- * did not cover them either, so this is not a regression, but it is not coverage.
+ * A module exporting `generateMetadata` that takes NO arguments is called and
+ * its result read like a static object: those are the pages whose metadata only
+ * moved there to read the catalogue (§138 t-1073), and the next-intl/server mock
+ * in tests/setup.ts serves them the real English.
+ *
+ * KNOWN GAP, stated rather than papered over: a `generateMetadata` that takes
+ * route props contributes nothing — calling it needs route params and a live
+ * database. The hand-listed version did not cover those either, so this is not a
+ * regression, but it is not coverage.
  *
  * Imported a bounded number at a time, against a timeout that scales with how many
  * modules there are (#969) — see `tests/helpers/route-module-imports.ts`. That is
@@ -181,17 +186,32 @@ function flatten(value: unknown, out: string[] = []): string[] {
  * has to be known when the hook is registered. An import that throws still fails
  * the hook; nothing is skipped.
  */
+type RouteModule = {
+  metadata?: Metadata;
+  generateMetadata?: (...args: unknown[]) => Metadata | Promise<Metadata>;
+};
+
+/** The static `metadata`, else what a no-argument `generateMetadata()` returns. */
+async function resolveMetadata(mod: RouteModule): Promise<Metadata | undefined> {
+  if (mod.metadata) return mod.metadata;
+  if (typeof mod.generateMetadata === 'function' && mod.generateMetadata.length === 0) {
+    return mod.generateMetadata();
+  }
+  return undefined;
+}
+
 const withMetadata: { rel: string; spec: string; strings: string[] }[] = [];
 const discovered: string[] = routeModules();
 
 beforeAll(async () => {
   const imported = await mapWithConcurrency(discovered, ROUTE_IMPORT_CONCURRENCY, async (rel) => {
-    const mod: { metadata?: Metadata } = await import(/* @vite-ignore */ toSpec(rel));
+    const mod: RouteModule = await import(/* @vite-ignore */ toSpec(rel));
     return { rel, mod };
   });
   for (const { rel, mod } of imported) {
-    if (!mod.metadata) continue;
-    const strings = flatten(mod.metadata);
+    const metadata = await resolveMetadata(mod);
+    if (!metadata) continue;
+    const strings = flatten(metadata);
     if (strings.length > 0) withMetadata.push({ rel, spec: toSpec(rel), strings });
   }
 }, routeImportTimeoutMs(discovered.length));
@@ -301,7 +321,7 @@ describe('metadata is driven by the BRAND seam, not hardcoded', () => {
         : undefined;
     expect(template, 'the (public) layout should declare a title template').toContain('%s');
 
-    const page: { metadata?: Metadata } = await import('@/app/(public)/page');
+    const pageMetadata = await resolveMetadata(await import('@/app/(public)/page'));
 
     // An `absolute` title opts OUT of the parent template — that is Next's own
     // semantics, not a special case invented here — so the doubling this row
@@ -321,14 +341,14 @@ describe('metadata is driven by the BRAND seam, not hardcoded', () => {
     // and that is correct rather than a hole — with no template in play there is
     // no doubling to catch. So the `titles.length > 0` floor applies only when a
     // template can actually apply.
-    const titleField = page.metadata?.title;
+    const titleField = pageMetadata?.title;
     const titleIsAbsolute =
       typeof titleField === 'object' && titleField !== null && 'absolute' in titleField;
 
     const titles = [
       titleIsAbsolute ? undefined : titleField,
-      page.metadata?.openGraph?.title,
-      page.metadata?.twitter?.title,
+      pageMetadata?.openGraph?.title,
+      pageMetadata?.twitter?.title,
     ].filter((t): t is string => typeof t === 'string');
 
     if (!titleIsAbsolute) {

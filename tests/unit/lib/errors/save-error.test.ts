@@ -14,8 +14,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 
 import { APIClientError } from '@/lib/api/client';
+import { createTranslator } from 'next-intl';
+import en from '@/lib/i18n/messages/en.json';
 import {
   applyFieldErrors,
+  englishSaveErrorText,
   invalidSave,
   isStaleSave,
   readSaveError,
@@ -342,5 +345,34 @@ describe('unreadableNumbers', () => {
   it('has nothing to say without a form, as on the server or in a submit with no target', () => {
     expect(unreadableNumbers(undefined)).toBeNull();
     expect(unreadableNumbers({ elements: [] })).toBeNull();
+  });
+});
+
+describe('englishSaveErrorText (§138 t-1073)', () => {
+  // Written out so a page does not ship en.json; held here to the catalogue,
+  // which is what useSaveFailure shows a viewer.
+  const t = createTranslator({ locale: 'en', messages: en, namespace: 'forms.saveError' });
+
+  it('says what the catalogue says, for one field and for several', () => {
+    for (const count of [1, 2, 12]) {
+      expect(englishSaveErrorText.fieldsNeedFixing(count)).toBe(t('fieldsNeedFixing', { count }));
+      expect(englishSaveErrorText.fieldsNeedNumber(count)).toBe(t('fieldsNeedNumber', { count }));
+    }
+    expect(englishSaveErrorText.checkForm).toBe(t('checkForm'));
+    expect(englishSaveErrorText.checkField).toBe(t('checkField'));
+    expect(englishSaveErrorText.enterNumber).toBe(t('enterNumber'));
+    expect(englishSaveErrorText.tryAgain).toBe(t('tryAgain'));
+  });
+
+  it('is what invalidSave uses unless it is given other words', () => {
+    const errors = { name: { type: 'required', message: '' } } as FieldErrors<FieldValues>;
+    const french = { ...englishSaveErrorText, fieldsNeedFixing: () => '1 champ à corriger.' };
+
+    expect(invalidSave(errors).message).toBe('1 field needs fixing.');
+    expect(invalidSave(errors, french)).toEqual({
+      message: '1 champ à corriger.',
+      stale: false,
+      fields: [{ field: 'name', message: 'Check this field.' }],
+    });
   });
 });

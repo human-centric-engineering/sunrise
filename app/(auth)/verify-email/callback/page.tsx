@@ -1,10 +1,14 @@
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 import { VerifyCallbackClientContent } from '@/app/(auth)/verify-email/callback/verify-callback-content';
 
-export const metadata: Metadata = {
-  title: 'Email Verification',
-  description: 'Complete your email verification',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('auth.verifyEmail.callback.meta');
+  return {
+    title: t('title'),
+    description: t('description'),
+  };
+}
 
 /**
  * Verify Email Callback Page

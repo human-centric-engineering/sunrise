@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import { useFormatter, useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusIndicator, getStatusConfig } from '@/components/status/status-indicator';
+import { StatusIndicator } from '@/components/status/status-indicator';
 import type { ServiceHealth } from '@/lib/monitoring';
 
 /**
@@ -23,11 +24,20 @@ export interface ServiceStatusCardProps extends React.HTMLAttributes<HTMLDivElem
 /**
  * Format latency for display
  */
-function formatLatency(latencyMs: number): string {
+type Formatter = ReturnType<typeof useFormatter>;
+
+/** `250ms`, `1.23s`: the unit's narrow form in the viewer's language. */
+function formatLatency(format: Formatter, latencyMs: number): string {
   if (latencyMs < 1000) {
-    return `${latencyMs}ms`;
+    return format.number(latencyMs, { style: 'unit', unit: 'millisecond', unitDisplay: 'narrow' });
   }
-  return `${(latencyMs / 1000).toFixed(2)}s`;
+  return format.number(latencyMs / 1000, {
+    style: 'unit',
+    unit: 'second',
+    unitDisplay: 'narrow',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 /**
@@ -58,7 +68,8 @@ export function ServiceStatusCard({
   className,
   ...props
 }: ServiceStatusCardProps) {
-  const statusConfig = getStatusConfig(health.status);
+  const t = useTranslations('status.indicator');
+  const format = useFormatter();
 
   return (
     <Card
@@ -79,7 +90,7 @@ export function ServiceStatusCard({
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">{statusConfig.description}</span>
+          <span className="text-muted-foreground">{t(`${health.status}.description`)}</span>
           {showLatency && health.latency !== undefined && (
             <span
               className={cn(
@@ -89,7 +100,7 @@ export function ServiceStatusCard({
                   : 'text-muted-foreground'
               )}
             >
-              {formatLatency(health.latency)}
+              {formatLatency(format, health.latency)}
             </span>
           )}
         </div>

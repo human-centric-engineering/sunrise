@@ -115,6 +115,20 @@ describe('AUTH_LANDING_LABEL', () => {
   });
 });
 
+describe('authLandingLabel (§138 t-1073)', () => {
+  it('uses the translated default while the seam is null', async () => {
+    const { authLandingLabel } = await loadWith(null, null);
+
+    expect(authLandingLabel('Tableau de bord')).toBe('Tableau de bord');
+  });
+
+  it('uses a fork label as given, whatever the language', async () => {
+    const { authLandingLabel } = await loadWith('/programme', '  Programme  ');
+
+    expect(authLandingLabel('Tableau de bord')).toBe('Programme');
+  });
+});
+
 describe('AUTH_WELCOME_ROUTE (§134 t-1063)', () => {
   it('is null when the seam is null, so nobody is redirected', async () => {
     const { AUTH_WELCOME_ROUTE } = await loadWith(null);

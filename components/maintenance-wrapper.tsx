@@ -20,6 +20,7 @@
  */
 
 import { headers } from 'next/headers';
+import { getTranslations } from 'next-intl/server';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { MaintenancePage } from '@/components/maintenance-page';
@@ -171,10 +172,11 @@ export async function MaintenanceWrapperWithAdminNotice({ children }: Maintenanc
 
   // Admins can bypass but see a notice
   if (isAdmin) {
+    const t = await getTranslations('maintenance');
     return (
       <>
         <div className="border-b border-amber-500/50 bg-amber-500/10 px-4 py-2 text-center text-sm text-amber-700 dark:text-amber-400">
-          Maintenance mode is active. You can access the site because you are an admin.
+          {t('adminNotice')}
         </div>
         {children}
       </>

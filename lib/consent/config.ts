@@ -30,23 +30,13 @@ export const DEFAULT_CONSENT_STATE: ConsentState = {
 };
 
 /**
- * Cookie category definitions with descriptions
+ * Cookie categories. Each one's name and description are in the catalogue
+ * under `cookies.categories.<id>`; change the wording with
+ * `overridePlatformMessages()`.
  */
 export const COOKIE_CATEGORIES: CookieCategory[] = [
-  {
-    id: 'essential',
-    name: 'Essential',
-    description:
-      'These cookies are necessary for the website to function. They include authentication, security, and user preferences like theme settings.',
-    required: true,
-  },
-  {
-    id: 'optional',
-    name: 'Analytics & Marketing',
-    description:
-      'These cookies help us understand how visitors interact with our website and allow us to show relevant advertisements. They may be set by third-party services.',
-    required: false,
-  },
+  { id: 'essential', required: true },
+  { id: 'optional', required: false },
 ];
 
 /**

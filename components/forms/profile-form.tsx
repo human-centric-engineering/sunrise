@@ -9,14 +9,15 @@
  * Phase 3.2: User Management
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { updateUserSchema, type UpdateUserInput } from '@/lib/validations/user';
+import { createUpdateUserSchema, type UpdateUserInput } from '@/lib/validations/user';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,6 +59,9 @@ interface ProfileFormProps {
 }
 
 export function ProfileForm({ user }: ProfileFormProps) {
+  const t = useTranslations('account.profileForm');
+  const tv = useTranslations('validation');
+  const updateUserSchema = useMemo(() => createUpdateUserSchema(tv), [tv]);
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -92,7 +96,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
   });
 
   const save = useSaveFailure({
-    fallback: 'Could not update your profile. Try again in a moment.',
+    fallback: t('saveFailed'),
     fields: SERVER_FIELDS,
     setError,
     errors,
@@ -161,14 +165,19 @@ export function ProfileForm({ user }: ProfileFormProps) {
     >
       {/* Name */}
       <div className="space-y-2">
-        <Label htmlFor="name">Name</Label>
-        <Input id="name" placeholder="Your name" disabled={isLoading} {...register('name')} />
+        <Label htmlFor="name">{t('name')}</Label>
+        <Input
+          id="name"
+          placeholder={t('namePlaceholder')}
+          disabled={isLoading}
+          {...register('name')}
+        />
         <FormError message={errors.name?.message} />
       </div>
 
       {/* Email (read-only for now - email change requires verification) */}
       <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="email">{t('email')}</Label>
         <Input
           id="email"
           type="email"
@@ -176,22 +185,18 @@ export function ProfileForm({ user }: ProfileFormProps) {
           disabled={true}
           {...register('email')}
         />
-        <p className="text-muted-foreground text-xs">
-          Email changes require verification and are not yet supported.
-        </p>
+        <p className="text-muted-foreground text-xs">{t('emailNote')}</p>
       </div>
 
       {/* Bio */}
       <div className="space-y-2">
         <Label htmlFor="bio" className="flex items-center gap-1">
-          Bio
-          <FieldHelp title="Public bio">
-            A short description visible on your profile. Max 500 characters.
-          </FieldHelp>
+          {t('bio')}
+          <FieldHelp title={t('bioHelpTitle')}>{t('bioHelp')}</FieldHelp>
         </Label>
         <Textarea
           id="bio"
-          placeholder="Tell us about yourself..."
+          placeholder={t('bioPlaceholder')}
           disabled={isLoading}
           rows={4}
           {...register('bio')}
@@ -202,11 +207,8 @@ export function ProfileForm({ user }: ProfileFormProps) {
       {/* Phone */}
       <div className="space-y-2">
         <Label htmlFor="phone" className="flex items-center gap-1">
-          Phone
-          <FieldHelp title="Phone number">
-            Optional contact number. Only visible to administrators. Accepts international formats
-            with +, digits, spaces, dashes, and parentheses.
-          </FieldHelp>
+          {t('phone')}
+          <FieldHelp title={t('phoneHelpTitle')}>{t('phoneHelp')}</FieldHelp>
         </Label>
         <Input
           id="phone"
@@ -221,10 +223,8 @@ export function ProfileForm({ user }: ProfileFormProps) {
       {/* Timezone */}
       <div className="space-y-2">
         <Label htmlFor="timezone" className="flex items-center gap-1">
-          Timezone
-          <FieldHelp title="Your timezone">
-            Used for displaying dates and scheduling notifications in your local time.
-          </FieldHelp>
+          {t('timezone')}
+          <FieldHelp title={t('timezoneHelpTitle')}>{t('timezoneHelp')}</FieldHelp>
         </Label>
         <Select
           value={currentTimezone || 'UTC'}
@@ -232,7 +232,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
           disabled={isLoading}
         >
           <SelectTrigger id="timezone">
-            <SelectValue placeholder="Select timezone" />
+            <SelectValue placeholder={t('timezonePlaceholder')} />
           </SelectTrigger>
           <SelectContent className="max-h-[300px]">
             {getTimezoneRegions().map((region) => {
@@ -257,14 +257,12 @@ export function ProfileForm({ user }: ProfileFormProps) {
       {/* Location */}
       <div className="space-y-2">
         <Label htmlFor="location" className="flex items-center gap-1">
-          Location
-          <FieldHelp title="Location">
-            Free-form location (e.g. &ldquo;London, UK&rdquo;). Visible on your profile.
-          </FieldHelp>
+          {t('location')}
+          <FieldHelp title={t('locationHelpTitle')}>{t('locationHelp')}</FieldHelp>
         </Label>
         <Input
           id="location"
-          placeholder="City, Country"
+          placeholder={t('locationPlaceholder')}
           disabled={isLoading}
           {...register('location')}
         />
@@ -277,7 +275,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       {success && (
         <div className="flex items-center gap-2 rounded-md bg-green-50 p-3 text-sm text-green-900 dark:bg-green-950/50 dark:text-green-300">
           <CheckCircle2 className="h-4 w-4" />
-          Profile updated successfully
+          {t('success')}
         </div>
       )}
 
@@ -286,10 +284,10 @@ export function ProfileForm({ user }: ProfileFormProps) {
         {isLoading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Saving...
+            {t('saving')}
           </>
         ) : (
-          'Save Changes'
+          t('save')
         )}
       </Button>
     </form>

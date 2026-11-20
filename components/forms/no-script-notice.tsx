@@ -1,3 +1,4 @@
+import { useTranslations } from 'next-intl';
 import { FormError } from '@/components/forms/form-error';
 
 /**
@@ -11,11 +12,12 @@ import { FormError } from '@/components/forms/form-error';
  * scripts failed to load (`.context/ui/form-errors.md`).
  */
 export function NoScriptNotice() {
+  const t = useTranslations('forms.noScript');
   return (
     <noscript>
       {/* A `<noscript>` is inline, so a parent's `space-y-*` puts no gap below it. */}
       <div className="mb-4">
-        <FormError message="This form needs JavaScript. Turn it on in your browser, then reload this page." />
+        <FormError message={t('message')} />
       </div>
     </noscript>
   );
