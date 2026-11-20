@@ -210,3 +210,37 @@ describe('the move action (§136 t-1066)', () => {
     expect(modelHasUses({ ...NONE, settings: [{ slot: 'chat', source: 'suggested' }] })).toBe(true);
   });
 });
+
+describe('the app’s own uses (§136 t-1067)', () => {
+  it('shows nothing about the app when it reports nothing', () => {
+    const region = panel({ agents: [{ id: 'a1', name: 'Helper', followsPlatform: false }] });
+    expect(within(region).queryByRole('heading', { name: 'In the app' })).not.toBeInTheDocument();
+  });
+
+  it('names the caller’s, counts other orgs’, and says the move leaves them to the app', () => {
+    const region = panel({
+      appPins: [{ label: 'Panel: Contracts', where: 'Panels › Contracts › Judge' }],
+      otherOrgAppPins: 3,
+    });
+
+    const app = column(region, 'In the app');
+    expect(app).toHaveTextContent('Panel: Contracts');
+    expect(app).toHaveTextContent('Panels › Contracts › Judge');
+    expect(app).toHaveTextContent('3 in other organisations. They are counted, not named.');
+    expect(app).toHaveTextContent('moving the model’s uses does not change them');
+    expect(region).not.toHaveTextContent('Nothing uses this model.');
+  });
+
+  it('says when the app’s uses could not all be read', () => {
+    const region = panel({ appPinsUnavailable: true });
+    expect(column(region, 'In the app')).toHaveTextContent(
+      'The app’s own uses could not all be read, so there may be more.'
+    );
+  });
+
+  it('modelHasUses counts the app’s uses, in any org', () => {
+    expect(modelHasUses({ ...NONE, appPins: [{ label: 'P', where: 'w' }] })).toBe(true);
+    expect(modelHasUses({ ...NONE, otherOrgAppPins: 1 })).toBe(true);
+    expect(modelHasUses({ ...NONE, appPins: [], otherOrgAppPins: 0 })).toBe(false);
+  });
+});

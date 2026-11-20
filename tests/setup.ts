@@ -388,14 +388,14 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * `admin-tier-roster.test.ts` (judges the fork's org-tier pages). A test that
  * needs a seam filled mocks it itself, as `org-tier-admin-pages.test.ts`,
  * `user-created-hooks.test.ts`, `erasure-hooks-seam.test.ts`,
- * `org-created-hooks.test.ts` and `signup-org.test.ts` do.
+ * `org-created-hooks.test.ts`, `signup-org.test.ts` and `app-pins.test.ts` do.
  * A fork tests its own filled seam in `tests/unit/lib/app/<seam>.test.ts`,
  * which may read the real seam too. `defaults.test.ts` fails any other file
  * that reads a pinned seam past its pin, or unmocks one.
  *
- * Eight seams are pinned, not every lazy init in `lib/app/`: six a measured
- * fill failed, and the org-created and signup-org seams (below). The rest are
- * #636's sweep.
+ * Nine seams are pinned, not every lazy init in `lib/app/`: six a measured
+ * fill failed, and the org-created, signup-org and model-pins seams (below).
+ * The rest are #636's sweep.
  */
 // Each keeps the module's other exports, as the brand pin derives its keys: a
 // fork may export more from these files, and a mock that dropped it would fail
@@ -434,6 +434,15 @@ vi.mock('@/lib/app/signup-org', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   initAppSignupOrgResolver: () => {
     // Registers no resolver: Sunrise's shipped default.
+  },
+}));
+// Pinned when the seam was added (t-1067): a filled one adds the app's pins to
+// every model's uses and can refuse every move, which the uses, delete and
+// move tests assert exactly.
+vi.mock('@/lib/app/model-pins', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  initAppModelPins: () => {
+    // Registers no reporter and no check: Sunrise's shipped default.
   },
 }));
 

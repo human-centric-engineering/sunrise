@@ -18,11 +18,23 @@ vi.mock('@/lib/orchestration/admin/global-config-usage', () => ({
   providerModelUsage: vi.fn(),
 }));
 vi.mock('@/lib/orchestration/settings', () => ({ getOrchestrationSettings: vi.fn() }));
+vi.mock('@/lib/tenancy/context', () => ({
+  isMultiTenant: vi.fn(() => false),
+  getTenantContext: vi.fn(),
+  listActiveOrgIds: vi.fn(),
+  runAsOrg: vi.fn((_orgId: string, fn: () => Promise<unknown>) => fn()),
+}));
 
 import { prisma } from '@/lib/db/client';
 import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { modelUses, retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
+import {
+  __resetAppModelPinsForTests,
+  registerModelPinReporter,
+} from '@/lib/orchestration/model-lifecycle/app-pins';
+import { getTenantContext, isMultiTenant, listActiveOrgIds } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const NOW = new Date('2027-03-01T12:00:00.000Z');
 const FUTURE = new Date('2027-06-01T00:00:00.000Z');
@@ -83,6 +95,10 @@ beforeEach(() => {
   vi.mocked(getOrchestrationSettings).mockResolvedValue(SETTINGS as never);
   vi.mocked(providerModelUsage).mockResolvedValue(UNUSED);
   catalogue([]);
+  vi.mocked(isMultiTenant).mockReturnValue(false);
+  vi.mocked(getTenantContext).mockReturnValue(undefined as never);
+  // tests/setup.ts pins lib/app/model-pins.ts empty; tests register here.
+  __resetAppModelPinsForTests();
 });
 
 describe('modelUses', () => {
@@ -94,7 +110,7 @@ describe('modelUses', () => {
     } as never);
 
     const uses = await modelUses(
-      { id: 'm1', providerSlug: 'openai', modelId: 'gpt-4o' },
+      { id: 'm1', name: 'GPT-4o', providerSlug: 'openai', modelId: 'gpt-4o' },
       { acrossOrgs: false }
     );
 
@@ -103,6 +119,10 @@ describe('modelUses', () => {
       ...UNUSED,
       settings: [{ slot: 'chat', source: 'saved', byIdOnly: true }],
       sharedWith: [],
+      // Nothing registered at lib/app/model-pins.ts: no app uses, none missing.
+      appPins: [],
+      otherOrgAppPins: 0,
+      appPinsUnavailable: false,
     });
   });
 
@@ -117,8 +137,18 @@ describe('modelUses', () => {
       defaultModelsStored: { chat: 'microsoft::gpt-4o' },
     } as never);
 
-    const azure = await modelUses({ id: 'a', providerSlug: 'microsoft', modelId: 'gpt-4o' });
-    const openai = await modelUses({ id: 'o', providerSlug: 'openai', modelId: 'gpt-4o' });
+    const azure = await modelUses({
+      id: 'a',
+      name: 'GPT-4o',
+      providerSlug: 'microsoft',
+      modelId: 'gpt-4o',
+    });
+    const openai = await modelUses({
+      id: 'o',
+      name: 'GPT-4o',
+      providerSlug: 'openai',
+      modelId: 'gpt-4o',
+    });
 
     expect(azure.settings).toEqual([{ slot: 'chat', source: 'saved' }]);
     expect(openai.settings).toEqual([]);
@@ -134,7 +164,12 @@ describe('modelUses', () => {
       defaultModels: { ...SETTINGS.defaultModels, chat: 'gpt-4o' },
     } as never);
 
-    const uses = await modelUses({ id: 'a', providerSlug: 'microsoft', modelId: 'gpt-4o' });
+    const uses = await modelUses({
+      id: 'a',
+      name: 'GPT-4o',
+      providerSlug: 'microsoft',
+      modelId: 'gpt-4o',
+    });
 
     expect(uses.sharedWith).toEqual(['openai']);
     expect(uses.settings).toEqual([{ slot: 'chat', source: 'suggested', byIdOnly: true }]);
@@ -277,5 +312,72 @@ describe('retiringModelsInUse', () => {
     );
 
     expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+  });
+});
+
+describe('the app’s own pins (§136 t-1067)', () => {
+  const MODEL = { id: 'm1', name: 'GPT-4o', providerSlug: 'openai', modelId: 'gpt-4o' };
+
+  it('names the caller’s org’s pins and counts every other org’s, at multi', async () => {
+    vi.mocked(isMultiTenant).mockReturnValue(true);
+    vi.mocked(getTenantContext).mockReturnValue({ orgId: 'org-a' } as never);
+    vi.mocked(listActiveOrgIds).mockResolvedValue(['org-a', 'org-b']);
+    registerModelPinReporter(({ orgId, model }) =>
+      model.id === 'm1'
+        ? orgId === 'org-a'
+          ? [{ label: 'Panel: Contracts', where: 'Panels › Judge' }]
+          : [
+              { label: 'Panel: Claims', where: 'Panels › Judge' },
+              { label: 'Panel: Leases', where: 'Panels › Judge' },
+            ]
+        : []
+    );
+
+    const uses = await modelUses(MODEL);
+
+    expect(uses.appPins).toEqual([{ label: 'Panel: Contracts', where: 'Panels › Judge' }]);
+    expect(uses.otherOrgAppPins).toBe(2);
+    expect(uses.appPinsUnavailable).toBe(false);
+  });
+
+  it('asks the caller’s org alone when not counting across orgs', async () => {
+    vi.mocked(isMultiTenant).mockReturnValue(true);
+    vi.mocked(getTenantContext).mockReturnValue({ orgId: 'org-b' } as never);
+    const asked: string[] = [];
+    registerModelPinReporter(({ orgId }) => {
+      asked.push(orgId);
+      return [{ label: 'Panel', where: 'x' }];
+    });
+
+    const uses = await modelUses(MODEL, { acrossOrgs: false });
+
+    expect(asked).toEqual(['org-b']);
+    expect(listActiveOrgIds).not.toHaveBeenCalled();
+    expect(uses.appPins).toHaveLength(1);
+    expect(uses.otherOrgAppPins).toBe(0);
+  });
+
+  it('names every pin at single, and says when the report failed', async () => {
+    registerModelPinReporter(({ orgId }) => {
+      expect(orgId).toBe(INSTALL_ORG_ID);
+      throw new Error('panel table missing');
+    });
+
+    const uses = await modelUses(MODEL);
+
+    expect(uses.appPins).toEqual([]);
+    expect(uses.appPinsUnavailable).toBe(true);
+  });
+
+  it('counts a dated model the app alone uses as in use, by its state', async () => {
+    catalogue([
+      { id: 'r1', providerSlug: 'openai', modelId: 'app-only', retiresAt: FUTURE },
+      { id: 'd1', providerSlug: 'openai', modelId: 'unused', retiresAt: PAST },
+    ]);
+    registerModelPinReporter(({ model }) =>
+      model.id === 'r1' ? [{ label: 'Panel: Contracts', where: 'Panels › Judge' }] : []
+    );
+
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 1, retired: 0 });
   });
 });
