@@ -363,6 +363,48 @@ describe('009-provider-models seed — model ids the vendors serve (t-1041)', ()
     });
   });
 
+  it('tells an admin to correct the id of an edited row whose model only had a typo in it', async () => {
+    const { logger } = await runSeed(() => null, {
+      'anthropic/claude-haiku-4.5': stored({
+        id: 'row-haiku-dotted',
+        slug: 'anthropic-claude-haiku-4-5',
+        providerSlug: 'anthropic',
+        isDefault: false,
+      }),
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('so it was left as it is: correct its model id to claude-haiku-4-5')
+    );
+  });
+
+  it('never keeps a recorded successor that is itself not served, though not yet retired', async () => {
+    // The audit recorded Opus 4 → Sonnet 4; Sonnet 4 is still active when
+    // Opus 4 is checked, but every call to it fails too.
+    const { update } = await runSeed(() => null, {
+      'anthropic/claude-opus-4': stored({
+        id: 'row-opus-4',
+        slug: 'anthropic-claude-opus-4',
+        providerSlug: 'anthropic',
+        modelId: 'claude-opus-4',
+        replacementId: 'row-sonnet-4',
+      }),
+      'anthropic/claude-sonnet-4': stored({
+        id: 'row-sonnet-4',
+        slug: 'anthropic-claude-sonnet-4',
+        providerSlug: 'anthropic',
+        modelId: 'claude-sonnet-4',
+      }),
+      'anthropic/claude-opus-4-6': stored({
+        id: 'row-opus-4-6',
+        slug: 'anthropic-claude-opus-4-6',
+        providerSlug: 'anthropic',
+        modelId: 'claude-opus-4-6',
+      }),
+    });
+
+    expect(retirements(update)['row-opus-4']).toMatchObject({ replacementId: 'row-opus-4-6' });
+  });
+
   it('writes nothing when a row is already retired as it would be', async () => {
     const { update } = await runSeed(() => null, {
       'openai/o3-mini': stored({
@@ -426,7 +468,7 @@ describe('009-provider-models seed — model ids the vendors serve (t-1041)', ()
     expect(update).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining(
-        'Provider model anthropic-claude-opus-4 (anthropic claude-opus-4) is not served by its vendor, but an admin has edited it'
+        'Provider model anthropic-claude-opus-4 (anthropic claude-opus-4) is not served by its vendor, but an admin has edited it, so it was left as it is: retire it from its page and move its uses to claude-opus-4-6'
       )
     );
   });

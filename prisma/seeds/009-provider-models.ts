@@ -33,6 +33,8 @@ export const RETIRED_SEED_MODELS: ReadonlyArray<{
   providerSlug: string;
   modelId: string;
   replacementModelId: string;
+  /** The same model under the id its vendor uses: the seed had a typo, not a retired model. */
+  sameModel?: true;
 }> = [
   { providerSlug: 'anthropic', modelId: 'claude-opus-4', replacementModelId: 'claude-opus-4-6' },
   {
@@ -44,6 +46,7 @@ export const RETIRED_SEED_MODELS: ReadonlyArray<{
     providerSlug: 'anthropic',
     modelId: 'claude-haiku-4.5',
     replacementModelId: 'claude-haiku-4-5',
+    sameModel: true,
   },
   { providerSlug: 'openai', modelId: 'o3-mini', replacementModelId: 'o3' },
 ];
@@ -57,9 +60,13 @@ export const SEED_RETIREMENT_DAY = '2026-11-20';
 /** Appended to a not-served row's slug when the seed needs that slug for its replacement. */
 export const NOT_SERVED_SLUG_SUFFIX = '-not-served';
 
+/** `provider/modelId` of every model not served: never a successor. */
+const NOT_SERVED = new Set(RETIRED_SEED_MODELS.map((m) => `${m.providerSlug}/${m.modelId}`));
+
 const RETIRE_SELECT = {
   id: true,
   slug: true,
+  modelId: true,
   name: true,
   providerSlug: true,
   capabilities: true,
@@ -277,7 +284,7 @@ const unit: SeedUnit = {
         tierRole: 'thinking',
         reasoningDepth: 'very_high',
         latency: 'medium',
-        costEfficiency: 'medium',
+        costEfficiency: 'high',
         contextLength: 'very_high',
         toolUse: 'strong',
         bestRole: 'Hard reasoning, planning, verification',
@@ -1136,7 +1143,11 @@ const unit: SeedUnit = {
       // keep, but every call to the model fails: say so.
       if (!row.isDefault) {
         logger.warn(
-          `Provider model ${row.slug} (${notServed.providerSlug} ${notServed.modelId}) is not served by its vendor, but an admin has edited it, so it was left as it is: retire it from its page`
+          `Provider model ${row.slug} (${notServed.providerSlug} ${notServed.modelId}) is not served by its vendor, but an admin has edited it, so it was left as it is: ${
+            notServed.sameModel
+              ? `correct its model id to ${notServed.replacementModelId}`
+              : `retire it from its page and move its uses to ${notServed.replacementModelId}`
+          }`
         );
         continue;
       }
@@ -1149,8 +1160,14 @@ const unit: SeedUnit = {
             select: RETIRE_SELECT,
           })
         : null;
+      // One that is itself not served (and may not be retired yet in this
+      // pass) never qualifies.
       let replacementId: string | null =
-        recorded && !checkReplacement(row, recorded) ? recorded.id : null;
+        recorded &&
+        !NOT_SERVED.has(`${recorded.providerSlug}/${recorded.modelId}`) &&
+        !checkReplacement(row, recorded)
+          ? recorded.id
+          : null;
       if (!replacementId) {
         const candidate = await prisma.aiProviderModel.findUnique({
           where: {
