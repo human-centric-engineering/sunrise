@@ -60,7 +60,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { isSerializableConflict } from '@/lib/db/serializable-conflict';
-import { isLanguageTag } from '@/lib/i18n/locales';
+import { isLanguageTag } from '@/lib/i18n/tags';
 import { logger as defaultLogger, type Logger } from '@/lib/logging';
 import {
   ORG_QUOTA_KEYS,

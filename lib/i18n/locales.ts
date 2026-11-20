@@ -8,23 +8,25 @@
  * catalogue stands out. Real languages come from an app, through the catalogue
  * seam (`lib/app/messages.ts`, read through `lib/i18n/registry.ts`).
  *
- * Boundary-clean: no `next/*` and no database imports, so the proxy, the
- * client and the email renderer can all use it.
+ * Boundary-clean: no `next/*` and no database imports, so the proxy and the
+ * email renderer can use it. It reads the app's registrations, so it brings
+ * the catalogue with it: client code that only needs a tag's shape imports
+ * `lib/i18n/tags.ts` instead.
  *
  * @see .context/ui/i18n.md
  */
 
 import { match } from '@formatjs/intl-localematcher';
 import { appLocaleTags } from '@/lib/i18n/registry';
+import { isLanguageTag, PLATFORM_LOCALES, PSEUDO_LOCALE } from '@/lib/i18n/tags';
 
-/** The source language: every string is written in it, and every lookup falls back to it. */
-export const DEFAULT_LOCALE = 'en';
-
-/** The pseudo-locale generated from {@link DEFAULT_LOCALE}, for checking screens. */
-export const PSEUDO_LOCALE = 'en-XA';
-
-/** The locales Sunrise ships a catalogue for. */
-export const PLATFORM_LOCALES: readonly string[] = Object.freeze([DEFAULT_LOCALE, PSEUDO_LOCALE]);
+export {
+  DEFAULT_LOCALE,
+  isLanguageTag,
+  MAX_LOCALE_TAG_LENGTH,
+  PLATFORM_LOCALES,
+  PSEUDO_LOCALE,
+} from '@/lib/i18n/tags';
 
 /**
  * The cookie a visitor's own choice of language is kept in. Strictly
@@ -35,16 +37,6 @@ export const LOCALE_COOKIE_NAME = 'sunrise_locale';
 
 /** One year, in seconds. */
 export const LOCALE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
-
-/** The longest language tag stored or matched; BCP 47 recommends supporting 35. */
-export const MAX_LOCALE_TAG_LENGTH = 35;
-
-const LANGUAGE_TAG = /^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,3}$/i;
-
-/** Whether `tag` has the shape of a BCP 47 language tag; says nothing about support. */
-export function isLanguageTag(tag: string): boolean {
-  return tag.length <= MAX_LOCALE_TAG_LENGTH && LANGUAGE_TAG.test(tag);
-}
 
 /**
  * The locales the interface can be shown in, the source language first:

@@ -150,6 +150,20 @@ describe('a registered locale', () => {
     expect((missing[0][1] as { keys: string[] }).keys).not.toContain('common.save');
   });
 
+  it('logs the same gap once across registrations that rebuild the catalogue', () => {
+    appInit.run = () => {
+      registerAppLocale('fr', { common: { save: 'Enregistrer' } });
+      // A read between registrations builds `fr`; the next call clears it.
+      catalogueFor('fr');
+      registerAppMessages('fr', { app: { client: { title: 'Clients' } } });
+    };
+    catalogueFor('fr');
+    const missing = mockLog.warn.mock.calls.filter(([msg]) =>
+      String(msg).includes('missing from an app locale')
+    );
+    expect(missing).toHaveLength(1);
+  });
+
   it('is stored in its canonical spelling', () => {
     appInit.run = () => {
       registerAppLocale('pt-br', { common: { save: 'Salvar' } });
@@ -232,6 +246,32 @@ describe('a malformed tree', () => {
     expect(() =>
       registerAppMessages('en', JSON.parse('{"app":{"__proto__":{"x":"y"}}}') as MessageTree)
     ).toThrow(/not a usable key/);
+  });
+
+  it('refuses a string that is not valid ICU, naming the key', () => {
+    expect(() => registerAppMessages('en', { app: { greet: 'Hi {name' } })).toThrow(
+      /"app\.greet" is not a valid ICU message/
+    );
+    registerAppLocale('fr');
+    expect(() => overridePlatformMessages('fr', { common: { save: '{' } })).toThrow(
+      /"common\.save" is not a valid ICU message/
+    );
+  });
+
+  it('fails the init on a broken string, so the pseudo-locale still renders', () => {
+    appInit.run = () => {
+      registerAppMessages('en', { app: { greet: 'Hi {name' } });
+    };
+    expect(catalogueFor('en-XA')).toEqual(pseudoLocalize(en));
+    expect(catalogueFor('en')).toEqual(en);
+    expect(mockLog.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the pseudo-locale', () => {
+  it('is recognised in any case', () => {
+    expect(catalogueFor('en-xa')).toEqual(pseudoLocalize(en));
+    expect(catalogueFor('EN-XA')).toBe(catalogueFor('en-XA'));
   });
 });
 

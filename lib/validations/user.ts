@@ -11,7 +11,7 @@ import { emailSchema, passwordSchema } from '@/lib/validations/auth';
 import { paginationQuerySchema, sortingQuerySchema, cuidSchema } from '@/lib/validations/common';
 import { USER_ROLES, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import { ORG_ROLES } from '@/lib/tenancy/roles';
-import { localeChoiceSchema } from '@/lib/validations/locale';
+import { isLanguageTag, MAX_LOCALE_TAG_LENGTH } from '@/lib/i18n/tags';
 
 /**
  * Update user profile schema (PATCH /api/v1/users/me)
@@ -53,8 +53,18 @@ export const updateUserSchema = z.object({
     .optional()
     .nullable(),
   timezone: z.string().max(50, 'Timezone must be less than 50 characters').optional(),
-  // The interface language (§138 t-1071); null follows the org default.
-  locale: localeChoiceSchema.optional(),
+  // The interface language (§138 t-1071); null follows the org default. Only
+  // the tag's shape is checked here, because client forms import this schema
+  // and the supported list lives in the catalogue (`lib/i18n/tags.ts`).
+  // `PATCH /api/v1/users/me` swaps in `localeChoiceSchema`, which checks the
+  // locale is supported and canonicalises it.
+  locale: z
+    .string()
+    .trim()
+    .max(MAX_LOCALE_TAG_LENGTH)
+    .refine(isLanguageTag, 'Language must be a language tag, like "en" or "pt-BR"')
+    .nullable()
+    .optional(),
   location: z
     .string()
     .trim()

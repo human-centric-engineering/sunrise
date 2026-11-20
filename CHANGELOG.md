@@ -49,8 +49,14 @@ release process.
   namespace, which the platform catalogue now reserves and never ships. A
   registered locale is returned by `supportedLocales()`, so users, orgs and
   visitors can choose it; a key it lacks shows in English and is logged once.
+  A registered string must be valid ICU, or the init throws.
   `Messages` (`lib/i18n/catalogue.ts`) now includes `AppMessages`. A throwing
-  init rolls back every registration and the platform catalogue serves.
+  init rolls back every registration and the platform catalogue serves. The
+  registry is server-only. The tag constants and `isLanguageTag()` moved to the
+  import-free `lib/i18n/tags.ts`, and `lib/i18n/locales.ts` still re-exports
+  them. The `locale` field of `updateUserSchema` now checks only a tag's shape,
+  so client forms do not bundle the catalogue. `PATCH /api/v1/users/me` still
+  refuses an unsupported locale.
   _Fork impact:_ none required. `tests/unit/lib/app/defaults.test.ts` gains a
   row for the new seam; pin it when you fill the seam.
 

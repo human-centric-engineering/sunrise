@@ -18,24 +18,25 @@
  * one before: the source (`en`: the platform's strings, then the app's `en`
  * strings, then the app's `en` overrides) → the locale's platform
  * translations and app strings → the locale's overrides. So a key a locale
- * lacks shows in English, per key, and the log names the missing keys once
- * when the catalogue is built. The pseudo-locale is generated from the
+ * lacks shows in English, per key. When the catalogue is built, the log
+ * gives the count of missing keys and names up to 20 of them, once per
+ * locale and count. The pseudo-locale is generated from the
  * source, app strings and overrides included.
  *
  * A platform key the platform does not have (one removed in an upgrade, or a
  * typo) is dropped with a warning rather than thrown, so an upgrade that
  * retires a string never takes an app's whole translation down with it.
- * A malformed tree, a reserved namespace in the wrong call, or a locale that
- * is not registered throws, which rolls back everything the init registered.
+ * A malformed tree, a string that is not valid ICU, a reserved namespace in
+ * the wrong call, or a locale that is not registered throws, which rolls back everything the init registered.
  *
  * **Registration is synchronous and runs lazily** before the first catalogue
- * or supported-locale read, in whichever realm reads first
- * (`platform.seam-realm`). Two realms read it. The server reads the
- * catalogue (the request config, the email renderer) and the supported list
- * (the locale schemas on API routes). The client reads only the supported
- * list, through the same schemas in a client form (`lib/validations/user.ts`),
- * so a form accepts a registered locale too; its messages come from the
- * server through `NextIntlClientProvider`. Each realm runs the init itself.
+ * or supported-locale read (`platform.seam-realm`). Only the server reads
+ * it: the catalogue (the request config, the email renderer) and the
+ * supported list (the locale schemas on API routes). Keep it off the client.
+ * It brings the catalogue, every translation an app registers and the ICU
+ * parser with it. A client form checks only a tag's shape
+ * (`lib/i18n/tags.ts`), and client components get their messages from the
+ * server through `NextIntlClientProvider`.
  *
  * Boundary-clean: no `next/*` and no database imports.
  *
@@ -43,10 +44,11 @@
  * @see .context/ui/i18n.md
  */
 
+import { parse } from '@formatjs/icu-messageformat-parser';
 import en from '@/lib/i18n/messages/en.json';
 import { initAppMessages } from '@/lib/app/messages';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
-import { DEFAULT_LOCALE, PLATFORM_LOCALES, PSEUDO_LOCALE, isLanguageTag } from '@/lib/i18n/locales';
+import { DEFAULT_LOCALE, PLATFORM_LOCALES, PSEUDO_LOCALE, isLanguageTag } from '@/lib/i18n/tags';
 import { pseudoLocalize, type MessageTree } from '@/lib/i18n/pseudo';
 import { logger } from '@/lib/logging';
 
@@ -61,7 +63,7 @@ export const APP_MESSAGE_NAMESPACES: readonly string[] = Object.freeze(['app', '
 /** How deep a registered tree may nest. Far past anything a screen needs. */
 const MAX_DEPTH = 16;
 
-/** How many keys a warning lists before it says how many more. */
+/** How many keys a warning lists; its `count` says how many there are in all. */
 const MAX_LOGGED_KEYS = 20;
 
 const SOURCE: MessageTree = en;
@@ -74,6 +76,12 @@ const appMessages = new Map<string, MessageTree>();
 const overrides = new Map<string, MessageTree>();
 /** Built catalogues, by locale. Derived from the three maps; cleared when any changes. */
 const built = new Map<string, MessageTree>();
+/**
+ * The missing-key warnings already logged, as `locale:count`. Not cleared with
+ * {@link built}: each registration rebuilds every catalogue, and the same
+ * gap should be logged once, not once per registration call.
+ */
+const warnedMissing = new Set<string>();
 
 const appInit = createAppInitGate({
   label: 'i18n: initAppMessages',
@@ -177,7 +185,10 @@ export function appLocaleTags(): readonly string[] {
  */
 export function catalogueFor(locale: string): MessageTree {
   appInit.ensure();
-  const key = locale === PSEUDO_LOCALE ? PSEUDO_LOCALE : (registeredTag(locale) ?? DEFAULT_LOCALE);
+  const key =
+    locale.toLowerCase() === PSEUDO_LOCALE.toLowerCase()
+      ? PSEUDO_LOCALE
+      : (registeredTag(locale) ?? DEFAULT_LOCALE);
   let catalogue = built.get(key);
   if (!catalogue) {
     catalogue = build(key);
@@ -192,6 +203,7 @@ export function __resetAppMessagesForTests(): void {
   appMessages.clear();
   overrides.clear();
   built.clear();
+  warnedMissing.clear();
   appInit.reset();
 }
 
@@ -201,7 +213,9 @@ function build(locale: string): MessageTree {
   if (locale === PSEUDO_LOCALE) return pseudoLocalize(source);
   const own = merge(appLocales.get(locale), appMessages.get(locale), overrides.get(locale));
   const missing = missingKeys(source, own);
-  if (missing.length > 0) {
+  const warning = `${locale}:${missing.length}`;
+  if (missing.length > 0 && !warnedMissing.has(warning)) {
+    warnedMissing.add(warning);
     logger.warn('i18n: strings missing from an app locale show in English', {
       locale,
       count: missing.length,
@@ -276,10 +290,25 @@ function checkTree(value: unknown, where: string, path = '', depth = 0): Message
     if (key === '' || key.includes('.') || key === '__proto__') {
       throw new Error(`i18n: ${where}: "${at}" is not a usable key`);
     }
-    if (typeof child === 'string') out[key] = child;
+    if (typeof child === 'string') out[key] = checkMessage(child, where, at);
     else out[key] = checkTree(child, where, at, depth + 1);
   }
   return out;
+}
+
+/**
+ * `message`, if it is valid ICU. Checked when it is registered, so a broken
+ * string fails the init (which rolls back) instead of throwing on every
+ * render: next-intl and the pseudo-locale both parse it.
+ */
+function checkMessage(message: string, where: string, at: string): string {
+  try {
+    parse(message);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`i18n: ${where}: "${at}" is not a valid ICU message (${reason})`);
+  }
+  return message;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

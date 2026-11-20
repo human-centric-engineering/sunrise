@@ -16,8 +16,8 @@
  * 2. **Add a language** — `registerAppLocale('fr', platformStrings)`. Sunrise
  *    ships only `en` and the pseudo-locale `en-XA`, so this is how a real
  *    language reaches the platform's screens. Pass the platform's strings in
- *    that language; any you leave out show in English, and the log says
- *    which, once. Add your own strings in it with `registerAppMessages`.
+ *    that language; any you leave out show in English, and the log gives
+ *    how many and names up to 20 of them. Add your own strings in it with `registerAppMessages`.
  * 3. **Change a platform string** — `overridePlatformMessages(locale, { … })`.
  *    Applied last, over the platform's text and any translation.
  *

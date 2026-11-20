@@ -26,6 +26,17 @@ import {
 } from '@/lib/validations/user';
 
 describe('updateUserSchema', () => {
+  describe('locale', () => {
+    // Client forms import this schema, so it checks only the tag's shape and
+    // does not reach the catalogue; the route checks support (route test).
+    it('checks only the shape of the tag', () => {
+      expect(updateUserSchema.parse({ locale: ' fr-CA ' }).locale).toBe('fr-CA');
+      expect(updateUserSchema.parse({ locale: null }).locale).toBeNull();
+      expect(updateUserSchema.safeParse({ locale: 'not a tag' }).success).toBe(false);
+      expect(updateUserSchema.safeParse({ locale: 'en-' + 'x'.repeat(40) }).success).toBe(false);
+    });
+  });
+
   describe('valid update data', () => {
     it('should accept valid name update', () => {
       const result = updateUserSchema.safeParse({
