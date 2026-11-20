@@ -362,6 +362,51 @@ describe('getDatabaseHealth at TENANCY_MODE=multi', () => {
 });
 
 /**
+ * Test Suite: checkDatabaseConnection() at TENANCY_MODE=multi (t-1055)
+ *
+ * The same refusal as above: a caller with no org must still be told the
+ * truth about the database.
+ */
+describe('checkDatabaseConnection at TENANCY_MODE=multi', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(prisma.$queryRaw).mockImplementation((() => {
+      if (isMultiTenant() && getTenantContext() === null) {
+        return Promise.reject(new Error('No tenant context for raw SQL.$queryRaw'));
+      }
+      return Promise.resolve([{ result: 1 }]);
+    }) as any);
+  });
+
+  afterEach(() => {
+    mockEnv.TENANCY_MODE = 'single';
+  });
+
+  it('reports connected when called with no tenant context, from the system scope', async () => {
+    let probeContext: ReturnType<typeof getTenantContext> = null;
+    vi.mocked(prisma.$queryRaw).mockImplementation((() => {
+      probeContext = getTenantContext();
+      return Promise.resolve([{ result: 1 }]);
+    }) as any);
+    expect(getTenantContext()).toBeNull();
+
+    expect(await checkDatabaseConnection()).toBe(true); // test-review:accept tobe_true — boolean return
+
+    expect(probeContext).toMatchObject({ orgId: null, source: 'system' });
+    expect(vi.mocked(logger.error)).toHaveBeenCalledTimes(0);
+  });
+
+  it('still reports the database down when it is', async () => {
+    const dbError = new Error('Connection refused');
+    vi.mocked(prisma.$queryRaw).mockRejectedValue(dbError);
+
+    expect(await checkDatabaseConnection()).toBe(false);
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith('Database connection failed', dbError);
+  });
+});
+
+/**
  * Test Suite: executeTransaction()
  *
  * Tests transaction wrapper with error handling

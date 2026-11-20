@@ -349,7 +349,8 @@ export function runAsCrossOrgCount<T>(reason: string, fn: () => Promise<T>): Pro
 /**
  * Run `fn` as the system scope for the database liveness probe (#1262).
  *
- * `getDatabaseHealth()` runs a raw `SELECT 1`, and at `multi` the data layer
+ * `getDatabaseHealth()` and `checkDatabaseConnection()` (both in
+ * `lib/db/utils.ts`) run a raw `SELECT 1`, and at `multi` the data layer
  * refuses raw SQL with no tenant context. Its callers include the
  * unauthenticated `/api/health` route, which has no org to enter. So the
  * probe runs in the same scope as {@link runAsSystem}, with the same

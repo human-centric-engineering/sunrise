@@ -9,10 +9,17 @@ import { runAsLivenessProbe } from '@/lib/tenancy/context';
 
 /**
  * Check if database connection is working
+ *
+ * Runs its `SELECT 1` in the liveness-probe scope, as `getDatabaseHealth()`
+ * does and for the same reason: at `TENANCY_MODE=multi` the data layer refuses
+ * raw SQL with no tenant context, so a caller with no org would be told the
+ * database is down (#1262, t-1055).
  */
 export async function checkDatabaseConnection(): Promise<boolean> {
   try {
-    await prisma.$queryRaw`SELECT 1`;
+    await runAsLivenessProbe(async () => {
+      await prisma.$queryRaw`SELECT 1`;
+    });
     return true;
   } catch (error) {
     logger.error('Database connection failed', error);
