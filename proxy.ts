@@ -383,9 +383,10 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   }
 
   // An OWNER or ADMIN of an org whose onboarding is unfinished, reaching the
-  // landing route with a GET, goes to the app's welcome route instead (§134 t-1063). Every door
-  // into the app (login, OAuth, signup, invitations, the brand link) lands on
-  // that one route, so this is the one place that sees them all. With no
+  // landing route with a GET, goes to the app's welcome route instead (§134
+  // t-1063). The usual doors into the app (login, OAuth, signup, invitations,
+  // the brand link) land on that one route; a sign-in that returns to a deep
+  // link (`callbackUrl`) does not, and is not redirected. With no
   // welcome route set in lib/app/welcome.ts nothing is read.
   if (AUTH_WELCOME_ROUTE !== null && authenticated) {
     const welcome = await welcomeRedirectFor(request, tenantOrgId);

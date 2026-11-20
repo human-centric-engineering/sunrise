@@ -14,8 +14,8 @@
  * platform benefit, so per-user onboarding is the app's to keep.
  *
  * The platform's one use of the read: with a welcome route set
- * (`lib/app/welcome.ts`), the proxy sends a member of an unfinished org who
- * reaches the landing route to the welcome route instead
+ * (`lib/app/welcome.ts`), the proxy sends an OWNER or ADMIN of an unfinished,
+ * active org who reaches the landing route to the welcome route instead
  * ({@link welcomeRedirectFor}). With none set nothing is read or redirected,
  * and an app can still call {@link isOrgOnboarded} its own way.
  *

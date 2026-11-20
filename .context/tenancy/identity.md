@@ -403,7 +403,7 @@ the install org (made by the migration, never by the lifecycle) and every org
 that existed before the key was introduced read as finished, and nobody who is
 already a member is sent to a welcome step. Only a literal `true` reads as
 unfinished; any other value reads as finished (`readOrgOnboarded()`), since a
-bad value that kept every member out of the product is the worse failure.
+bad value that kept every owner out of the product is the worse failure.
 
 **Reading and marking it.** `lib/tenancy/onboarding.ts`:
 
@@ -437,11 +437,16 @@ the welcome route (a key the welcome route already sets keeps its value). Only a
 GET or HEAD page load is redirected, never a server action posted from the
 landing page. Next's prefetch of the landing route (the header brand link) is
 answered too, so while a welcome route is set each prefetch costs a session
-and membership read in the proxy. Every door into the app (login, OAuth, signup,
-invitation acceptance, verification, the header brand link) lands on the
-landing route, which is why the check sits there. The org is the guard's
-choice: the app's tenant resolver, else the session's active org, else the
-install org at `single`. Only a membership counts, so platform staff looking at
+and membership read in the proxy. The usual doors into the app (login, OAuth,
+signup, invitation acceptance, verification, the header brand link) land on
+the landing route, which is why the check sits there. A sign-in that returns to
+a deep link (`/login?callbackUrl=/projects/x`) does not, so that one visit skips
+the welcome step; the next visit to the landing route shows it. The org is the
+guard's choice: the app's tenant resolver, else the session's active org, else
+the install org at `single`. So the redirect applies only while the session is
+acting in the unfinished org: an existing user whom staff make OWNER of a new
+org, but whose session still acts in an earlier org, is not sent there until
+they switch to it. Only a membership counts, so platform staff looking at
 a customer's org are not sent to its welcome step. Other paths, a deep link
 included, are never redirected. A failed read lets the request through to the
 landing route, logged at `warn`. With the route `null` the proxy reads
