@@ -17,9 +17,9 @@ const mockPrincipal = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/auth/admin-page-viewer', () => ({ requestPrincipal: mockPrincipal }));
 
 /** One org row and one member, shared by the write and the read. */
-const store = vi.hoisted(() => ({
+const store = vi.hoisted((): { orgSettings: unknown; memberLocale: string | null } => ({
   orgSettings: null,
-  memberLocale: null as string | null,
+  memberLocale: null,
 }));
 const mockPrisma = vi.hoisted(() => {
   const db = {
