@@ -745,6 +745,70 @@ describe('moveModelUses', () => {
     expect(vi.mocked(testProviderKeyOnModel).mock.calls[0][3]).toEqual({ chat: false });
   });
 
+  it('skips an org when its key cannot be tested or read, and moves the rest', async () => {
+    world.keyed = ['org-a', 'org-b'];
+    vi.mocked(testProviderKeyOnModel).mockRejectedValue(new Error('unsafe base URL'));
+    vi.mocked(openOrgProviderKey).mockImplementation(() => {
+      if (scope === 'org-b') return Promise.reject(new Error('keyring broken'));
+      return Promise.resolve({ apiKey: 'sk-a', summary: {} as never });
+    });
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(result.orgs.map((o) => [o.orgId, o.status, o.reason])).toEqual([
+      [
+        'org-a',
+        'skipped',
+        'Its own key for this provider could not be tested against the replacement.',
+      ],
+      [
+        'org-b',
+        'skipped',
+        'Its own key for this provider could not be read, so it could not be tested.',
+      ],
+    ]);
+    expect(world.agents).toEqual(freshWorld().agents);
+  });
+
+  it('says to run it again when an agent was changed at the same moment', async () => {
+    const { isAgentVersionConflict } = await import('@/lib/orchestration/agents/agent-versioning');
+    vi.mocked(isAgentVersionConflict).mockReturnValueOnce(true);
+    vi.mocked(repinWorkflow).mockImplementationOnce(() => {
+      throw new Error('Unique constraint failed on agentId_version');
+    });
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(result.orgs[0]).toMatchObject({
+      status: 'failed',
+      reason: 'One of its agents was changed at the same moment. Run the move again.',
+    });
+  });
+
+  it('reports an org whose only uses are left, without testing its key or writing', async () => {
+    world.keyed = ['org-a'];
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-a');
+    world.workflows = [
+      {
+        id: 'wf-a9',
+        name: 'A chat',
+        orgId: 'org-a',
+        draftDefinition: null,
+        published: { version: 1, snapshot: definition(step('t', 'chat_turn', 'gpt-4o')) },
+      },
+    ];
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(result.orgs).toEqual([
+      {
+        orgId: 'org-a',
+        name: 'Acme',
+        status: 'moved',
+        agents: 0,
+        workflows: 0,
+        left: [{ workflowId: 'wf-a9', stepId: 't', reason: 'chat_turn_by_id' }],
+      },
+      { orgId: 'org-b', name: 'Bolt', status: 'moved', agents: 1, workflows: 0, left: [] },
+    ]);
+    expect(testProviderKeyOnModel).not.toHaveBeenCalled();
+    expect(repinWorkflow).not.toHaveBeenCalled();
+  });
+
   it('rolls back an org that fails, reports it, and still moves the others', async () => {
     vi.mocked(repinWorkflow).mockImplementationOnce(() => {
       throw new Error('relation "ai_workflow" violates something secret');
