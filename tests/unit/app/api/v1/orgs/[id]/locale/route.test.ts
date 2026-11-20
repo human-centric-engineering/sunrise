@@ -202,4 +202,18 @@ describe('PUT /api/v1/orgs/[id]/locale', () => {
     expect((await put({ locale: 'en' })).status).toBe(409);
     expect(mockLogAdminAction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing landed;
   });
+
+  it('answers 404 when the org is gone by the time it is written', async () => {
+    // The resolver found it; the write's own read did not.
+    mockPrisma.org.findUnique
+      .mockResolvedValueOnce({ id: ORG, settings: {} })
+      .mockResolvedValue(null);
+    expect((await put({ locale: 'en' })).status).toBe(404);
+    expect(mockLogAdminAction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing written;
+  });
+
+  it('lets an error that is not a settings clash through as a 500', async () => {
+    mockPrisma.$transaction.mockRejectedValue(new Error('connection reset'));
+    expect((await put({ locale: 'en' })).status).toBe(500);
+  });
 });

@@ -39,7 +39,13 @@ vi.mock('next/headers', () => ({
   }),
 }));
 
-import { requestLocale } from '@/lib/i18n/request';
+// next-intl's wrapper returns the function it is given; stand it in so the
+// config can be called outside a React Server Components render.
+vi.mock('next-intl/server', () => ({ getRequestConfig: (fn: unknown) => fn }));
+
+import requestConfig, { requestLocale } from '@/lib/i18n/request';
+import { messagesFor } from '@/lib/i18n/catalogue';
+import { I18N_FORMATS } from '@/lib/i18n/format';
 
 const USER = 'cmuser0000000000000000usr1';
 const ORG = 'cmorg000000000000000acme1';
@@ -118,5 +124,25 @@ describe('requestLocale', () => {
       expect.stringContaining('could not read the viewer'),
       { error: 'connection refused' }
     );
+  });
+});
+
+describe('the request config', () => {
+  it('hands next-intl the resolved locale, its messages, the time zone and the named formats', async () => {
+    signedIn();
+    mockPrisma.user.findUnique.mockResolvedValue({ locale: 'en-XA', timezone: 'Europe/Paris' });
+
+    const config = await (
+      requestConfig as unknown as (params: unknown) => Promise<Record<string, unknown>>
+    )({ requestLocale: Promise.resolve(undefined) });
+
+    expect(config).toEqual({
+      locale: 'en-XA',
+      messages: messagesFor('en-XA'),
+      timeZone: 'Europe/Paris',
+      formats: I18N_FORMATS,
+    });
+    // The pseudo catalogue, not the source one.
+    expect((config.messages as { common: { save: string } }).common.save).toBe('[Šåṽé]');
   });
 });
