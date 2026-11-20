@@ -6,7 +6,7 @@
  * pseudo-locale is for checking a screen, not for customers: every string on
  * it reads accented and bracketed, so English text that does not come from the
  * catalogue stands out. Real languages come from an app, through the catalogue
- * seam.
+ * seam (`lib/app/messages.ts`, read through `lib/i18n/registry.ts`).
  *
  * Boundary-clean: no `next/*` and no database imports, so the proxy, the
  * client and the email renderer can all use it.
@@ -15,6 +15,7 @@
  */
 
 import { match } from '@formatjs/intl-localematcher';
+import { appLocaleTags } from '@/lib/i18n/registry';
 
 /** The source language: every string is written in it, and every lookup falls back to it. */
 export const DEFAULT_LOCALE = 'en';
@@ -45,9 +46,13 @@ export function isLanguageTag(tag: string): boolean {
   return tag.length <= MAX_LOCALE_TAG_LENGTH && LANGUAGE_TAG.test(tag);
 }
 
-/** The locales the interface can be shown in, the source language first. */
+/**
+ * The locales the interface can be shown in, the source language first:
+ * the platform's, then those an app registered (`lib/app/messages.ts`).
+ */
 export function supportedLocales(): readonly string[] {
-  return PLATFORM_LOCALES;
+  const app = appLocaleTags();
+  return app.length === 0 ? PLATFORM_LOCALES : [...PLATFORM_LOCALES, ...app];
 }
 
 /** Whether `tag` is exactly a supported locale (case-insensitive), as stored. */

@@ -567,10 +567,10 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "A bounded set of error fingerprints already handled, so the handler cannot loop on itself; browser-only (initialised from a client component, `typeof window` guarded), so the process it is global to is one visitor's tab.",
   },
   {
-    file: 'lib/i18n/catalogue.ts',
-    holders: ['pseudo'],
+    file: 'lib/i18n/registry.ts',
+    holders: ['appLocales', 'appMessages', 'overrides', 'built', 'appInit'],
     posture: 'no-tenant-data',
-    why: 'The pseudo-locale catalogue, generated once from the shipped `en` messages (§138 t-1071). Built from code, never from a row.',
+    why: 'The strings and languages an app registers from code (§138 t-1072), and the catalogues built from them and the shipped `en` messages, the same for every org. Which locale a request gets is resolved per request and never held here.',
   },
   {
     file: 'lib/admin/logs.ts',
