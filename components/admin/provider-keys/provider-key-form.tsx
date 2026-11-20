@@ -9,8 +9,9 @@
  * again once it is saved; the page shows its last four characters.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { KeyRound } from 'lucide-react';
@@ -24,9 +25,9 @@ import { FormError, SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
-import { saveProviderKeySchema } from '@/lib/validations/tenancy';
+import { createSaveProviderKeySchema } from '@/lib/validations/tenancy';
 
-type KeyFormData = z.infer<typeof saveProviderKeySchema>;
+type KeyFormData = z.infer<ReturnType<typeof createSaveProviderKeySchema>>;
 
 const SERVER_FIELDS: Partial<Record<string, keyof KeyFormData>> = { apiKey: 'apiKey' };
 
@@ -47,6 +48,9 @@ export function ProviderKeyForm({
   replaces,
   onDone,
 }: ProviderKeyFormProps) {
+  const t = useTranslations('admin.providerKeys.form');
+  const tv = useTranslations('validation');
+  const schema = useMemo(() => createSaveProviderKeySchema(tv), [tv]);
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const {
@@ -56,12 +60,12 @@ export function ProviderKeyForm({
     reset,
     formState: { errors },
   } = useForm<KeyFormData>({
-    resolver: zodResolver(saveProviderKeySchema),
+    resolver: zodResolver(schema),
     mode: 'onTouched',
     defaultValues: { apiKey: '' },
   });
   const save = useSaveFailure({
-    fallback: 'The key could not be saved. Try again.',
+    fallback: t('failed'),
     fields: SERVER_FIELDS,
     setError,
     errors,
@@ -91,24 +95,13 @@ export function ProviderKeyForm({
     >
       <div className="space-y-2">
         <Label htmlFor={inputId} className="flex items-center gap-1">
-          {replaces ? `New ${providerName} key` : `${providerName} key`}{' '}
-          <FieldHelp title="Your organisation’s own key">
-            <p>
-              Paste an API key from your organisation&apos;s own {providerName} account. Your
-              organisation&apos;s calls to {providerName} then go out on it, and {providerName}{' '}
-              bills that account.
-            </p>
-            <p className="mt-2">
-              Before it is saved, the key is tried with one small request to {providerName}. A key
-              that fails is not saved. Once saved, it is never shown again: only its last four
-              characters are.
-            </p>
-            {replaces && (
-              <p className="mt-2">
-                Saving replaces the current key: this organisation&apos;s calls use the new key
-                within a minute. Use this when a key has leaked or you are moving to a new one.
-              </p>
-            )}
+          {replaces
+            ? t('labelReplace', { name: providerName })
+            : t('label', { name: providerName })}{' '}
+          <FieldHelp title={t('helpTitle')}>
+            <p>{t('help', { name: providerName })}</p>
+            <p className="mt-2">{t('helpTest', { name: providerName })}</p>
+            {replaces && <p className="mt-2">{t('helpReplace')}</p>}
           </FieldHelp>
         </Label>
         <Input
@@ -125,10 +118,10 @@ export function ProviderKeyForm({
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" size="sm" disabled={submitting}>
           <KeyRound className="mr-2 h-4 w-4" />
-          {submitting ? 'Testing and saving…' : replaces ? 'Test and replace' : 'Test and save'}
+          {submitting ? t('saving') : replaces ? t('replace') : t('save')}
         </Button>
         <Button type="button" size="sm" variant="ghost" disabled={submitting} onClick={onDone}>
-          Cancel
+          {t('cancel')}
         </Button>
       </div>
       <SaveError failure={save.failure} />

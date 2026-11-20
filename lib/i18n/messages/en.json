@@ -1271,10 +1271,10 @@
       },
       "list": {
         "none": "This organisation is not approved for any provider that takes a key. Platform staff approve providers.",
-        "keyEnding": "Key ending <hint>…{hint}</hint>, saved {when}",
-        "saved": "Saved {when}",
-        "savedBy": "Key ending <hint>…{hint}</hint>, saved {when} by {who}",
-        "savedByNoHint": "Saved {when} by {who}",
+        "keyEnding": "Key ending <hint>…{hintValue}</hint>, saved {when}.",
+        "saved": "Saved {when}.",
+        "savedBy": "Key ending <hint>…{hintValue}</hint>, saved {when} by {who}.",
+        "savedByNoHint": "Saved {when} by {who}.",
         "replace": "Replace key",
         "add": "Add your own key",
         "testKey": "Test key",
@@ -1283,9 +1283,9 @@
         "removeTitle": "Remove the {name} key",
         "removeFailed": "The key could not be removed. Try again.",
         "removeDeleted": "The key is deleted: to use it again, save it again.",
-        "removeNotTaken": "{name} is not available to this organisation’s calls with any key, so they stay refused.",
+        "removeNotTaken": "{name} is not available to this organisation's calls with any key, so they stay refused.",
         "removeNotApproved": "This organisation is not approved for {name}, so its calls to it stay refused.",
-        "removeBackToPlatform": "Within a minute, this organisation’s calls to {name} go back to the platform’s key."
+        "removeBackToPlatform": "Within a minute, this organisation's calls to {name} go back to the platform's key."
       },
       "form": {
         "label": "{name} key",
