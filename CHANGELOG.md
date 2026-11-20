@@ -71,6 +71,20 @@ release process.
   `tests/setup.ts` pins the seam empty for every test file, like the
   `signup-org` seam.
 
+- **An org admin sets the org's language, and the org-settings admin pages
+  read from the catalogue (§138 t-1074).** Admin → Options gains a language
+  picker over `PUT /api/v1/orgs/[id]/locale`; a member with no language of
+  their own then sees it. Options is now shown on every install, not only one
+  whose app registers an org-set switch. Members, Options, AI keys, Support
+  access and Waitlist, and the parts of the admin shell an org admin sees on
+  them, show the viewer's language. Staff-only pages and the orchestration
+  console stay English by ruling. New schema factories for those forms:
+  `createInviteOrgMemberSchema`, `buildSupportGrantSchema` and
+  `createSaveProviderKeySchema` (`lib/validations/tenancy.ts`); the exported
+  schemas keep the routes' English. See `.context/ui/i18n.md`, "The admin
+  console". **Fork impact:** a fork that edited one of those pages conflicts
+  on the text, which moved to `admin.*` in `lib/i18n/messages/en.json`.
+
 - **An app can register its own strings and languages (§138 t-1072).** New
   fork-owned scaffold `lib/app/messages.ts` (`initAppMessages()` and the
   `AppMessages` type, shipped empty) behind the shared init gate, with
@@ -618,6 +632,19 @@ release process.
   `tests/unit/lib/app/defaults.test.ts`.
 
 ### Changed
+
+- **The org-settings admin components no longer export their English (§138
+  t-1074).** `ORG_ROLE_LABELS` (`components/admin/members/org-role-help`) is
+  removed; the words are `admin.members.roles.<role>`. In
+  `components/admin/provider-keys/provider-key-states`, `stateBadge()` returns
+  a catalogue `key` in place of a `label`, `stateSentence()` is replaced by
+  `stateSentenceKey()`, and `SAVE_BLOCKED_SENTENCE`, `READ_ONLY_SENTENCE` and
+  `testFailureSentence()` are removed (`admin.providerKeys.*`).
+  `durationLabel(hours, t)` (`components/admin/support-access/support-grant-form`)
+  takes the translator, and `SUPPORT_GRANT_DURATIONS` is the list of hours.
+  `SUPPORT_GRANT_LEVEL_LABELS` stays, as the English for staff screens.
+  **Fork impact:** code that read one of these fails to compile; read the
+  catalogue key instead.
 
 - **Three exports that carried the user screens' English now carry none (§138
   t-1073).** The words moved to the catalogue, and these no longer held what
