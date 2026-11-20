@@ -91,7 +91,8 @@ export const GET = withAuth(
  * and the interface language (`locale`, §138 t-1071; `null` follows the org default).
  *
  * Validates:
- * - Request body matches updateUserSchema
+ * - Request body matches updateUserBodySchema (`updateUserSchema` plus a
+ *   supported, canonicalised `locale`)
  * - Email is unique (if being changed)
  *
  * Changing the email address does NOT take effect in this request (#489). It

@@ -147,7 +147,9 @@ export function registerAppMessages(locale: string, messages: MessageTree): void
       );
     }
   }
-  appMessages.set(target, merge(appMessages.get(target) ?? {}, tree));
+  const current = appMessages.get(target) ?? {};
+  refuseReshape(current, tree, `registerAppMessages("${target}")`);
+  appMessages.set(target, merge(current, tree));
   built.clear();
 }
 
@@ -227,15 +229,24 @@ function build(locale: string): MessageTree {
 
 /** The canonical spelling of a language tag (`pt-br` → `pt-BR`); throws on a tag that is not one. */
 function canonicalTag(locale: unknown): string {
+  let canonical: string | undefined;
   if (typeof locale === 'string' && isLanguageTag(locale)) {
     try {
-      const [canonical] = Intl.getCanonicalLocales(locale);
-      if (canonical) return canonical;
+      [canonical] = Intl.getCanonicalLocales(locale);
     } catch {
       // Falls through to the throw: the shape check passed but Intl refuses it.
     }
   }
-  throw new Error(`i18n: ${JSON.stringify(locale)} is not a language tag`);
+  if (typeof locale !== 'string' || !canonical) {
+    throw new Error(`i18n: ${JSON.stringify(locale)} is not a language tag`);
+  }
+  // Case only: `Intl` also renames deprecated codes (`iw` → `he`), and a tag
+  // stored under another name than the one registered would not match the
+  // lookups, which compare case-insensitively.
+  if (canonical.toLowerCase() !== locale.toLowerCase()) {
+    throw new Error(`i18n: "${locale}" is a deprecated tag; use "${canonical}"`);
+  }
+  return canonical;
 }
 
 /** The registered app locale `locale` names (case-insensitive), or null. */
@@ -259,6 +270,31 @@ function writableLocale(locale: string, fn: string): string {
     throw new Error(`i18n: ${fn}("${tag}"): register the locale with registerAppLocale() first`);
   }
   return registered;
+}
+
+/**
+ * Throws when `incoming` would turn a string in `current` into a group of
+ * strings, or the other way round: the merge would silently drop the group.
+ */
+function refuseReshape(
+  current: MessageTree,
+  incoming: MessageTree,
+  where: string,
+  path = ''
+): void {
+  for (const [key, value] of Object.entries(incoming)) {
+    if (!Object.hasOwn(current, key)) continue;
+    const at = path ? `${path}.${key}` : key;
+    const before = current[key];
+    if (typeof before !== typeof value) {
+      throw new Error(
+        `i18n: ${where}: "${at}" was registered as ${typeof before === 'string' ? 'a string' : 'a group of strings'} and cannot change shape`
+      );
+    }
+    if (typeof before === 'object' && typeof value === 'object') {
+      refuseReshape(before, value, where, at);
+    }
+  }
 }
 
 function refuseReserved(tree: MessageTree, where: string, instead: string): void {

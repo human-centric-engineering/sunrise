@@ -268,6 +268,22 @@ describe('a malformed tree', () => {
   });
 });
 
+describe('registration guards', () => {
+  it('refuses a deprecated tag, naming the current one', () => {
+    expect(() => registerAppLocale('iw')).toThrow(/deprecated tag; use "he"/);
+  });
+
+  it('refuses a later call that changes a string into a group, or back', () => {
+    registerAppMessages('en', { app: { client: { title: 'X', body: 'Y' } } });
+    expect(() => registerAppMessages('en', { app: { client: 'Clients' } })).toThrow(
+      /"app\.client" was registered as a group of strings/
+    );
+    expect(() => registerAppMessages('en', { app: { client: { title: { a: 'b' } } } })).toThrow(
+      /"app\.client\.title" was registered as a string/
+    );
+  });
+});
+
 describe('the pseudo-locale', () => {
   it('is recognised in any case', () => {
     expect(catalogueFor('en-xa')).toEqual(pseudoLocalize(en));

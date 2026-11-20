@@ -30,7 +30,11 @@ export function messagesFor(locale: string): Messages {
   return catalogueFor(locale) as Messages;
 }
 
-/** The source catalogue, for tests and tooling. */
+/**
+ * The built source catalogue: the platform's `en` strings with the app's `en`
+ * strings and overrides merged in. The platform's own strings alone are
+ * `lib/i18n/messages/en.json`.
+ */
 export function sourceMessages(): Messages {
   return messagesFor(DEFAULT_LOCALE);
 }

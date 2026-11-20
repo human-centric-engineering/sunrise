@@ -8,10 +8,10 @@
  * catalogue stands out. Real languages come from an app, through the catalogue
  * seam (`lib/app/messages.ts`, read through `lib/i18n/registry.ts`).
  *
- * Boundary-clean: no `next/*` and no database imports, so the proxy and the
- * email renderer can use it. It reads the app's registrations, so it brings
- * the catalogue with it: client code that only needs a tag's shape imports
- * `lib/i18n/tags.ts` instead.
+ * Server-only in practice: no `next/*` and no database imports, but it reads
+ * the app's registrations, so it brings the catalogue, the app's
+ * translations and the ICU parser with it. Keep it out of the proxy and
+ * client code; those import the constants from `lib/i18n/tags.ts`.
  *
  * @see .context/ui/i18n.md
  */
