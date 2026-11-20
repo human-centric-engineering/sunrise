@@ -26,6 +26,8 @@ anti-pattern below.
 | Make a user a member              | `ensureMembership()` — `lib/tenancy/membership.ts`                     |
 | The role a new user gets          | `initialMembershipFor()` / `membershipForNewUser()` — same module      |
 | The org a new session starts in   | `activeOrgForSession()` — same module                                  |
+| Where a self-serve signup lands   | `lib/app/signup-org.ts` → `lib/tenancy/signup-org.ts` (`multi` only)   |
+| A new org's welcome step          | `lib/app/welcome.ts` → `lib/tenancy/onboarding.ts`                     |
 | Change the org a session acts in  | `POST /api/v1/orgs/switch` — `app/api/v1/orgs/switch/route.ts`         |
 | Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`) — platform      |
 | …as that org's OWNER/ADMIN        | `POST /api/v1/orgs/[id]/invitations` — `checkInvitationInto()`         |
@@ -168,7 +170,9 @@ idempotent, so a re-run or an operator who created the row by hand is a
 no-op rather than a failed deploy.
 
 **Later rows — the hooks.** `userCreateBeforeHook` (`lib/auth/config.ts`)
-decides the membership — `membershipForNewUser(user, invitation)` — and
+decides the membership — `membershipForNewUser(user, invitation)`, or at
+`multi` for a self-serve signup an org of their own
+([below](#self-serve-signup-an-org-of-their-own)) — and
 records it twice: on better-auth's request state (`lib/auth/pending-signup.ts`),
 and on the user row itself as `User.signupOrgId` / `signupOrgRole` — returned
 as hook data, so it lands in the same INSERT as the user (t-838).
@@ -210,10 +214,13 @@ the request still knows (t-836):
 | ------------------------------------------------------------------- | --------------------------- | -------------------------------------- |
 | Password, through an invitation (`runInvitedSignup` still holds it) | invited org + install floor | invited org only                       |
 | OAuth (its invitation rode only on the request state)               | install-org default         | **nothing written**, logged at `error` |
-| Anything else (uninvited)                                           | install-org default         | install-org default                    |
+| Anything else (uninvited)                                           | install-org default         | install-org default (see below)        |
 
 At `multi` the install org is the vendor's own, so an OAuth signup that might
-have been invited is left with no membership rather than put there. The guard
+have been invited is left with no membership rather than put there. An
+uninvited email signup that reaches this row at `multi` had an org of its own
+decided and lost the record of it; it lands in the install org, and the org
+made for it, still marked, is deleted by the abandoned-org sweep below. The guard
 refuses a memberless user at `multi`, and a platform admin adds them through
 `POST /api/v1/orgs/[id]/members`.
 
@@ -288,6 +295,170 @@ not already hold as platform admin, so now that the authorization policy reads
 org roles a single-tenant install answers every question exactly as it did
 before (swept, not asserted: `authorization-org.test.ts`). The SERVICE account holds platform `ADMIN` but never logs
 in; making it an org OWNER would be a grant nothing today confers.
+
+## Self-serve signup: an org of their own
+
+At `TENANCY_MODE=multi` the install org is the vendor's own and holds the
+control plane, so a stranger who signs up must not become a member of it
+(sunrise#1232). **A self-serve signup gets a new org of their own, as its
+`OWNER`, and their first session starts there** (§134 t-1062). An app replaces
+that default with a resolver in `lib/app/signup-org.ts`
+([CUSTOMIZATION.md](../../CUSTOMIZATION.md)): join an existing org with a role,
+keep the install org, or a new org under a name it chooses.
+
+**Who is asked.** `asksSignupOrg()` (`lib/tenancy/signup-org.ts`):
+
+| The signup                                                    | Asked? | Lands as (nothing registered)                                 |
+| ------------------------------------------------------------- | ------ | ------------------------------------------------------------- |
+| No invitation, email or OAuth                                 | yes    | OWNER of a new org                                            |
+| From the install org's waitlist (its invitation names no org) | yes    | OWNER of a new org                                            |
+| From an org's own waitlist (its invitation names that org)    | no     | that org, as any invitation                                   |
+| Any other invitation                                          | no     | as [invitations](#invitations-which-org-a-new-user-joins) say |
+| Platform staff (the first human on a fresh database)          | no     | OWNER of the install org                                      |
+| Anyone at `single`                                            | no     | unchanged                                                     |
+
+**Where it is asked.** Inside the before hook's decision
+(`recordPendingMembership`), before anything is written, so the answer is
+recorded like every other: on the row (`signupOrgId` / `signupOrgRole`) and
+on the request state. The after hook writes exactly one membership and the
+session hook starts the first session in that org. The user-created seam runs
+after the membership is written, which is why it is not where this is decided:
+moving someone there leaves a window, and a failure, in which they stay in the
+vendor's org. The founder is made `OWNER` by the answer itself, not by the
+first-owner bootstrap, which since #1235 needs an issuer with owner standing
+that a signup does not have.
+
+**A fault never refuses a signup.** A resolver that throws, runs past
+`SIGNUP_ORG_RESOLVER_TIMEOUT_MS` (5 s), answers nothing or something
+malformed (validated with Zod), or names an org that does not exist, is not
+`ACTIVE`, is at its seats limit, or still awaits its own founder (another
+signup's), falls
+back to the decision as it was: the install org, by the role rule above,
+logged at `error`. So does a failure to create the org.
+
+**The org exists before the user.** The row names the org, so
+`createSignupOrg()` (`lib/tenancy/lifecycle.ts`) makes it in the before hook,
+with no member, and marked: `Org.settings.awaitingFounder = true`. While
+marked, its org-created hooks are owed but not run (a hook is told the owner,
+and there is none yet) and the retry job skips it. The create does not place
+its platform agents either.
+**The setup waits for a founder who can act there.** That is: the install
+does not require a verified address (`REQUIRE_EMAIL_VERIFICATION`), or theirs
+is verified, or they have had a session (an OAuth sign-in is not held for
+verification, and an accepted invitation proves the address and signs them
+in). `writeNewUserMemberships` removes the mark in the transaction that writes
+the founder's membership when that already holds; the after hook then runs
+both (`completeSignupOrg()`) **after the response**, so an app's slow hook
+never holds the signup. Otherwise (an email signup in production) the org
+keeps its mark until it does: `afterEmailVerificationHook`, and the session
+hook at every sign-in at `multi`, run `completeFoundedSignupOrgs()`, which
+releases it (`releaseFoundedSignupOrgs()`, one `UPDATE … RETURNING`) and runs
+the setup. So a form submitted with an address nobody proves runs none of the
+app's setup; such an org has a member, so the sweep below leaves it. A founder
+healed in later (at sign-in, or by `healSignupRecord()` when an admin adds them
+elsewhere) has the mark removed the same way, and that org's setup runs after
+the response. Only an `OWNER` membership removes a mark.
+
+**Nothing of the person is copied onto the org.** With no app-chosen `name`,
+the org is called "My organisation" (`DEFAULT_SIGNUP_ORG_NAME`) and its slug is
+`org-<random>`: never from the person's name or address. `eraseUser()` does not
+touch `Org`, so a copy there would outlive their erasure, and a slug is in URLs
+and logs. An app that answers `{ kind: 'own', name }` with a name taken from
+the person makes that copy itself, and owns its erasure. As a backstop,
+the `orgCreatedHooks` job (hooks registered or not) releases the mark itself on
+a signup org older than 15 minutes (`ORG_CREATED_FOUNDER_GRACE_MS`) whose OWNER
+can act. A marked org is not a resolver's `join` target. The `platformAgents`
+job may still place agents in a marked org.
+
+**A signup that fails after its org exists leaves no org behind for good.**
+The user INSERT can still be refused after the org is made. The
+`abandonedSignupOrgs` maintenance job (hourly, system scope) runs
+`sweepAbandonedSignupOrgs()`, one `DELETE` of every org that:
+
+1. still carries the mark, so it never had a founder;
+2. has no member;
+3. is named by no user's signup record (a founder whose membership write
+   failed is healed into it at their next sign-in, so it is not abandoned);
+4. is older than `SIGNUP_ORG_ABANDONED_AFTER_MS` (an hour), so a signup in
+   flight is never touched.
+
+The mark is what tells an abandoned org from a live one that has lost every
+member (an erasure, a removal): a live org had a founder, so its mark is
+gone, and only [org erasure](../privacy/org-erasure.md) deletes it. All four
+conditions are re-tested on the row being deleted. What the org row cascades
+to goes with it; nothing else can be there, since nobody could act in it.
+
+## Onboarding: a new org's welcome step
+
+An app usually wants a new org's founder to go through a welcome step before
+using the product, and to stop seeing it once it is done. The platform keeps
+one fact for that, **per org**: whether its onboarding is finished
+(§134 t-1063).
+
+**The record.** `Org.settings.awaitingOnboarding` (`ORG_AWAITING_ONBOARDING_KEY`,
+`lib/tenancy/org-settings.ts`) is written `true` in the INSERT of every org
+`lib/tenancy/lifecycle.ts` creates, however it was made: staff, an app's own
+`createOrg()`, or a self-serve signup. **A missing key means finished.** So
+the install org (made by the migration, never by the lifecycle) and every org
+that existed before the key was introduced read as finished, and nobody who is
+already a member is sent to a welcome step. Only a literal `true` reads as
+unfinished; any other value reads as finished (`readOrgOnboarded()`), since a
+bad value that kept every owner out of the product is the worse failure.
+
+**Reading and marking it.** `lib/tenancy/onboarding.ts`:
+
+- `isOrgOnboarded(orgId)` → `true`, `false`, or `null` for no such org. The
+  install org is always `true`.
+- `markOrgOnboarded(orgId)` → `'marked'`, `'already-finished'` or
+  `'no-such-org'`. It removes the key and keeps every other one, in the same
+  serializable read-modify-write as the other slices, and tries a clash with
+  another settings write again after a short random pause, up to three
+  attempts in all. **It checks nothing about the caller**: call it from your
+  own server code after deciding who may finish onboarding (typically an OWNER
+  or ADMIN of that org). There is no API route for it; the welcome step is the
+  app's, and so is its endpoint.
+- **After marking, purge the client cache before leaving the welcome page.**
+  The proxy's redirect also answers Next's prefetch of the landing route, and
+  the client router can keep that cached redirect after the org is marked, so
+  a client-side `router.push()` to the landing route bounces back to the
+  welcome route. Mark from a server action and end it with
+  `revalidatePath('/', 'layout')` (which purges the client cache) and
+  `redirect(AUTH_LANDING_ROUTE)`.
+
+**The redirect.** `lib/app/welcome.ts` ships `appWelcomeRoute = null`. Set it,
+and the proxy (`welcomeRedirectFor()`, called from `proxy.ts`) sends a
+signed-in request for the **landing route** (`AUTH_LANDING_ROUTE`) to the
+welcome route when the user is an **OWNER or ADMIN** of the org the request
+acts for, and that org is `ACTIVE` and unfinished. A plain MEMBER is not sent:
+they could not finish the step, and would be bounced off the landing route on
+every visit until the owner did. A suspended org is left to the landing
+route's own guard. The landing request's query string is carried across to
+the welcome route (a key the welcome route already sets keeps its value). Only a
+GET or HEAD page load is redirected, never a server action posted from the
+landing page. Next's prefetch of the landing route (the header brand link) is
+answered too, so while a welcome route is set each prefetch costs a session
+and membership read in the proxy. The usual doors into the app (login, OAuth,
+signup, invitation acceptance, verification, the header brand link) land on
+the landing route, which is why the check sits there. A sign-in that returns to
+a deep link (`/login?callbackUrl=/projects/x`) does not, so that one visit skips
+the welcome step; the next visit to the landing route shows it. The org is the
+guard's choice: the app's tenant resolver, else the session's active org, else
+the install org at `single`. So the redirect applies only while the session is
+acting in the unfinished org: an existing user whom staff make OWNER of a new
+org, but whose session still acts in an earlier org, is not sent there until
+they switch to it. Only a membership counts, so platform staff looking at
+a customer's org are not sent to its welcome step. Other paths, a deep link
+included, are never redirected. A failed read lets the request through to the
+landing route, logged at `warn`. With the route `null` the proxy reads
+nothing. The value must be root-relative, not the landing route's own path,
+and not on or under an auth route (`AUTH_ROUTES`: `/login`, `/signup`,
+`/reset-password`, from which the proxy sends a signed-in user back to the
+landing route), or it throws at module load (`lib/auth-landing/route.ts`).
+
+**Per user is the app's job.** An org has one founding moment a platform can
+record. A person's own first-run tour, inside an org that is already set up,
+differs per app; recording it here would be new personal data with its own
+erasure and export rules for no platform benefit. Keep it in your own model.
 
 ## Invitations: which org a new user joins
 

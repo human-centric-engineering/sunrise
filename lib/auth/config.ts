@@ -27,6 +27,10 @@ import {
   type SignupRecord,
 } from '@/lib/tenancy/membership';
 import { ORG_ROLES } from '@/lib/tenancy/roles';
+import { asksSignupOrg, signupOrgMemberships } from '@/lib/tenancy/signup-org';
+import { completeSignupOrg, completeFoundedSignupOrgs } from '@/lib/tenancy/lifecycle';
+import { keepRunningAfterResponse } from '@/lib/api/after-response';
+import { requiresEmailVerification } from '@/lib/auth/verification-status';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import {
   getPendingSignup,
@@ -166,7 +170,8 @@ function redeemedInvitation(metadata: InvitationMetadata): RedeemedInvitation {
 async function recordPendingMembership(
   user: UserCreateData,
   invitation: InvitationMetadata | null,
-  viaInvitation: boolean
+  viaInvitation: boolean,
+  signupMethod: 'email' | 'oauth'
 ): Promise<SignupRecord> {
   // Three steps, each with its own failure: the fallback below is for a
   // decision that failed, and must not narrow a role when only recording did.
@@ -183,7 +188,15 @@ async function recordPendingMembership(
 
   let memberships;
   try {
-    memberships = await membershipsForNewUser(user, invitation);
+    // A self-serve signup at `multi` is asked where it lands (§134 t-1062):
+    // by default an org of their own. `null` is the decision below, as before.
+    const selfServe = asksSignupOrg(user, invitation, viaInvitation)
+      ? await signupOrgMemberships(user, {
+          signupMethod,
+          waitlistEntryId: invitation?.waitlistEntryId ?? null,
+        })
+      : null;
+    memberships = selfServe ?? (await membershipsForNewUser(user, invitation));
   } catch (error) {
     logger.error('Failed to decide the org membership for a new user', error, {
       email: user.email,
@@ -277,6 +290,12 @@ export async function userCreateBeforeHook(
   }
 
   const isOAuthSignup = ctx?.path?.includes('/callback/') ?? false;
+  // What a signup-org resolver is told. Wider than `isOAuthSignup`, which
+  // reads the OAuth invitation state only a callback carries: better-auth
+  // also creates an OAuth account from `POST /sign-in/social` with an
+  // `idToken` (see the invite_only gate below).
+  const signupMethod =
+    isOAuthSignup || (ctx?.path?.includes('/sign-in/social') ?? false) ? 'oauth' : 'email';
 
   // Set when a valid invitation token authorises this OAuth signup; read by the
   // invite_only gate below.
@@ -346,7 +365,12 @@ export async function userCreateBeforeHook(
             // The row this hook consumed is the only copy of the org the
             // invitation named; hand it to the hooks that follow now.
             const invited = { ...user, role: invitedRole };
-            const record = await recordPendingMembership(invited, invitation.metadata, true);
+            const record = await recordPendingMembership(
+              invited,
+              invitation.metadata,
+              true,
+              'oauth'
+            );
             return { data: { ...invited, ...record } };
           }
         }
@@ -445,7 +469,8 @@ export async function userCreateBeforeHook(
         const record = await recordPendingMembership(
           promoted,
           accepted ? { ...accepted, role: PLATFORM_ADMIN_ROLE } : null,
-          oauthInvitationAccepted || isInvitedSignup()
+          oauthInvitationAccepted || isInvitedSignup(),
+          signupMethod
         );
         return { data: { ...promoted, ...record } };
       }
@@ -475,7 +500,8 @@ export async function userCreateBeforeHook(
   const record = await recordPendingMembership(
     user,
     invitedSignupInvitation(),
-    oauthInvitationAccepted || isInvitedSignup()
+    oauthInvitationAccepted || isInvitedSignup(),
+    signupMethod
   );
   return { data: { ...user, ...record } };
 }
@@ -561,7 +587,19 @@ export async function userCreateAfterHook(
     // membership at all — so a floor skipped beside a written primary would
     // never be repaired.
     try {
-      await writeNewUserMemberships(user.id, memberships);
+      const { founded } = await writeNewUserMemberships(user.id, memberships);
+      // An org of their own, made by the before hook (§134 t-1062): its app
+      // setup and platform agents waited for its founder, who is now in it
+      // and can act there (an unverified address keeps it waiting, for the
+      // verification hook). After the response: an app's hooks may take
+      // seconds, and the signup must not wait on them.
+      if (founded) {
+        keepRunningAfterResponse(
+          () => completeSignupOrg(founded, user.id),
+          'Setting up a new signup org',
+          { orgId: founded, userId: user.id }
+        );
+      }
     } catch (membershipError) {
       logger.error('Failed to create org membership for new user', membershipError, {
         userId: user.id,
@@ -635,7 +673,7 @@ export async function userCreateAfterHook(
   }
 
   // Determine if welcome email should be sent immediately
-  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+  const requiresVerification = requiresEmailVerification();
 
   const shouldSendWelcomeNow = isOAuthSignup || !requiresVerification || viaInvitation;
 
@@ -820,11 +858,22 @@ export async function afterEmailVerificationHook(
     return;
   }
 
+  // A signup org whose setup waited for this address to be proven (§134
+  // t-1062). After the response, so the verification click does not wait on
+  // an app's hooks; never throws.
+  if (isMultiTenant()) {
+    keepRunningAfterResponse(
+      () => completeFoundedSignupOrgs(user.id),
+      'Setting up a verified founder’s signup org',
+      { userId: user.id }
+    );
+  }
+
   // Only send welcome email here if verification was required at signup.
   // When verification is not required, the welcome email is sent immediately
   // on account creation (databaseHooks.user.create.after). If the user later
   // verifies voluntarily from their profile/settings, we must not send it again.
-  const requiresVerification = env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+  const requiresVerification = requiresEmailVerification();
 
   if (!requiresVerification) {
     logger.info('Skipping welcome email after verification (already sent at signup)', {
@@ -1063,10 +1112,38 @@ export async function sessionCreateBeforeHook(
   try {
     const pending = await getPendingSignup();
     if (pending) {
+      // A session minted at signup (OAuth) proves the founder can act, though
+      // the after hook, which writes the membership, runs after this hook and
+      // may have found no session row yet. After the response, by when it has.
+      if (isMultiTenant()) {
+        keepRunningAfterResponse(
+          () => completeFoundedSignupOrgs(session.userId, { signingIn: true }),
+          'Setting up a signing-in founder’s signup org',
+          { userId: session.userId }
+        );
+      }
       return { data: { activeOrgId: pending.membership.orgId } };
     }
 
-    const { orgId, healed } = await activeOrgForSession(session.userId);
+    const { orgId, healed, founded } = await activeOrgForSession(session.userId);
+    // A signup org whose setup waited for its founder (§134 t-1062): one the
+    // heal just gave them, and any they own still marked, which a session
+    // proves they can now act in (an accepted invitation, an OAuth address the
+    // provider did not verify). After the response, as on the signup itself.
+    if (founded) {
+      keepRunningAfterResponse(
+        () => completeSignupOrg(founded, session.userId),
+        'Setting up a healed signup org',
+        { orgId: founded, userId: session.userId }
+      );
+    }
+    if (isMultiTenant()) {
+      keepRunningAfterResponse(
+        () => completeFoundedSignupOrgs(session.userId, { signingIn: true }),
+        'Setting up a signing-in founder’s signup org',
+        { userId: session.userId }
+      );
+    }
     if (orgId === null) {
       logger.error(
         'User has no org membership at sign-in and no signup record to heal from; refused at multi until added to an org',
@@ -1130,14 +1207,14 @@ export const auth = betterAuth({
     // Email verification: enabled by default in production, disabled in development
     // Override with REQUIRE_EMAIL_VERIFICATION environment variable
     // Note: Verification email sending is configured in emailVerification block below
-    requireEmailVerification: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
+    requireEmailVerification: requiresEmailVerification(),
     sendResetPassword: sendResetPasswordHook,
   },
 
   // Email verification configuration
   emailVerification: {
     // Trigger verification email on signup when required
-    sendOnSignUp: env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production',
+    sendOnSignUp: requiresEmailVerification(),
 
     // Automatically sign in user after successful email verification
     autoSignInAfterVerification: true,

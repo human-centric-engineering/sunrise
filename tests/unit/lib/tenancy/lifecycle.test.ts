@@ -31,6 +31,10 @@ const db = vi.hoisted(() => ({
   },
   user: { findUnique: vi.fn(), update: vi.fn() },
   $transaction: vi.fn(),
+  // A healed signup record removes its org's awaiting-founder mark (t-1062).
+  $executeRaw: vi.fn(),
+  // A verified founder's signup orgs, released (t-1062).
+  $queryRaw: vi.fn(),
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 
@@ -71,7 +75,10 @@ import {
   addMember,
   changeMemberRole,
   checkInvitationInto,
+  completeSignupOrg,
+  completeFoundedSignupOrgs,
   createOrg,
+  createSignupOrg,
   OrgLifecycleError,
   removeMember,
   resolveOrgResource,
@@ -128,6 +135,7 @@ beforeEach(() => {
   // The transaction client IS the double, so writes inside are visible.
   db.$transaction.mockImplementation((fn: (tx: typeof db) => Promise<unknown>) => fn(db));
   mockRevoke.mockResolvedValue(0);
+  db.$executeRaw.mockResolvedValue(0);
 });
 
 describe('OrgLifecycleError', () => {
@@ -192,7 +200,7 @@ describe('createOrg', () => {
     );
   });
 
-  it('with no org-created hook registered, writes exactly the org and dispatches nothing', async () => {
+  it('with no org-created hook registered, writes only the org and its onboarding mark, and dispatches nothing', async () => {
     db.org.findUnique.mockResolvedValue(null);
     db.org.create.mockResolvedValue(orgRow());
     mockHookKeys.mockReturnValue([]);
@@ -200,7 +208,7 @@ describe('createOrg', () => {
     await createOrg({ slug: 'other', name: 'Other Org', source: 'admin' });
 
     expect(db.org.create).toHaveBeenCalledWith({
-      data: { slug: 'other', name: 'Other Org' },
+      data: { slug: 'other', name: 'Other Org', settings: { awaitingOnboarding: true } },
       select: expect.any(Object),
     });
     expect(mockRunHooks).not.toHaveBeenCalled();
@@ -234,7 +242,10 @@ describe('createOrg', () => {
       data: {
         slug: 'other',
         name: 'Other Org',
-        settings: { orgCreated: { owed: ['app:provider', 'app:package'], source: 'admin' } },
+        settings: {
+          orgCreated: { owed: ['app:provider', 'app:package'], source: 'admin' },
+          awaitingOnboarding: true,
+        },
       },
       select: expect.any(Object),
     });
@@ -270,7 +281,10 @@ describe('createOrg', () => {
     expect(db.org.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          settings: { orgCreated: { owed: ['app:provider'], source: 'app' } },
+          settings: {
+            orgCreated: { owed: ['app:provider'], source: 'app' },
+            awaitingOnboarding: true,
+          },
         }),
       })
     );
@@ -342,6 +356,100 @@ describe('createOrg', () => {
     ).toBe('USER_NOT_FOUND');
 
     expect(db.org.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('createSignupOrg (§134 t-1062)', () => {
+  it('creates the org marked as awaiting its founder, with no member, and runs nothing yet', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.org.create.mockResolvedValue(orgRow());
+    mockHookKeys.mockReturnValue(['app:provider']);
+
+    await createSignupOrg({ slug: 'ada-1a2b3c4d', name: 'Ada’s organisation' });
+
+    expect(db.org.create).toHaveBeenCalledWith({
+      data: {
+        slug: 'ada-1a2b3c4d',
+        name: 'Ada’s organisation',
+        settings: {
+          orgCreated: { owed: ['app:provider'], source: 'signup' },
+          awaitingFounder: true,
+          awaitingOnboarding: true,
+        },
+      },
+      select: expect.any(Object),
+    });
+    expect(db.orgMembership.create).not.toHaveBeenCalled();
+    // A hook is told the owner, and there is none yet; the agents wait too.
+    expect(mockRunHooks).not.toHaveBeenCalled();
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  it('marks the org even when no org-created hook is registered', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.org.create.mockResolvedValue(orgRow());
+
+    await createSignupOrg({ slug: 'ada-1a2b3c4d', name: 'Ada’s organisation' });
+
+    expect(db.org.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          settings: { awaitingFounder: true, awaitingOnboarding: true },
+        }),
+      })
+    );
+  });
+
+  it('refuses a taken slug like createOrg', async () => {
+    db.org.findUnique.mockResolvedValue({ id: 'someone-else' });
+
+    const error = await refusal(() => createSignupOrg({ slug: 'taken', name: 'X' }));
+
+    expect(error.code).toBe('SLUG_TAKEN');
+    expect(db.org.create).not.toHaveBeenCalled();
+  });
+
+  it('completeSignupOrg runs the deferred hooks with the founder as owner, then the platform agents', async () => {
+    const order: string[] = [];
+    mockRunHooks.mockImplementation(async () => {
+      order.push('hooks');
+      return { succeeded: 1, failed: 0, unregistered: 0 };
+    });
+    mockReconcile.mockImplementation(async () => {
+      order.push('agents');
+      return {};
+    });
+
+    await completeSignupOrg(ORG, OWNER);
+
+    expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: OWNER });
+    expect(mockReconcile).toHaveBeenCalledWith(ORG);
+    expect(order).toEqual(['hooks', 'agents']);
+  });
+
+  it('completeFoundedSignupOrgs sets up each org the release hands back, with its owner', async () => {
+    mockRunHooks.mockResolvedValue({ succeeded: 1, failed: 0, unregistered: 0 });
+    mockReconcile.mockResolvedValue({});
+    db.$queryRaw.mockResolvedValue([{ orgId: ORG, ownerUserId: OWNER }]);
+
+    await completeFoundedSignupOrgs(OWNER);
+
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: OWNER });
+    expect(mockReconcile).toHaveBeenCalledWith(ORG);
+  });
+
+  it('completeFoundedSignupOrgs logs a failed release and sets nothing up, without throwing', async () => {
+    db.$queryRaw.mockRejectedValue(new Error('connection reset'));
+
+    await expect(completeFoundedSignupOrgs(OWNER)).resolves.toBeUndefined();
+
+    expect(mockRunHooks).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'Failed to release a verified founder’s signup org',
+      expect.any(Error),
+      { userId: OWNER }
+    );
   });
 });
 
@@ -469,6 +577,25 @@ describe('addMember', () => {
       where: { id: OTHER },
       data: { signupOrgId: null, signupOrgRole: null },
     });
+  });
+
+  it('runs the deferred setup of a signup org the heal founded, after the add (t-1062)', async () => {
+    const FOUNDED = 'cmorg00000000000000founded';
+    db.user.findUnique.mockResolvedValue({
+      ...human(OTHER),
+      signupOrgId: FOUNDED,
+      signupOrgRole: ORG_OWNER_ROLE,
+    });
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.orgMembership.count.mockResolvedValue(3);
+    db.$executeRaw.mockResolvedValue(1); // the founder's mark removed
+    mockRunHooks.mockResolvedValue({ succeeded: 0, failed: 0, unregistered: 0 });
+    mockReconcile.mockResolvedValue({});
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER);
+
+    await vi.waitFor(() => expect(mockReconcile).toHaveBeenCalledWith(FOUNDED));
+    expect(mockRunHooks).toHaveBeenCalledWith(FOUNDED, { ownerUserId: OTHER });
   });
 
   it('a role the caller asked for wins over the one a healed record wrote for the same org (review round 3)', async () => {

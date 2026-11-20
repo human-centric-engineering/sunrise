@@ -12,6 +12,17 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { env } from '@/lib/env';
+
+/**
+ * Whether an address must be verified before its account is used:
+ * `REQUIRE_EMAIL_VERIFICATION`, on by default in production. better-auth is
+ * configured with this rule (`lib/auth/config.ts`), and a self-serve signup's
+ * own org waits for it before its setup runs (§134 t-1062).
+ */
+export function requiresEmailVerification(): boolean {
+  return env.REQUIRE_EMAIL_VERIFICATION ?? env.NODE_ENV === 'production';
+}
 
 /**
  * Email verification status states

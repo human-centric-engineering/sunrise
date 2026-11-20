@@ -44,6 +44,7 @@ import { initAppNav } from '@/lib/app/admin-nav';
 import { publicNavItems, footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
 import { protectedNavItems } from '@/lib/app/protected-nav';
 import { appAuthLandingRoute, appAuthLandingLabel } from '@/lib/app/auth-landing';
+import { appWelcomeRoute } from '@/lib/app/welcome';
 import { initApp } from '@/lib/app/bootstrap';
 import { initAppKnowledgeAccessContributors } from '@/lib/app/knowledge-access-contributors';
 import { initAppGuardFloorContributors } from '@/lib/app/guard-floor-contributors';
@@ -71,6 +72,7 @@ import { appOwnModules } from '@/lib/app/own-modules';
 import { APP_CAPABILITY_PAIRS, APP_UNCHECKED_SEEDS } from '@/lib/app/capability-seed-pairs';
 import * as userCreatedHooks from '@/lib/auth/user-created-hooks';
 import * as orgCreatedHooks from '@/lib/tenancy/org-created-hooks';
+import * as signupOrg from '@/lib/tenancy/signup-org';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
   getAppSubjectSources,
@@ -159,7 +161,7 @@ import {
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
 
-// tests/setup.ts pins these four seams for every file (#1125, #1139). This
+// tests/setup.ts pins these five seams for every file (#1125, #1139). This
 // file asserts what Sunrise really ships, so it puts the real scaffolds back:
 // their rows below read them through the registries' own lazy wiring, which a
 // per-row `importActual` would bypass.
@@ -167,6 +169,7 @@ vi.mock('@/lib/app/admin-tier', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/user-created', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/erasure', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/org-created', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/signup-org', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -297,6 +300,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect(appAuthLandingRoute).toBeNull();
       expect(appAuthLandingLabel).toBeNull();
     },
+  },
+  {
+    seam: 'lib/app/welcome.ts',
+    risk: 'a stray value would send every member of every new org on every install to a welcome page after login',
+    assert: () => expect(appWelcomeRoute).toBeNull(),
   },
   {
     seam: 'lib/app/admin-breadcrumbs.ts',
@@ -488,6 +496,16 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       // Reading the owed keys runs the lazy init, so this exercises the REAL
       // seam; an empty list is what makes createOrg() write nothing extra.
       expect(orgCreatedHooks.orgCreatedHookKeys()).toEqual([]);
+    },
+  },
+  {
+    seam: 'lib/app/signup-org.ts',
+    risk: 'a stray resolver would decide where every self-serve signup lands at multi on every install, instead of an org of their own',
+    assert: () => {
+      signupOrg.__resetSignupOrgResolverForTests();
+      // The read runs the lazy init, so this exercises the REAL seam; no
+      // resolver is what gives each self-serve signup an org of their own.
+      expect(signupOrg.hasSignupOrgResolver()).toBe(false);
     },
   },
   {
@@ -763,6 +781,7 @@ describe('lib/app/ seams ship empty', () => {
     ['admin-tier', 'org-tier admin', [ROSTER]],
     ['user-created', 'user-created', []],
     ['org-created', 'org-created', []],
+    ['signup-org', 'signup-org', []],
     ['erasure', 'erasure', [STALE]],
   ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so

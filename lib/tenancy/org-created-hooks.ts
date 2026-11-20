@@ -7,9 +7,10 @@
  * in a create step of its own, so an org platform staff made from Sunrise's
  * admin skipped it and could call no AI provider.
  *
- * **Every org passes through `createOrg()`** (`lib/tenancy/lifecycle.ts`), the
- * one place an org row is written, so a dispatch there covers the admin route
- * and a fork calling it (and, once §134 t-1062 ships, self-serve signup).
+ * **Every org is written in `lib/tenancy/lifecycle.ts`**: `createOrg()`, for
+ * the admin route and a fork calling it, and `createSignupOrg()`, for the org
+ * a self-serve signup founds (§134 t-1062), whose hooks wait for its founder's
+ * membership (`completeSignupOrg()`). A dispatch there covers every path.
  *
  * **Hooks run after the create commits, never inside it.** A hook that could
  * fail the create would let a fault in app code (or a vendor's outage) refuse
@@ -47,12 +48,14 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppOrgCreatedHooks } from '@/lib/app/org-created';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
 import { withTimeout } from '@/lib/utils/with-timeout';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { releaseFoundedSignupOrgs } from '@/lib/tenancy/membership';
 import {
   clearOrgCreatedOwed,
   readOrgCreatedOwed,
+  ORG_AWAITING_FOUNDER_KEY,
   type OrgCreatedSource,
 } from '@/lib/tenancy/org-settings';
 
@@ -68,8 +71,9 @@ export interface OrgCreatedContext {
   name: string;
   /**
    * How it was made: `admin` from Sunrise's admin, `app` by an app's own call
-   * to `createOrg()`. `signup` is reserved for Sunrise's self-serve signup
-   * (§134 t-1062), which does not create orgs yet.
+   * to `createOrg()`, `signup` for the org of their own a self-serve signup
+   * founds at `multi` (§134 t-1062). A `signup` org's hooks run once its
+   * founder's membership exists, so `ownerUserId` names them.
    */
   source: OrgCreatedSource;
   /**
@@ -185,6 +189,13 @@ export const ORG_CREATED_LEASE_MS = 2 * 60 * 1000;
  * cannot fill the tick.
  */
 export const ORG_CREATED_JOB_BUDGET_MS = 60_000;
+
+/**
+ * How old a signup org must be before the job releases its awaiting-founder
+ * mark itself (§134 t-1062): long enough that a signup, or a verification, in
+ * flight releases its own org and runs its hooks first.
+ */
+export const ORG_CREATED_FOUNDER_GRACE_MS = 15 * 60 * 1000;
 
 /** The most orgs one maintenance tick picks up. */
 export const ORG_CREATED_JOB_BATCH = 25;
@@ -383,11 +394,28 @@ export interface OrgCreatedRetryResult {
  * keep failing cannot hold the rest back), and enters each one's own scope to
  * run them. It starts no further org once {@link ORG_CREATED_JOB_BUDGET_MS}
  * has passed. With no hook registered it returns without a query. A suspended
- * org's owed hooks wait until it is reinstated.
+ * org's owed hooks wait until it is reinstated, and a signup org's until its
+ * founder has joined it and can act there (`ORG_AWAITING_FOUNDER_KEY`). As a
+ * backstop it first releases that mark on signup orgs older than
+ * {@link ORG_CREATED_FOUNDER_GRACE_MS} whose founder can act
+ * (`releaseFoundedSignupOrgs`): one whose release on the signup or
+ * verification path was missed, or whose membership a heal wrote.
  */
 export async function retryOwedOrgCreatedHooks(): Promise<OrgCreatedRetryResult> {
   const result: OrgCreatedRetryResult = { orgs: 0, succeeded: 0, failed: 0 };
   appInit.ensure();
+
+  // The backstop for signup orgs whose founder can act (t-1062), with or
+  // without hooks: the mark also keeps an org from being a resolver's `join`
+  // target. A failure only delays them to the next tick. At `single` no
+  // signup org is made, so it makes no query.
+  if (isMultiTenant()) {
+    await releaseFoundedSignupOrgs({
+      createdBefore: new Date(Date.now() - ORG_CREATED_FOUNDER_GRACE_MS),
+    }).catch((error: unknown) => {
+      logger.error('Failed to release founded signup orgs; their hooks wait a tick', error);
+    });
+  }
   if (hooks.size === 0) return result;
 
   // Only orgs owing a key this process can run: one owing only a key no
@@ -397,6 +425,7 @@ export async function retryOwedOrgCreatedHooks(): Promise<OrgCreatedRetryResult>
     SELECT id FROM org
      WHERE status = 'ACTIVE'
        AND settings->'orgCreated'->'owed' ?| ${keys}::text[]
+       AND NOT settings ? ${ORG_AWAITING_FOUNDER_KEY}
      ORDER BY random()
      LIMIT ${ORG_CREATED_JOB_BATCH}`;
 

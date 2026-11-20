@@ -20,6 +20,34 @@ vi.mock('@/lib/logging', () => ({
   logger: { error: loggerError, warn: loggerWarn, info: vi.fn(), debug: vi.fn() },
 }));
 
+/**
+ * The backstop's release (t-1062), played against the store: a marked org
+ * created before the cutoff with an OWNER loses its mark. Whether that owner
+ * can act (a verified address) is the SQL's, tested in membership.test.ts.
+ */
+const mockRelease = vi.hoisted(() =>
+  vi.fn(async (filter: { createdBefore: Date }) => {
+    const out: Array<{ orgId: string; ownerUserId: string }> = [];
+    for (const [id, row] of store.orgs) {
+      const settings = row.settings as Record<string, unknown> | null;
+      const owner = store.owners.get(id)?.[0];
+      if (!settings || !('awaitingFounder' in settings) || !owner) continue;
+      if (row.createdAt >= filter.createdBefore) continue;
+      delete settings.awaitingFounder;
+      out.push({ orgId: id, ownerUserId: owner });
+    }
+    return out;
+  })
+);
+vi.mock('@/lib/tenancy/membership', () => ({ releaseFoundedSignupOrgs: mockRelease }));
+
+// The backstop runs only at `multi`; everything else here is mode-blind.
+const tenancy = vi.hoisted(() => ({ multi: false }));
+vi.mock('@/lib/tenancy/context', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tenancy/context')>()),
+  isMultiTenant: () => tenancy.multi,
+}));
+
 /** One org row's settings column, and its OWNER memberships, as the double holds them. */
 const store = vi.hoisted(() => ({
   orgs: new Map<
@@ -61,12 +89,21 @@ const rawSql = vi.hoisted(
         return [{ lease: claimed }];
       }
       if (sql.includes('SELECT id FROM org')) {
-        const [keys] = values as [string[]];
+        const [keys, excludedKey] = values as [string[], string | undefined];
+        // Played only when the statement says so (t-1062), so dropping the
+        // clause from the SQL fails the test that relies on it.
+        const excludes = sql.includes('NOT settings ? ?') && typeof excludedKey === 'string';
         return [...store.orgs.entries()]
           .filter(([, row]) => {
             const owed = recordOf(row.settings)?.owed;
+            const marked =
+              excludes &&
+              typeof row.settings === 'object' &&
+              row.settings !== null &&
+              excludedKey in row.settings;
             return (
               (row.status ?? 'ACTIVE') === 'ACTIVE' &&
+              !marked &&
               Array.isArray(owed) &&
               owed.some((key) => keys.includes(key as string))
             );
@@ -111,6 +148,7 @@ import {
   runOrgCreatedHooks,
   orgCreatedHookKeys,
   ORG_CREATED_HOOK_TIMEOUT_MS,
+  ORG_CREATED_FOUNDER_GRACE_MS,
   ORG_CREATED_JOB_BUDGET_MS,
   ORG_CREATED_LEASE_MS,
   ORG_CREATED_RUN_BUDGET_MS,
@@ -147,6 +185,7 @@ function register(entries: Record<string, (ctx: OrgCreatedContext) => unknown>) 
 }
 
 beforeEach(() => {
+  tenancy.multi = false;
   __resetOrgCreatedHooksForTests();
   initAppOrgCreatedHooks.mockReset().mockImplementation(() => {});
   store.orgs.clear();
@@ -600,6 +639,17 @@ describe('retryOwedOrgCreatedHooks', () => {
       failed: 0,
     });
     expect(db.$queryRaw).not.toHaveBeenCalled();
+    expect(mockRelease).not.toHaveBeenCalled(); // `single`: no signup orgs
+  });
+
+  it('at multi, releases founded signup orgs even with no hook registered (t-1062)', async () => {
+    tenancy.multi = true;
+
+    await retryOwedOrgCreatedHooks();
+
+    // The mark also keeps an org from being a resolver's `join` target.
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+    expect(db.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('runs the owed hooks of each ACTIVE org that owes some, each in its own scope', async () => {
@@ -630,6 +680,13 @@ describe('retryOwedOrgCreatedHooks', () => {
       status: 'SUSPENDED',
     });
     store.orgs.set('org-done', { slug: 'd', name: 'D', settings: null, createdAt: LONG_AGO });
+    // A signup org whose founder has not joined yet (t-1062): its hooks wait.
+    store.orgs.set('org-awaiting', {
+      slug: 'w',
+      name: 'W',
+      settings: { ...orgCreatedSettings(['app:provider'], 'signup'), awaitingFounder: true },
+      createdAt: LONG_AGO,
+    });
     // Owes only a key nothing registers any more: not selected at all.
     store.orgs.set('org-stale', {
       slug: 'x',
@@ -647,6 +704,61 @@ describe('retryOwedOrgCreatedHooks', () => {
     expect(readOrgCreatedOwed(store.orgs.get('org-suspended')?.settings)?.owed).toEqual([
       'app:provider',
     ]);
+  });
+
+  it('releases a signup org whose founder can act once it is past the grace period, and runs its hooks in the same tick (t-1062)', async () => {
+    tenancy.multi = true;
+    const seen: string[] = [];
+    register({
+      'app:provider': (ctx) => {
+        seen.push(`${ctx.orgId}:${ctx.ownerUserId}`);
+      },
+    });
+    const marked = () => ({
+      ...orgCreatedSettings(['app:provider'], 'signup'),
+      awaitingFounder: true,
+    });
+    // Its founder joined but the release on their path was missed.
+    store.orgs.set('org-missed', { slug: 'm', name: 'M', settings: marked(), createdAt: LONG_AGO });
+    store.owners.set('org-missed', ['user-founder']);
+    // A signup in flight: left to its own hook.
+    store.orgs.set('org-young', {
+      slug: 'y',
+      name: 'Y',
+      settings: marked(),
+      createdAt: new Date(),
+    });
+    store.owners.set('org-young', ['user-young']);
+    const before = Date.now();
+
+    const result = await retryOwedOrgCreatedHooks();
+
+    const [{ createdBefore }] = mockRelease.mock.calls[0];
+    expect(createdBefore.getTime()).toBeLessThanOrEqual(
+      before - ORG_CREATED_FOUNDER_GRACE_MS + 1000
+    );
+    expect(createdBefore.getTime()).toBeGreaterThanOrEqual(
+      before - ORG_CREATED_FOUNDER_GRACE_MS - 1000
+    );
+    expect(seen).toEqual(['org-missed:user-founder']);
+    expect(result).toEqual({ orgs: 1, succeeded: 1, failed: 0 });
+    expect(store.orgs.get('org-young')?.settings).toHaveProperty('awaitingFounder', true);
+  });
+
+  it('still runs the owed hooks when the release fails, and logs it', async () => {
+    tenancy.multi = true;
+    const seen: string[] = [];
+    register({ 'app:provider': (ctx) => void seen.push(ctx.orgId) });
+    seedOrg(['app:provider']);
+    mockRelease.mockRejectedValueOnce(new Error('connection reset'));
+
+    const result = await retryOwedOrgCreatedHooks();
+
+    expect(result.succeeded).toBe(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      'Failed to release founded signup orgs; their hooks wait a tick',
+      expect.any(Error)
+    );
   });
 
   it('starts no further org once the tick budget is spent', async () => {

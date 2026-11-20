@@ -19,6 +19,7 @@
  * page error.
  */
 import { appAuthLandingRoute, appAuthLandingLabel } from '@/lib/app/auth-landing';
+import { appWelcomeRoute } from '@/lib/app/welcome';
 import { normalizeRootRelativePath } from '@/lib/security/sanitize';
 
 /** Sunrise's own landing route, used when the fork seam is `null`. */
@@ -86,3 +87,68 @@ export const AUTH_LANDING_ROUTE = resolveAuthLandingRoute();
  * writing "Dashboard", so a fork's rename lands everywhere the route does.
  */
 export const AUTH_LANDING_LABEL = resolveAuthLandingLabel();
+
+/**
+ * The path part of a root-relative route, without its query, fragment or a
+ * trailing slash: `/app/?x=1` and `/app` are the same page to the router.
+ */
+export function routePathname(route: string): string {
+  const { pathname } = new URL(route, 'http://localhost');
+  return pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+}
+
+/**
+ * The auth pages (login, signup, password reset). The proxy sends a signed-in
+ * user away from these, and from any path beneath them, to the landing route.
+ */
+export const AUTH_ROUTES: readonly string[] = ['/login', '/signup', '/reset-password'];
+
+/** Whether `pathname` is one of {@link AUTH_ROUTES} or a path beneath it. */
+export function isAuthRoutePath(pathname: string): boolean {
+  return AUTH_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
+
+/**
+ * Fail loudly on a bad welcome route, for the landing route's reasons: it is
+ * a redirect target. A welcome route on the landing route's own path would
+ * redirect an owner of an unfinished org to the page they were already
+ * redirected from, for as long as the org stays unfinished, so that throws too.
+ * So does one on or under an auth route: the proxy sends a signed-in user from
+ * there back to the landing route, which sends them to the welcome route again.
+ */
+function resolveWelcomeRoute(): string | null {
+  if (appWelcomeRoute === null) return null;
+
+  const normalized = normalizeRootRelativePath(appWelcomeRoute.trim());
+  if (normalized === null) {
+    throw new Error(
+      `Invalid appWelcomeRoute in lib/app/welcome.ts: ${JSON.stringify(appWelcomeRoute)}. ` +
+        'Must be a root-relative path such as "/welcome".'
+    );
+  }
+  if (routePathname(normalized) === routePathname(AUTH_LANDING_ROUTE)) {
+    throw new Error(
+      `Invalid appWelcomeRoute in lib/app/welcome.ts: ${JSON.stringify(appWelcomeRoute)} is the ` +
+        'landing route itself, so an owner of an unfinished org would be redirected to it forever. ' +
+        'Give the welcome step its own page.'
+    );
+  }
+  if (isAuthRoutePath(routePathname(normalized))) {
+    throw new Error(
+      `Invalid appWelcomeRoute in lib/app/welcome.ts: ${JSON.stringify(appWelcomeRoute)} is on an ` +
+        `auth route (${AUTH_ROUTES.join(', ')}), which sends a signed-in user back to the landing ` +
+        'route, so an owner of an unfinished org would loop between the two. ' +
+        'Give the welcome step a page outside the auth routes.'
+    );
+  }
+
+  return normalized;
+}
+
+/**
+ * Where a signed-in OWNER or ADMIN of an org whose onboarding is unfinished lands
+ * instead of {@link AUTH_LANDING_ROUTE} (§134 t-1063), or `null` when the app
+ * sets none and nobody is redirected. The proxy applies it; see
+ * `lib/tenancy/onboarding.ts`.
+ */
+export const AUTH_WELCOME_ROUTE = resolveWelcomeRoute();

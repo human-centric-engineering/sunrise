@@ -12,7 +12,9 @@
  * caps (see {@link readOrgQuotas}), and a `privacy` slice holding its LLM
  * privacy minimum and protected terms (see {@link readOrgPrivacy}), and an
  * `entitlements` slice holding the switches set on it and off it (see
- * {@link readOrgEntitlements}). Everything else in that JSON belongs to
+ * {@link readOrgEntitlements}), and an `awaitingOnboarding` mark on an org
+ * whose onboarding the app has not finished (see {@link readOrgOnboarded}).
+ * Everything else in that JSON belongs to
  * whoever put it there — a fork's own org-level config — and every write path
  * below preserves it rather than replacing the object.
  *
@@ -274,6 +276,65 @@ export async function writePlatformAgentsMarker(
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<void> {
   await writeSettingsSlice(orgId, ORG_PLATFORM_AGENTS_KEY, marker, db);
+}
+
+/**
+ * The key that marks an org made at self-serve signup whose founder has not
+ * joined it, or cannot act there yet (§134 t-1062): `true` while it is there.
+ * Removed, once the founder is its OWNER and can act there (a verified address
+ * where one is required, or a session), by whichever comes first: the
+ * transaction that writes their membership (`writeNewUserMemberships`,
+ * `healSignupRecord`), their verification or any sign-in
+ * (`releaseFoundedSignupOrgs`, `lib/tenancy/membership.ts`), or the
+ * `orgCreatedHooks` job's backstop after 15 minutes. Written by
+ * `createSignupOrg()` (`lib/tenancy/lifecycle.ts`). While it is set the
+ * org-created retry job skips the org, and once the org is older than an hour
+ * with no member and no user's signup record naming it, the
+ * `abandonedSignupOrgs` job deletes it (`lib/tenancy/signup-org.ts`).
+ */
+export const ORG_AWAITING_FOUNDER_KEY = 'awaitingFounder';
+
+/**
+ * The key that marks an org whose onboarding the app has not finished
+ * (§134 t-1063): `true` while it is unfinished.
+ *
+ * Written in the INSERT of every org created through `lib/tenancy/lifecycle.ts`
+ * (staff, an app's own `createOrg()`, a self-serve signup), and removed by
+ * `markOrgOnboarded()` (`lib/tenancy/onboarding.ts`) when the app says the
+ * welcome step is done. **A missing key means finished**, so the install org
+ * and every org that existed before this key was introduced read as finished,
+ * with no migration. See {@link readOrgOnboarded}.
+ */
+export const ORG_AWAITING_ONBOARDING_KEY = 'awaitingOnboarding';
+
+/**
+ * Whether an org's onboarding is finished, read from its `settings`.
+ *
+ * Only a literal `true` under {@link ORG_AWAITING_ONBOARDING_KEY} reads as
+ * unfinished. Anything else, an unreadable column included, reads as
+ * finished: the answer decides whether a member is sent to a welcome step,
+ * and sending everyone in an org there because of a bad value would keep
+ * them out of the product, which is the worse failure.
+ */
+export function readOrgOnboarded(settings: unknown): boolean {
+  return !(isJsonObject(settings) && settings[ORG_AWAITING_ONBOARDING_KEY] === true);
+}
+
+/**
+ * Remove an org's {@link ORG_AWAITING_ONBOARDING_KEY}, preserving every other
+ * key. Through {@link writeSettingsSlice}: a SERIALIZABLE read-modify-write,
+ * so a clash fails this writer with `P2034` ({@link isSettingsWriteConflict})
+ * rather than dropping another slice.
+ *
+ * @returns whether anything was written (`false` when the org was already
+ *   finished), or `null` when the org does not exist.
+ */
+export async function clearOrgAwaitingOnboarding(
+  orgId: string,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<{ written: boolean } | null> {
+  const result = await writeSettingsSlice(orgId, ORG_AWAITING_ONBOARDING_KEY, null, db);
+  return result === null ? null : { written: result.written };
 }
 
 /** The key the org-created seam owns inside `Org.settings` (§134 t-1061). */
