@@ -97,6 +97,9 @@ export function SettingsTabs({
 
   // document.title per tab, in the viewer's language.
   const titles = useMemo(() => settingsTabTitles(t), [t]);
+  const showLanguage =
+    language.options.length > 1 ||
+    (language.locale !== null && !language.options.some((o) => o.tag === language.locale));
 
   const { activeTab, setActiveTab } = useTrackedUrlTabs<SettingsTab>({
     defaultTab: DEFAULT_SETTINGS_TAB,
@@ -228,13 +231,18 @@ export function SettingsTabs({
 
             <Separator />
 
-            {/* Interface language */}
-            <div className="space-y-4">
-              <h3 className="font-medium">{t('accountTab.language')}</h3>
-              <LanguageForm locale={language.locale} options={language.options} />
-            </div>
+            {/* Interface language: shown when there is a language to pick, or a
+                stored one the install no longer offers, so it can be cleared. */}
+            {showLanguage ? (
+              <>
+                <div className="space-y-4">
+                  <h3 className="font-medium">{t('accountTab.language')}</h3>
+                  <LanguageForm locale={language.locale} options={language.options} />
+                </div>
 
-            <Separator />
+                <Separator />
+              </>
+            ) : null}
 
             {/* Danger Zone */}
             <div className="space-y-4">

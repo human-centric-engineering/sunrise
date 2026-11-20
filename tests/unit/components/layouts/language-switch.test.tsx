@@ -60,6 +60,12 @@ describe('LanguageSwitch', () => {
     expect(trigger).toHaveTextContent('Français');
   });
 
+  it('shows its label, not an empty switch, on a page in a language it does not list', () => {
+    render(<LanguageSwitch options={OPTIONS} current="en-XA" />);
+
+    expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('Language');
+  });
+
   it('lists every language by its native name', async () => {
     const user = userEvent.setup();
     render(<LanguageSwitch options={OPTIONS} current="en" />);

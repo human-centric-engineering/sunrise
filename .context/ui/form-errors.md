@@ -19,6 +19,7 @@ was also amber, which doesn't read as a failure.
 | `invalidSave()`          | `lib/errors/save-error.ts`                             | A save react-hook-form's validation blocked, as a failure: the field count, each field named           |
 | `unreadableNumbers()`    | `lib/errors/save-error.ts`                             | The number fields the browser couldn't read, as a failure; `save.submit` checks it on every press      |
 | `useSaveFailure()`       | `lib/hooks/use-save-failure.ts`                        | Owns a page's failure: reports what a save threw, and clears it on every press of Save                 |
+| `SaveErrorText`          | `lib/errors/save-error.ts`                             | The summary's words (`forms.saveError`); `useSaveFailure` passes them in the viewer's language         |
 | `apiErrorFromResponse()` | `lib/api/client.ts`                                    | The `APIClientError` a failed raw `fetch` would have raised through `apiClient`                        |
 | `useCommittedDialog()`   | `lib/hooks/use-committed-dialog.ts`                    | Locks a dialog while its save runs, and clears its failure as it opens and closes                      |
 | `<SaveError>`            | `components/forms/form-error.tsx`                      | Shows the failure by Save: red, `role="alert"`, brought into view and focused when it appears          |
@@ -32,6 +33,14 @@ sign-in fails).
 **A hand-drawn save-error box fails the build**, and so does a `<form>`
 without `noValidate` or `method="post"`: `npm run check:save-errors` (in `npm run validate`, and
 its own CI step). See [The check](#the-check).
+
+The words these use ("2 fields need fixing.", "Enter a number.") are the
+catalogue's `forms.saveError`. `useSaveFailure()` reads them in the viewer's
+language. Called on their own, `invalidSave()`, `unreadableNumbers()` and
+`fieldCount()` take an optional `SaveErrorText` and default to
+`englishSaveErrorText`, which a test holds equal to the catalogue. A form
+that shows a count itself uses
+`useTranslations('forms.saveError')('fieldsNeedFixing', { count })`.
 
 ## The rules
 
@@ -264,7 +273,9 @@ const { error } = await authClient.changePassword({ currentPassword, newPassword
 if (error) {
   if (error.code === 'INVALID_PASSWORD') {
     setError('currentPassword', { type: 'server', message: WRONG });
-    save.show(fieldCount(1), [{ field: 'currentPassword', message: WRONG }]); // focuses it
+    save.show(tSave('fieldsNeedFixing', { count: 1 }), [
+      { field: 'currentPassword', message: WRONG },
+    ]); // focuses it
   } else save.show(error.message);
   return;
 }

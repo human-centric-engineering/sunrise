@@ -56,7 +56,10 @@ export function LanguageSwitch({ options, current }: LanguageSwitchProps) {
   // Settles when the refreshed page has rendered, whichever language it came
   // back in (a signed-in user's own choice outranks the cookie this sets).
   const [refreshing, startRefresh] = useTransition();
-  const shown = pending !== null && (saving || refreshing) ? pending : current;
+  const picked = pending !== null && (saving || refreshing) ? pending : current;
+  // A page in a language the switch does not list (the pseudo-locale in
+  // production) shows the label rather than an empty switch.
+  const shown = options.some((o) => o.tag === picked) ? picked : undefined;
 
   if (options.length < 2) return null;
 
@@ -96,7 +99,7 @@ export function LanguageSwitch({ options, current }: LanguageSwitchProps) {
             className="h-8 w-auto gap-2 text-sm"
             aria-describedby={failed ? errorId : undefined}
           >
-            <SelectValue />
+            <SelectValue placeholder={t('label')} />
           </SelectTrigger>
           <SelectContent>
             {options.map((option) => (

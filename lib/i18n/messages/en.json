@@ -664,6 +664,14 @@
     "noScript": {
       "message": "This form needs JavaScript. Turn it on in your browser, then reload this page."
     },
+    "saveError": {
+      "fieldsNeedFixing": "{count, plural, one {# field needs fixing.} other {# fields need fixing.}}",
+      "checkForm": "Check the form and try again.",
+      "checkField": "Check this field.",
+      "enterNumber": "Enter a number.",
+      "fieldsNeedNumber": "{count, plural, one {# field needs a number.} other {# fields need a number.}}",
+      "tryAgain": "Try again."
+    },
     "staleSave": {
       "changed": "{what} changed since you opened it. Nothing was saved.",
       "explainWithCopy": "Someone else saved it, or a person on it had their data erased. Your changes are still here, and reloading discards them: copy them first to keep a record, then reload to see the current version and make them again.",

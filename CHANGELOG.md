@@ -44,6 +44,10 @@ release process.
   `tests/setup.ts` now does with the real catalogue. `authLandingLabel(default)`
   (`lib/auth-landing/route.ts`) gives `AUTH_LANDING_LABEL` in the viewer's
   language: a fork's own label as given, otherwise the translated default.
+  `useSaveFailure()` shows its summary by Save ("2 fields need fixing.") in
+  the viewer's language, from the new `forms.saveError` keys, and
+  `invalidSave()`, `unreadableNumbers()` and `fieldCount()` take an optional
+  `SaveErrorText` (default `englishSaveErrorText`, in `lib/errors/save-error.ts`).
 
 - **A new fork seam, `lib/app/model-pins.ts` (ships empty), for the models an
   app names itself (§136, t-1067).** Fill `initAppModelPins()` with

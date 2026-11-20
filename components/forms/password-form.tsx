@@ -26,11 +26,11 @@ import { FormError, SaveError } from '@/components/forms/form-error';
 import { NoScriptNotice } from '@/components/forms/no-script-notice';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
-import { fieldCount } from '@/lib/errors/save-error';
 
 export function PasswordForm() {
   const t = useTranslations('account.password');
   const tv = useTranslations('validation');
+  const tSave = useTranslations('forms.saveError');
   const changePasswordSchema = useMemo(() => createChangePasswordSchema(tv), [tv]);
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -78,7 +78,9 @@ export function PasswordForm() {
           // focus. By Save, the summary every form shows for a named field.
           const wrongPassword = t('wrongPassword');
           setError('currentPassword', { type: 'server', message: wrongPassword });
-          save.show(fieldCount(1), [{ field: 'currentPassword', message: wrongPassword }]);
+          save.show(tSave('fieldsNeedFixing', { count: 1 }), [
+            { field: 'currentPassword', message: wrongPassword },
+          ]);
         } else {
           save.show(error.message || t('saveFailed'));
         }

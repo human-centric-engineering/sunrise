@@ -396,6 +396,27 @@ describe('components/settings/settings-tabs', () => {
       expect(picker).toHaveAttribute('data-options', 'en,fr');
     });
 
+    it.each([
+      ['hides', 'only one language and nothing stored', null, false],
+      ['hides', 'only one language, which is the stored one', 'en', false],
+      ['shows', 'a stored language the install no longer offers', 'de', true],
+    ] as const)('%s the language picker with %s', async (_v, _case, locale, shown) => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=account') as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(
+        <SettingsTabs
+          {...defaultProps}
+          language={{ locale, options: [{ tag: 'en', name: 'English' }] }}
+        />
+      );
+
+      expect(screen.queryByTestId('language-form') !== null).toBe(shown);
+      expect(screen.queryByRole('heading', { name: 'Language' }) !== null).toBe(shown);
+    });
+
     it('should show Danger Zone heading', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');

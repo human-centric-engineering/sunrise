@@ -68,15 +68,22 @@ type LoadError =
  * We detect specific error patterns and return friendly messages.
  */
 function parseOAuthError(error: string): LoadError {
-  // Decode and normalize the error message
-  const decoded = decodeURIComponent(error).replace(/_/g, ' ');
+  // useSearchParams has decoded it already. Decoding again catches a message
+  // encoded twice, and a stray '%' leaves it as it is rather than throwing.
+  let raw = error;
+  try {
+    raw = decodeURIComponent(error);
+  } catch {
+    // Not encoded again: use it as given.
+  }
+  const decoded = raw.replace(/_/g, ' ');
 
   // Check for email mismatch error (our custom error from before hook)
   if (decoded.includes('invitation was sent to')) {
     // Matched before underscores become spaces, so an address keeps its own
     // ("john_doe@acme.com"). It runs to the full stop that ends the sentence,
     // so the dots inside it ("jane.doe@acme.com") stay part of it too.
-    const emailMatch = decodeURIComponent(error).match(/sent[ _]to[ _](\S+?)\.(?:[\s_]|$)/);
+    const emailMatch = raw.match(/sent[ _]to[ _](\S+?)\.(?:[\s_]|$)/);
     return emailMatch
       ? { key: 'oauthWrongEmail', email: emailMatch[1] }
       : { key: 'oauthWrongEmailUnknown' };

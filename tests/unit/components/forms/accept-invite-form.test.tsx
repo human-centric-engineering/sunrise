@@ -838,6 +838,19 @@ describe('components/forms/accept-invite-form', () => {
       ).toBeInTheDocument();
     });
 
+    it('shows the generic OAuth error for a message with a stray %, rather than crashing', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(
+          'token=abc123&email=test@example.com&error=100%25_failed'
+        ) as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(<AcceptInviteForm />);
+
+      expect(await screen.findByText(/unable to sign in/i)).toBeInTheDocument();
+    });
+
     it('should show generic OAuth error for unknown errors', async () => {
       // Arrange
       const { useSearchParams } = await import('next/navigation');
