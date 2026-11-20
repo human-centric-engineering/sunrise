@@ -178,7 +178,7 @@ export function PricingReference({
             <p>
               <strong>Rates are per million tokens.</strong> A typical chat turn uses 500–2,000
               input tokens and 200–1,000 output tokens. A 10-turn conversation on a frontier model
-              (~$15/M input, ~$75/M output) costs roughly $0.08–$0.90 depending on context length.
+              (~$5/M input, ~$25/M output) costs roughly $0.08–$0.35 depending on context length.
             </p>
             {canForceRefresh ? (
               <p>

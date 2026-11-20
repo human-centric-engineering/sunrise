@@ -1,6 +1,6 @@
 # Provider Selection Matrix
 
-DB-managed registry of LLM provider **models** with tier classification, capability ratings, and a decision heuristic for assigning models to agent roles. Each row represents a single model (e.g. "Claude Opus 4", "GPT-4o-mini", "Voyage 3") rather than a provider.
+DB-managed registry of LLM provider **models** with tier classification, capability ratings, and a decision heuristic for assigning models to agent roles. Each row represents a single model (e.g. "Claude Opus 4.6", "GPT-4o-mini", "Voyage 3") rather than a provider.
 
 ## Dynamic system-agent resolution
 
@@ -20,7 +20,7 @@ import { recommendModels } from '@/lib/orchestration/llm';
 
 // "What model should I use for a reasoning-heavy agent?"
 const recs = await recommendModels('thinking', { limit: 3 });
-// → [{ slug: 'anthropic-claude-opus-4', providerSlug: 'anthropic', score: 90, reason: '...' }, ...]
+// → [{ slug: 'anthropic-claude-opus-4-6', providerSlug: 'anthropic', score: 90, reason: '...' }, ...]
 
 // Embedding model recommendations
 const embedRecs = await recommendModels('embedding', { limit: 3 });
@@ -44,18 +44,19 @@ Seed (~36 defaults) → AiProviderModel table → provider-selector.ts → API e
 
 - **Seed-managed** (`isDefault: true`): ~36 default model entries populated by `009-provider-models.ts`. Re-seeding updates these rows.
 - **Admin-managed** (`isDefault: false`): Once an admin edits a seed model, `isDefault` flips to `false` and future seeds skip it. Admin-created models are always `isDefault: false`.
+- **Not served** (`RETIRED_SEED_MODELS`, t-1041): a seeded model its vendor does not serve leaves the seed, and a re-seed retires an install's seed-managed row for it, found by provider and model id: on 2026-11-20 or the day already recorded, with the successor already recorded while it qualifies or else its replacement on the same provider, and turned off ([Model lifecycle](./llm-providers.md#model-lifecycle)). A row whose slug the seed now gives its replacement is first moved aside (`-not-served` appended to its slug); pins name provider and model id, so nothing that uses it changes. Whatever still uses it shows on the model's page and in config health, and moves with **Move uses**. Claude Opus 4 and Sonnet 4 (replaced by 4.6), o3-mini (replaced by o3) and the dotted `claude-haiku-4.5` (replaced by `claude-haiku-4-5`) went this way on 2026-11-20. A row an admin has edited is left as it is. A seeded model whose provider and id another row already holds is skipped with a warning rather than failing the seed.
 
 ## Capability Tier Classification
 
 Models carry a single `tierRole` describing what they're FOR (capability tier) plus a `deploymentProfiles` array describing where they run (deployment locus). The two are orthogonal — Qwen2.5-72B is `tierRole: 'thinking'` AND `deploymentProfiles: ['sovereign']`.
 
-| Tier | Role               | Use When                                                             | Example Models                                                                        |
-| ---- | ------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 1    | **Thinking**       | Complex planning, multi-step reasoning, decomposition                | Claude Opus 4, GPT-5, Gemini 2.5 Pro, Qwen 2.5 72B (sovereign-deployable)             |
-| 2    | **Worker**         | Tool execution, summarisation, transformations, cheap parallel tasks | Claude Sonnet 4, GPT-4.1, DeepSeek Chat, Grok 3, Llama 3.3 70B (sovereign-deployable) |
-| 3    | **Infrastructure** | Scaling, latency-sensitive loops, high-throughput                    | Claude Haiku 4.5, GPT-4o-mini, Groq Llama 3.3                                         |
-| 4    | **Control Plane**  | Fallback logic, A/B testing, cost routing, enterprise compliance     | OpenRouter Auto, Bedrock Claude, Azure GPT-4o                                         |
-| E    | **Embedding**      | Vector embeddings for knowledge base and semantic search             | text-embedding-3-small, Voyage 3, Mistral Embed                                       |
+| Tier | Role               | Use When                                                             | Example Models                                                                          |
+| ---- | ------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 1    | **Thinking**       | Complex planning, multi-step reasoning, decomposition                | Claude Opus 4.6, GPT-5, Gemini 2.5 Pro, Qwen 2.5 72B (sovereign-deployable)             |
+| 2    | **Worker**         | Tool execution, summarisation, transformations, cheap parallel tasks | Claude Sonnet 4.6, GPT-4.1, DeepSeek Chat, Grok 3, Llama 3.3 70B (sovereign-deployable) |
+| 3    | **Infrastructure** | Scaling, latency-sensitive loops, high-throughput                    | Claude Haiku 4.5, GPT-4o-mini, Groq Llama 3.3                                           |
+| 4    | **Control Plane**  | Fallback logic, A/B testing, cost routing, enterprise compliance     | OpenRouter Auto, Bedrock Claude, Azure GPT-4o                                           |
+| E    | **Embedding**      | Vector embeddings for knowledge base and semantic search             | text-embedding-3-small, Voyage 3, Mistral Embed                                         |
 
 The deployment-locus signal — previously baked into a `local_sovereign` tier — now lives in the `deploymentProfiles` array. Self-hosted open-weight models still appear in the matrix; they just carry their actual capability tier (thinking / worker) plus `['sovereign']` rather than collapsing both axes into a single tier value. See `.context/orchestration/meta/architectural-decisions.md` §3.11.
 

@@ -56,8 +56,8 @@ describe('seed 009 — provider-models capability assignment', () => {
 
   describe('Claude models — vision and documents', () => {
     const claudeSlugs = [
-      'anthropic-claude-opus-4',
-      'anthropic-claude-sonnet-4',
+      'anthropic-claude-opus-4-6',
+      'anthropic-claude-sonnet-4-6',
       'anthropic-claude-haiku-4-5',
       'amazon-bedrock-claude',
     ];
@@ -151,7 +151,7 @@ describe('seed 009 — provider-models capability assignment', () => {
   describe('embedding / audio / reasoning models do not get vision or documents', () => {
     const nonChatSlugs = [
       'openai-whisper-1',
-      'openai-o3-mini',
+      'openai-o3',
       'openai-text-embedding-3-small',
       'openai-text-embedding-3-large',
       'voyage-voyage-3',

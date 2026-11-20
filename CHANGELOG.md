@@ -716,6 +716,26 @@ release process.
 
 ### Fixed
 
+- **The seeded model catalogue names models its vendors serve (t-1041).**
+  `prisma/seeds/009-provider-models.ts` seeded Claude Haiku 4.5 as
+  `claude-haiku-4.5` (Anthropic's id is `claude-haiku-4-5`), and Claude Opus
+  4, Claude Sonnet 4 and OpenAI o3-mini, which their vendors no longer serve,
+  so choosing any of them failed with "model not found". The seed now gives
+  Haiku 4.5 its real id, and seeds Opus 4.6, Sonnet 4.6 and o3 in place of
+  the other three. On an existing install a re-seed retires each
+  seed-managed row for a model not served (`RETIRED_SEED_MODELS`): on
+  2026-11-20, or the day already recorded; with the successor already
+  recorded if it still qualifies, else its replacement here; and turned off.
+  The dotted Haiku row is first moved aside (its slug gains `-not-served`) so
+  the corrected row can take the slug. Anything still pinned to these models
+  then shows on the model's page and in config health and moves with
+  **Move uses** (§136). A row an admin has edited is left alone, and a seeded
+  model whose provider and id another row already holds is skipped with a
+  warning instead of failing the seed. The built-in price for Claude Opus 4.6
+  (`model-registry.ts`, `anthropic.ts`) was $15 / $75 per million tokens; it
+  is $5 / $25, which every Opus 4.6 call is now costed at, and o3-mini leaves
+  the built-in list. **Fork impact:** run `npm run db:seed`; then open each
+  retired model the config-health card names and move its uses.
 - **A provider model with `vision` or `documents` can be saved again
   (t-1064).** The admin provider-model API's capability list was a copy of
   `MODEL_CAPABILITIES` that missed both when they were added, so the edit form

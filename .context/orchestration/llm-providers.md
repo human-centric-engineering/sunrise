@@ -1363,7 +1363,7 @@ The decision heuristic in `lib/orchestration/llm/provider-selector.ts` scores mo
 import { recommendModels } from '@/lib/orchestration/llm';
 
 const recs = await recommendModels('thinking', { limit: 3 });
-// → [{ slug: 'anthropic-claude-opus-4', providerSlug: 'anthropic', score: 90, reason: '...' }, ...]
+// → [{ slug: 'anthropic-claude-opus-4-6', providerSlug: 'anthropic', score: 90, reason: '...' }, ...]
 
 // Embedding-specific recommendations
 const embedRecs = await recommendModels('embedding', { limit: 3 });

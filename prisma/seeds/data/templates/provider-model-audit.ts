@@ -471,7 +471,7 @@ Each entry in \`newModels\`:
 - \`name\`: Human-readable name (e.g. "Claude Sonnet 4.5")
 - \`slug\`: Lowercase letters / digits / hyphens only, prefixed with the provider (e.g. "anthropic-claude-sonnet-4-5")
 - \`providerSlug\`: Must match an existing provider slug from the registry
-- \`modelId\`: API model identifier in **canonical short form** — the bare id the provider's API accepts, WITHOUT date suffixes. Match the format the registry already uses. Examples: \`claude-opus-4\` (NOT \`claude-opus-4-20250514\`), \`gpt-5\` (NOT \`gpt-5-2026-01-15\`), \`o3-mini\`.
+- \`modelId\`: API model identifier in **canonical short form** — the bare id the provider's API accepts, WITHOUT date suffixes. Match the format the registry already uses. Examples: \`claude-haiku-4-5\` (NOT \`claude-haiku-4-5-20251001\`), \`gpt-5\` (NOT \`gpt-5-2025-08-07\`), \`o3\`.
 - \`description\`: Brief — purpose and strengths in one sentence.
 - \`capabilities\`: array of one or more of: \`chat\`, \`reasoning\`, \`embedding\`, \`audio\`, \`image\`, \`moderation\`, \`vision\`, \`documents\`. Use these exact tokens — do not invent values like \`multimodal\` or \`pdf\`. \`image\` = image generation; \`vision\` = image input to a chat model.
 - \`tierRole\`: one of \`thinking\` / \`worker\` / \`infrastructure\` / \`control_plane\` / \`embedding\` (the model's capability tier).
@@ -492,20 +492,20 @@ ${PRICING_INSTRUCTIONS}
 
 ## Worked example
 
-Suppose the registry contains only \`claude-sonnet-4\` (anthropic). Web search result [2] reads "Claude Sonnet 4.5 released October 2025" at https://anthropic.com/news/sonnet-4-5 with description "Anthropic announces Claude Sonnet 4.5, available via API from October 2025." A well-formed proposal looks like this:
+Suppose the registry contains only \`claude-sonnet-4-5\` (anthropic). Web search result [2] reads "Introducing Claude Sonnet 4.6" at https://www.anthropic.com/news/claude-sonnet-4-6 with description "Anthropic announces Claude Sonnet 4.6, available via the API." A well-formed proposal looks like this:
 
 \`\`\`json
 {
-  "name": "Claude Sonnet 4.5",
-  "slug": "anthropic-claude-sonnet-4-5",
+  "name": "Claude Sonnet 4.6",
+  "slug": "anthropic-claude-sonnet-4-6",
   "providerSlug": "anthropic",
-  "modelId": "claude-sonnet-4-5",
-  "description": "Anthropic's mid-tier 4.5-generation chat model, balancing reasoning quality and cost.",
+  "modelId": "claude-sonnet-4-6",
+  "description": "Anthropic's mid-tier 4.6-generation chat model, balancing reasoning quality and cost.",
   "capabilities": ["chat", "vision", "documents"],
-  "tierRole": "infrastructure",
+  "tierRole": "worker",
   "deploymentProfiles": ["hosted"],
   "reasoningDepth": "high",
-  "latency": "medium",
+  "latency": "fast",
   "costEfficiency": "high",
   "contextLength": "very_high",
   "toolUse": "strong",
@@ -513,14 +513,14 @@ Suppose the registry contains only \`claude-sonnet-4\` (anthropic). Web search r
   "sources": [{
     "source": "web_search",
     "confidence": "high",
-    "reference": "https://anthropic.com/news/sonnet-4-5",
-    "snippet": "Anthropic announces Claude Sonnet 4.5, available via API from October 2025.",
+    "reference": "https://www.anthropic.com/news/claude-sonnet-4-6",
+    "snippet": "Anthropic announces Claude Sonnet 4.6, available via the API.",
     "note": "Result [2] announces the model's release."
   }]
 }
 \`\`\`
 
-Note: \`modelId\` is the bare canonical form (\`claude-sonnet-4-5\`, not the dated release id); the source is \`web_search\` with a verifiable URL; confidence is \`high\` because it's a vendor announcement.
+Note: \`modelId\` is the bare canonical form (\`claude-sonnet-4-6\`, not a dated release id); the source is \`web_search\` with a verifiable URL; confidence is \`high\` because it's a vendor announcement.
 
 ## Data
 
