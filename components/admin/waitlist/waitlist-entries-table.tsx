@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Loader2 } from 'lucide-react';
+import { useFormatter, useTranslations } from 'next-intl';
 
 import {
   AlertDialog,
@@ -38,7 +39,6 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { ClientDate } from '@/components/ui/client-date';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -119,7 +119,6 @@ export interface WaitlistEntriesTableProps {
 
 const ALL = '__all__';
 const LIMIT = WAITLIST_ADMIN_PAGE_SIZE;
-const LOAD_FAILED = 'The waitlist could not be loaded. Please try again.';
 
 interface Filters {
   q: string;
@@ -151,14 +150,17 @@ export function filterParams(filters: Filters): URLSearchParams {
   return params;
 }
 
-/** The answers, as `label: value` for each declared field that has one. */
-function answers(entry: WaitlistEntryRow, fields: readonly WaitlistFieldShape[]): string[] {
+/** The answers, a `[question, answer]` pair for each declared field that has one. */
+function answers(
+  entry: WaitlistEntryRow,
+  fields: readonly WaitlistFieldShape[]
+): Array<[question: string, answer: string]> {
   const details = isRecord(entry.details) ? entry.details : {};
-  return fields.flatMap((f) => {
+  return fields.flatMap((f): Array<[string, string]> => {
     const value = details[f.key];
     if (typeof value !== 'string' || value === '') return [];
     const shown = f.options?.find((o) => o.value === value)?.label ?? value;
-    return [`${f.label}: ${shown}`];
+    return [[f.label, shown]];
   });
 }
 
@@ -171,26 +173,31 @@ export function canInvite(entry: WaitlistEntryRow): boolean {
   return entryStateRefusal(entry) === null;
 }
 
-/** What a single invite did, for the line above the table. */
-function inviteNotice(outcome: string, emailStatus: string): string {
-  const what = outcome === 'resent' ? 'Invitation resent' : 'Invitation sent';
-  if (emailStatus === 'sent') return `${what}.`;
-  return `${what === 'Invitation sent' ? 'Invitation created' : 'Invitation renewed'}, but the email did not go${
-    emailStatus === 'disabled' ? ' (email is not set up)' : ''
-  }. Use Resend to try again.`;
+/** Which line a single invite's answer calls for, by its key in `admin.waitlist.entries.notice`. */
+function inviteNoticeKey(
+  outcome: string,
+  emailStatus: string
+): 'sent' | 'resent' | 'createdNoEmail' | 'createdEmailOff' | 'renewedNoEmail' | 'renewedEmailOff' {
+  const resent = outcome === 'resent';
+  if (emailStatus === 'sent') return resent ? 'resent' : 'sent';
+  if (emailStatus === 'disabled') return resent ? 'renewedEmailOff' : 'createdEmailOff';
+  return resent ? 'renewedNoEmail' : 'createdNoEmail';
 }
 
 function StateBadges({ entry }: { entry: WaitlistEntryRow }) {
+  const t = useTranslations('admin.waitlist.entries.badges');
   return (
     <div className="flex flex-wrap gap-1">
-      {!entry.confirmedAt && <Badge variant="outline">Unconfirmed</Badge>}
-      {entry.flaggedReason && <Badge variant="destructive">Flagged: {entry.flaggedReason}</Badge>}
-      {entry.removedAt && <Badge variant="secondary">Removed</Badge>}
-      {entry.removedAt && entry.rejoinRequests > 0 && (
-        <Badge variant="outline">Re-submitted ×{entry.rejoinRequests}</Badge>
+      {!entry.confirmedAt && <Badge variant="outline">{t('unconfirmed')}</Badge>}
+      {entry.flaggedReason && (
+        <Badge variant="destructive">{t('flagged', { reason: entry.flaggedReason })}</Badge>
       )}
-      {entry.invitedAt && !entry.joinedAt && <Badge variant="outline">Invited</Badge>}
-      {entry.joinedAt && <Badge>Signed up</Badge>}
+      {entry.removedAt && <Badge variant="secondary">{t('removed')}</Badge>}
+      {entry.removedAt && entry.rejoinRequests > 0 && (
+        <Badge variant="outline">{t('resubmitted', { count: entry.rejoinRequests })}</Badge>
+      )}
+      {entry.invitedAt && !entry.joinedAt && <Badge variant="outline">{t('invited')}</Badge>}
+      {entry.joinedAt && <Badge>{t('joined')}</Badge>}
     </div>
   );
 }
@@ -202,6 +209,10 @@ export function WaitlistEntriesTable({
   exportMaxRows,
   onChanged,
 }: WaitlistEntriesTableProps) {
+  const t = useTranslations('admin.waitlist.entries');
+  const tShell = useTranslations('admin.shell');
+  const format = useFormatter();
+  const loadFailed = t('loadFailed');
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [searchText, setSearchText] = useState('');
   const [sortBy, setSortBy] = useState<SortField>(WAITLIST_ADMIN_DEFAULT_SORT.sortBy);
@@ -210,28 +221,28 @@ export function WaitlistEntriesTable({
   const [entries, setEntries] = useState<WaitlistEntryRow[]>(initial?.entries ?? []);
   const [total, setTotal] = useState(initial?.total ?? 0);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(initial ? null : LOAD_FAILED);
+  const [error, setError] = useState<string | null>(initial ? null : loadFailed);
   const latestRequest = useRef(0);
   // The server rendered the default first page; fetch only once something changes.
   const skipFirstLoad = useRef(initial !== null);
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const rowSave = useSaveFailure({
-    fallback: 'Could not update the entry. Try again.',
+    fallback: t('rowFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
   const [restoreTarget, setRestoreTarget] = useState<WaitlistEntryRow | null>(null);
   const [restoring, setRestoring] = useState(false);
   const restoreSave = useSaveFailure({
-    fallback: 'Could not restore the entry. Try again.',
+    fallback: t('restoreFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
   const [eraseTarget, setEraseTarget] = useState<WaitlistEntryRow | null>(null);
   const [erasing, setErasing] = useState(false);
   const eraseSave = useSaveFailure({
-    fallback: 'Could not erase the entry. Try again.',
+    fallback: t('eraseFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
@@ -265,14 +276,14 @@ export function WaitlistEntriesTable({
       const res = await fetch(`${API.ADMIN.WAITLIST}?${params}`);
       if (!isCurrent()) return;
       if (!res.ok) {
-        fail(LOAD_FAILED);
+        fail(loadFailed);
         return;
       }
       const body = await parseApiResponse<WaitlistEntryRow[]>(res);
       if (!isCurrent()) return;
       const meta = body.success ? parsePaginationMeta(body.meta) : null;
       if (!body.success || !Array.isArray(body.data) || !meta) {
-        fail(LOAD_FAILED);
+        fail(loadFailed);
         return;
       }
       // An action that emptied the last page (a remove or erase of its one
@@ -288,11 +299,11 @@ export function WaitlistEntriesTable({
     } catch (err) {
       if (!isCurrent()) return;
       logger.error('waitlist entries fetch failed', err);
-      fail(LOAD_FAILED);
+      fail(loadFailed);
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [filters, page, sortBy, sortOrder]);
+  }, [filters, page, sortBy, sortOrder, loadFailed]);
 
   useEffect(() => {
     if (skipFirstLoad.current) {
@@ -360,7 +371,7 @@ export function WaitlistEntriesTable({
       const outcome = isRecord(data) && typeof data.outcome === 'string' ? data.outcome : 'invited';
       const emailStatus =
         isRecord(data) && typeof data.emailStatus === 'string' ? data.emailStatus : 'sent';
-      setNotice(inviteNotice(outcome, emailStatus));
+      setNotice(t(`notice.${inviteNoticeKey(outcome, emailStatus)}`));
       onChanged?.();
       await load();
     } catch (err) {
@@ -382,7 +393,7 @@ export function WaitlistEntriesTable({
       onChanged?.();
       await load();
     } catch (err) {
-      rowSave.report(err, 'Could not send the invitations');
+      rowSave.report(err, t('inviteSelectedFailed'));
     } finally {
       setInvitingSelected(false);
     }
@@ -450,11 +461,7 @@ export function WaitlistEntriesTable({
         `${API.ADMIN.WAITLIST_EXPORT}?${filterParams({ ...filters, q: searchText })}`
       );
       if (!res.ok) {
-        setExportError(
-          res.status === 429
-            ? 'Too many exports just now. Try again in a minute.'
-            : 'The export failed. Please try again.'
-        );
+        setExportError(res.status === 429 ? t('exportRateLimited') : t('exportFailed'));
         return;
       }
       const disposition = res.headers.get('Content-Disposition') ?? '';
@@ -467,7 +474,7 @@ export function WaitlistEntriesTable({
       URL.revokeObjectURL(url);
     } catch (err) {
       logger.error('waitlist export failed', err);
-      setExportError('The export failed. Please try again.');
+      setExportError(t('exportFailed'));
     } finally {
       setExporting(false);
     }
@@ -485,63 +492,44 @@ export function WaitlistEntriesTable({
       <ArrowDown className="ml-1 inline h-3 w-3" aria-hidden />
     );
   const toggles: Array<[key: keyof Filters, label: string, help: string]> = [
-    [
-      'includeUnconfirmed',
-      'Show unconfirmed',
-      'People who have not clicked the link in their confirmation email. Anyone can type any address into the form, so these are hidden by default and never invited.',
-    ],
-    [
-      'includeRemoved',
-      'Show removed',
-      'People taken off the list. Their row is kept so a re-join stays removed; erase them to delete it.',
-    ],
-    [
-      'includeJoined',
-      'Show signed up',
-      'People who have created an account from their invitation.',
-    ],
-    [
-      'flaggedOnly',
-      'Flagged only',
-      'Only entries the app’s screening check flagged for review — a throwaway domain, say. A flag is a reason to look, not proof of abuse.',
-    ],
+    ['includeUnconfirmed', t('showUnconfirmed'), t('showUnconfirmedHelp')],
+    ['includeRemoved', t('showRemoved'), t('showRemovedHelp')],
+    ['includeJoined', t('showJoined'), t('showJoinedHelp')],
+    ['flaggedOnly', t('flaggedOnly'), t('flaggedOnlyHelp')],
   ];
 
   return (
     <section className="space-y-3" aria-labelledby="waitlist-entries-heading">
       <h2 id="waitlist-entries-heading" className="text-lg font-semibold">
-        People
+        {t('title')}
       </h2>
 
       <div className="flex flex-wrap items-end gap-4">
         <div className="space-y-1">
           <Label htmlFor="waitlist-search" className="flex items-center gap-1">
-            Search
-            <FieldHelp title="Search">
-              Matches the address, the name, or any of the form&apos;s answers. The address is
-              matched as you type it; answers are matched exactly as written.
-            </FieldHelp>
+            {t('search')}
+            <FieldHelp title={t('search')}>{t('searchHelp')}</FieldHelp>
           </Label>
           <Input
             id="waitlist-search"
             className="w-64"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            placeholder="Address, name or answer"
+            placeholder={t('searchPlaceholder')}
           />
         </div>
         {lists.length > 1 && (
           <div className="space-y-1">
             <Label htmlFor="waitlist-list-filter" className="flex items-center gap-1">
-              List
-              <FieldHelp title="List">Show one list, or every list the app declares.</FieldHelp>
+              {t('list')}
+              <FieldHelp title={t('list')}>{t('listHelp')}</FieldHelp>
             </Label>
             <Select value={filters.list} onValueChange={(v) => setFilter('list', v)}>
               <SelectTrigger id="waitlist-list-filter" className="w-[180px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>All lists</SelectItem>
+                <SelectItem value={ALL}>{t('allLists')}</SelectItem>
                 {lists.map((key) => (
                   <SelectItem key={key} value={key}>
                     {key}
@@ -572,20 +560,18 @@ export function WaitlistEntriesTable({
               selected.size === 0 || selected.size > WAITLIST_INVITE_WAVE_MAX || invitingSelected
             }
           >
-            {invitingSelected ? 'Inviting…' : `Invite selected (${selected.size})`}
+            {invitingSelected ? t('inviting') : t('inviteSelected', { count: selected.size })}
           </Button>
           <Button variant="outline" size="sm" onClick={() => setWaveOpen(true)}>
-            Invite a wave…
+            {t('inviteWave')}
           </Button>
-          <FieldHelp title="Inviting">
-            An invitation emails a link to create an account. Only people who have confirmed their
-            address, are still on the list and are not flagged can be invited, up to{' '}
-            {WAITLIST_INVITE_WAVE_MAX} at a time. When they sign up, their entry shows Signed up.
+          <FieldHelp title={t('invitingHelpTitle')}>
+            {t('invitingHelp', { max: WAITLIST_INVITE_WAVE_MAX })}
           </FieldHelp>
         </div>
         <div className="ml-auto flex items-center gap-2 pb-1">
           <span className="text-muted-foreground text-xs">
-            Up to {exportMaxRows.toLocaleString()} rows, with these filters
+            {t('exportLimit', { max: exportMaxRows })}
           </span>
           <Button variant="outline" size="sm" onClick={() => void exportCsv()} disabled={exporting}>
             {exporting ? (
@@ -593,7 +579,7 @@ export function WaitlistEntriesTable({
             ) : (
               <Download className="mr-2 h-4 w-4" aria-hidden />
             )}
-            Export CSV
+            {t('exportCsv')}
           </Button>
         </div>
       </div>
@@ -622,7 +608,7 @@ export function WaitlistEntriesTable({
             <TableRow>
               <TableHead className="w-8">
                 <Checkbox
-                  aria-label="Select everyone on this page who can be invited"
+                  aria-label={t('selectPage')}
                   checked={allOnPageSelected}
                   disabled={invitableOnPage.length === 0}
                   onCheckedChange={(checked) =>
@@ -634,32 +620,35 @@ export function WaitlistEntriesTable({
               </TableHead>
               <TableHead>
                 <button type="button" onClick={() => sortOn('email')}>
-                  Address{sortIcon('email')}
+                  {t('address')}
+                  {sortIcon('email')}
                 </button>
               </TableHead>
-              <TableHead>Name</TableHead>
-              {lists.length > 1 && <TableHead>List</TableHead>}
-              <TableHead>Answers</TableHead>
-              <TableHead>Source</TableHead>
+              <TableHead>{t('name')}</TableHead>
+              {lists.length > 1 && <TableHead>{t('list')}</TableHead>}
+              <TableHead>{t('answers')}</TableHead>
+              <TableHead>{t('source')}</TableHead>
               <TableHead>
                 <button type="button" onClick={() => sortOn('createdAt')}>
-                  Joined{sortIcon('createdAt')}
+                  {t('joined')}
+                  {sortIcon('createdAt')}
                 </button>
               </TableHead>
               <TableHead>
                 <button type="button" onClick={() => sortOn('confirmedAt')}>
-                  Confirmed{sortIcon('confirmedAt')}
+                  {t('confirmed')}
+                  {sortIcon('confirmedAt')}
                 </button>
               </TableHead>
-              <TableHead>State</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead>{t('state')}</TableHead>
+              <TableHead className="text-right">{tShell('actions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={columns} className="text-muted-foreground py-8 text-center">
-                  {loading ? 'Loading…' : error ? 'Nothing to show.' : 'No one matches.'}
+                  {loading ? tShell('loading') : error ? tShell('nothingToShow') : t('empty')}
                 </TableCell>
               </TableRow>
             ) : (
@@ -668,7 +657,7 @@ export function WaitlistEntriesTable({
                   <TableCell>
                     {canInvite(entry) && (
                       <Checkbox
-                        aria-label={`Select ${entry.email}`}
+                        aria-label={t('selectOne', { email: entry.email })}
                         checked={selected.has(entry.id)}
                         onCheckedChange={(checked) => toggleSelected(entry.id, checked === true)}
                       />
@@ -678,18 +667,21 @@ export function WaitlistEntriesTable({
                   <TableCell>{entry.name ?? '—'}</TableCell>
                   {lists.length > 1 && <TableCell>{entry.list}</TableCell>}
                   <TableCell className="max-w-xs text-xs">
-                    {answers(entry, fields).map((line) => (
-                      <div key={line} className="truncate" title={line}>
-                        {line}
-                      </div>
-                    ))}
+                    {answers(entry, fields).map(([question, answer]) => {
+                      const line = t('answer', { question, answer });
+                      return (
+                        <div key={line} className="truncate" title={line}>
+                          {line}
+                        </div>
+                      );
+                    })}
                   </TableCell>
                   <TableCell className="text-xs">{entry.utmSource ?? entry.source}</TableCell>
+                  <TableCell>{format.dateTime(new Date(entry.createdAt), 'short')}</TableCell>
                   <TableCell>
-                    <ClientDate date={entry.createdAt} />
-                  </TableCell>
-                  <TableCell>
-                    {entry.confirmedAt ? <ClientDate date={entry.confirmedAt} /> : '—'}
+                    {entry.confirmedAt
+                      ? format.dateTime(new Date(entry.confirmedAt), 'short')
+                      : '—'}
                   </TableCell>
                   <TableCell>
                     <StateBadges entry={entry} />
@@ -701,7 +693,7 @@ export function WaitlistEntriesTable({
                         onClick={() => void invite(entry)}
                         disabled={busyId === entry.id}
                       >
-                        {entry.invitedAt ? 'Resend' : 'Invite'}
+                        {entry.invitedAt ? t('resend') : t('invite')}
                       </Button>
                     )}
                     {entry.removedAt ? (
@@ -711,7 +703,7 @@ export function WaitlistEntriesTable({
                         onClick={() => setRestoreTarget(entry)}
                         disabled={busyId === entry.id}
                       >
-                        Restore
+                        {t('restore')}
                       </Button>
                     ) : (
                       <Button
@@ -720,11 +712,11 @@ export function WaitlistEntriesTable({
                         onClick={() => void remove(entry)}
                         disabled={busyId === entry.id}
                       >
-                        Remove
+                        {t('remove')}
                       </Button>
                     )}
                     <Button variant="destructive" size="sm" onClick={() => setEraseTarget(entry)}>
-                      Erase
+                      {t('erase')}
                     </Button>
                   </TableCell>
                 </TableRow>
@@ -735,28 +727,24 @@ export function WaitlistEntriesTable({
       </div>
 
       <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">
-          {total.toLocaleString()} {total === 1 ? 'person' : 'people'}
-        </span>
+        <span className="text-muted-foreground">{t('people', { count: total })}</span>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setPage((p) => p - 1)}
             disabled={page <= 1 || loading}
-            aria-label="Previous page"
+            aria-label={tShell('previousPage')}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span>
-            Page {page} of {totalPages}
-          </span>
+          <span>{t('pageOf', { page, total: totalPages })}</span>
           <Button
             variant="outline"
             size="sm"
             onClick={() => setPage((p) => p + 1)}
             disabled={page >= totalPages || loading}
-            aria-label="Next page"
+            aria-label={tShell('nextPage')}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -777,25 +765,21 @@ export function WaitlistEntriesTable({
       <AlertDialog open={restoreTarget !== null} onOpenChange={restoreDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Restore this person?</AlertDialogTitle>
+            <AlertDialogTitle>{t('restoreTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              They were taken off the list
               {restoreTarget && restoreTarget.rejoinRequests > 0
-                ? `, and have tried to join again ${restoreTarget.rejoinRequests} time${
-                    restoreTarget.rejoinRequests === 1 ? '' : 's'
-                  } since`
-                : ''}
-              . Restoring puts them back on it, where they can be invited.
+                ? t('restoreDescriptionRejoined', { count: restoreTarget.rejoinRequests })
+                : t('restoreDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <SaveError failure={restoreSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel {...restoreDialog.cancelProps}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...restoreDialog.cancelProps}>{tShell('cancel')}</AlertDialogCancel>
             <AlertDialogAction
               {...restoreDialog.actionProps()}
               onClick={(e) => restoreDialog.confirm(e, handleRestore)}
             >
-              {restoring ? 'Restoring…' : 'Restore'}
+              {restoring ? t('restoring') : t('restore')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -804,23 +788,18 @@ export function WaitlistEntriesTable({
       <AlertDialog open={eraseTarget !== null} onOpenChange={eraseDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Erase this person?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This deletes their entry and answers for good, and any invitation this organisation
-              has sent them that they have not used. A receipt records that they were erased,
-              without their address. Use it to honour an erasure request; to take someone off the
-              list but keep the record, use Remove.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t('eraseTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('eraseDescription')}</AlertDialogDescription>
           </AlertDialogHeader>
           <SaveError failure={eraseSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel {...eraseDialog.cancelProps}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...eraseDialog.cancelProps}>{tShell('cancel')}</AlertDialogCancel>
             <AlertDialogAction
               {...eraseDialog.actionProps()}
               onClick={(e) => eraseDialog.confirm(e, handleErase)}
               className="bg-red-600 hover:bg-red-700"
             >
-              {erasing ? 'Erasing…' : 'Erase'}
+              {erasing ? t('erasing') : t('erase')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

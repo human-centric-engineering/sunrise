@@ -274,6 +274,11 @@ vi.mock('next-intl', async (importOriginal) => {
   return { ...(await importOriginal<typeof import('next-intl')>()), ...nextIntlClientMock };
 });
 vi.mock('next-intl/server', async () => {
+  // Load the client mock first. The helper imports `next-intl`, so a file that
+  // reaches `next-intl/server` first (a server page) would otherwise build the
+  // client mock from inside the helper's own evaluation, get it half-built,
+  // and leave its client components on the real hooks (§138 t-1074).
+  await import('next-intl');
   const { nextIntlServerMock } = await import('@/tests/helpers/i18n');
   return nextIntlServerMock;
 });

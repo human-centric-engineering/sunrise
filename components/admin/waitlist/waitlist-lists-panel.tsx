@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { useFormatter, useTranslations } from 'next-intl';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -57,16 +58,18 @@ function ListCard({
   list: WaitlistListCountsView;
   onListChange: WaitlistListsPanelProps['onListChange'];
 }) {
+  const t = useTranslations('admin.waitlist.lists');
+  const format = useFormatter();
   const [pending, setPending] = useState<Pending>(null);
   // Closed by the config alone: no close date, so retention has no window to count.
   const unrecorded = !list.open && list.closedSince === null;
   // One failure per button, each shown beside the button that was pressed.
   const toggleSave = useSaveFailure({
-    fallback: `Could not ${list.open ? 'close' : 'open'} the list. Try again.`,
+    fallback: list.open ? t('closeFailed') : t('openFailed'),
     fields: NO_SERVER_FIELDS,
   });
   const recordSave = useSaveFailure({
-    fallback: 'Could not record the close. Try again.',
+    fallback: t('recordFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
@@ -91,12 +94,12 @@ function ListCard({
   };
 
   const states: Array<[label: string, count: number]> = [
-    ['Confirmed', list.confirmed],
-    ['Unconfirmed', list.unconfirmed],
-    ['Flagged', list.flagged],
-    ['Invited', list.invited],
-    ['Signed up', list.joined],
-    ['Removed', list.removed],
+    [t('confirmed'), list.confirmed],
+    [t('unconfirmed'), list.unconfirmed],
+    [t('flagged'), list.flagged],
+    [t('invited'), list.invited],
+    [t('joined'), list.joined],
+    [t('removed'), list.removed],
   ];
 
   return (
@@ -105,13 +108,9 @@ function ListCard({
         <div className="flex items-center gap-2">
           <h3 className="font-medium">{list.key}</h3>
           <Badge variant={list.open ? 'default' : 'secondary'}>
-            {list.open ? 'Taking joins' : 'Closed'}
+            {list.open ? t('takingJoins') : t('closed')}
           </Badge>
-          <FieldHelp title="Opening and closing a list">
-            Closing a list stops new joins and nothing else: people can still confirm, leave and be
-            invited, and you can still export and erase. Each change records who made it. A list
-            starts open unless the app declares it closed.
-          </FieldHelp>
+          <FieldHelp title={t('toggleHelpTitle')}>{t('toggleHelp')}</FieldHelp>
         </div>
         <div className="flex items-center gap-2">
           {unrecorded && (
@@ -126,7 +125,7 @@ function ListCard({
                 {pending === 'record' && (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
                 )}
-                Mark closed
+                {t('markClosed')}
               </Button>
             </>
           )}
@@ -138,28 +137,26 @@ function ListCard({
             disabled={pending !== null}
           >
             {pending === 'toggle' && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />}
-            {list.open ? 'Close list' : 'Open list'}
+            {list.open ? t('closeList') : t('openList')}
           </Button>
         </div>
       </div>
-      {unrecorded && (
-        <p className="text-muted-foreground text-sm">
-          Closed by the app&apos;s settings, with no close date recorded, so its entries are kept
-          until one is. Mark closed records today: confirmed entries are then deleted the app&apos;s
-          retention window after it.
-        </p>
-      )}
+      {unrecorded && <p className="text-muted-foreground text-sm">{t('unrecorded')}</p>}
       <dl className="grid grid-cols-3 gap-2 text-sm sm:grid-cols-6">
         {states.map(([label, count]) => (
           <div key={label}>
             <dt className="text-muted-foreground">{label}</dt>
-            <dd className="font-medium tabular-nums">{count}</dd>
+            <dd className="font-medium tabular-nums">{format.number(count)}</dd>
           </div>
         ))}
       </dl>
       {list.bySource.length > 0 && (
         <p className="text-muted-foreground text-sm">
-          Confirmed by source: {list.bySource.map((s) => `${s.source} ${s.count}`).join(' · ')}
+          {t('bySource', {
+            sources: list.bySource
+              .map((s) => t('sourceCount', { source: s.source, count: s.count }))
+              .join(' · '),
+          })}
         </p>
       )}
     </div>
@@ -167,17 +164,14 @@ function ListCard({
 }
 
 export function WaitlistListsPanel({ lists, onListChange }: WaitlistListsPanelProps) {
+  const t = useTranslations('admin.waitlist.lists');
   return (
     <section className="space-y-3" aria-labelledby="waitlist-lists-heading">
       <div className="flex items-center gap-1">
         <h2 id="waitlist-lists-heading" className="text-lg font-semibold">
-          Lists
+          {t('title')}
         </h2>
-        <FieldHelp title="What the counts mean">
-          Confirmed people have clicked the link in their confirmation email and are the ones an
-          invite draws from. Unconfirmed and flagged entries are counted on their own and never
-          inside Confirmed. Flagged entries were marked by the app&apos;s screening check.
-        </FieldHelp>
+        <FieldHelp title={t('countsHelpTitle')}>{t('countsHelp')}</FieldHelp>
       </div>
       <div className="space-y-3">
         {lists.map((list) => (

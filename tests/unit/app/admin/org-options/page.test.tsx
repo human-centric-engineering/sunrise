@@ -129,7 +129,7 @@ describe('OrgOptionsPage', () => {
     render(await OrgOptionsPage());
 
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'This organisation’s options could not be loaded.'
+      "This organisation's options could not be loaded."
     );
     expect(screen.queryByTestId('options-form')).not.toBeInTheDocument();
     expect(screen.getByTestId('language-form')).toBeInTheDocument();
