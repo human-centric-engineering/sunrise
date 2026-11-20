@@ -12,11 +12,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Building2, ChevronRight, Home } from 'lucide-react';
 import { HeaderActions } from '@/components/layouts/header-actions';
 import { useBreadcrumbLabels } from '@/components/admin/breadcrumb-context';
 import { appSegmentLabels } from '@/lib/app/admin-breadcrumbs';
-import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { authLandingLabel, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { adminPageTier } from '@/lib/auth/admin-tier';
 
 interface AdminHeaderProps {
@@ -32,6 +33,22 @@ interface AdminHeaderProps {
   /** Every org-tier page pattern, core's and the fork's, as the layout read them. */
   orgTierPages: readonly string[];
 }
+
+/**
+ * The segments of the org-settings pages and the console root, named from the
+ * catalogue (§138 t-1074), by their key in `admin.nav` / `admin.shell`. Staff
+ * and orchestration segments keep the English below (owner ruling, §138
+ * planning).
+ */
+const catalogueSegments: Readonly<
+  Record<string, 'members' | 'orgOptions' | 'providerKeys' | 'supportAccess' | 'waitlist'>
+> = {
+  members: 'members',
+  'org-options': 'orgOptions',
+  'provider-keys': 'providerKeys',
+  'support-access': 'supportAccess',
+  waitlist: 'waitlist',
+};
 
 // Sunrise's names for its own segments. A fork names its segments (or renames
 // these) in `lib/app/admin-breadcrumbs.ts`; anything unnamed is title-cased.
@@ -74,14 +91,24 @@ function humanizeSegment(segment: string): string {
 }
 
 export function AdminHeader({ title, description, orgName, orgTierPages }: AdminHeaderProps) {
+  const t = useTranslations('admin.shell');
+  const tNav = useTranslations('admin.nav');
+  const tLayout = useTranslations('layout.nav');
   const pathname = usePathname();
   // Pages register readable names for their dynamic id segments here.
   const labelOverrides = useBreadcrumbLabels();
+
+  /** Core's name for a segment the catalogue names, in the viewer's language. */
+  const catalogueLabel = (segment: string): string | undefined => {
+    if (segment === 'admin') return t('admin');
+    return Object.hasOwn(catalogueSegments, segment) ? tNav(catalogueSegments[segment]) : undefined;
+  };
 
   /** A known name for the segment: registered by the page, the fork's, or core's. */
   const knownLabel = (segment: string): string | undefined =>
     ownLabel(labelOverrides, segment) ??
     ownLabel(appSegmentLabels, segment) ??
+    catalogueLabel(segment) ??
     ownLabel(segmentLabels, segment);
 
   // Generate breadcrumbs from pathname
@@ -99,7 +126,7 @@ export function AdminHeader({ title, description, orgName, orgTierPages }: Admin
   // Use the last segment as the title if not provided. Only a known label: a
   // title-cased record id is worse than a generic heading.
   const lastSegment = segments[segments.length - 1] ?? '';
-  const pageTitle = title || knownLabel(lastSegment) || 'Admin';
+  const pageTitle = title || knownLabel(lastSegment) || t('admin');
 
   return (
     <header className="bg-background border-b">
@@ -110,7 +137,7 @@ export function AdminHeader({ title, description, orgName, orgTierPages }: Admin
             <Link
               href={AUTH_LANDING_ROUTE}
               className="hover:text-foreground transition-colors"
-              aria-label={AUTH_LANDING_LABEL}
+              aria-label={authLandingLabel(tLayout('dashboard'))}
             >
               <Home className="h-4 w-4" />
             </Link>
@@ -142,7 +169,10 @@ export function AdminHeader({ title, description, orgName, orgTierPages }: Admin
             <p className="text-muted-foreground flex items-center gap-1.5 text-sm">
               <Building2 className="h-4 w-4" aria-hidden="true" />
               <span>
-                Acting in <span className="text-foreground font-medium">{actingOrgName}</span>
+                {t.rich('actingIn', {
+                  org: actingOrgName,
+                  strong: (chunks) => <span className="text-foreground font-medium">{chunks}</span>,
+                })}
               </span>
             </p>
           )}

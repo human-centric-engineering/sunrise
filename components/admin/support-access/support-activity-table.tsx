@@ -11,9 +11,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useFormatter, useTranslations } from 'next-intl';
 
 import { Button } from '@/components/ui/button';
-import { ClientDate } from '@/components/ui/client-date';
 import {
   Select,
   SelectContent,
@@ -55,29 +55,28 @@ export interface SupportActivityTableProps {
 const ALL = 'all';
 const LIMIT = 25;
 
-/** A grant, as a person picking one would recognise it: when, and why. */
-function grantLabel(grant: SupportGrantRow | undefined): string {
-  if (!grant) return 'An earlier grant';
-  const when = new Date(grant.createdAt).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-  const reason = grant.reason.length > 40 ? `${grant.reason.slice(0, 40)}…` : grant.reason;
-  return `${when}: ${reason}`;
-}
-
-/** The audit action, with entering named in words: it is the row an org looks for first. */
-function actionLabel(action: string): string {
-  return action === 'support.enter' ? 'Entered the organisation' : action;
-}
-
-function actorName(actor: SupportActivityRow['actor']): string {
-  if (!actor) return 'Deleted account';
-  return actor.name || 'Unnamed';
-}
-
 export function SupportActivityTable({ orgId, grants }: SupportActivityTableProps) {
+  const t = useTranslations('admin.supportAccess.activity');
+  const tShell = useTranslations('admin.shell');
+  const format = useFormatter();
+  const loadFailed = t('loadFailed');
+
+  /** A grant, as a person picking one would recognise it: when, and why. */
+  const grantLabel = (grant: SupportGrantRow | undefined): string => {
+    if (!grant) return t('earlierGrant');
+    const reason = grant.reason.length > 40 ? `${grant.reason.slice(0, 40)}…` : grant.reason;
+    return t('grantLabel', { when: format.dateTime(new Date(grant.createdAt), 'short'), reason });
+  };
+
+  /** The audit action, with entering named in words: it is the row an org looks for first. */
+  const actionLabel = (action: string): string =>
+    action === 'support.enter' ? t('entered') : action;
+
+  const actorName = (actor: SupportActivityRow['actor']): string => {
+    if (!actor) return tShell('deletedAccount');
+    return actor.name || tShell('unnamed');
+  };
+
   const [grantId, setGrantId] = useState<string>(ALL);
   const [page, setPage] = useState(1);
   const [entries, setEntries] = useState<SupportActivityRow[]>([]);
@@ -106,14 +105,14 @@ export function SupportActivityTable({ orgId, grants }: SupportActivityTableProp
       const res = await fetch(`${API.ORGS.supportActivity(orgId)}?${params}`);
       if (!isCurrent()) return;
       if (!res.ok) {
-        fail('What support did could not be loaded. Please try again.');
+        fail(loadFailed);
         return;
       }
       const body = await parseApiResponse<SupportActivityRow[]>(res);
       if (!isCurrent()) return;
       const meta = body.success ? parsePaginationMeta(body.meta) : null;
       if (!body.success || !Array.isArray(body.data) || !meta) {
-        fail('What support did could not be loaded. Please try again.');
+        fail(loadFailed);
         return;
       }
       setEntries(body.data);
@@ -121,11 +120,11 @@ export function SupportActivityTable({ orgId, grants }: SupportActivityTableProp
     } catch (err) {
       if (!isCurrent()) return;
       logger.error('support activity fetch failed', err);
-      fail('What support did could not be loaded. Please try again.');
+      fail(loadFailed);
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [orgId, grantId, page]);
+  }, [orgId, grantId, page, loadFailed]);
 
   useEffect(() => {
     void load();
@@ -138,11 +137,9 @@ export function SupportActivityTable({ orgId, grants }: SupportActivityTableProp
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 id="support-activity-heading" className="text-lg font-semibold">
-            What support did
+            {t('title')}
           </h2>
-          <p className="text-muted-foreground text-sm">
-            When support entered this organisation and what they did while in it, newest first.
-          </p>
+          <p className="text-muted-foreground text-sm">{t('description')}</p>
         </div>
         <Select
           value={grantId}
@@ -151,11 +148,11 @@ export function SupportActivityTable({ orgId, grants }: SupportActivityTableProp
             setPage(1);
           }}
         >
-          <SelectTrigger className="w-[280px]" aria-label="Grant">
+          <SelectTrigger className="w-[280px]" aria-label={t('grant')}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL}>All grants</SelectItem>
+            <SelectItem value={ALL}>{t('allGrants')}</SelectItem>
             {grants.map((grant) => (
               <SelectItem key={grant.id} value={grant.id}>
                 {grantLabel(grant)}
@@ -175,30 +172,24 @@ export function SupportActivityTable({ orgId, grants }: SupportActivityTableProp
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>When</TableHead>
-              <TableHead>Who</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead>What</TableHead>
-              <TableHead>Grant</TableHead>
+              <TableHead>{t('when')}</TableHead>
+              <TableHead>{t('who')}</TableHead>
+              <TableHead>{t('action')}</TableHead>
+              <TableHead>{t('what')}</TableHead>
+              <TableHead>{t('grant')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
-                  {loading
-                    ? 'Loading…'
-                    : error
-                      ? 'Nothing to show.'
-                      : 'Support has not worked in this organisation.'}
+                  {loading ? tShell('loading') : error ? tShell('nothingToShow') : t('empty')}
                 </TableCell>
               </TableRow>
             ) : (
               entries.map((entry) => (
                 <TableRow key={entry.id}>
-                  <TableCell>
-                    <ClientDate date={entry.createdAt} showTime />
-                  </TableCell>
+                  <TableCell>{format.dateTime(new Date(entry.createdAt), 'dateTime')}</TableCell>
                   <TableCell>{actorName(entry.actor)}</TableCell>
                   <TableCell className="font-mono text-xs">{actionLabel(entry.action)}</TableCell>
                   <TableCell>
@@ -220,19 +211,17 @@ export function SupportActivityTable({ orgId, grants }: SupportActivityTableProp
           <Button
             variant="outline"
             size="sm"
-            aria-label="Previous page"
+            aria-label={tShell('previousPage')}
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="text-sm">
-            {page} / {totalPages}
-          </span>
+          <span className="text-sm">{t('pageOf', { page, total: totalPages })}</span>
           <Button
             variant="outline"
             size="sm"
-            aria-label="Next page"
+            aria-label={tShell('nextPage')}
             disabled={page >= totalPages}
             onClick={() => setPage((p) => p + 1)}
           >

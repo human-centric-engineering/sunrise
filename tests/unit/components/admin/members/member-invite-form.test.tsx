@@ -109,7 +109,9 @@ describe('MemberInviteForm', () => {
     });
   });
 
-  it('shows the message, clears the form and refreshes after a send', async () => {
+  // The confirmation is the form's own words, in the viewer's language; the
+  // route's `message` is English whoever asked (§138 t-1074).
+  it('confirms the send, clears the form and refreshes', async () => {
     vi.mocked(apiClient.post).mockResolvedValue(sentResponse());
     const user = userEvent.setup();
     render(<MemberInviteForm orgId="org-1" />);
@@ -117,7 +119,7 @@ describe('MemberInviteForm', () => {
     await fill(user, 'New Person', 'new@example.com');
     await user.click(screen.getByRole('button', { name: /send invitation/i }));
 
-    expect(await screen.findByText(/Invitation sent \(new@example.com\)/)).toBeInTheDocument();
+    expect(await screen.findByText('Invitation sent to new@example.com.')).toBeInTheDocument();
     expect(screen.queryByText(/did not go out/)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Name')).toHaveValue('');
     expect(screen.getByLabelText(/^Email/, { selector: 'input' })).toHaveValue('');

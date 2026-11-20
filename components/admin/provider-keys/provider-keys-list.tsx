@@ -13,6 +13,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useFormatter, useTranslations } from 'next-intl';
 import { FlaskConical, Trash2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -28,13 +29,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ClientDate } from '@/components/ui/client-date';
 import { SaveError } from '@/components/forms/form-error';
 import { ProviderKeyForm } from '@/components/admin/provider-keys/provider-key-form';
 import {
   stateBadge,
-  stateSentence,
-  testFailureSentence,
+  stateSentenceKey,
   type ProviderKeyRow,
 } from '@/components/admin/provider-keys/provider-key-states';
 import { apiClient } from '@/lib/api/client';
@@ -60,11 +59,13 @@ export function ProviderKeysList({
   canChange,
   masterKeyMissing,
 }: ProviderKeysListProps) {
+  const t = useTranslations('admin.providerKeys');
+  const tShell = useTranslations('admin.shell');
   const router = useRouter();
   const [removing, setRemoving] = useState<ProviderKeyRow | null>(null);
   const [busy, setBusy] = useState(false);
   const removeSave = useSaveFailure({
-    fallback: 'The key could not be removed. Try again.',
+    fallback: t('list.removeFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
@@ -90,12 +91,7 @@ export function ProviderKeysList({
   });
 
   if (providers.length === 0) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        This organisation is not approved for any provider that takes a key. Platform staff approve
-        providers.
-      </p>
-    );
+    return <p className="text-muted-foreground text-sm">{t('list.none')}</p>;
   }
 
   return (
@@ -116,14 +112,17 @@ export function ProviderKeysList({
       <AlertDialog open={!!removing} onOpenChange={removeDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove the {removing?.name} key</AlertDialogTitle>
+            <AlertDialogTitle>
+              {t('list.removeTitle', { name: removing?.name ?? '' })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {removeConsequence(removing)} The key is deleted: to use it again, save it again.
+              {removing && t(`list.${removeConsequenceKey(removing)}`, { name: removing.name })}{' '}
+              {t('list.removeDeleted')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <SaveError failure={removeSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel {...removeDialog.cancelProps}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...removeDialog.cancelProps}>{tShell('cancel')}</AlertDialogCancel>
             <AlertDialogAction
               {...removeDialog.actionProps()}
               onClick={(e) =>
@@ -132,7 +131,7 @@ export function ProviderKeysList({
                 })
               }
             >
-              Remove key
+              {t('list.removeKey')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -145,15 +144,12 @@ export function ProviderKeysList({
  * What removing a key does to the org's calls. "Within a minute", not "now":
  * another server process can keep the old answer for up to a minute.
  */
-function removeConsequence(row: ProviderKeyRow | null): string {
-  if (!row) return '';
-  if (!row.takesKey) {
-    return `${row.name} is not available to this organisation's calls with any key, so they stay refused.`;
-  }
-  if (!row.approved) {
-    return `This organisation is not approved for ${row.name}, so its calls to it stay refused.`;
-  }
-  return `Within a minute, this organisation's calls to ${row.name} go back to the platform's key.`;
+function removeConsequenceKey(
+  row: ProviderKeyRow
+): 'removeNotTaken' | 'removeNotApproved' | 'removeBackToPlatform' {
+  if (!row.takesKey) return 'removeNotTaken';
+  if (!row.approved) return 'removeNotApproved';
+  return 'removeBackToPlatform';
 }
 
 interface ProviderKeyCardProps {
@@ -177,15 +173,31 @@ function ProviderKeyCard({
   disabled,
   onRemove,
 }: ProviderKeyCardProps) {
+  const t = useTranslations('admin.providerKeys');
+  const format = useFormatter();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [testing, setTesting] = useState(false);
   const [outcome, setOutcome] = useState<TestOutcome | null>(null);
   const testRequest = useSaveFailure({
-    fallback: 'The key could not be tested. Try again.',
+    fallback: t('test.failed'),
     fields: NO_SERVER_FIELDS,
   });
   const badge = stateBadge(row);
+
+  /** When the key was saved, and by whom, ending in the hint when there is one. */
+  const savedLine = (key: NonNullable<ProviderKeyRow['key']>) => {
+    const when = format.dateTime(new Date(key.savedAt), 'dateTime');
+    const hint = (chunks: React.ReactNode) => <span className="font-mono">{chunks}</span>;
+    if (key.savedBy) {
+      return key.hint
+        ? t.rich('list.savedBy', { hint, when, who: key.savedBy.name, hintValue: key.hint })
+        : t('list.savedByNoHint', { when, who: key.savedBy.name });
+    }
+    return key.hint
+      ? t.rich('list.keyEnding', { hint, when, hintValue: key.hint })
+      : t('list.saved', { when });
+  };
 
   const test = async () => {
     setTesting(true);
@@ -215,27 +227,17 @@ function ProviderKeyCard({
             variant={badge.problem ? 'destructive' : row.key ? 'default' : 'outline'}
             className="px-1.5 py-0 text-[10px]"
           >
-            {badge.label}
+            {t(`badge.${badge.key}`)}
           </Badge>
         </div>
-        <CardDescription>{stateSentence(row, { masterKeyMissing })}</CardDescription>
+        <CardDescription>
+          {t(`state.${stateSentenceKey(row, { masterKeyMissing })}`, { name: row.name })}
+        </CardDescription>
       </CardHeader>
       {/* Nothing to show or do: no key, and saving is not offered here. */}
       {(row.key || canSave) && (
         <CardContent className="space-y-3">
-          {row.key && (
-            <p className="text-sm">
-              {row.key.hint ? (
-                <>
-                  Key ending <span className="font-mono">…{row.key.hint}</span>, saved{' '}
-                </>
-              ) : (
-                'Saved '
-              )}
-              <ClientDate date={row.key.savedAt} showTime />
-              {row.key.savedBy ? ` by ${row.key.savedBy.name}` : ''}.
-            </p>
-          )}
+          {row.key && <p className="text-sm">{savedLine(row.key)}</p>}
 
           {editing && canSave ? (
             <ProviderKeyForm
@@ -257,7 +259,7 @@ function ProviderKeyCard({
                   disabled={disabled}
                   onClick={() => setEditing(true)}
                 >
-                  {row.key ? 'Replace key' : 'Add your own key'}
+                  {row.key ? t('list.replace') : t('list.add')}
                 </Button>
               )}
               {canChange && row.key && row.approved && row.takesKey && (
@@ -268,13 +270,13 @@ function ProviderKeyCard({
                   onClick={() => void test()}
                 >
                   <FlaskConical className="mr-2 h-4 w-4" />
-                  {testing ? 'Testing…' : 'Test key'}
+                  {testing ? t('list.testing') : t('list.testKey')}
                 </Button>
               )}
               {canChange && row.key && (
                 <Button size="sm" variant="outline" disabled={disabled} onClick={onRemove}>
                   <Trash2 className="mr-2 h-4 w-4" />
-                  Remove key
+                  {t('list.removeKey')}
                 </Button>
               )}
             </div>
@@ -283,8 +285,8 @@ function ProviderKeyCard({
           {outcome && (
             <p role="status" className={outcome.ok ? 'text-sm' : 'text-destructive text-sm'}>
               {outcome.ok
-                ? `${row.name} accepted the key.`
-                : testFailureSentence(row.name, outcome.reason)}
+                ? t('test.accepted', { name: row.name })
+                : t(`test.${outcome.reason}`, { name: row.name })}
             </p>
           )}
           <SaveError failure={testRequest.failure} />

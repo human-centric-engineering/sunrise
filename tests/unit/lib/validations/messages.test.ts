@@ -10,6 +10,16 @@ import { createSignInSchema, createSignUpSchema, signUpSchema } from '@/lib/vali
 import { createUpdateUserSchema } from '@/lib/validations/user';
 import { createContactClientSchema } from '@/lib/validations/contact';
 import { buildWaitlistDetailsSchema } from '@/lib/validations/waitlist';
+import {
+  buildSupportGrantSchema,
+  createInviteOrgMemberSchema,
+  createSaveProviderKeySchema,
+  createSupportGrantSchema,
+  inviteOrgMemberSchema,
+  PROVIDER_KEY_MAX_LENGTH,
+  saveProviderKeySchema,
+  SUPPORT_GRANT_MAX_HOURS,
+} from '@/lib/validations/tenancy';
 
 /** A translator that shows which key and values it was asked for. */
 const keyed: ValidationT = (key, values) =>
@@ -90,5 +100,45 @@ describe('schema factories', () => {
     });
 
     expect(messagesOf(result)).toEqual(["Passwords don't match"]);
+  });
+
+  // The org-settings admin forms (§138 t-1074).
+  it('cover the invite, support-grant and AI-key forms', () => {
+    expect(
+      messagesOf(createInviteOrgMemberSchema(keyed).safeParse({ name: '', email: 'nope' }))
+    ).toEqual(['[nameRequired]', '[emailInvalid]']);
+    expect(
+      messagesOf(buildSupportGrantSchema(keyed).safeParse({ reason: '', durationHours: 1.5 }))
+    ).toEqual(['[supportReasonRequired]', '[durationWhole]']);
+    expect(
+      messagesOf(
+        buildSupportGrantSchema(keyed).safeParse({
+          reason: 'x',
+          durationHours: SUPPORT_GRANT_MAX_HOURS + 1,
+        })
+      )
+    ).toEqual([`durationTooLong:{"max":"${SUPPORT_GRANT_MAX_HOURS}"}`]);
+    expect(messagesOf(createSaveProviderKeySchema(keyed).safeParse({ apiKey: 'a b' }))).toEqual([
+      '[providerKeyBadCharacter]',
+    ]);
+  });
+
+  it('keep the English the tenancy routes have always returned', () => {
+    expect(messagesOf(inviteOrgMemberSchema.safeParse({ name: '', email: 'a@b.co' }))).toEqual([
+      'Name is required',
+    ]);
+    expect(
+      messagesOf(
+        createSupportGrantSchema.safeParse({
+          reason: 'x',
+          durationHours: SUPPORT_GRANT_MAX_HOURS + 1,
+        })
+      )
+    ).toEqual([`Duration must be at most ${SUPPORT_GRANT_MAX_HOURS} hours`]);
+    expect(
+      messagesOf(
+        saveProviderKeySchema.safeParse({ apiKey: 'k'.repeat(PROVIDER_KEY_MAX_LENGTH + 1) })
+      )
+    ).toEqual([`A key is at most ${PROVIDER_KEY_MAX_LENGTH} characters`]);
   });
 });

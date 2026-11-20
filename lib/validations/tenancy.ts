@@ -7,7 +7,8 @@
  */
 import { z } from 'zod';
 import { cuidSchema, paginationQuerySchema, slugSchema } from '@/lib/validations/common';
-import { emailSchema } from '@/lib/validations/auth';
+import { createEmailSchema } from '@/lib/validations/auth';
+import { englishValidation, type ValidationT } from '@/lib/validations/messages';
 import { ORG_ROLES, ORG_STATUSES, SUPPORT_GRANT_LEVELS } from '@/lib/tenancy/roles';
 import { ORG_ID_SHAPE } from '@/lib/tenancy/resolver';
 import { PRIVACY_TIGHTENING_MODES } from '@/lib/orchestration/privacy/settings-policy';
@@ -529,16 +530,22 @@ export type UpdateOrgMemberInput = z.infer<typeof updateOrgMemberSchema>;
  * no org: the invitee joins the org the URL names, as a platform USER. Keys
  * outside the schema are dropped, so a `role` sent here sets nothing.
  */
-export const inviteOrgMemberSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters'),
-  email: emailSchema,
-  /** Absent ⇒ MEMBER on acceptance. OWNER needs the inviter's owner standing. */
-  orgRole: z.enum(ORG_ROLES).optional(),
-});
+type InviteOrgMemberShape = {
+  name: z.ZodString;
+  email: z.ZodString;
+  orgRole: z.ZodOptional<z.ZodEnum<{ [K in (typeof ORG_ROLES)[number]]: K }>>;
+};
+
+/** The invitation body, with its messages from `t` (§138 t-1074): the form passes its translator. */
+export function createInviteOrgMemberSchema(t: ValidationT): z.ZodObject<InviteOrgMemberShape> {
+  return z.object({
+    name: z.string().trim().min(1, t('nameRequired')).max(100, t('nameTooLong')),
+    email: createEmailSchema(t),
+    /** Absent ⇒ MEMBER on acceptance. OWNER needs the inviter's owner standing. */
+    orgRole: z.enum(ORG_ROLES).optional(),
+  });
+}
+export const inviteOrgMemberSchema = createInviteOrgMemberSchema(englishValidation);
 
 export type InviteOrgMemberInput = z.infer<typeof inviteOrgMemberSchema>;
 
@@ -555,21 +562,31 @@ export const SUPPORT_GRANT_MAX_HOURS = 7 * 24;
  * to vendor support acting inside the org. The reason is required: it is the
  * record of what the org agreed to, and the vendor reads it on entry.
  */
-export const createSupportGrantSchema = z.object({
-  /** Absent ⇒ ADMIN (ruling 2): the OWNER restricts by choosing READ_ONLY. */
-  level: z.enum(SUPPORT_GRANT_LEVELS).optional(),
-  reason: z
-    .string()
-    .trim()
-    .min(1, 'Say why support needs access')
-    .max(1000, 'Reason must be 1000 characters or fewer'),
-  durationHours: z
-    .number()
-    .int('Duration must be a whole number of hours')
-    .min(1, 'Duration must be at least 1 hour')
-    .max(SUPPORT_GRANT_MAX_HOURS, `Duration must be at most ${SUPPORT_GRANT_MAX_HOURS} hours`)
-    .optional(),
-});
+type CreateSupportGrantShape = {
+  level: z.ZodOptional<z.ZodEnum<{ [K in (typeof SUPPORT_GRANT_LEVELS)[number]]: K }>>;
+  reason: z.ZodString;
+  durationHours: z.ZodOptional<z.ZodNumber>;
+};
+
+/** The grant body, with its messages from `t` (§138 t-1074): the form passes its translator. */
+export function buildSupportGrantSchema(t: ValidationT): z.ZodObject<CreateSupportGrantShape> {
+  return z.object({
+    /** Absent ⇒ ADMIN (ruling 2): the OWNER restricts by choosing READ_ONLY. */
+    level: z.enum(SUPPORT_GRANT_LEVELS).optional(),
+    reason: z
+      .string()
+      .trim()
+      .min(1, t('supportReasonRequired'))
+      .max(1000, t('supportReasonTooLong')),
+    durationHours: z
+      .number()
+      .int(t('durationWhole'))
+      .min(1, t('durationTooShort'))
+      .max(SUPPORT_GRANT_MAX_HOURS, t('durationTooLong', { max: String(SUPPORT_GRANT_MAX_HOURS) }))
+      .optional(),
+  });
+}
+export const createSupportGrantSchema = buildSupportGrantSchema(englishValidation);
 
 export type CreateSupportGrantInput = z.infer<typeof createSupportGrantSchema>;
 
@@ -634,13 +651,20 @@ export const KEY_DISALLOWED_CHARACTER = /[^\x21-\x7e]/;
  * breaks from a paste are trimmed; anything inside the key that is not
  * printable ASCII is refused, since no vendor key has it.
  */
-export const saveProviderKeySchema = z.object({
-  apiKey: z
-    .string()
-    .trim()
-    .min(1, 'Paste the key')
-    .max(PROVIDER_KEY_MAX_LENGTH, `A key is at most ${PROVIDER_KEY_MAX_LENGTH} characters`)
-    .refine((key) => !KEY_DISALLOWED_CHARACTER.test(key), {
-      message: 'The key contains a space, a line break or a hidden character, which no key has',
-    }),
-});
+/** The key body, with its messages from `t` (§138 t-1074): the form passes its translator. */
+export function createSaveProviderKeySchema(t: ValidationT): z.ZodObject<{ apiKey: z.ZodString }> {
+  return z.object({
+    apiKey: z
+      .string()
+      .trim()
+      .min(1, t('providerKeyRequired'))
+      .max(
+        PROVIDER_KEY_MAX_LENGTH,
+        t('providerKeyTooLong', { max: String(PROVIDER_KEY_MAX_LENGTH) })
+      )
+      .refine((key) => !KEY_DISALLOWED_CHARACTER.test(key), {
+        message: t('providerKeyBadCharacter'),
+      }),
+  });
+}
+export const saveProviderKeySchema = createSaveProviderKeySchema(englishValidation);

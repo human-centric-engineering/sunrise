@@ -19,6 +19,8 @@ import {
 } from '@/components/admin/support-access/support-grant-form';
 import { SUPPORT_GRANT_DEFAULT_HOURS, SUPPORT_GRANT_MAX_HOURS } from '@/lib/validations/tenancy';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { createTranslator } from 'next-intl';
+import en from '@/lib/i18n/messages/en.json';
 
 const mockRefresh = vi.fn();
 
@@ -139,25 +141,25 @@ describe('SupportGrantForm', () => {
 });
 
 describe('durationLabel', () => {
+  // The source catalogue's words, as an English viewer reads them.
+  const t = createTranslator({ locale: 'en', messages: en, namespace: 'admin.supportAccess' });
+
   it('shows hours up to a day, and whole days beyond', () => {
-    expect(durationLabel(1)).toBe('1 hour');
-    expect(durationLabel(4)).toBe('4 hours');
-    expect(durationLabel(24)).toBe('24 hours');
-    expect(durationLabel(72)).toBe('3 days');
-    expect(durationLabel(168)).toBe('7 days');
-    expect(durationLabel(30)).toBe('30 hours');
+    expect(durationLabel(1, t)).toBe('1 hour');
+    expect(durationLabel(4, t)).toBe('4 hours');
+    expect(durationLabel(24, t)).toBe('24 hours');
+    expect(durationLabel(72, t)).toBe('3 days');
+    expect(durationLabel(168, t)).toBe('7 days');
+    expect(durationLabel(30, t)).toBe('30 hours');
   });
 });
 
 describe('SUPPORT_GRANT_DURATIONS', () => {
   it('offers the default and the maximum, ascending, each once, none past the maximum', () => {
-    const hours = SUPPORT_GRANT_DURATIONS.map((option) => option.hours);
+    const hours = [...SUPPORT_GRANT_DURATIONS];
     expect(hours).toContain(SUPPORT_GRANT_DEFAULT_HOURS);
     expect(hours).toContain(SUPPORT_GRANT_MAX_HOURS);
     expect(hours).toEqual([...new Set(hours)].sort((a, b) => a - b));
     expect(Math.max(...hours)).toBe(SUPPORT_GRANT_MAX_HOURS);
-    for (const option of SUPPORT_GRANT_DURATIONS) {
-      expect(option.label).toBe(durationLabel(option.hours));
-    }
   });
 });

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 
 import { WaitlistAdmin } from '@/components/admin/waitlist/waitlist-admin';
 import type { WaitlistEntryRow } from '@/components/admin/waitlist/waitlist-entries-table';
@@ -15,10 +16,10 @@ import {
 } from '@/lib/validations/waitlist';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
 
-export const metadata: Metadata = {
-  title: 'Waitlist',
-  description: 'The people waiting to be let in, and whether each list is taking joins.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin.waitlist');
+  return { title: t('metaTitle'), description: t('metaDescription') };
+}
 
 /**
  * Admin — the org's waitlist (§125 t-976).
@@ -46,6 +47,7 @@ export default async function WaitlistAdminPage() {
     ),
   ]);
 
+  const t = await getTranslations('admin.waitlist');
   const lists = counts.ok && Array.isArray(counts.data?.lists) ? counts.data.lists : null;
   const fields = counts.ok && Array.isArray(counts.data?.fields) ? counts.data.fields : [];
   const meta = firstPage.ok ? parsePaginationMeta(firstPage.meta) : null;
@@ -57,11 +59,8 @@ export default async function WaitlistAdminPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">Waitlist</h1>
-        <p className="text-muted-foreground text-sm">
-          The people waiting to be let in. Only confirmed entries are shown and counted unless you
-          ask for the others.
-        </p>
+        <h1 className="text-2xl font-semibold">{t('title')}</h1>
+        <p className="text-muted-foreground text-sm">{t('intro')}</p>
       </header>
 
       <WaitlistAdmin

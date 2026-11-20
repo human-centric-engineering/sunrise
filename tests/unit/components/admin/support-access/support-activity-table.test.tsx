@@ -13,6 +13,7 @@ import userEvent from '@testing-library/user-event';
 
 import { SupportActivityTable } from '@/components/admin/support-access/support-activity-table';
 import type { SupportGrantRow } from '@/components/admin/support-access/support-grants-table';
+import { testFormatter } from '@/tests/helpers/i18n';
 
 vi.mock('@/lib/logging', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -37,13 +38,9 @@ const GRANTS = [
   grant({ id: 'g-2', reason: LONG_REASON, createdAt: '2026-09-01T12:00:00.000Z', open: false }),
 ];
 
-/** The label the table gives a grant: created date, then reason. */
+/** The date in a grant's label, in the viewer's locale and zone (the `short` format). */
 function dateOf(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  return testFormatter().dateTime(new Date(iso), 'short');
 }
 
 function entry(over: Record<string, unknown> = {}) {

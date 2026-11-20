@@ -183,16 +183,17 @@ export default tseslint.config(
     },
   },
 
-  // ── Screens on the string catalogue (§138 t-1073) ────────────────────────
+  // ── Screens on the string catalogue (§138 t-1073, t-1074) ────────────────
   // The user and public screens read every string from the catalogue
   // (`lib/i18n/messages/en.json`, `.context/ui/i18n.md`), so text written into
   // the JSX would show in English whatever the viewer's language. This rejects
   // it, wrapped (`{'Save'}`) or not. Props are not checked: the rule cannot
   // tell an `aria-label` from a `className`.
   //
-  // Scoped to the converted paths on purpose. The staff admin is not on the
-  // catalogue yet, and a fork's own components are the fork's call, so an
-  // install-wide rule would fail code nobody here converted.
+  // Scoped to the converted paths on purpose. The staff admin and the
+  // orchestration console stay English (owner ruling, §138 planning), and a
+  // fork's own components are the fork's call, so an install-wide rule would
+  // fail code nobody here converted.
   // `app/global-error.tsx` is English by design and is not listed.
   {
     files: [
@@ -203,6 +204,12 @@ export default tseslint.config(
       'app/error.tsx',
       'components/{auth,forms,settings,account,waitlist,cookie-consent,layouts,errors,marketing,dashboard,status}/**/*.tsx',
       'components/{theme-toggle,maintenance-page,maintenance-wrapper,error-boundary}.tsx',
+      // The org-settings admin pages and the shell an org admin sees on them
+      // (t-1074). Staff-only pages and orchestration stay English.
+      'app/admin/{members,org-options,provider-keys,support-access,waitlist}/**/*.tsx',
+      'app/admin/{layout,error}.tsx',
+      'components/admin/{members,org-options,provider-keys,support-access,waitlist}/**/*.tsx',
+      'components/admin/{admin-header,admin-sidebar,locked-admin-page}.tsx',
     ],
     rules: {
       'react/jsx-no-literals': [

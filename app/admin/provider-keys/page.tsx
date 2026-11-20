@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
+import { getTranslations } from 'next-intl/server';
 
 import { ProviderKeysList } from '@/components/admin/provider-keys/provider-keys-list';
 import {
-  READ_ONLY_SENTENCE,
-  SAVE_BLOCKED_SENTENCE,
   type ProviderKeyRow,
   type ProviderKeySaveBlocked,
 } from '@/components/admin/provider-keys/provider-key-states';
@@ -13,10 +12,10 @@ import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 
-export const metadata: Metadata = {
-  title: 'AI keys',
-  description: 'Run this organisation’s AI calls on its own provider accounts.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin.providerKeys');
+  return { title: t('metaTitle'), description: t('metaDescription') };
+}
 
 interface ProviderKeysData {
   saveBlocked: ProviderKeySaveBlocked | null;
@@ -46,45 +45,37 @@ function Unavailable({ children }: { children: React.ReactNode }) {
 export default async function ProviderKeysPage() {
   const org = await requestActingOrg();
   const data = isMultiTenant() && org && org.id !== INSTALL_ORG_ID ? await getKeys(org.id) : null;
+  const t = await getTranslations('admin.providerKeys');
 
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">AI keys{org ? ` for ${org.name}` : ''}</h1>
-        <p className="text-muted-foreground text-sm">
-          Run this organisation&apos;s AI calls on its own account with a provider, so the provider
-          bills you directly and works under your agreement with them.
-        </p>
+        <h1 className="text-2xl font-semibold">
+          {org ? t('titleFor', { org: org.name }) : t('title')}
+        </h1>
+        <p className="text-muted-foreground text-sm">{t('intro')}</p>
       </header>
 
       {!isMultiTenant() ? (
-        <Unavailable>
-          Organisations&apos; own AI keys are for installs with more than one organisation. This
-          install has one, and its keys are set where providers are configured.
-        </Unavailable>
+        <Unavailable>{t('singleTenant')}</Unavailable>
       ) : !org ? (
-        <Unavailable>
-          You are not acting in an organisation, so there are no keys to show.
-        </Unavailable>
+        <Unavailable>{t('noOrg')}</Unavailable>
       ) : org.id === INSTALL_ORG_ID ? (
-        <Unavailable>
-          The install organisation runs on the platform&apos;s own keys, which are set where
-          providers are configured. Switch to a customer organisation to see its keys.
-        </Unavailable>
+        <Unavailable>{t('installOrg')}</Unavailable>
       ) : !data ? (
         <p role="alert" className="text-destructive text-sm">
-          This organisation&apos;s AI keys could not be loaded.
+          {t('loadFailed')}
         </p>
       ) : (
         <>
           {data.readOnly ? (
             <p role="note" className="rounded-md border p-3 text-sm">
-              {READ_ONLY_SENTENCE}
+              {t('readOnly')}
             </p>
           ) : (
             data.saveBlocked && (
               <p role="note" className="rounded-md border p-3 text-sm">
-                {SAVE_BLOCKED_SENTENCE[data.saveBlocked]}
+                {t(`saveBlocked.${data.saveBlocked}`)}
               </p>
             )
           )}

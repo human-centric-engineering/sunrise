@@ -11,6 +11,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { z } from 'zod';
 
 import {
@@ -36,10 +37,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
-import {
-  WAITLIST_INVITE_REFUSAL_MESSAGES,
-  WAITLIST_INVITE_REFUSALS,
-} from '@/lib/waitlist/invite-refusals';
+import { WAITLIST_INVITE_REFUSALS } from '@/lib/waitlist/invite-refusals';
 import { WAITLIST_INVITE_WAVE_MAX, type WaitlistFieldShape } from '@/lib/validations/waitlist';
 
 /** The server's own list, so a reason added there is read here without an edit. */
@@ -72,35 +70,33 @@ export async function postWave(body: Record<string, unknown>): Promise<WaveResul
 
 /** What a wave did, in a sentence or two, with the reasons anyone was left out. */
 export function WaveSummary({ result }: { result: WaveResult }) {
+  const t = useTranslations('admin.waitlist');
   if (result.selected === 0) {
     return (
       <p role="status" className="text-sm">
-        No one matched: everyone who can be invited there has been.
+        {t('wave.noneMatched')}
       </p>
     );
   }
   const reasons = new Map<string, number>();
   for (const row of result.rows) {
     if (row.outcome === 'refused' && row.reason) {
-      const message = WAITLIST_INVITE_REFUSAL_MESSAGES[row.reason];
+      const message = t(`refusals.${row.reason}`);
       reasons.set(message, (reasons.get(message) ?? 0) + 1);
     }
   }
+  const sentences = [
+    t('wave.invitedOf', { invited: result.invited, selected: result.selected }),
+    ...(result.emailNotSent > 0 ? [t('wave.emailNotSent', { count: result.emailNotSent })] : []),
+    ...(result.failed > 0 ? [t('wave.failed', { count: result.failed })] : []),
+  ];
   return (
     <div role="status" className="space-y-1 text-sm">
-      <p>
-        Invited {result.invited} of {result.selected}.
-        {result.emailNotSent > 0 &&
-          ` ${result.emailNotSent} invitation email${result.emailNotSent === 1 ? '' : 's'} did not go; use Resend on ${result.emailNotSent === 1 ? 'that row' : 'those rows'}.`}
-        {result.failed > 0 &&
-          ` ${result.failed} could not be invited because of an error; try them again.`}
-      </p>
+      <p>{sentences.join(' ')}</p>
       {reasons.size > 0 && (
         <ul className="text-muted-foreground list-disc pl-5">
           {[...reasons].map(([message, count]) => (
-            <li key={message}>
-              {count} not invited: {message}
-            </li>
+            <li key={message}>{t('wave.notInvited', { count, reason: message })}</li>
           ))}
         </ul>
       )}
@@ -127,6 +123,8 @@ export function WaitlistInviteWaveDialog({
   fields,
   onInvited,
 }: WaitlistInviteWaveDialogProps) {
+  const t = useTranslations('admin.waitlist.wave');
+  const tShell = useTranslations('admin.shell');
   const [mode, setMode] = useState<'next' | 'sample'>('next');
   const [count, setCount] = useState('10');
   const [list, setList] = useState(ALL);
@@ -135,7 +133,7 @@ export function WaitlistInviteWaveDialog({
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<WaveResult | null>(null);
   const save = useSaveFailure({
-    fallback: 'The invitations could not be sent. Try again.',
+    fallback: t('sendFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
@@ -176,12 +174,8 @@ export function WaitlistInviteWaveDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Invite a wave</DialogTitle>
-          <DialogDescription>
-            Send invitations to people on the list who have confirmed their address and have not
-            been invited yet. Flagged entries are left out. Each person gets an email with a link to
-            create an account.
-          </DialogDescription>
+          <DialogTitle>{t('title')}</DialogTitle>
+          <DialogDescription>{t('description')}</DialogDescription>
         </DialogHeader>
 
         {result ? (
@@ -190,11 +184,9 @@ export function WaitlistInviteWaveDialog({
           <div className="space-y-4">
             <div className="space-y-1">
               <Label htmlFor="wave-mode" className="flex items-center gap-1">
-                Who
-                <FieldHelp title="Who">
-                  <strong>Earliest first</strong> invites the people who joined first.{' '}
-                  <strong>At random</strong> picks people at random, so where someone is on the list
-                  makes no difference.
+                {t('who')}
+                <FieldHelp title={t('who')}>
+                  {t.rich('whoHelp', { strong: (chunks) => <strong>{chunks}</strong> })}
                 </FieldHelp>
               </Label>
               <Select
@@ -205,18 +197,17 @@ export function WaitlistInviteWaveDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="next">Earliest first</SelectItem>
-                  <SelectItem value="sample">At random</SelectItem>
+                  <SelectItem value="next">{t('earliest')}</SelectItem>
+                  <SelectItem value="sample">{t('random')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-1">
               <Label htmlFor="wave-count" className="flex items-center gap-1">
-                How many
-                <FieldHelp title="How many">
-                  Up to {WAITLIST_INVITE_WAVE_MAX} in one wave. If fewer people can be invited, all
-                  of them are.
+                {t('howMany')}
+                <FieldHelp title={t('howMany')}>
+                  {t('howManyHelp', { max: WAITLIST_INVITE_WAVE_MAX })}
                 </FieldHelp>
               </Label>
               <Input
@@ -230,7 +221,7 @@ export function WaitlistInviteWaveDialog({
               />
               {!countValid && (
                 <p className="text-destructive text-xs">
-                  Enter a whole number from 1 to {WAITLIST_INVITE_WAVE_MAX}.
+                  {t('countInvalid', { max: WAITLIST_INVITE_WAVE_MAX })}
                 </p>
               )}
             </div>
@@ -238,15 +229,15 @@ export function WaitlistInviteWaveDialog({
             {lists.length > 1 && (
               <div className="space-y-1">
                 <Label htmlFor="wave-list" className="flex items-center gap-1">
-                  List
-                  <FieldHelp title="List">Invite from one list, or from all of them.</FieldHelp>
+                  {t('list')}
+                  <FieldHelp title={t('list')}>{t('listHelp')}</FieldHelp>
                 </Label>
                 <Select value={list} onValueChange={setList}>
                   <SelectTrigger id="wave-list">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ALL}>All lists</SelectItem>
+                    <SelectItem value={ALL}>{t('allLists')}</SelectItem>
                     {lists.map((key) => (
                       <SelectItem key={key} value={key}>
                         {key}
@@ -260,11 +251,8 @@ export function WaitlistInviteWaveDialog({
             {fields.length > 0 && (
               <div className="space-y-1">
                 <Label htmlFor="wave-field" className="flex items-center gap-1">
-                  Only people who answered
-                  <FieldHelp title="Only people who answered">
-                    Invite only people who gave one answer to one of the form&apos;s questions. The
-                    answer must match exactly.
-                  </FieldHelp>
+                  {t('answered')}
+                  <FieldHelp title={t('answered')}>{t('answeredHelp')}</FieldHelp>
                 </Label>
                 <Select
                   value={field}
@@ -277,7 +265,7 @@ export function WaitlistInviteWaveDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ANY}>Anyone</SelectItem>
+                    <SelectItem value={ANY}>{t('anyone')}</SelectItem>
                     {fields.map((f) => (
                       <SelectItem key={f.key} value={f.key}>
                         {f.label}
@@ -288,8 +276,8 @@ export function WaitlistInviteWaveDialog({
                 {chosenField &&
                   (chosenField.options ? (
                     <Select value={value} onValueChange={setValue}>
-                      <SelectTrigger aria-label={`Answer to ${chosenField.label}`}>
-                        <SelectValue placeholder="Choose an answer" />
+                      <SelectTrigger aria-label={t('answerTo', { question: chosenField.label })}>
+                        <SelectValue placeholder={t('chooseAnswer')} />
                       </SelectTrigger>
                       <SelectContent>
                         {chosenField.options.map((o) => (
@@ -301,10 +289,10 @@ export function WaitlistInviteWaveDialog({
                     </Select>
                   ) : (
                     <Input
-                      aria-label={`Answer to ${chosenField.label}`}
+                      aria-label={t('answerTo', { question: chosenField.label })}
                       value={value}
                       onChange={(e) => setValue(e.target.value)}
-                      placeholder="The answer, exactly as given"
+                      placeholder={t('exactAnswer')}
                     />
                   ))}
               </div>
@@ -316,11 +304,11 @@ export function WaitlistInviteWaveDialog({
           <SaveError failure={save.failure} />
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => close(false)} disabled={running}>
-              {result ? 'Close' : 'Cancel'}
+              {result ? tShell('close') : tShell('cancel')}
             </Button>
             {!result && (
               <Button onClick={() => void run()} disabled={running || !countValid || !answerValid}>
-                {running ? 'Sending…' : 'Send invitations'}
+                {running ? t('sending') : t('send')}
               </Button>
             )}
           </div>

@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 
 import {
   WaitlistEntriesTable,
@@ -39,6 +40,7 @@ export function WaitlistAdmin({
   initial,
   exportMaxRows,
 }: WaitlistAdminProps) {
+  const t = useTranslations('admin.waitlist');
   const [lists, setLists] = useState(initialLists);
   const [stale, setStale] = useState(false);
   const latest = useRef(0);
@@ -85,13 +87,13 @@ export function WaitlistAdmin({
           <WaitlistListsPanel lists={lists} onListChange={onListChange} />
           {stale && (
             <p role="status" className="text-muted-foreground text-sm">
-              The counts could not be refreshed and may be out of date.
+              {t('countsStale')}
             </p>
           )}
         </>
       ) : (
         <p role="alert" className="text-destructive text-sm">
-          The waitlist&apos;s lists could not be loaded.
+          {t('listsLoadFailed')}
         </p>
       )}
 

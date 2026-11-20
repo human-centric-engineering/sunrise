@@ -452,6 +452,8 @@ describe('AdminSidebar — what an org viewer sees', () => {
     expect(screen.getByText('Fork Console')).toBeInTheDocument();
   });
 
+  // Options is shown whether or not the app registers an org-set switch: it
+  // carries the org's language (§138 t-1074).
   it('shows an org viewer exactly the customer’s core sections and the mixed pages (t-811, t-812)', () => {
     render(<AdminSidebar reach={ORG_REACH} orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
@@ -460,6 +462,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
       .map((link) => link.getAttribute('href'))
       .filter((href): href is string => href?.startsWith('/admin/') ?? false);
     expect(hrefs).toEqual([
+      '/admin/org-options',
       '/admin/orchestration',
       '/admin/orchestration/agents',
       '/admin/orchestration/workflows',
@@ -476,7 +479,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
     ]);
   });
 
-  it('shows an org viewer Members and Support access alone when orchestration is closed (t-929)', () => {
+  it('shows an org viewer the org-settings items alone when orchestration is closed (t-929)', () => {
     const open = ORG_TIER_ADMIN_PAGES.filter((p) => !p.startsWith('/admin/orchestration'));
     render(<AdminSidebar reach={ORG_REACH} multiTenant orgTierPages={open} />);
 
@@ -484,7 +487,12 @@ describe('AdminSidebar — what an org viewer sees', () => {
       .getAllByRole('link')
       .map((link) => link.getAttribute('href'))
       .filter((href): href is string => href?.startsWith('/admin/') ?? false);
-    expect(hrefs).toEqual(['/admin/members', '/admin/provider-keys', '/admin/support-access']);
+    expect(hrefs).toEqual([
+      '/admin/members',
+      '/admin/org-options',
+      '/admin/provider-keys',
+      '/admin/support-access',
+    ]);
     expect(screen.queryByText('AI Orchestration')).not.toBeInTheDocument();
   });
 
@@ -730,20 +738,16 @@ describe('sectionsForCapabilities', () => {
     },
   ];
 
-  it('returns the very array it was given when the app has a waitlist and org options', () => {
-    expect(
-      sectionsForCapabilities(sections, { waitlistEnabled: true, orgOptionsEnabled: true })
-    ).toBe(sections);
+  it('returns the very array it was given when the app has a waitlist', () => {
+    expect(sectionsForCapabilities(sections, { waitlistEnabled: true })).toBe(sections);
   });
 
-  it('removes /admin/org-options when no switch is org-set, the default (t-1054)', () => {
+  // Options carries the org's language (§138 t-1074), so it is shown whether
+  // or not the app registers an org-set switch (t-1054 hid it when none was).
+  it('keeps /admin/org-options with or without a waitlist', () => {
     const withOptions = [{ title: 'M', items: [item('/admin/org-options'), item('/o')] }];
-    expect(sectionsForCapabilities(withOptions, { waitlistEnabled: true })).toEqual([
-      { title: 'M', items: [item('/o')] },
-    ]);
-    expect(
-      sectionsForCapabilities(withOptions, { waitlistEnabled: true, orgOptionsEnabled: true })
-    ).toBe(withOptions);
+    expect(sectionsForCapabilities(withOptions, { waitlistEnabled: true })).toBe(withOptions);
+    expect(sectionsForCapabilities(withOptions, { waitlistEnabled: false })).toEqual(withOptions);
   });
 
   it('removes /admin/waitlist, from items and subgroups, and leaves everything else', () => {
@@ -763,9 +767,9 @@ describe('sectionsForCapabilities', () => {
       secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
 
     const before = flat(coreNavSections).map((i) => i.href);
-    const after = flat(
-      sectionsForCapabilities(coreNavSections, { waitlistEnabled: false, orgOptionsEnabled: true })
-    ).map((i) => i.href);
+    const after = flat(sectionsForCapabilities(coreNavSections, { waitlistEnabled: false })).map(
+      (i) => i.href
+    );
 
     expect(before).toContain('/admin/waitlist');
     expect(after).toEqual(before.filter((h) => h !== '/admin/waitlist'));
