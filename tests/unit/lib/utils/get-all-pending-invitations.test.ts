@@ -89,6 +89,7 @@ const createMockUser = (id: string, name: string) => ({
   bio: null,
   phone: null,
   timezone: 'UTC',
+  locale: null,
   location: null,
   preferences: {},
   signupOrgId: null,

@@ -28,7 +28,7 @@ import { successResponse } from '@/lib/api/responses';
 import { ForbiddenError } from '@/lib/api/errors';
 import { validateQueryParams } from '@/lib/api/validation';
 import { orgIdParamSchema } from '@/lib/validations/tenancy';
-import { readOrgRetention } from '@/lib/tenancy/org-settings';
+import { readOrgLocale, readOrgRetention } from '@/lib/tenancy/org-settings';
 import { getRouteLogger } from '@/lib/api/context';
 
 export const GET = withAuth<{ id: string }>(
@@ -65,7 +65,11 @@ export const GET = withAuth<{ id: string }>(
     const { _count, settings, ...org } = membership.org;
     return successResponse({
       ...org,
-      settings: { retention: readOrgRetention(settings, { orgId: id }, log) },
+      settings: {
+        retention: readOrgRetention(settings, { orgId: id }, log),
+        // The org's default interface language (§138 t-1071), `null` for none.
+        locale: readOrgLocale(settings, { orgId: id }, log),
+      },
       memberCount: _count.memberships,
       role: membership.role,
       joinedAt: membership.createdAt,

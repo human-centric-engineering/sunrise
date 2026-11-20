@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { headers } from 'next/headers';
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale } from 'next-intl/server';
 import '@/app/globals.css';
 import '@/app/brand-theme.css'; // fork-owned per-surface palette; must cascade after globals
 import { ThemeProvider } from '@/hooks/use-theme';
@@ -38,9 +40,11 @@ export default async function RootLayout({
   // app/brand-theme.css (empty in vanilla Sunrise). On <html> so body-portaled
   // overlays inherit it; kept current across client nav by <SurfaceSync> below.
   const surface = headersList.get('x-surface') ?? DEFAULT_SURFACE;
+  // The interface language (§138 t-1071), resolved in lib/i18n/request.ts.
+  const locale = await getLocale();
 
   return (
-    <html lang="en" data-surface={surface} suppressHydrationWarning>
+    <html lang={locale} data-surface={surface} suppressHydrationWarning>
       <head>
         <script
           nonce={nonce}
@@ -52,21 +56,25 @@ export default async function RootLayout({
       </head>
       <body suppressHydrationWarning>
         <SurfaceSync />
-        <ErrorHandlingProvider>
-          <ConsentProvider>
-            <AnalyticsProvider>
-              <ThemeProvider>
-                {children}
-                <CookieBanner />
-              </ThemeProvider>
-              <Suspense fallback={null}>
-                <UserIdentifier />
-                <PageTracker skipInitial />
-              </Suspense>
-              <AnalyticsScripts nonce={nonce} />
-            </AnalyticsProvider>
-          </ConsentProvider>
-        </ErrorHandlingProvider>
+        {/* Locale, messages, time zone and formats for Client Components,
+            inherited from the request config. */}
+        <NextIntlClientProvider>
+          <ErrorHandlingProvider>
+            <ConsentProvider>
+              <AnalyticsProvider>
+                <ThemeProvider>
+                  {children}
+                  <CookieBanner />
+                </ThemeProvider>
+                <Suspense fallback={null}>
+                  <UserIdentifier />
+                  <PageTracker skipInitial />
+                </Suspense>
+                <AnalyticsScripts nonce={nonce} />
+              </AnalyticsProvider>
+            </ConsentProvider>
+          </ErrorHandlingProvider>
+        </NextIntlClientProvider>
       </body>
     </html>
   );

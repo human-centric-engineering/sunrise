@@ -48,7 +48,9 @@ import {
   loadPlatformAgentsMarker,
   readOrgRetention,
   isSettingsWriteConflict,
+  readOrgLocale,
   readOrgPrivacy,
+  writeOrgLocale,
   salvageOrgPrivacy,
   readOrgProviderPolicy,
   readOrgQuotas,
@@ -425,6 +427,82 @@ describe('the LLM privacy settings (§127 t-1010)', () => {
     const db = { $transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)) };
 
     expect(await writeOrgPrivacy(ORG_A, STORED as never, db as never)).toBeNull();
+    expect(tx.org.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('the org default locale (§138 t-1071)', () => {
+  it('reads a stored language tag', () => {
+    expect(readOrgLocale({ locale: 'en-XA', retention: {} })).toBe('en-XA');
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('reads an org with no default as null, without a warning', () => {
+    expect(readOrgLocale(null)).toBeNull();
+    expect(readOrgLocale({ retention: {} })).toBeNull();
+    expect(readOrgLocale({ locale: null })).toBeNull();
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a number', 42],
+    ['not a tag', 'English'],
+    ['an object', { tag: 'en' }],
+  ])('degrades %s to null, with a warning', (_label, value) => {
+    expect(readOrgLocale({ locale: value }, { orgId: ORG_A })).toBeNull();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Org default locale is malformed; treating the org as having no default',
+      { orgId: ORG_A }
+    );
+  });
+
+  it('keeps a tag that has no catalogue: whether it is served is the resolution’s question', () => {
+    expect(readOrgLocale({ locale: 'fr' })).toBe('fr');
+  });
+
+  it('writes the slice, keeping every other key, and says what it replaced', async () => {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({ settings: { quotas: { requestsPerMinute: 5 } } }),
+        update: vi.fn(),
+      },
+    };
+    const db = { $transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)) };
+
+    const result = await writeOrgLocale(ORG_A, 'en-XA', db as never);
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { quotas: { requestsPerMinute: 5 }, locale: 'en-XA' } },
+    });
+    expect(result).toEqual({ previous: null, stored: 'en-XA', written: true });
+  });
+
+  it('removes the key on null', async () => {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({ settings: { locale: 'en', quotas: {} } }),
+        update: vi.fn(),
+      },
+    };
+    const db = { $transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)) };
+
+    expect(await writeOrgLocale(ORG_A, null, db as never)).toEqual({
+      previous: 'en',
+      stored: null,
+      written: true,
+    });
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { quotas: {} } },
+    });
+  });
+
+  it('returns null for an org that does not exist', async () => {
+    const tx = { org: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } };
+    const db = { $transaction: vi.fn((fn: (t: typeof tx) => unknown) => fn(tx)) };
+
+    expect(await writeOrgLocale(ORG_A, 'en', db as never)).toBeNull();
     expect(tx.org.update).not.toHaveBeenCalled();
   });
 });

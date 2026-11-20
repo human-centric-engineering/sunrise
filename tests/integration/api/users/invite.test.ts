@@ -425,6 +425,7 @@ describe('POST /api/v1/users/invite', () => {
         bio: null,
         phone: null,
         timezone: 'UTC',
+        locale: null,
         location: null,
         preferences: {},
         signupOrgId: null,

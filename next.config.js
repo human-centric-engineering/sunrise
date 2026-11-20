@@ -2,6 +2,12 @@
 // file directly, before any bundler, and cannot resolve `@/`. Moving either
 // required file means updating these two paths (the second is in headers()).
 const { frameDenySource } = require('./lib/security/frame-deny-source.cjs');
+const createNextIntlPlugin = require('next-intl/plugin');
+
+// The interface-language request config (§138 t-1071): locale, messages and
+// formats per request. No i18n routing, so no URL changes. See
+// .context/ui/i18n.md.
+const withNextIntl = createNextIntlPlugin('./lib/i18n/request.ts');
 
 /**
  * Hosts allowed to reach Next's internal dev endpoints (HMR socket,
@@ -145,4 +151,4 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+module.exports = withNextIntl(nextConfig);

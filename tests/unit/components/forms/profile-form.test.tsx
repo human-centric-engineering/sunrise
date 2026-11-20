@@ -77,6 +77,7 @@ describe('components/forms/profile-form', () => {
     bio: 'Software developer',
     phone: '+1 555-0100',
     timezone: 'America/New_York',
+    locale: null,
     location: 'New York, USA',
     signupOrgId: null,
     signupOrgRole: null,
