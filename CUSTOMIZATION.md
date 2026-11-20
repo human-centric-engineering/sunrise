@@ -1238,9 +1238,12 @@ seconds in all, the check included. It
 (`APP_MODEL_MOVE_CHECK_TIMEOUT_MS`) or answers anything else refuses the move,
 and so does this init throwing (rolled back, so nothing it registered is kept),
 or a reporter failing while a check is registered. A reporter failing on its own
-marks the app's uses as unreadable, and refuses the model's delete (which
-cannot be undone) and counts it as in use in config health; each org's report has 10 seconds
-(`APP_MODEL_PIN_REPORT_TIMEOUT_MS`). See
+marks the app's uses as unreadable, refuses the model's delete (which cannot
+be undone), and leaves config health's retiring-model checks unable to run
+rather than guess. Each org's report has 10 seconds
+(`APP_MODEL_PIN_REPORT_TIMEOUT_MS`), and one report over every org 20 seconds
+in all (`APP_MODEL_PIN_REPORT_BUDGET_MS`): orgs not asked by then count as
+failed. See
 [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#an-apps-own-model-pins-136-t-1067).
 
 **App-owned MCP resources — `lib/app/mcp-resources.ts`.** MCP _tools_ already had

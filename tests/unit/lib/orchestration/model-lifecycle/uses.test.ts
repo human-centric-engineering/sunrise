@@ -369,13 +369,48 @@ describe('the app’s own pins (§136 t-1067)', () => {
     expect(uses.appPinsUnavailable).toBe(true);
   });
 
-  it('counts a dated model as in use when the app’s report about it failed', async () => {
+  it('cannot answer when the app’s report on an otherwise unused dated model failed', async () => {
+    // Config health then reports its checks as not able to run: no alert
+    // about uses nobody can name, and no all-clear either.
     catalogue([{ id: 'd1', providerSlug: 'openai', modelId: 'app-maybe', retiresAt: PAST }]);
     registerModelPinReporter(() => {
       throw new Error('panel table missing');
     });
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+    await expect(retiringModelsInUse(NOW)).rejects.toThrow(
+      "The app's own uses of dated model d1 could not be read"
+    );
+  });
+
+  it('still answers when a failed report could not change it', async () => {
+    // A by-id-only workflow and every row with the id retired: in use anyway.
+    catalogue([
+      { id: 'az', providerSlug: 'microsoft', modelId: 'gpt-4o', retiresAt: PAST },
+      { id: 'oa', providerSlug: 'openai', modelId: 'gpt-4o', retiresAt: PAST },
+    ]);
+    vi.mocked(providerModelUsage).mockResolvedValue({
+      ...UNUSED,
+      otherOrgWorkflows: 1,
+      otherOrgWorkflowsByIdOnly: 1,
+    });
+    registerModelPinReporter(() => {
+      throw new Error('panel table missing');
+    });
+
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 2 });
+  });
+
+  it('tells the reporter about the model in its declared shape only', async () => {
+    catalogue([{ id: 'r1', providerSlug: 'openai', modelId: 'm', retiresAt: FUTURE }]);
+    const seen: Array<Record<string, unknown>> = [];
+    registerModelPinReporter(({ model }) => {
+      seen.push({ ...model });
+      return [];
+    });
+
+    await retiringModelsInUse(NOW);
+
+    expect(Object.keys(seen[0]).sort()).toEqual(['id', 'modelId', 'name', 'providerSlug']);
   });
 
   it('does not ask the app about a dated model the platform already uses', async () => {

@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 
 import {
+  modelHasMovableUses,
   modelHasUses,
   ProviderModelUses,
   type ProviderModelUsesData,
@@ -238,6 +239,11 @@ describe('the app’s own uses (§136 t-1067)', () => {
     expect(column(region, 'In the app')).toHaveTextContent(
       'The app’s own uses could not all be read, so there may be more.'
     );
+  });
+
+  it('modelHasMovableUses leaves out the app’s uses, which the move does not change', () => {
+    expect(modelHasMovableUses({ ...NONE, appPins: [{ label: 'P', where: 'w' }] })).toBe(false);
+    expect(modelHasMovableUses({ ...NONE, otherOrgAppPins: 2, otherOrgAgents: 1 })).toBe(true);
   });
 
   it('modelHasUses counts the app’s uses, in any org', () => {

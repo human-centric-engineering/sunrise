@@ -27,6 +27,7 @@ import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
   APP_MODEL_MOVE_CHECK_TIMEOUT_MS,
+  APP_MODEL_PIN_REPORT_BUDGET_MS,
   APP_MODEL_PIN_REPORT_TIMEOUT_MS,
   __resetAppModelPinsForTests,
   appModelPinsRegistered,
@@ -168,9 +169,35 @@ describe('reportAppModelPins', () => {
       orgId: 'org-a',
       providerModelId: 'm-old',
     });
+    // The fields go in the logger's meta slot, not its error slot.
     expect(logger.error).toHaveBeenCalledWith(
       'App model-pin reporter gave no usable answer',
-      expect.objectContaining({ orgId: 'org-b' })
+      undefined,
+      expect.objectContaining({ orgId: 'org-b', providerModelId: 'm-old' })
+    );
+  });
+
+  it('stops asking once the whole report has used its time, however many orgs remain', async () => {
+    vi.useFakeTimers();
+    const orgIds = Array.from({ length: 20 }, (_, i) => `org-${i}`);
+    vi.mocked(listActiveOrgIds).mockResolvedValue(orgIds);
+    const asked: string[] = [];
+    registerModelPinReporter(({ orgId }) => {
+      asked.push(orgId);
+      return new Promise(() => {});
+    });
+
+    const pending = reportAppModelPins(MODEL);
+    await vi.advanceTimersByTimeAsync(APP_MODEL_PIN_REPORT_BUDGET_MS + 1);
+
+    // Two batches of eight, each given its 10 s, use the 20 s; the last four
+    // orgs are never asked, and the report says it is short.
+    expect(await pending).toEqual({ pins: [], failed: true });
+    expect(asked).toHaveLength(16);
+    expect(logger.error).toHaveBeenCalledWith(
+      'App model-pin report ran out of time; the rest of the orgs were not asked',
+      undefined,
+      { providerModelId: 'm-old', notAsked: 4 }
     );
   });
 

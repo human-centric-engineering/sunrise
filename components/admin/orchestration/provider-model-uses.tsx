@@ -125,6 +125,15 @@ export function modelHasUses(uses: ProviderModelUsesData): boolean {
   );
 }
 
+/**
+ * Whether anything the move can change uses the model: everything
+ * {@link modelHasUses} counts but the app's own uses, which the app moves
+ * itself. What gates the move's trigger.
+ */
+export function modelHasMovableUses(uses: ProviderModelUsesData): boolean {
+  return modelHasUses({ ...uses, appPins: [], otherOrgAppPins: 0 });
+}
+
 /** The app's own uses (§136 t-1067): named in the caller's org, counted elsewhere. */
 function AppUses({ uses }: { uses: ProviderModelUsesData }) {
   const own = uses.appPins ?? [];

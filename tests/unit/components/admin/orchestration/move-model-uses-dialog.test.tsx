@@ -330,6 +330,36 @@ describe('the app’s own pins and its check (§136 t-1067)', () => {
     expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeEnabled();
   });
 
+  it('lists an org with only the app’s uses apart, and says no agent or workflow uses the model', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      ...PREVIEW,
+      orgs: [
+        {
+          orgId: 'org-z',
+          name: 'Zeta',
+          agents: 0,
+          inactiveAgents: 0,
+          agentsFollowingPlatform: 0,
+          workflows: 0,
+          left: {},
+          ownKey: false,
+          appPins: 3,
+        },
+      ],
+      settings: { moved: [], left: [] },
+      app: { pinsUnavailable: false, refused: null },
+    });
+    renderDialog();
+    const { dialog } = await open();
+    await within(dialog).findByText('Zeta');
+
+    expect(dialog).toHaveTextContent('No agent or workflow in any organisation uses this model.');
+    expect(dialog).toHaveTextContent('Zeta: 3 uses the app reports');
+    expect(dialog).toHaveTextContent('The app moves these itself; this move does not change them.');
+    expect(dialog).not.toHaveTextContent('Zeta: 0 agents');
+    expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeDisabled();
+  });
+
   it('shows the app’s refusal and offers no move', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({
       ...PREVIEW,

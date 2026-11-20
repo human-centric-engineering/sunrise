@@ -136,8 +136,11 @@ export interface RetiringModelsInUse {
  *
  * The app's reporter (§136 t-1067) is asked only about a dated model nothing
  * of the platform's uses exactly, since it cannot change the answer for the
- * rest. A report that fails counts the model as in use, as the delete check
- * does: it is not known to be unused, and the model's page says why.
+ * rest. A report that fails throws: config health then reports its checks as
+ * not able to run, rather than raise an alert about uses nobody can name or
+ * pass a model nobody can clear.
+ *
+ * @throws Error when the app's report on such a model failed.
  */
 export async function retiringModelsInUse(now: Date = new Date()): Promise<RetiringModelsInUse> {
   const dated = await prisma.aiProviderModel.findMany({
@@ -167,10 +170,15 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
       counts[state]++;
       continue;
     }
-    // The app reports its uses of this row, so each is exact; a report that
-    // failed may have missed one.
-    const app = await reportAppModelPins(model);
-    if (app.pins.length > 0 || app.failed) {
+    // The app reports its uses of this row, so each is exact. A report that
+    // failed may have missed one: not known either way.
+    const app = await reportAppModelPins({
+      id: model.id,
+      name: model.name,
+      providerSlug: model.providerSlug,
+      modelId: model.modelId,
+    });
+    if (app.pins.length > 0) {
       counts[state]++;
       continue;
     }
@@ -181,10 +189,14 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
       ownWorkflowsByIdOnly +
       usage.otherOrgWorkflowsByIdOnly +
       pins.filter((p) => p.byIdOnly).length;
-    if (byIdOnly === 0) continue;
     const states = [state, ...others.map((o) => modelLifecycleState(o, now))];
-    if (states.includes('current')) continue;
-    counts[states.includes('retiring') ? 'retiring' : 'retired']++;
+    if (byIdOnly > 0 && !states.includes('current')) {
+      counts[states.includes('retiring') ? 'retiring' : 'retired']++;
+      continue;
+    }
+    if (app.failed) {
+      throw new Error(`The app's own uses of dated model ${model.id} could not be read`);
+    }
   }
   return counts;
 }

@@ -8,7 +8,10 @@
  *        change is written to the admin audit log.
  * DELETE /api/v1/admin/orchestration/provider-models/:id — hard delete, refused
  *        (409 MODEL_IN_USE) when any active agent or active workflow still
- *        references the row's (providerSlug, modelId) pair.
+ *        references the row's (providerSlug, modelId) pair, a saved setting
+ *        names it (§136 t-1065), or the app reports a use of it; and refused
+ *        (409 MODEL_USES_UNREADABLE) while the app's report of its own uses
+ *        failed (§136 t-1067).
  *
  * Authentication: Admin role required.
  */

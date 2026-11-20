@@ -58,7 +58,8 @@
  * past two minutes or answers anything else refuses the move, and so does this
  * init throwing, or the reporter failing while a check is registered. A
  * reporter failing on its own marks the app's uses as unreadable, which
- * refuses the model's delete and counts it as in use in config health.
+ * refuses the model's delete and leaves config health's retiring-model
+ * checks unable to run.
  *
  * Empty = no app uses reported and every move allowed, as before this seam.
  *

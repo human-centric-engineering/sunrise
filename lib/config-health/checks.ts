@@ -144,8 +144,8 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
     label: 'Retired AI model still in use',
     severity: 'critical',
     description:
-      'A model its provider has retired is still used by an agent, a workflow or a default ' +
-      'setting, so calls to it fail.',
+      'A model its provider has retired is still used by an agent, a workflow, a default ' +
+      "setting or the app's own code, so calls to it fail.",
     remediation:
       'Under Admin → Orchestration → Providers → Models, open each model marked Retired: it lists ' +
       'what still uses it. Move those to its replacement, or to another model. A default shown as ' +
@@ -153,6 +153,8 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
     docsPath: '.context/orchestration/llm-providers.md',
     // §136 t-1065. Counts every org's agents and workflows: the catalogue is
     // shared, so a retired model one org still uses is the operator's to see.
+    // And the app's own uses (§136 t-1067); a failed report of them makes
+    // this check unable to run, never an alert.
     detect: async (): Promise<boolean> => (await retiringModelsInUse()).retired === 0,
   },
   {
@@ -160,8 +162,8 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
     label: 'Retiring AI model in use',
     severity: 'warning',
     description:
-      'A model its provider is about to retire is still used by an agent, a workflow or a default ' +
-      'setting. It works until its retirement day, then calls to it fail.',
+      'A model its provider is about to retire is still used by an agent, a workflow, a default ' +
+      "setting or the app's own code. It works until its retirement day, then calls to it fail.",
     remediation:
       'Under Admin → Orchestration → Providers → Models, open each model marked Retiring: it lists ' +
       'what uses it and its replacement. Move those before the day.',

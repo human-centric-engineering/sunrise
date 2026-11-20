@@ -31,7 +31,8 @@
  * A reporter is informational, so with no check registered its failure does
  * not refuse a move: the finder and the preview say the app's uses could not
  * be read (`failed`). Its readers decide the rest: the model's delete, which
- * cannot be undone, refuses, and config health counts the model as in use.
+ * cannot be undone, refuses, and config health's retiring-model checks report
+ * that they could not run.
  *
  * With nothing registered nothing here runs: no org is entered and every
  * answer is empty, so the finder and the move behave as they did before this
@@ -51,6 +52,12 @@ import { withTimeout } from '@/lib/utils/with-timeout';
 
 /** How long one org's report may take before it counts as failed. */
 export const APP_MODEL_PIN_REPORT_TIMEOUT_MS = 10_000;
+/**
+ * How long one report over every org may take in all. An org not answered
+ * by then counts as failed, so a slow reporter delays a page by this much at
+ * most, however many orgs there are.
+ */
+export const APP_MODEL_PIN_REPORT_BUDGET_MS = 20_000;
 /** How long the check may take before it counts as a refusal. */
 export const APP_MODEL_MOVE_CHECK_TIMEOUT_MS = 120_000;
 /** Orgs asked for their report at once. */
@@ -209,10 +216,11 @@ async function orgsToAsk(acrossOrgs: boolean): Promise<string[]> {
 async function reportOne(
   ask: AppModelPinReporter,
   model: AppPinModel,
-  orgId: string
+  orgId: string,
+  timeoutMs: number
 ): Promise<ReportedAppModelPin[] | null> {
   const run = () =>
-    withTimeout(APP_MODEL_PIN_REPORT_TIMEOUT_MS, 'model-pin reporter', (signal) =>
+    withTimeout(timeoutMs, 'model-pin reporter', (signal) =>
       Promise.resolve(ask({ model, orgId, signal }))
     );
   let raw: unknown;
@@ -224,7 +232,7 @@ async function reportOne(
   }
   const parsed = pinsSchema.safeParse(raw);
   if (!parsed.success) {
-    logger.error('App model-pin reporter gave no usable answer', {
+    logger.error('App model-pin reporter gave no usable answer', undefined, {
       orgId,
       providerModelId: model.id,
       issues: parsed.error.issues.slice(0, 5).map((issue) => issue.message),
@@ -238,8 +246,11 @@ async function reportOne(
 /**
  * The app's uses of `model`, in every active org by default, or in the
  * caller's org alone with `acrossOrgs: false` (as `providerModelUsage`'s
- * option). Each org is asked inside its own scope. With no reporter
- * registered nothing is asked and the report is empty.
+ * option). Each org is asked inside its own scope, eight at a time, each for
+ * at most {@link APP_MODEL_PIN_REPORT_TIMEOUT_MS} and all of them within
+ * {@link APP_MODEL_PIN_REPORT_BUDGET_MS}: an org not answered in time counts
+ * as failed. With no reporter registered nothing is asked and the report is
+ * empty.
  */
 export async function reportAppModelPins(
   model: AppPinModel,
@@ -251,9 +262,26 @@ export async function reportAppModelPins(
   const orgIds = await orgsToAsk(options.acrossOrgs !== false);
   const pins: ReportedAppModelPin[] = [];
   let failed = false;
+  const deadline = Date.now() + APP_MODEL_PIN_REPORT_BUDGET_MS;
   for (let i = 0; i < orgIds.length; i += REPORT_CONCURRENCY) {
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      logger.error(
+        'App model-pin report ran out of time; the rest of the orgs were not asked',
+        undefined,
+        {
+          providerModelId: model.id,
+          notAsked: orgIds.length - i,
+        }
+      );
+      failed = true;
+      break;
+    }
+    const timeoutMs = Math.min(APP_MODEL_PIN_REPORT_TIMEOUT_MS, left);
     const batch = await Promise.all(
-      orgIds.slice(i, i + REPORT_CONCURRENCY).map((orgId) => reportOne(ask, model, orgId))
+      orgIds
+        .slice(i, i + REPORT_CONCURRENCY)
+        .map((orgId) => reportOne(ask, model, orgId, timeoutMs))
     );
     for (const result of batch) {
       if (result) pins.push(...result);
@@ -302,7 +330,7 @@ export async function checkAppModelMove(
   }
   const parsed = answerSchema.safeParse(raw);
   if (!parsed.success) {
-    logger.error('App model-move check gave no usable answer; the move is refused', {
+    logger.error('App model-move check gave no usable answer; the move is refused', undefined, {
       ...log,
       answered: raw === null || raw === undefined ? String(raw) : typeof raw,
     });
