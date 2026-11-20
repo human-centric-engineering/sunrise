@@ -73,6 +73,7 @@ import {
   definedEntries,
   orgCreatedSettings,
   ORG_AWAITING_FOUNDER_KEY,
+  ORG_AWAITING_ONBOARDING_KEY,
   type OrgCreatedSource,
 } from '@/lib/tenancy/org-settings';
 import { orgCreatedHookKeys, runOrgCreatedHooks } from '@/lib/tenancy/org-created-hooks';
@@ -404,7 +405,13 @@ async function insertOrg(
   const org = await db
     .$transaction(async (tx) => {
       const created = await tx.org.create({
-        data: { slug: input.slug, name: input.name, ...(settings ? { settings } : {}) },
+        data: {
+          slug: input.slug,
+          name: input.name,
+          // Every org starts with its onboarding unfinished until the app
+          // marks it done (§134 t-1063); the install org is never made here.
+          settings: { ...settings, [ORG_AWAITING_ONBOARDING_KEY]: true },
+        },
         select: orgSelect,
       });
       if (ownerId) {

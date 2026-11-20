@@ -23,15 +23,21 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 afterEach(() => {
   vi.resetModules();
   vi.doUnmock('@/lib/app/auth-landing');
+  vi.doUnmock('@/lib/app/welcome');
 });
 
 /** Load the resolver with a stubbed seam. */
-async function loadWith(route: string | null, label: string | null = null) {
+async function loadWith(
+  route: string | null,
+  label: string | null = null,
+  welcome: string | null = null
+) {
   vi.resetModules();
   vi.doMock('@/lib/app/auth-landing', () => ({
     appAuthLandingRoute: route,
     appAuthLandingLabel: label,
   }));
+  vi.doMock('@/lib/app/welcome', () => ({ appWelcomeRoute: welcome }));
   return import('@/lib/auth-landing/route');
 }
 
@@ -106,5 +112,56 @@ describe('AUTH_LANDING_LABEL', () => {
     const { AUTH_LANDING_LABEL } = await loadWith('/programme', '  Programme  ');
 
     expect(AUTH_LANDING_LABEL).toBe('Programme');
+  });
+});
+
+describe('AUTH_WELCOME_ROUTE (§134 t-1063)', () => {
+  it('is null when the seam is null, so nobody is redirected', async () => {
+    const { AUTH_WELCOME_ROUTE } = await loadWith(null);
+
+    expect(AUTH_WELCOME_ROUTE).toBeNull();
+  });
+
+  it('uses a root-relative fork value', async () => {
+    const { AUTH_WELCOME_ROUTE } = await loadWith(null, null, ' /welcome ');
+
+    expect(AUTH_WELCOME_ROUTE).toBe('/welcome');
+  });
+
+  it.each([
+    ['an absolute URL', 'https://evil.example.com/welcome'],
+    ['a protocol-relative URL', '//evil.example.com'],
+  ])('throws on %s', async (_label, value) => {
+    await expect(loadWith(null, null, value)).rejects.toThrow(/lib\/app\/welcome\.ts/);
+  });
+
+  it.each([
+    ['the default landing route', null, '/dashboard'],
+    ['the same path with a query', null, '/dashboard?step=1'],
+    ['the same path with a trailing slash', null, '/dashboard/'],
+    ['a fork landing route', '/app', '/app'],
+  ])('throws when it is %s, which would redirect to itself', async (_label, landing, welcome) => {
+    await expect(loadWith(landing, null, welcome)).rejects.toThrow(/landing route itself/);
+  });
+
+  it.each([
+    ['an auth route', '/signup'],
+    ['a path beneath an auth route', '/signup/welcome'],
+    ['the login route with a query', '/login?next=1'],
+    ['the password-reset route with a trailing slash', '/reset-password/'],
+  ])('throws when it is %s, which would loop with the landing route', async (_label, welcome) => {
+    await expect(loadWith(null, null, welcome)).rejects.toThrow(/auth route/);
+  });
+
+  it('accepts a path that only shares an auth route’s letters', async () => {
+    const { AUTH_WELCOME_ROUTE } = await loadWith(null, null, '/signups-welcome');
+
+    expect(AUTH_WELCOME_ROUTE).toBe('/signups-welcome');
+  });
+
+  it('accepts a path beneath the landing route', async () => {
+    const { AUTH_WELCOME_ROUTE } = await loadWith(null, null, '/dashboard/welcome');
+
+    expect(AUTH_WELCOME_ROUTE).toBe('/dashboard/welcome');
   });
 });

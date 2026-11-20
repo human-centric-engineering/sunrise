@@ -18,6 +18,30 @@ release process.
 
 ### Added
 
+- **An app can send a new org's owners and admins to a welcome step until it says
+  onboarding is done (§134 t-1063).** Every org created through
+  `lib/tenancy/lifecycle.ts` (staff, an app's `createOrg()`, a self-serve
+  signup) is now inserted with `Org.settings.awaitingOnboarding: true`
+  (`ORG_AWAITING_ONBOARDING_KEY`); a missing key reads as finished, so the
+  install org and every org that already exists are finished, with no
+  migration. `isOrgOnboarded()` and `markOrgOnboarded()` in the new
+  `lib/tenancy/onboarding.ts` read and clear it (`readOrgOnboarded()` in
+  `lib/tenancy/org-settings.ts` reads it from a settings object). A new fork
+  seam, `lib/app/welcome.ts` (`appWelcomeRoute`, ships `null`), resolved and
+  validated as `AUTH_WELCOME_ROUTE` in `lib/auth-landing/route.ts`: when set,
+  the proxy sends a signed-in OWNER or ADMIN of an unfinished, active org who
+  reaches the landing route there instead (query string kept; a plain MEMBER
+  is not sent). With it `null`, nothing is read or redirected. The route may
+  not be the landing route or sit on an auth route; the auth routes are now
+  exported from `lib/auth-landing/route.ts` as `AUTH_ROUTES` /
+  `isAuthRoutePath()`, which `proxy.ts` uses. Per-user onboarding stays the
+  app's; Sunrise records it per org only.
+  _Fork impact:_ none until you set the route. A new org's `settings` column
+  is no longer `NULL` (it holds the key), so a query that took `NULL` to mean
+  "never configured", or a test that asserts the exact `data` of
+  `org.create`, sees the change. Orgs staff create (a migrating customer
+  included) start unfinished too, so their owner sees the welcome step once.
+
 - **What uses a catalogue model, and a warning when a retiring one is in use
   (§136, t-1065).** `GET /api/v1/admin/orchestration/provider-models/:id` now
   returns `lifecycle` (`state`, `replacement`) and `uses`: the agents and
