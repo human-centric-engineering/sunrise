@@ -66,6 +66,7 @@ Three properties come with it:
 | `guard-floor-contributors.ts`      | `initAppGuardFloorContributors`      | `lib/orchestration/chat/guard-floor.ts`                     | roll back, log, degrade        |
 | `jobs.ts`                          | `initAppJobs`                        | `lib/orchestration/maintenance/app-jobs.ts`                 | roll back, log, degrade        |
 | `knowledge-access-contributors.ts` | `initAppKnowledgeAccessContributors` | `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts` | roll back, log, degrade        |
+| `messages.ts`                      | `initAppMessages`                    | `lib/i18n/registry.ts` (strings and languages)              | roll back, log, degrade        |
 | `mcp-resources.ts`                 | `initAppMcpResources`                | `lib/orchestration/mcp/resource-registry.ts`                | roll back, log, degrade        |
 | `model-pins.ts`                    | `initAppModelPins`                   | `lib/orchestration/model-lifecycle/app-pins.ts`             | roll back, log, **refuse**     |
 | `org-created.ts`                   | `initAppOrgCreatedHooks`             | `lib/tenancy/org-created-hooks.ts`                          | roll back, log, degrade        |

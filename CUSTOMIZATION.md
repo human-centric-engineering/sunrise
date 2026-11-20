@@ -505,6 +505,7 @@ small and conflict-free.)
 | `lib/app/model-pins.ts`                    | models your app names itself, and a check on moving them (`initAppModelPins`) | a model's uses, its delete check, config health, and the model move (server)                                          |
 | `lib/app/account-sections.ts`              | extra sections on `/profile` + `/settings`                                    | `<AccountSections/>` on both account pages (server)                                                                   |
 | `lib/app/entitlements.ts`                  | the switches and meters an org can have (`initAppEntitlements`)               | the entitlements registry → `/admin/orgs/[id]`, `orgHasSwitch()` and `checkMeterQuota()` (server)                     |
+| `lib/app/messages.ts`                      | an app's own strings, its languages, replaced platform strings                | the catalogue registry → every translated screen and email, and `supportedLocales()` (server only)                    |
 | `lib/app/api-key-scopes.ts`                | extra API-key scopes (`APP_API_KEY_SCOPES`)                                   | `lib/auth/api-key-scopes.ts` + `createApiKeySchema` (server + client)                                                 |
 | `lib/app/brand.ts`                         | product name, legal entity, meta description                                  | `lib/brand.ts` → metadata, footers, `<BrandMark>`, emails (server + client)                                           |
 | `lib/app/reserved-tiers.ts`                | which reserved tiers THIS checkout occupies                                   | `tests/unit/reserved-fork-tiers.test.ts` + the metadata guard (test)                                                  |
@@ -1132,6 +1133,43 @@ this list is the allowlist `POST /api/v1/user/api-keys` issues against. That
 endpoint's `GET` returns `availableScopes`, so your key UI does not have to
 restate the list. See
 [`.context/orchestration/api-keys.md`](./.context/orchestration/api-keys.md).
+
+**Your own strings and languages — `lib/app/messages.ts`.** Write your
+screens' text through the catalogue from the first screen (`.context/ui/i18n.md`).
+Sunrise ships `en` and the pseudo-locale `en-XA`; a real language comes from you.
+Fill the auto-wired `initAppMessages()`:
+
+```typescript
+// lib/app/messages.ts — yours to edit
+import appEn from '@/lib/app/messages/en.json'; // { "app": { "client": { "title": "Clients" } } }
+import appFr from '@/lib/app/messages/fr.json'; // { "app": { "client": { "title": "Clients" } } }
+import platformFr from '@/lib/app/messages/platform-fr.json'; // { "common": { "save": "Enregistrer", … } }
+import {
+  overridePlatformMessages,
+  registerAppLocale,
+  registerAppMessages,
+} from '@/lib/i18n/registry';
+
+export type AppMessages = typeof appEn; // makes t('app.client.title') type-check
+
+export function initAppMessages(): void {
+  registerAppMessages('en', appEn); // your strings, under "app"
+  registerAppLocale('fr', platformFr); // a new language, with the platform's strings in it
+  registerAppMessages('fr', appFr); // your strings in it
+  overridePlatformMessages('en', { common: { save: 'Save changes' } }); // replace one
+}
+```
+
+The JSON files can live anywhere you keep your own modules; a folder under
+`lib/app/`, as here, must be added to `appOwnModules` in `lib/app/own-modules.ts`
+(`'lib/app/messages/'`), or the seam-coverage guards fail on it.
+Your strings go under the `app` namespace (`framework` for a framework tier),
+which Sunrise never ships, so an upgrade cannot collide with them. A registered
+locale is choosable at once, by a user, an org or a visitor. A key a locale
+lacks shows in English and the log lists it once; a platform key that no
+longer exists is dropped with a warning, so an upgrade that retires a string
+does not break your translation. If the init throws, none of it applies and
+every screen shows the platform catalogue.
 
 **Account sections — `lib/app/account-sections.ts`.** The authenticated account
 surface (`/profile`, `/settings`) is the one place a fork commonly needs to add

@@ -130,6 +130,9 @@ import {
   __resetEntitlementRegistryForTests,
 } from '@/lib/tenancy/entitlements';
 import { allMeters } from '@/lib/tenancy/meters';
+import { appLocaleTags, catalogueFor, __resetAppMessagesForTests } from '@/lib/i18n/registry';
+import { supportedLocales } from '@/lib/i18n/locales';
+import enMessages from '@/lib/i18n/messages/en.json';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
 import { ORG_TIER_ADMIN_PAGES, adminPageTier } from '@/lib/auth/admin-tier';
 import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
@@ -301,6 +304,17 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     assert: () => {
       expect(appAuthLandingRoute).toBeNull();
       expect(appAuthLandingLabel).toBeNull();
+    },
+  },
+  {
+    seam: 'lib/app/messages.ts',
+    risk: 'a stray string would replace platform text, and a stray locale would become choosable, on every screen of every install',
+    assert: () => {
+      __resetAppMessagesForTests();
+      // The read triggers the lazy init, so this exercises the REAL seam.
+      expect(appLocaleTags()).toEqual([]);
+      expect(supportedLocales()).toEqual(['en', 'en-XA']);
+      expect(catalogueFor('en')).toEqual(enMessages);
     },
   },
   {

@@ -40,6 +40,26 @@ release process.
   `tests/setup.ts` pins the seam empty for every test file, like the
   `signup-org` seam.
 
+- **An app can register its own strings and languages (§138 t-1072).** New
+  fork-owned scaffold `lib/app/messages.ts` (`initAppMessages()` and the
+  `AppMessages` type, shipped empty) behind the shared init gate, with
+  `registerAppMessages()`, `registerAppLocale()`, `overridePlatformMessages()`,
+  `appLocaleTags()`, `catalogueFor()` and `APP_MESSAGE_NAMESPACES` in
+  `lib/i18n/registry.ts`. An app's strings go under the `app` (or `framework`)
+  namespace, which the platform catalogue now reserves and never ships. A
+  registered locale is returned by `supportedLocales()`, so users, orgs and
+  visitors can choose it; a key it lacks shows in English and is logged once.
+  A registered string must be valid ICU, or the init throws.
+  `Messages` (`lib/i18n/catalogue.ts`) now includes `AppMessages`. A throwing
+  init rolls back every registration and the platform catalogue serves. The
+  registry is server-only. The tag constants and `isLanguageTag()` moved to the
+  import-free `lib/i18n/tags.ts`, and `lib/i18n/locales.ts` still re-exports
+  them. The `locale` field of `updateUserSchema` now checks only a tag's shape,
+  so client forms do not bundle the catalogue. `PATCH /api/v1/users/me` still
+  refuses an unsupported locale.
+  _Fork impact:_ none required. `tests/unit/lib/app/defaults.test.ts` gains a
+  row for the new seam; pin it when you fill the seam.
+
 - **Move every use of a retiring model to its replacement in one audited
   action (§136, t-1066).** `POST /api/v1/admin/orchestration/provider-models/:id/move-uses/preview`
   and `POST …/move-uses` (platform admin; the move from the install org only),
