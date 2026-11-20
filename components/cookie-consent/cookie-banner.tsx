@@ -17,11 +17,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { useConsent, useShouldShowConsentBanner, BANNER_DELAY_MS } from '@/lib/consent';
 import { PreferencesModal } from '@/components/cookie-consent/preferences-modal';
 
 export function CookieBanner() {
+  const t = useTranslations('cookies.banner');
   const { acceptAll, rejectOptional, isPreferencesOpen, openPreferences, closePreferences } =
     useConsent();
   const shouldShow = useShouldShowConsentBanner();
@@ -57,7 +59,7 @@ export function CookieBanner() {
       <div
         role="dialog"
         aria-modal="false"
-        aria-label="Cookie consent"
+        aria-label={t('label')}
         aria-describedby="cookie-banner-description"
         className="bg-background fixed right-0 bottom-0 left-0 z-50 border-t shadow-lg"
       >
@@ -66,31 +68,32 @@ export function CookieBanner() {
             {/* Content */}
             <div className="flex-1">
               <p id="cookie-banner-description" className="text-muted-foreground text-sm">
-                We use cookies to improve your experience. Essential cookies are always active for
-                security and functionality. Optional cookies help us analyze usage and improve our
-                services.{' '}
-                <Link
-                  href="/privacy"
-                  className="text-foreground underline underline-offset-4 hover:no-underline"
-                >
-                  Privacy Policy
-                </Link>
+                {t.rich('description', {
+                  link: (chunks) => (
+                    <Link
+                      href="/privacy"
+                      className="text-foreground underline underline-offset-4 hover:no-underline"
+                    >
+                      {chunks}
+                    </Link>
+                  ),
+                })}
               </p>
             </div>
 
             {/* Actions */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <Button variant="ghost" size="sm" onClick={openPreferences} className="text-sm">
-                Manage Preferences
+                {t('managePreferences')}
               </Button>
 
               {/* Equal prominence buttons (GDPR compliance) */}
               <div className="flex gap-2">
                 <Button variant="outline" onClick={rejectOptional} className="flex-1 sm:flex-none">
-                  Essential Only
+                  {t('essentialOnly')}
                 </Button>
                 <Button variant="default" onClick={acceptAll} className="flex-1 sm:flex-none">
-                  Accept All
+                  {t('acceptAll')}
                 </Button>
               </div>
             </div>

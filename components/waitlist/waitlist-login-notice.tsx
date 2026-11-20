@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 
 import { getWaitlistConfig } from '@/lib/waitlist/config';
 
@@ -14,15 +15,20 @@ import { getWaitlistConfig } from '@/lib/waitlist/config';
  * Renders nothing without a waitlist config. The page decides `invite_only`.
  */
 export function WaitlistLoginNotice() {
+  // next-intl's hook works in a (non-async) Server Component too; staying
+  // synchronous keeps the login page that mounts this one synchronous.
+  const t = useTranslations('waitlist');
   const config = getWaitlistConfig();
   if (!config) return null;
   return (
     <p className="text-muted-foreground text-center text-sm">
-      Accounts are by invitation for now.{' '}
-      <Link href={config.joinPath} className="text-primary font-medium hover:underline">
-        Join the waitlist
-      </Link>{' '}
-      to hear when we open.
+      {t.rich('loginNotice', {
+        link: (chunks) => (
+          <Link href={config.joinPath} className="text-primary font-medium hover:underline">
+            {chunks}
+          </Link>
+        ),
+      })}
     </p>
   );
 }

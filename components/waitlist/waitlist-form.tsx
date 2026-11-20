@@ -10,8 +10,9 @@
  * yourself.
  *
  * The copy is the fork's: every label, placeholder and message the form draws
- * is a `copy` prop with a neutral default. The exceptions are the schema's
- * validation messages, which come from the field labels the fork declares.
+ * is a `copy` prop with a neutral default from the catalogue (`waitlist.form`).
+ * The exceptions are the schema's validation messages, which come from the
+ * `validation` namespace and the field labels the fork declares.
  * A list closed since the page rendered (the route's 409) shows the closed
  * message, as a list closed at render does. Styling comes from the surface's theme tokens, like any other form.
  *
@@ -25,9 +26,10 @@ import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { CheckCircle2, Loader2 } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { emailSchema } from '@/lib/validations/auth';
+import { createEmailSchema } from '@/lib/validations/auth';
 import { buildWaitlistDetailsSchema, type WaitlistFieldShape } from '@/lib/validations/waitlist';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { Button } from '@/components/ui/button';
@@ -70,21 +72,8 @@ export interface WaitlistFormCopy {
 /** The optional select's "no answer" item: Radix forbids an empty item value. */
 const NO_ANSWER = '__no_answer__';
 
-const DEFAULT_COPY: WaitlistFormCopy = {
-  emailLabel: 'Email',
-  emailPlaceholder: 'you@example.com',
-  nameLabel: 'Name (optional)',
-  optionalMarker: '(optional)',
-  selectPlaceholder: 'Choose one',
-  selectNoAnswerLabel: 'No answer',
-  failureMessage: 'Something went wrong. Please try again in a moment.',
-  submitLabel: 'Join the waitlist',
-  submittingLabel: 'Joining…',
-  successTitle: 'Thanks for joining',
-  successMessage: 'We’ll be in touch when there’s a place for you.',
-  closedMessage: 'This waitlist isn’t taking new sign-ups right now.',
-  consentNotice: null,
-};
+/** The example address in the email field: an address, so not a catalogue string. */
+const EMAIL_PLACEHOLDER = 'you@example.com';
 
 export interface WaitlistFormProps {
   /** The fork's declared fields, in form order. */
@@ -110,7 +99,25 @@ function attribution(): Record<string, string> {
 }
 
 export function WaitlistForm({ fields, list, closed = false, copy, className }: WaitlistFormProps) {
-  const text = { ...DEFAULT_COPY, ...copy };
+  const t = useTranslations('waitlist.form');
+  const tv = useTranslations('validation');
+  const defaults: WaitlistFormCopy = {
+    emailLabel: t('emailLabel'),
+    emailPlaceholder: EMAIL_PLACEHOLDER,
+    nameLabel: t('nameLabel'),
+    optionalMarker: t('optionalMarker'),
+    selectPlaceholder: t('selectPlaceholder'),
+    selectNoAnswerLabel: t('selectNoAnswerLabel'),
+    failureMessage: t('failureMessage'),
+    submitLabel: t('submitLabel'),
+    submittingLabel: t('submittingLabel'),
+    successTitle: t('successTitle'),
+    successMessage: t('successMessage'),
+    closedMessage: t('closedMessage'),
+    consentNotice: null,
+  };
+  const text = { ...defaults, ...copy };
+  const nameFieldName = t('nameFieldName');
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   // Closed when the page rendered, or closed since: the route's 409 says so.
@@ -119,12 +126,15 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
   const schema = useMemo(
     () =>
       z.object({
-        email: emailSchema,
-        name: z.string().trim().max(100, 'Name must be 100 characters or fewer'),
-        details: buildWaitlistDetailsSchema(fields),
+        email: createEmailSchema(tv),
+        name: z
+          .string()
+          .trim()
+          .max(100, tv('answerTooLong', { label: nameFieldName, max: '100' })),
+        details: buildWaitlistDetailsSchema(fields, tv),
         website: z.string(),
       }),
-    [fields]
+    [fields, tv, nameFieldName]
   );
 
   const {
@@ -214,7 +224,7 @@ export function WaitlistForm({ fields, list, closed = false, copy, className }: 
       <NoScriptNotice />
       {/* Honeypot — invisible to people, filled by bots. Decided on its value by the route. */}
       <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
-        <label htmlFor="waitlist-website">Website (leave blank)</label>
+        <label htmlFor="waitlist-website">{t('honeypotLabel')}</label>
         <input
           type="text"
           id="waitlist-website"

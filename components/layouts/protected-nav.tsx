@@ -20,26 +20,36 @@
  */
 
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { HeaderNav, type HeaderNavItem } from '@/components/layouts/header-nav';
 import { useSession } from '@/lib/auth/client';
 import { protectedNavItems } from '@/lib/app/protected-nav';
 import { DEFAULT_PROTECTED_NAV } from '@/lib/protected-nav/types';
 import { isPlatformAdmin } from '@/lib/auth/roles';
+import { defaultNavLabelKey } from '@/components/layouts/default-nav-label';
 
 // Fork override (a non-null array) replaces the platform default wholesale.
 const navItems = protectedNavItems ?? DEFAULT_PROTECTED_NAV;
+// Only the platform's own labels come from the catalogue; a fork's are its text.
+const isDefaultNav = protectedNavItems == null;
 
 export function ProtectedNav() {
   const pathname = usePathname();
+  const t = useTranslations('layout.nav');
   const { data: session } = useSession();
 
   const isAdmin = isPlatformAdmin(session?.user);
+
+  const labelFor = (href: string, label: string): string => {
+    const key = isDefaultNav ? defaultNavLabelKey(href) : null;
+    return key ? t(key) : label;
+  };
 
   const items: HeaderNavItem[] = navItems
     .filter((item) => !item.adminOnly || isAdmin)
     .map((item) => ({
       href: item.href,
-      label: item.label,
+      label: labelFor(item.href, item.label),
       icon: item.icon,
       // Exact items match only on equality; everything else prefix-matches so
       // `/settings/billing` still highlights "Settings". A fork sets `exact` to

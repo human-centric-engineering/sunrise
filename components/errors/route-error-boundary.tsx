@@ -14,6 +14,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -86,6 +87,7 @@ export function RouteErrorBoundary({
   footer,
 }: RouteErrorBoundaryProps): React.ReactElement {
   const router = useRouter();
+  const t = useTranslations('errors');
   const [isSessionExpired, setIsSessionExpired] = useState(false);
 
   // Log and report exactly once per error. `isSessionExpired` is deliberately
@@ -163,15 +165,13 @@ export function RouteErrorBoundary({
           <CardHeader>
             <div className="flex items-center gap-2">
               <LogIn className="h-5 w-5 text-blue-500" />
-              <CardTitle>Session Expired</CardTitle>
+              <CardTitle>{t('sessionExpired.title')}</CardTitle>
             </div>
-            <CardDescription>
-              Your session has expired. Please sign in again to continue.
-            </CardDescription>
+            <CardDescription>{t('sessionExpired.description')}</CardDescription>
           </CardHeader>
           <CardContent>
             <Button onClick={() => router.push('/login')} className="w-full">
-              Sign in
+              {t('sessionExpired.signIn')}
             </Button>
           </CardContent>
         </Card>
@@ -186,7 +186,7 @@ export function RouteErrorBoundary({
       error={error}
       containerClassName={containerClassName}
       actions={[
-        { label: 'Try again', onClick: retry },
+        { label: t('generic.tryAgain'), onClick: retry },
         {
           label: fallback.label,
           onClick: () => {

@@ -9,6 +9,7 @@
  */
 
 import { Home } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { RouteErrorBoundary } from '@/components/errors/route-error-boundary';
 
 export default function PublicError({
@@ -18,16 +19,17 @@ export default function PublicError({
   error: Error & { digest?: string };
   retry: () => void;
 }): React.ReactElement {
+  const t = useTranslations('errors');
   return (
     <RouteErrorBoundary
       error={error}
       retry={retry}
       boundaryName="PublicError"
       tag="public"
-      title="Oops! Something went wrong"
-      description="We encountered an unexpected error. Please try again or return to the home page."
+      title={t('public.title')}
+      description={t('public.description')}
       fallback={{
-        label: 'Go home',
+        label: t('generic.goHome'),
         href: '/',
         navigate: 'reload',
         icon: <Home className="mr-2 h-4 w-4" />,

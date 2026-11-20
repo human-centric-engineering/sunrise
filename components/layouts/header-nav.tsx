@@ -17,6 +17,7 @@
  */
 
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import type { LucideIcon } from 'lucide-react';
 import { Menu } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -40,6 +41,7 @@ interface HeaderNavProps {
 }
 
 export function HeaderNav({ items }: HeaderNavProps) {
+  const t = useTranslations('layout.nav');
   // No links, no nav: a menu button that opens an empty menu is a control with
   // nothing behind it (e.g. a fork whose items are all admin-only).
   if (items.length === 0) return null;
@@ -73,7 +75,7 @@ export function HeaderNav({ items }: HeaderNavProps) {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="h-9 w-9">
               <Menu className="h-5 w-5" />
-              <span className="sr-only">Open navigation menu</span>
+              <span className="sr-only">{t('openMenu')}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-48">

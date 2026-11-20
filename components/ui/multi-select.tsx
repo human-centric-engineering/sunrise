@@ -19,6 +19,7 @@
 
 import * as React from 'react';
 import { ChevronsUpDown, X } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -88,8 +89,8 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
   const {
     value,
     onChange,
-    placeholder = 'Select…',
-    emptyText = 'No options',
+    placeholder,
+    emptyText,
     disabled,
     className,
     contentClassName,
@@ -100,6 +101,8 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
     createLabel,
     createSupportsDescription,
   } = props;
+  const tm = useTranslations('ui.multiSelect');
+  const tc = useTranslations('common');
   const isAsync = 'loadOptions' in props && typeof props.loadOptions === 'function';
 
   const [open, setOpen] = React.useState(false);
@@ -189,7 +192,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
       setCreateFormOpen(false);
       setCreateDescription('');
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : 'Failed to create');
+      setCreateError(err instanceof Error ? err.message : tm('createFailed'));
     } finally {
       setCreating(false);
     }
@@ -237,7 +240,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
         >
           <div className="flex flex-1 flex-wrap items-center gap-1 text-left">
             {value.length === 0 ? (
-              <span className="text-muted-foreground">{placeholder}</span>
+              <span className="text-muted-foreground">{placeholder ?? tm('placeholder')}</span>
             ) : (
               <>
                 {chipsToShow.map((v) => (
@@ -246,7 +249,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                     <span
                       role="button"
                       tabIndex={0}
-                      aria-label={`Remove ${labelByValue[v] ?? v}`}
+                      aria-label={tm('remove', { label: labelByValue[v] ?? v })}
                       onClick={(e) => removeChip(v, e)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
@@ -261,7 +264,9 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                     </span>
                   </Badge>
                 ))}
-                {hiddenChips > 0 ? <Badge variant="outline">+{hiddenChips} more</Badge> : null}
+                {hiddenChips > 0 ? (
+                  <Badge variant="outline">{tm('more', { count: hiddenChips })}</Badge>
+                ) : null}
               </>
             )}
           </div>
@@ -276,9 +281,9 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={isAsync ? 'Search…' : 'Filter…'}
+            placeholder={isAsync ? tm('search') : tm('filter')}
             className="h-8"
-            aria-label="Search options"
+            aria-label={tm('searchOptions')}
           />
         </div>
         <div className="max-h-64 overflow-y-auto py-1">
@@ -299,8 +304,8 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
               <span className="text-primary">+</span>
               <span className="truncate">
                 {creating
-                  ? 'Creating…'
-                  : (createLabel?.(trimmedQuery) ?? `Create "${trimmedQuery}"`)}
+                  ? tm('creating')
+                  : (createLabel?.(trimmedQuery) ?? tm('createQuery', { query: trimmedQuery }))}
               </span>
             </button>
           ) : null}
@@ -308,20 +313,20 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
             <div className="space-y-2 border-b p-3">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <span className="text-primary">+</span>
-                <span className="truncate">{`Create "${trimmedQuery}"`}</span>
+                <span className="truncate">{tm('createQuery', { query: trimmedQuery })}</span>
               </div>
               <div className="space-y-1">
                 <label
                   htmlFor="multi-select-create-description"
                   className="text-muted-foreground text-xs"
                 >
-                  Description (optional)
+                  {tm('descriptionOptional')}
                 </label>
                 <Input
                   id="multi-select-create-description"
                   value={createDescription}
                   onChange={(e) => setCreateDescription(e.target.value)}
-                  placeholder="What is this option for?"
+                  placeholder={tm('descriptionPlaceholder')}
                   className="h-8 text-sm"
                   disabled={creating}
                   onKeyDown={(e) => {
@@ -345,7 +350,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                   }}
                   disabled={creating}
                 >
-                  Cancel
+                  {tc('cancel')}
                 </Button>
                 <Button
                   type="button"
@@ -356,7 +361,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                   }}
                   disabled={creating}
                 >
-                  {creating ? 'Creating…' : 'Create'}
+                  {creating ? tm('creating') : tm('create')}
                 </Button>
               </div>
             </div>
@@ -365,9 +370,13 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
             <p className="text-destructive border-b px-3 py-2 text-xs">{createError}</p>
           ) : null}
           {asyncLoading ? (
-            <div className="text-muted-foreground px-3 py-6 text-center text-sm">Loading…</div>
+            <div className="text-muted-foreground px-3 py-6 text-center text-sm">
+              {tc('loading')}
+            </div>
           ) : visibleOptions.length === 0 && !canCreate ? (
-            <div className="text-muted-foreground px-3 py-6 text-center text-sm">{emptyText}</div>
+            <div className="text-muted-foreground px-3 py-6 text-center text-sm">
+              {emptyText ?? tm('empty')}
+            </div>
           ) : (
             visibleOptions.map((option) => {
               const checked = value.includes(option.value);
@@ -400,7 +409,9 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
         <div className="flex items-center justify-between gap-2 border-t px-2 py-1.5">
           {value.length > 0 ? (
             <>
-              <span className="text-muted-foreground text-xs">{value.length} selected</span>
+              <span className="text-muted-foreground text-xs">
+                {tm('selectedCount', { count: value.length })}
+              </span>
               <div className="flex items-center gap-1">
                 <Button
                   type="button"
@@ -409,7 +420,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                   className="h-7 px-2 text-xs"
                   onClick={() => onChange([])}
                 >
-                  Clear all
+                  {tm('clearAll')}
                 </Button>
                 <Button
                   type="button"
@@ -417,13 +428,13 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                   className="h-7 px-3 text-xs"
                   onClick={() => setOpen(false)}
                 >
-                  Done
+                  {tm('done')}
                 </Button>
               </div>
             </>
           ) : (
             <>
-              <span className="text-muted-foreground text-xs">None selected</span>
+              <span className="text-muted-foreground text-xs">{tm('noneSelected')}</span>
               <Button
                 type="button"
                 variant="ghost"
@@ -431,7 +442,7 @@ export function MultiSelect(props: MultiSelectProps): React.ReactElement {
                 className="h-7 px-3 text-xs"
                 onClick={() => setOpen(false)}
               >
-                Done
+                {tm('done')}
               </Button>
             </>
           )}

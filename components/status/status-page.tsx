@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useFormatter, useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,6 +26,12 @@ export interface StatusPageProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Custom description */
   description?: string;
 }
+
+/**
+ * A clock time to the second: the page polls every few seconds, so minutes
+ * alone would not show that a refresh happened.
+ */
+const TIME_WITH_SECONDS = { hour: '2-digit', minute: '2-digit', second: '2-digit' } as const;
 
 /**
  * Format uptime for display
@@ -69,8 +76,8 @@ export function StatusPage({
   pollingInterval = 30000,
   showMemory = true,
   onStatusChange,
-  title = 'System Status',
-  description = 'Current status of all services',
+  title,
+  description,
   className,
   ...props
 }: StatusPageProps) {
@@ -79,31 +86,30 @@ export function StatusPage({
     onStatusChange,
   };
 
+  const t = useTranslations('status.page');
+  const format = useFormatter();
+
   const { data, isLoading, error, lastUpdated, refresh, isPolling, startPolling } =
     useHealthCheck(hookOptions);
 
   // Format last updated time
-  const lastUpdatedStr = lastUpdated
-    ? lastUpdated.toLocaleTimeString(undefined, {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      })
-    : 'Never';
+  const lastUpdatedStr = lastUpdated ? format.dateTime(lastUpdated, TIME_WITH_SECONDS) : t('never');
 
   return (
     <div className={cn('space-y-6', className)} {...props}>
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-          <p className="text-muted-foreground text-sm">{description}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{title ?? t('title')}</h1>
+          <p className="text-muted-foreground text-sm">{description ?? t('description')}</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs">Last updated: {lastUpdatedStr}</span>
+          <span className="text-muted-foreground text-xs">
+            {t('lastUpdated', { time: lastUpdatedStr })}
+          </span>
           <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={isLoading}>
             <RefreshCw className={cn('mr-2 h-4 w-4', isLoading && 'animate-spin')} />
-            Refresh
+            {t('refresh')}
           </Button>
         </div>
       </div>
@@ -113,7 +119,7 @@ export function StatusPage({
         <Card className="border-red-500/50 bg-red-50 dark:bg-red-950/20">
           <CardContent className="pt-6">
             <p className="text-red-600 dark:text-red-400">
-              Failed to fetch status: {error.message}
+              {t('fetchFailed', { message: error.message })}
             </p>
           </CardContent>
         </Card>
@@ -135,7 +141,7 @@ export function StatusPage({
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
                   <Server className="h-5 w-5" />
-                  Overall Status
+                  {t('overallStatus')}
                 </CardTitle>
                 <StatusIndicator
                   status={data.status === 'ok' ? 'operational' : 'outage'}
@@ -151,7 +157,7 @@ export function StatusPage({
                 <div className="flex items-center gap-2">
                   <Server className="text-muted-foreground h-4 w-4" />
                   <div>
-                    <p className="text-muted-foreground text-xs">Version</p>
+                    <p className="text-muted-foreground text-xs">{t('version')}</p>
                     <p className="font-mono text-sm">{data.version}</p>
                   </div>
                 </div>
@@ -159,7 +165,7 @@ export function StatusPage({
                 <div className="flex items-center gap-2">
                   <Clock className="text-muted-foreground h-4 w-4" />
                   <div>
-                    <p className="text-muted-foreground text-xs">Uptime</p>
+                    <p className="text-muted-foreground text-xs">{t('uptime')}</p>
                     <p className="font-mono text-sm">{formatUptime(data.uptime)}</p>
                   </div>
                 </div>
@@ -167,9 +173,9 @@ export function StatusPage({
                 <div className="flex items-center gap-2">
                   <Clock className="text-muted-foreground h-4 w-4" />
                   <div>
-                    <p className="text-muted-foreground text-xs">Last Check</p>
+                    <p className="text-muted-foreground text-xs">{t('lastCheck')}</p>
                     <p className="font-mono text-sm">
-                      {new Date(data.timestamp).toLocaleTimeString()}
+                      {format.dateTime(new Date(data.timestamp), TIME_WITH_SECONDS)}
                     </p>
                   </div>
                 </div>
@@ -181,12 +187,12 @@ export function StatusPage({
           <div className="space-y-4">
             <h2 className="flex items-center gap-2 text-lg font-semibold">
               <Database className="h-5 w-5" />
-              Services
+              {t('services')}
             </h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <ServiceStatusCard
-                name="Database"
-                description="PostgreSQL primary database"
+                name={t('database')}
+                description={t('databaseDescription')}
                 health={data.services.database}
                 showLatency
               />
@@ -199,25 +205,25 @@ export function StatusPage({
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <MemoryStick className="h-5 w-5" />
-                  Memory Usage
+                  {t('memoryUsage')}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid gap-4 sm:grid-cols-4">
                   <div>
-                    <p className="text-muted-foreground text-xs">Heap Used</p>
+                    <p className="text-muted-foreground text-xs">{t('heapUsed')}</p>
                     <p className="font-mono text-sm">{formatBytes(data.memory.heapUsed)}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">Heap Total</p>
+                    <p className="text-muted-foreground text-xs">{t('heapTotal')}</p>
                     <p className="font-mono text-sm">{formatBytes(data.memory.heapTotal)}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">RSS</p>
+                    <p className="text-muted-foreground text-xs">{t('rss')}</p>
                     <p className="font-mono text-sm">{formatBytes(data.memory.rss)}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">Usage</p>
+                    <p className="text-muted-foreground text-xs">{t('usage')}</p>
                     <p
                       className={cn(
                         'font-mono text-sm',
@@ -225,7 +231,7 @@ export function StatusPage({
                         data.memory.percentage > 90 && 'text-red-600 dark:text-red-400'
                       )}
                     >
-                      {data.memory.percentage}%
+                      {format.number(data.memory.percentage / 100, 'percent')}
                     </p>
                   </div>
                 </div>
@@ -254,14 +260,14 @@ export function StatusPage({
             {isPolling ? (
               <>
                 <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
-                Auto-refreshing every {pollingInterval / 1000}s
+                {t('autoRefreshing', { seconds: pollingInterval / 1000 })}
               </>
             ) : (
               <>
                 <span className="h-2 w-2 rounded-full bg-gray-400" />
-                Auto-refresh paused
+                {t('autoRefreshPaused')}
                 <button onClick={startPolling} className="text-primary hover:underline">
-                  Resume
+                  {t('resume')}
                 </button>
               </>
             )}

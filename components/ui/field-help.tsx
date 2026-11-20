@@ -25,6 +25,7 @@
 
 import * as React from 'react';
 import { Info } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
@@ -47,14 +48,15 @@ export function FieldHelp({
   children,
   className,
   contentClassName,
-  ariaLabel = 'More information',
+  ariaLabel,
 }: FieldHelpProps) {
+  const t = useTranslations('ui.fieldHelp');
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={ariaLabel}
+          aria-label={ariaLabel ?? t('moreInformation')}
           className={cn(
             'text-muted-foreground hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full align-middle transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
             className

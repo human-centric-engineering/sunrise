@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { format, isValid, parse } from 'date-fns';
 import { CalendarIcon, X } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -40,13 +41,14 @@ export function DatePicker({
   id,
   value,
   onChange,
-  placeholder = 'dd/mm/yyyy',
+  placeholder,
   disabled,
   className,
   fromDate,
   toDate,
   ...ariaProps
 }: DatePickerProps) {
+  const t = useTranslations('ui.datePicker');
   const selected = parseIso(value);
   const [open, setOpen] = React.useState(false);
 
@@ -77,13 +79,13 @@ export function DatePicker({
         >
           <CalendarIcon className="mr-2 size-4 shrink-0 opacity-60" aria-hidden />
           <span className="flex-1 text-left">
-            {selected ? format(selected, 'dd/MM/yyyy') : placeholder}
+            {selected ? format(selected, 'dd/MM/yyyy') : (placeholder ?? t('placeholder'))}
           </span>
           {selected && !disabled ? (
             <span
               role="button"
               tabIndex={0}
-              aria-label="Clear date"
+              aria-label={t('clear')}
               onClick={handleClear}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {

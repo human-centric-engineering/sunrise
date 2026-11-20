@@ -10,6 +10,7 @@
 
 import type { ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 
@@ -49,6 +50,7 @@ export function ErrorCard({
   footer,
   containerClassName = 'min-h-[400px]',
 }: ErrorCardProps): React.ReactElement {
+  const t = useTranslations('ui.errorCard');
   return (
     <div className={`flex items-center justify-center p-4 ${containerClassName}`}>
       <Card className="w-full max-w-md">
@@ -64,12 +66,12 @@ export function ErrorCard({
           {error && process.env.NODE_ENV === 'development' && (
             <div className="space-y-2">
               <div className="rounded-md bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/50 dark:text-red-400">
-                <p className="font-semibold">Error:</p>
+                <p className="font-semibold">{t('error')}</p>
                 <p className="font-mono">{error.message}</p>
               </div>
               {error.digest && (
                 <div className="rounded-md bg-gray-100 p-3 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400">
-                  <p className="font-semibold">Error Digest:</p>
+                  <p className="font-semibold">{t('digest')}</p>
                   <p className="font-mono">{error.digest}</p>
                 </div>
               )}

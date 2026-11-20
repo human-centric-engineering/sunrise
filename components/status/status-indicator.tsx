@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import type { ServiceStatus } from '@/lib/monitoring';
 
@@ -19,29 +20,14 @@ export interface StatusIndicatorProps extends React.HTMLAttributes<HTMLDivElemen
 }
 
 /**
- * Status indicator colors and labels
+ * Status indicator colors. Each status's label and description are in the
+ * catalogue under `status.indicator.<status>`.
  */
 const statusConfig = {
-  operational: {
-    color: 'bg-green-500',
-    label: 'Operational',
-    description: 'All systems working normally',
-  },
-  degraded: {
-    color: 'bg-yellow-500',
-    label: 'Degraded',
-    description: 'System experiencing issues',
-  },
-  outage: {
-    color: 'bg-red-500',
-    label: 'Outage',
-    description: 'System unavailable',
-  },
-  unknown: {
-    color: 'bg-gray-400',
-    label: 'Unknown',
-    description: 'Status unknown',
-  },
+  operational: { color: 'bg-green-500' },
+  degraded: { color: 'bg-yellow-500' },
+  outage: { color: 'bg-red-500' },
+  unknown: { color: 'bg-gray-400' },
 } as const;
 
 /**
@@ -91,14 +77,16 @@ export function StatusIndicator({
   className,
   ...props
 }: StatusIndicatorProps) {
+  const t = useTranslations('status.indicator');
   const config = statusConfig[status];
+  const label = t(`${status}.label`);
   const sizes = sizeConfig[size];
 
   return (
     <div
       className={cn('inline-flex items-center', sizes.gap, className)}
       role="status"
-      aria-label={`Status: ${config.label}`}
+      aria-label={t('ariaLabel', { label })}
       {...props}
     >
       <span
@@ -111,14 +99,15 @@ export function StatusIndicator({
         aria-hidden="true"
       />
       {showLabel && (
-        <span className={cn('font-medium', sizes.text, 'text-foreground')}>{config.label}</span>
+        <span className={cn('font-medium', sizes.text, 'text-foreground')}>{label}</span>
       )}
     </div>
   );
 }
 
 /**
- * Get status configuration for external use
+ * Get a status's colour for external use. Its words are in the catalogue:
+ * `status.indicator.<status>.label` and `.description`.
  */
 export function getStatusConfig(status: ServiceStatus | 'unknown') {
   return statusConfig[status];

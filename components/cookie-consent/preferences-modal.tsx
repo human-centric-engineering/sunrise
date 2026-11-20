@@ -16,6 +16,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,8 @@ function PreferencesContent({
   onSave: (optional: boolean) => void;
   onCancel: () => void;
 }) {
+  const t = useTranslations('cookies');
+  const tc = useTranslations('common');
   const [optionalEnabled, setOptionalEnabled] = useState(initialOptional);
 
   const handleSave = () => {
@@ -55,54 +58,56 @@ function PreferencesContent({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Cookie Preferences</DialogTitle>
-        <DialogDescription>
-          Manage your cookie preferences. Essential cookies cannot be disabled as they are required
-          for the website to function.
-        </DialogDescription>
+        <DialogTitle>{t('preferences.title')}</DialogTitle>
+        <DialogDescription>{t('preferences.description')}</DialogDescription>
       </DialogHeader>
 
       <div className="space-y-4 py-4">
-        {COOKIE_CATEGORIES.map((category) => (
-          <div key={category.id} className="flex items-start justify-between gap-4">
-            <div className="flex-1 space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{category.name}</span>
-                {category.required && (
-                  <span className="bg-secondary text-secondary-foreground rounded px-1.5 py-0.5 text-xs">
-                    Required
-                  </span>
+        {COOKIE_CATEGORIES.map((category) => {
+          const name = t(`categories.${category.id}.name`);
+          return (
+            <div key={category.id} className="flex items-start justify-between gap-4">
+              <div className="flex-1 space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{name}</span>
+                  {category.required && (
+                    <span className="bg-secondary text-secondary-foreground rounded px-1.5 py-0.5 text-xs">
+                      {t('preferences.required')}
+                    </span>
+                  )}
+                </div>
+                <p className="text-muted-foreground text-sm">
+                  {t(`categories.${category.id}.description`)}
+                </p>
+              </div>
+
+              <div className="pt-0.5">
+                {category.required ? (
+                  // Essential cookies - always on, disabled switch
+                  <Switch
+                    checked={true}
+                    disabled
+                    aria-label={t('preferences.switchRequired', { name })}
+                  />
+                ) : (
+                  // Optional cookies - toggleable
+                  <Switch
+                    checked={optionalEnabled}
+                    onCheckedChange={setOptionalEnabled}
+                    aria-label={t('preferences.switchOptional', { name })}
+                  />
                 )}
               </div>
-              <p className="text-muted-foreground text-sm">{category.description}</p>
             </div>
-
-            <div className="pt-0.5">
-              {category.required ? (
-                // Essential cookies - always on, disabled switch
-                <Switch
-                  checked={true}
-                  disabled
-                  aria-label={`${category.name} cookies (required)`}
-                />
-              ) : (
-                // Optional cookies - toggleable
-                <Switch
-                  checked={optionalEnabled}
-                  onCheckedChange={setOptionalEnabled}
-                  aria-label={`${category.name} cookies`}
-                />
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <DialogFooter className="gap-2 sm:gap-0">
         <Button variant="outline" onClick={onCancel}>
-          Cancel
+          {tc('cancel')}
         </Button>
-        <Button onClick={handleSave}>Save Preferences</Button>
+        <Button onClick={handleSave}>{t('preferences.save')}</Button>
       </DialogFooter>
     </>
   );

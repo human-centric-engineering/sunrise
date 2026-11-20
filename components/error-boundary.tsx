@@ -62,6 +62,7 @@
 
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { logger } from '@/lib/logging';
@@ -208,17 +209,16 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
  * Used when no custom fallback is provided to ErrorBoundary
  */
 function DefaultErrorFallback({ error, reset }: { error: Error; reset: () => void }): ReactNode {
+  const t = useTranslations('errors.generic');
   return (
     <div className="flex min-h-[400px] items-center justify-center p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-500" />
-            <CardTitle>Something went wrong</CardTitle>
+            <CardTitle>{t('title')}</CardTitle>
           </div>
-          <CardDescription>
-            An unexpected error occurred. This has been logged and we&apos;ll look into it.
-          </CardDescription>
+          <CardDescription>{t('description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Show error message in development only */}
@@ -229,7 +229,7 @@ function DefaultErrorFallback({ error, reset }: { error: Error; reset: () => voi
           )}
 
           <Button onClick={reset} className="w-full">
-            Try again
+            {t('tryAgain')}
           </Button>
         </CardContent>
       </Card>

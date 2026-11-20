@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useConsent } from '@/lib/consent';
 import { BRAND } from '@/lib/brand';
 import { resolveFooterCopyright } from '@/lib/footer/copyright';
@@ -14,6 +15,7 @@ import { resolveFooterCopyright } from '@/lib/footer/copyright';
  * Phase 3.5: Landing Page & Marketing
  */
 export function ProtectedFooter() {
+  const t = useTranslations('layout.footer');
   const currentYear = new Date().getFullYear();
   const { openPreferences } = useConsent();
   const copyright = resolveFooterCopyright(currentYear, BRAND.legalName);
@@ -27,10 +29,10 @@ export function ProtectedFooter() {
           {copyright && <p>{copyright}</p>}
           <div className="flex items-center gap-4">
             <button onClick={openPreferences} className="hover:text-foreground transition-colors">
-              Cookie Preferences
+              {t('cookiePreferences')}
             </button>
             <Link href="/contact" className="hover:text-foreground transition-colors">
-              Help & Support
+              {t('helpSupport')}
             </Link>
           </div>
         </div>

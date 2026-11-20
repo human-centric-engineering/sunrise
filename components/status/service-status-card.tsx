@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusIndicator, getStatusConfig } from '@/components/status/status-indicator';
+import { StatusIndicator } from '@/components/status/status-indicator';
 import type { ServiceHealth } from '@/lib/monitoring';
 
 /**
@@ -58,7 +59,7 @@ export function ServiceStatusCard({
   className,
   ...props
 }: ServiceStatusCardProps) {
-  const statusConfig = getStatusConfig(health.status);
+  const t = useTranslations('status.indicator');
 
   return (
     <Card
@@ -79,7 +80,7 @@ export function ServiceStatusCard({
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">{statusConfig.description}</span>
+          <span className="text-muted-foreground">{t(`${health.status}.description`)}</span>
           {showLatency && health.latency !== undefined && (
             <span
               className={cn(
