@@ -16,7 +16,8 @@
  * - **a check**, asked with the model, the replacement and every org's
  *   reported pins before a move. It allows the move or refuses it with a
  *   reason. A refusal stops the whole move before anything is written, and
- *   the preview shows it.
+ *   the preview shows it. It is told which (`phase`): the preview asks on
+ *   every replacement an admin picks, so it should answer from what is known.
  *
  * ## Failure
  *
@@ -27,8 +28,10 @@
  * register cannot be known, and a reporter that fails while a check is
  * registered, since the check cannot then be asked honestly.
  *
- * A reporter is informational, so its failure degrades: the finder and the
- * preview say the app's uses could not be read, and are otherwise as before.
+ * A reporter is informational, so with no check registered its failure does
+ * not refuse a move: the finder and the preview say the app's uses could not
+ * be read (`failed`). Its readers decide the rest: the model's delete, which
+ * cannot be undone, refuses, and config health counts the model as in use.
  *
  * With nothing registered nothing here runs: no org is entered and every
  * answer is empty, so the finder and the move behave as they did before this
@@ -90,12 +93,22 @@ export type AppModelPinReporter = (
   query: AppModelPinQuery
 ) => readonly AppModelPin[] | Promise<readonly AppModelPin[]>;
 
+/** When the check is asked. */
+export type AppModelMovePhase = 'preview' | 'move';
+
 /** What the check is asked. */
 export interface AppModelMoveCheckRequest {
   model: AppPinModel;
   replacement: AppPinModel;
   /** Every org's reported pins; empty with no reporter. */
   pins: readonly ReportedAppModelPin[];
+  /**
+   * `preview` while an admin is looking at the move, asked each time they
+   * pick a replacement, so answer from what is already known rather than run
+   * anything slow or billed; `move` once, just before the move writes. The
+   * move's request has 300 seconds in all, this check included.
+   */
+  phase: AppModelMovePhase;
   /** Aborts when the check runs out of time. */
   signal: AbortSignal;
 }
@@ -269,18 +282,19 @@ const CHECK_FAILED_REASON =
 export async function checkAppModelMove(
   model: AppPinModel,
   replacement: AppPinModel,
-  report: AppModelPinReport
+  report: AppModelPinReport,
+  phase: AppModelMovePhase
 ): Promise<AppMoveVerdict> {
   appInit.ensure();
   if (initFailed) return { allowed: false, reason: INIT_FAILED_REASON };
   const ask = check;
   if (!ask) return { allowed: true };
   if (report.failed) return { allowed: false, reason: REPORT_FAILED_REASON };
-  const log = { providerModelId: model.id, replacementId: replacement.id };
+  const log = { providerModelId: model.id, replacementId: replacement.id, phase };
   let raw: unknown;
   try {
     raw = await withTimeout(APP_MODEL_MOVE_CHECK_TIMEOUT_MS, 'model-move check', (signal) =>
-      Promise.resolve(ask({ model, replacement, pins: report.pins, signal }))
+      Promise.resolve(ask({ model, replacement, pins: report.pins, phase, signal }))
     );
   } catch (error) {
     logger.error('App model-move check failed; the move is refused', error, log);

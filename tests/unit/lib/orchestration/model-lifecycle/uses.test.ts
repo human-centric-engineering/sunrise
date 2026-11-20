@@ -369,6 +369,25 @@ describe('the app’s own pins (§136 t-1067)', () => {
     expect(uses.appPinsUnavailable).toBe(true);
   });
 
+  it('counts a dated model as in use when the app’s report about it failed', async () => {
+    catalogue([{ id: 'd1', providerSlug: 'openai', modelId: 'app-maybe', retiresAt: PAST }]);
+    registerModelPinReporter(() => {
+      throw new Error('panel table missing');
+    });
+
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+  });
+
+  it('does not ask the app about a dated model the platform already uses', async () => {
+    catalogue([{ id: 'r1', providerSlug: 'openai', modelId: 'used', retiresAt: FUTURE }]);
+    vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, otherOrgAgents: 1 });
+    const reporter = vi.fn(() => []);
+    registerModelPinReporter(reporter);
+
+    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 1, retired: 0 });
+    expect(reporter).not.toHaveBeenCalled();
+  });
+
   it('counts a dated model the app alone uses as in use, by its state', async () => {
     catalogue([
       { id: 'r1', providerSlug: 'openai', modelId: 'app-only', retiresAt: FUTURE },

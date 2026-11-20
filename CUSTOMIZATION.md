@@ -1212,11 +1212,12 @@ export function initAppModelPins(): void {
     const panels = await panelsJudgedBy(model.providerSlug, model.modelId);
     return panels.map((p) => ({ label: `Panel: ${p.name}`, where: 'Panels › Judge' }));
   });
-  // Asked before a move, with every org's pins; a refusal writes nothing.
-  registerModelMoveCheck(async ({ replacement, pins, signal }) =>
-    pins.length === 0 || (await panelsPassOn(replacement, signal))
+  // Asked at each preview and again before the move; a refusal writes
+  // nothing. Look up work done ahead of time rather than run it here.
+  registerModelMoveCheck(async ({ replacement, pins }) =>
+    pins.length === 0 || (await panelsPassedOn(replacement))
       ? { allow: true }
-      : { allow: false, reason: `${replacement.name} failed the panel evaluations` }
+      : { allow: false, reason: `${replacement.name} has not passed the panel evaluations` }
   );
 }
 ```
@@ -1227,13 +1228,18 @@ org in the move's preview. Sunrise never writes them: move them yourself once
 the move is done. Report a pin set in code, the same for every org, from the
 install org only (`orgId === INSTALL_ORG_ID`), or it is counted once per org.
 
-The check is asked at the preview and again at the move, before any org's own
-key is tested or anything is written, and its reason is shown to the admin. It
+The check is asked at each preview (`phase: 'preview'`, every time the admin
+picks a replacement) and again at the move (`phase: 'move'`), before any org's
+own key is tested or anything is written, and its reason is shown to the admin.
+So answer from what your app already knows: run slow or billed evaluations
+ahead of time, and look their result up here. The move's request has 300
+seconds in all, the check included. It
 **fails closed**: a check that throws, runs past two minutes
 (`APP_MODEL_MOVE_CHECK_TIMEOUT_MS`) or answers anything else refuses the move,
 and so does this init throwing (rolled back, so nothing it registered is kept),
 or a reporter failing while a check is registered. A reporter failing on its own
-only marks the app's uses as unreadable; each org's report has 10 seconds
+marks the app's uses as unreadable, and refuses the model's delete (which
+cannot be undone) and counts it as in use in config health; each org's report has 10 seconds
 (`APP_MODEL_PIN_REPORT_TIMEOUT_MS`). See
 [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#an-apps-own-model-pins-136-t-1067).
 

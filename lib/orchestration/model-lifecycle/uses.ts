@@ -133,6 +133,11 @@ export interface RetiringModelsInUse {
  * The models with a retirement date that something still uses, in every org,
  * counted by state at `now`. For config health, which reports presence only.
  * Few models carry a date at once, so each is looked up on its own.
+ *
+ * The app's reporter (§136 t-1067) is asked only about a dated model nothing
+ * of the platform's uses exactly, since it cannot change the answer for the
+ * rest. A report that fails counts the model as in use, as the delete check
+ * does: it is not known to be unused, and the model's page says why.
  */
 export async function retiringModelsInUse(now: Date = new Date()): Promise<RetiringModelsInUse> {
   const dated = await prisma.aiProviderModel.findMany({
@@ -145,10 +150,9 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
   for (const model of dated) {
     const state = modelLifecycleState(model, now);
     if (state === 'current') continue;
-    const [usage, others, app] = await Promise.all([
+    const [usage, others] = await Promise.all([
       providerModelUsage(model.providerSlug, model.modelId),
       siblings(model),
-      reportAppModelPins(model),
     ]);
     const pins = settingsPinsFor(model, settings);
     // Agents, and the pins that name the provider, are this model's own uses.
@@ -158,10 +162,15 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
       usage.otherOrgAgents +
       (usage.workflows.length - ownWorkflowsByIdOnly) +
       (usage.otherOrgWorkflows - usage.otherOrgWorkflowsByIdOnly) +
-      pins.filter((p) => !p.byIdOnly).length +
-      // The app reports its uses of this row, so each is exact.
-      app.pins.length;
+      pins.filter((p) => !p.byIdOnly).length;
     if (exact > 0) {
+      counts[state]++;
+      continue;
+    }
+    // The app reports its uses of this row, so each is exact; a report that
+    // failed may have missed one.
+    const app = await reportAppModelPins(model);
+    if (app.pins.length > 0 || app.failed) {
       counts[state]++;
       continue;
     }

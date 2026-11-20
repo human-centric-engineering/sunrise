@@ -212,7 +212,11 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
       )}
 
       {nothing ? (
-        <p className="text-muted-foreground text-sm">Nothing uses this model.</p>
+        <p className="text-muted-foreground text-sm">
+          {uses.appPinsUnavailable
+            ? 'Nothing Sunrise can see uses this model.'
+            : 'Nothing uses this model.'}
+        </p>
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1">

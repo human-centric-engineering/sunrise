@@ -89,7 +89,7 @@ describe('with nothing registered', () => {
     expect(listActiveOrgIds).not.toHaveBeenCalled();
     expect(runAsOrg).not.toHaveBeenCalled();
 
-    expect(await checkAppModelMove(MODEL, REPLACEMENT, report)).toEqual({ allowed: true });
+    expect(await checkAppModelMove(MODEL, REPLACEMENT, report, 'move')).toEqual({ allowed: true });
     expect(logger.error).not.toHaveBeenCalled();
   });
 });
@@ -206,12 +206,20 @@ describe('checkAppModelMove', () => {
         : { allow: false, reason: 'GPT-4.1 failed the contract panel' };
     });
 
-    expect(await checkAppModelMove(MODEL, REPLACEMENT, report)).toEqual({ allowed: true });
-    expect(await checkAppModelMove(MODEL, REPLACEMENT, report)).toEqual({
+    expect(await checkAppModelMove(MODEL, REPLACEMENT, report, 'preview')).toEqual({
+      allowed: true,
+    });
+    expect(await checkAppModelMove(MODEL, REPLACEMENT, report, 'move')).toEqual({
       allowed: false,
       reason: 'GPT-4.1 failed the contract panel',
     });
-    expect(asked[0]).toMatchObject({ model: MODEL, replacement: REPLACEMENT, pins: report.pins });
+    expect(asked[0]).toMatchObject({
+      model: MODEL,
+      replacement: REPLACEMENT,
+      pins: report.pins,
+      phase: 'preview',
+    });
+    expect(asked[1].phase).toBe('move');
     expect(asked[0].signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -223,7 +231,7 @@ describe('checkAppModelMove', () => {
   ])('refuses the move when the check %s (fails closed)', async (_how, answer) => {
     registerModelMoveCheck(answer as never);
 
-    const verdict = await checkAppModelMove(MODEL, REPLACEMENT, report);
+    const verdict = await checkAppModelMove(MODEL, REPLACEMENT, report, 'move');
 
     expect(verdict.allowed).toBe(false);
     expect(verdict).toEqual({
@@ -241,7 +249,7 @@ describe('checkAppModelMove', () => {
       return new Promise(() => {});
     });
 
-    const pending = checkAppModelMove(MODEL, REPLACEMENT, report);
+    const pending = checkAppModelMove(MODEL, REPLACEMENT, report, 'move');
     await vi.advanceTimersByTimeAsync(APP_MODEL_MOVE_CHECK_TIMEOUT_MS);
 
     expect((await pending).allowed).toBe(false);
@@ -252,7 +260,12 @@ describe('checkAppModelMove', () => {
     const check = vi.fn(() => ({ allow: true as const }));
     registerModelMoveCheck(check);
 
-    const verdict = await checkAppModelMove(MODEL, REPLACEMENT, { ...report, failed: true });
+    const verdict = await checkAppModelMove(
+      MODEL,
+      REPLACEMENT,
+      { ...report, failed: true },
+      'move'
+    );
 
     expect(verdict).toEqual({
       allowed: false,
@@ -263,9 +276,11 @@ describe('checkAppModelMove', () => {
 
   it('allows a short report when no check is registered: the reporter is informational', async () => {
     registerModelPinReporter(() => []);
-    expect(await checkAppModelMove(MODEL, REPLACEMENT, { pins: [], failed: true })).toEqual({
-      allowed: true,
-    });
+    expect(await checkAppModelMove(MODEL, REPLACEMENT, { pins: [], failed: true }, 'move')).toEqual(
+      {
+        allowed: true,
+      }
+    );
   });
 });
 
@@ -288,7 +303,7 @@ describe('an init that throws part-way', () => {
     expect(report).toEqual({ pins: [], failed: true });
     expect(runAsOrg).not.toHaveBeenCalled();
 
-    expect(await checkAppModelMove(MODEL, REPLACEMENT, report)).toEqual({
+    expect(await checkAppModelMove(MODEL, REPLACEMENT, report, 'move')).toEqual({
       allowed: false,
       reason: expect.stringContaining('failed to load'),
     });
@@ -299,7 +314,7 @@ describe('an init that throws part-way', () => {
     appInit.run = init;
     appModelPinsRegistered();
     await reportAppModelPins(MODEL);
-    await checkAppModelMove(MODEL, REPLACEMENT, { pins: [], failed: false });
+    await checkAppModelMove(MODEL, REPLACEMENT, { pins: [], failed: false }, 'move');
     expect(init).toHaveBeenCalledTimes(1);
   });
 });

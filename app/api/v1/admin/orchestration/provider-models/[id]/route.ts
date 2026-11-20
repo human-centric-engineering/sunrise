@@ -287,8 +287,9 @@ export const DELETE = withAdminAuth<{ id: string }>(
     );
 
     // And while the app reports a use of it (§136 t-1067): its own code or
-    // tables would name a row that no longer exists. A report that failed
-    // does not block: the reporter is informational, and the page says so.
+    // tables would name a row that no longer exists. The delete cannot be
+    // undone, so a report that failed refuses it too (below): the model is
+    // not known to be unused.
     const appCount = usage.appPins.length + usage.otherOrgAppPins;
 
     if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0 || appCount > 0) {
@@ -318,6 +319,16 @@ export const DELETE = withAdminAuth<{ id: string }>(
             : {}),
         },
       });
+    }
+    if (usage.appPinsUnavailable) {
+      log.warn('Provider model delete refused — the app’s uses could not be read', {
+        modelId: id,
+        slug: current.slug,
+      });
+      return errorResponse(
+        `Cannot delete model "${current.name}" — the app’s own uses of it could not all be read, so it may still be in use. Try again once the app’s report works; the server log says why it failed.`,
+        { code: 'MODEL_USES_UNREADABLE', status: 409 }
+      );
     }
 
     // Models naming this one as their replacement lose it (`ON DELETE SET
@@ -383,5 +394,6 @@ function buildInUseMessage(
   if (appUses > 0) parts.push(`${appUses} use${appUses === 1 ? '' : 's'} the app reports`);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
   const one = agents + workflows + savedSettings + appUses === 1;
-  return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.`;
+  const appNote = appUses > 0 ? ' The app moves its own uses itself.' : '';
+  return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.${appNote}`;
 }

@@ -22,13 +22,16 @@ release process.
   app names itself (§136, t-1067).** Fill `initAppModelPins()` with
   `registerModelPinReporter()`, asked once per org inside that org's scope for
   the app's uses of a model (`{ label, where }[]`), and/or
-  `registerModelMoveCheck()`, asked before a model move with both models and
-  every org's pins, answering `{ allow: true }` or `{ allow: false, reason }`
-  (both in `lib/orchestration/model-lifecycle/app-pins.ts`). Reported pins
-  appear in `GET /provider-models/:id`'s `uses` (`appPins`, `otherOrgAppPins`,
-  `appPinsUnavailable`), block the model's delete, count in config health's
-  retiring-model checks, and are counted per org in the move's preview
-  (`orgs[].appPins`). A refusal shows in the preview (`app.refused`) and stops
+  `registerModelMoveCheck()`, asked with both models, every org's pins and a
+  `phase` (`'preview'` on each replacement an admin picks, `'move'` just
+  before the move writes), answering `{ allow: true }` or
+  `{ allow: false, reason }` (both in
+  `lib/orchestration/model-lifecycle/app-pins.ts`). Reported pins appear in
+  `GET /provider-models/:id`'s `uses` (`appPins`, `otherOrgAppPins`,
+  `appPinsUnavailable`), block the model's delete (`409 MODEL_IN_USE`, or
+  `409 MODEL_USES_UNREADABLE` while a report failed), count in config
+  health's retiring-model checks, and are counted per org in the move's
+  preview (`orgs[].appPins`). A refusal shows in the preview (`app.refused`) and stops
   the move with 409 before any key is tested or anything is written. The check
   fails closed: one that throws, times out (2 minutes) or answers badly
   refuses, as does an init that throws. Sunrise never writes an app's pins.

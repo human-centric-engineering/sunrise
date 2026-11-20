@@ -4,9 +4,12 @@
  * POST /api/v1/admin/orchestration/provider-models/:id/move-uses/preview
  *      Body: `{ replacementId }`. What moving every use of the model to the
  *      replacement would do, org by org, and to the install settings:
- *      `previewModelMove`. Changes nothing, and sends nothing to a vendor (an
- *      org's own key is tested by the move itself, since the test is billed
- *      to that key). POST because it takes a body.
+ *      `previewModelMove`. Changes nothing, and Sunrise sends nothing to a
+ *      vendor (an org's own key is tested by the move itself, since the test
+ *      is billed to that key). It asks the app's reporter and check, if the
+ *      app registered them (§136 t-1067), the check with `phase: 'preview'`,
+ *      so an app can answer from what it already knows rather than run
+ *      anything billed. POST because it takes a body.
  *
  *      400 `VALIDATION_ERROR` (`replacementId`) when the replacement does not
  *      exist or does not qualify (`checkReplacement`: same provider, active,

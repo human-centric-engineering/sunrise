@@ -1168,10 +1168,16 @@ describe('the app’s own pins and its check', () => {
 
   it('shows the check’s refusal in the preview, and writes nothing', async () => {
     reportPins({ 'org-a': 1 });
-    registerModelMoveCheck(() => ({ allow: false, reason: 'GPT-4.1 failed the contract panel' }));
+    const phases: string[] = [];
+    registerModelMoveCheck(({ phase }) => {
+      phases.push(phase);
+      return { allow: false, reason: 'GPT-4.1 failed the contract panel' };
+    });
 
     const preview = await previewModelMove(await target());
 
+    // Told it is a preview, so it can answer without running anything billed.
+    expect(phases).toEqual(['preview']);
     expect(preview.app).toEqual({
       pinsUnavailable: false,
       refused: 'GPT-4.1 failed the contract panel',
@@ -1238,6 +1244,7 @@ describe('the app’s own pins and its check', () => {
     const result = await moveModelUses(await target(), ACTOR);
 
     expect(asked).toHaveLength(1);
+    expect(asked[0].phase).toBe('move');
     expect(asked[0].model).toEqual({
       id: 'm-old',
       name: RETIRING.name,

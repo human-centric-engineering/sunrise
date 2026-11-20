@@ -3,7 +3,8 @@
  *
  * POST /api/v1/admin/orchestration/provider-models/:id/move-uses
  *      Body: `{ replacementId }`. Moves every use of the model to the
- *      replacement on the same provider. First every org's own key for the
+ *      replacement on the same provider. First the app's check, when it
+ *      registered one (§136 t-1067: `lib/app/model-pins.ts`); then every org's own key for the
  *      provider is tested against the replacement (an org whose test fails is
  *      skipped); then the install's settings pins (left when any key failed);
  *      then each active org's agents (a new version each) and workflows (the
@@ -17,6 +18,13 @@
  *
  *      400 `VALIDATION_ERROR` (`replacementId`) when the replacement does not
  *      exist or does not qualify, a model on another provider included.
+ *
+ *      409 `CONFLICT` (`details.refusedBy: 'app'`) when the app's check
+ *      refuses the move, with its reason, before anything is tested or
+ *      written. A check that throws, times out or answers badly refuses too.
+ *
+ *      The 300 seconds below cover the app's reports and check as well as the
+ *      walk over the orgs, so a long check leaves less for the walk.
  *
  * Authentication: platform admin, from the install org (it writes the
  * install settings, `writesSharedSettings`). Every change is in the admin

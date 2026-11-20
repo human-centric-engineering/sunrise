@@ -180,8 +180,8 @@ because it asked to be consulted before its pins and the platform's part
 company (§136 t-1067). Which check a throwing init meant to register is
 unknown, so `checkAppModelMove()` refuses every move while it is known to have
 thrown, and the move dialog shows that reason; nothing is written. The uses
-finder only marks the app's uses as unreadable (`appPinsUnavailable`), since
-it reports and changes nothing.
+finder marks the app's uses as unreadable (`appPinsUnavailable`), and the
+model's delete, which cannot be undone, refuses while they are.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

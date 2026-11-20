@@ -231,8 +231,10 @@ describe('the app’s own uses (§136 t-1067)', () => {
     expect(region).not.toHaveTextContent('Nothing uses this model.');
   });
 
-  it('says when the app’s uses could not all be read', () => {
+  it('says when the app’s uses could not all be read, and not that nothing uses the model', () => {
     const region = panel({ appPinsUnavailable: true });
+    expect(region).toHaveTextContent('Nothing Sunrise can see uses this model.');
+    expect(region).not.toHaveTextContent('Nothing uses this model.');
     expect(column(region, 'In the app')).toHaveTextContent(
       'The app’s own uses could not all be read, so there may be more.'
     );

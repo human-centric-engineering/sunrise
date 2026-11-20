@@ -107,6 +107,7 @@ import {
   appModelPinsRegistered,
   checkAppModelMove,
   reportAppModelPins,
+  type AppModelMovePhase,
   type AppModelPinReport,
   type AppMoveVerdict,
   type AppPinModel,
@@ -207,12 +208,13 @@ function appPinModel(model: MoveModel): AppPinModel {
 }
 
 /** The app's pins in every org, and its check's verdict on this move. */
-async function askApp(target: MoveTarget) {
+async function askApp(target: MoveTarget, phase: AppModelMovePhase) {
   const report: AppModelPinReport = await reportAppModelPins(appPinModel(target.model));
   const verdict = await checkAppModelMove(
     appPinModel(target.model),
     appPinModel(target.replacement),
-    report
+    report,
+    phase
   );
   const perOrg = new Map<string, number>();
   for (const pin of report.pins) perOrg.set(pin.orgId, (perOrg.get(pin.orgId) ?? 0) + 1);
@@ -457,7 +459,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
   const [{ passes, suspended }, config, app] = await Promise.all([
     orgPasses(),
     providerConfigFor(target.model.providerSlug),
-    askApp(target),
+    askApp(target, 'preview'),
   ]);
   const orgs: OrgMovePreview[] = [];
   for (const pass of passes) {
@@ -885,7 +887,7 @@ export async function moveModelUses(
   // row is written. Its pins are read only for its check, which they inform.
   const app = appModelPinsRegistered();
   const verdict: AppMoveVerdict =
-    app.check || app.failed ? (await askApp(target)).verdict : { allowed: true };
+    app.check || app.failed ? (await askApp(target, 'move')).verdict : { allowed: true };
   if (!verdict.allowed) {
     logger.warn('Model move refused by the app', {
       providerModelId: target.model.id,

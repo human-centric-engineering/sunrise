@@ -29,12 +29,17 @@
  *       });
  *       return panels.map((p) => ({ label: `Panel: ${p.name}`, where: 'Panels › Judge' }));
  *     });
- *     // Asked before a move, with every org's pins. Refuse with a reason the
- *     // admin can act on; the move then writes nothing.
- *     registerModelMoveCheck(async ({ replacement, pins, signal }) => {
+ *     // Asked with every org's pins at each preview and once more just
+ *     // before the move. Refuse with a reason the admin can act on; the move
+ *     // then writes nothing. Run slow or billed work ahead of time and look
+ *     // its result up here: the preview asks on every replacement picked.
+ *     registerModelMoveCheck(async ({ replacement, pins }) => {
  *       if (pins.length === 0) return { allow: true };
- *       const passed = await runPanelEvaluations(replacement, signal);
- *       return passed
+ *       const result = await latestPanelEvaluation(replacement.modelId);
+ *       if (!result) {
+ *         return { allow: false, reason: `Run the panel evaluations on ${replacement.name} first` };
+ *       }
+ *       return result.passed
  *         ? { allow: true }
  *         : { allow: false, reason: `${replacement.name} failed the panel evaluations` };
  *     });
@@ -46,12 +51,14 @@
  * INSTALL_ORG_ID`), or it is counted once per org. Sunrise never writes your
  * pins: move them yourself, after the move.
  *
- * The check is asked `{ model, replacement, pins, signal }` in the admin's
- * scope, at the preview and again at the move, and answers `{ allow: true }`
- * or `{ allow: false, reason }`. It **fails closed**: one that throws, runs
+ * The check is asked `{ model, replacement, pins, phase, signal }` in the
+ * admin's scope, at each preview (`phase: 'preview'`) and again at the move
+ * (`'move'`), and answers `{ allow: true }` or `{ allow: false, reason }`. The
+ * move's request has 300 seconds in all, the check included. It **fails closed**: one that throws, runs
  * past two minutes or answers anything else refuses the move, and so does this
  * init throwing, or the reporter failing while a check is registered. A
- * reporter failing on its own only marks the app's uses as unreadable.
+ * reporter failing on its own marks the app's uses as unreadable, which
+ * refuses the model's delete and counts it as in use in config health.
  *
  * Empty = no app uses reported and every move allowed, as before this seam.
  *

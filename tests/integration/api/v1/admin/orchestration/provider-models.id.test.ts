@@ -1534,7 +1534,7 @@ describe('the app’s own uses of the model (§136 t-1067)', () => {
     }>(response);
     expect(body.error.code).toBe('MODEL_IN_USE');
     expect(body.error.message).toBe(
-      'Cannot delete model "Claude Opus 4" — 1 use the app reports still references it. Re-point them to a different model first.'
+      'Cannot delete model "Claude Opus 4" — 1 use the app reports still references it. Re-point them to a different model first. The app moves its own uses itself.'
     );
     expect(body.error.details.appPins).toEqual([
       { label: 'Panel: Contracts', where: 'Panels › Judge' },
@@ -1542,10 +1542,22 @@ describe('the app’s own uses of the model (§136 t-1067)', () => {
     expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
   });
 
-  it('does not refuse the delete over a report that failed: the reporter only informs', async () => {
+  it('refuses the delete while the app’s report failed: it cannot be undone', async () => {
     registerModelPinReporter(() => {
       throw new Error('panel table missing');
     });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ error: { code: string; message: string } }>(response);
+    expect(body.error.code).toBe('MODEL_USES_UNREADABLE');
+    expect(body.error.message).toContain('could not all be read, so it may still be in use');
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes as before when the app reports no use', async () => {
+    registerModelPinReporter(() => []);
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
 
