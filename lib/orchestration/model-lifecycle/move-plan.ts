@@ -43,6 +43,9 @@ import type { TaskType } from '@/types/orchestration';
 export type LeftReason =
   'shared_id' | 'chat_turn_by_id' | 'embedding_switch' | 'published_invalid' | 'changed_since';
 
+/** How many uses were left, by reason: steps, or whole workflows for `published_invalid`. */
+export type LeftCounts = Partial<Record<LeftReason, number>>;
+
 /** What a person reads for each {@link LeftReason}. */
 export const LEFT_REASON_TEXT: Record<LeftReason, string> = {
   shared_id:

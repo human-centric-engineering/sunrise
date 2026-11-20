@@ -23,7 +23,7 @@
  * version fails the schema or the DAG rules is left, with the reason, and the
  * rest of the org still moves. One org failing rolls back that org only, and is reported with
  * its reason; the orgs before and after it still move. The settings are the
- * install's, written once after the orgs.
+ * install's, written once before the orgs, under the settings row's lock.
  *
  * ## What moves
  *
@@ -62,7 +62,7 @@
  * Platform-agnostic: no Next.js imports.
  */
 
-import { APIError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { APIError, NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { workflowsMayPinWhere } from '@/lib/orchestration/admin/global-config-usage';
@@ -81,6 +81,7 @@ import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolv
 import {
   planSettingsMove,
   repinDefinition,
+  type LeftCounts,
   type LeftReason,
   type MovePins,
   type SettingsMovePlan,
@@ -92,7 +93,13 @@ import {
   invalidateOrchestrationSettingsCache,
   parseStoredDefaults,
 } from '@/lib/orchestration/settings';
-import { lockRepinSubjects, repinWorkflow } from '@/lib/orchestration/workflows/version-service';
+import {
+  lockRepinSubjects,
+  repinRefusal,
+  repinWorkflow,
+} from '@/lib/orchestration/workflows/version-service';
+import { lockSettingsRow } from '@/lib/orchestration/config-versions';
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant, listActiveOrgIds, runAsOrg } from '@/lib/tenancy/context';
 import type { TaskType } from '@/types/orchestration';
@@ -297,11 +304,26 @@ async function readOrgUses(pass: OrgPass, target: MoveTarget): Promise<OrgUses> 
     for (const [stepId, reason] of left) uses.left.push({ workflowId: w.id, stepId, reason });
     const draftMoves = (draft?.moved ?? 0) > 0;
     const publishedMoves = (published?.moved ?? 0) > 0;
+    // The move leaves such a workflow whole (`repinWorkflow`); say so now.
+    if (publishedMoves && repinRefusal(published?.definition) !== null) {
+      uses.left.push({ workflowId: w.id, stepId: '', reason: 'published_invalid' });
+      continue;
+    }
     if (draftMoves || publishedMoves) {
       uses.workflows.push({ id: w.id, name: w.name, draft: draftMoves, published: publishedMoves });
     }
   }
   return uses;
+}
+
+/**
+ * The steps left, counted by reason: what leaves this module, so another
+ * org's workflow and step ids never reach the browser.
+ */
+function countLeft(left: readonly LeftStep[]): LeftCounts {
+  const counts: LeftCounts = {};
+  for (const step of left) counts[step.reason] = (counts[step.reason] ?? 0) + 1;
+  return counts;
 }
 
 /** Whether the org has anything to move or to report as left. */
@@ -326,7 +348,8 @@ export interface OrgMovePreview {
   /** Agents left because the platform picks their model, and moves them itself. */
   agentsFollowingPlatform: number;
   workflows: number;
-  left: LeftStep[];
+  /** What is left on the model, counted by reason. */
+  left: LeftCounts;
   /** The org pays for the provider with its own key, which the move tests first. */
   ownKey: boolean;
 }
@@ -384,7 +407,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
         inactiveAgents: uses.agents.filter((a) => !a.isActive).length,
         agentsFollowingPlatform: uses.followingPlatform,
         workflows: uses.workflows.length,
-        left: uses.left,
+        left: countLeft(uses.left),
         ownKey,
       };
     });
@@ -415,7 +438,8 @@ export interface OrgMoveResult {
   reason?: string;
   agents: number;
   workflows: number;
-  left: LeftStep[];
+  /** What is left on the model, counted by reason. */
+  left: LeftCounts;
   /** Agents left because the platform picks their model, and moves them itself. */
   agentsFollowingPlatform: number;
 }
@@ -487,6 +511,9 @@ function failureReason(err: unknown): string {
   if (isAgentVersionConflict(err)) {
     return 'One of its agents was changed at the same moment. Run the move again.';
   }
+  if (err instanceof StaleRecordError) {
+    return 'One of its workflows was changed during the move, so nothing in it moved. Run the move again.';
+  }
   if (err instanceof APIError) return err.message;
   return 'Its changes could not be written. Nothing in it moved.';
 }
@@ -522,9 +549,20 @@ async function writeOrg(
         uses.workflows.map((w) => w.id)
       );
       for (const agent of uses.agents) {
-        await ensureBaselineVersion(tx, agent.id, actor.userId);
         // Exactly the binding read above: an agent moved off the model since
-        // is left as its editor left it.
+        // is left as its editor left it, with no version written for it.
+        const still = await tx.aiAgent.findFirst({
+          where: {
+            id: agent.id,
+            ...orgWhere(pass),
+            provider: target.model.providerSlug,
+            model: target.model.modelId,
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!still) continue;
+        await ensureBaselineVersion(tx, agent.id, actor.userId);
         const changed = await tx.aiAgent.updateMany({
           where: {
             id: agent.id,
@@ -573,7 +611,9 @@ async function writeOrg(
       }
       return writes;
     },
-    { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
+    // It may first wait on an erasure holding a subject's lock for up to the
+    // writers' allowance (`WRITER_TRANSACTION_OPTIONS`), then version a batch.
+    { timeout: WRITER_TRANSACTION_OPTIONS.timeout + AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
   );
 }
 
@@ -623,7 +663,7 @@ async function moveOrg(
     const base = {
       orgId: pass.orgId,
       name: pass.name,
-      left: uses.left,
+      left: countLeft(uses.left),
       agentsFollowingPlatform: uses.followingPlatform,
     };
     if (uses.agents.length + uses.workflows.length === 0) {
@@ -655,7 +695,7 @@ async function moveOrg(
     const moved = writes.agents.length + writes.workflows.length;
     return {
       ...base,
-      left: [...writes.refused, ...uses.left],
+      left: countLeft([...writes.refused, ...uses.left]),
       status: moved > 0 ? 'moved' : 'left',
       agents: writes.agents.length,
       workflows: writes.workflows.length,
@@ -676,6 +716,9 @@ async function moveSettings(
 ): Promise<SettingsMovePlan> {
   if (plan.moved.length === 0) return plan;
   const written = await prisma.$transaction(async (tx) => {
+    // Locked, so a settings save cannot commit between this read and the
+    // write below and be overwritten by it.
+    await lockSettingsRow(tx, 'global');
     const row = await tx.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
     if (!row)
       return {
@@ -738,9 +781,9 @@ async function moveSettings(
 }
 
 /**
- * Move every use of `target.model` to `target.replacement`: each active
- * org's agents and workflows, one org at a time in its own scope and its own
- * transaction, then the install settings. See the module header.
+ * Move every use of `target.model` to `target.replacement`: the install
+ * settings, then each active org's agents and workflows, one org at a time in
+ * its own scope and its own transaction. See the module header.
  */
 export async function moveModelUses(
   target: MoveTarget,
@@ -750,12 +793,14 @@ export async function moveModelUses(
     orgPasses(),
     providerConfigFor(target.model.providerSlug),
   ]);
+  // The install settings first: one quick write, which then holds even if a
+  // long walk over the orgs is cut off.
+  const settings = await moveSettings(target, await settingsPlan(target), actor);
   const orgs: OrgMoveResult[] = [];
   for (const pass of passes) {
     const result = await moveOrg(pass, target, config, actor);
     if (result) orgs.push(result);
   }
-  const settings = await moveSettings(target, await settingsPlan(target), actor);
   const totals = {
     agents: orgs.reduce((n, o) => n + o.agents, 0),
     workflows: orgs.reduce((n, o) => n + o.workflows, 0),

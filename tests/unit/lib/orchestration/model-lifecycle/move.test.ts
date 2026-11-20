@@ -40,7 +40,10 @@ vi.mock('@/lib/orchestration/agents/agent-versioning', () => ({
   recordAgentVersion: vi.fn(),
   isAgentVersionConflict: vi.fn(() => false),
 }));
-vi.mock('@/lib/orchestration/workflows/version-service', () => ({
+// The real refusal check (the preview shares it); the two writers faked over
+// the world below.
+vi.mock('@/lib/orchestration/workflows/version-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/workflows/version-service')>()),
   lockRepinSubjects: vi.fn(),
   repinWorkflow: vi.fn(),
 }));
@@ -179,8 +182,16 @@ function step(id: string, type: string, modelOverride?: string) {
   };
 }
 
-function definition(...steps: unknown[]) {
-  return { entryStepId: 'a', errorStrategy: 'fail', steps };
+/** A valid workflow: the steps run in order, the first is the entry. */
+function definition(...steps: Array<ReturnType<typeof step>>) {
+  return {
+    entryStepId: steps[0]?.id ?? 'a',
+    errorStrategy: 'fail',
+    steps: steps.map((st, i) => ({
+      ...st,
+      nextSteps: i + 1 < steps.length ? [{ targetStepId: steps[i + 1].id }] : [],
+    })),
+  };
 }
 
 function overridesOf(def: unknown): Array<string | undefined> {
@@ -289,7 +300,7 @@ function freshWorld(): World {
         name: 'B review',
         orgId: 'org-b',
         draftDefinition: null,
-        published: { version: 7, snapshot: definition(step('a', 'evaluate', 'openai::gpt-4o')) },
+        published: { version: 7, snapshot: definition(step('a', 'llm_call', 'openai::gpt-4o')) },
       },
     ],
     keyed: [],
@@ -390,7 +401,18 @@ function installFakes(): void {
   }) as never);
 
   const tx = {
+    $queryRaw: vi.fn(() => {
+      writeOrder.push('settings lock');
+      return Promise.resolve([]);
+    }),
     aiAgent: {
+      findFirst: vi.fn((args: { where: { id: string; orgId?: string; model: string } }) => {
+        assertScope(args.where.orgId);
+        const a = world.agents.find(
+          (x) => x.id === args.where.id && x.model === args.where.model && x.deletedAt === null
+        );
+        return Promise.resolve(a ? { id: a.id } : null);
+      }),
       updateMany: vi.fn(
         (args: {
           where: { id: string; orgId?: string; provider: string; model: string };
@@ -565,7 +587,7 @@ describe('previewModelMove', () => {
         inactiveAgents: 1,
         agentsFollowingPlatform: 0,
         workflows: 1,
-        left: [{ workflowId: 'wf-a1', stepId: 'c', reason: 'chat_turn_by_id' }],
+        left: { chat_turn_by_id: 1 },
         ownKey: false,
       },
       {
@@ -575,7 +597,7 @@ describe('previewModelMove', () => {
         inactiveAgents: 0,
         agentsFollowingPlatform: 0,
         workflows: 1,
-        left: [],
+        left: {},
         ownKey: true,
       },
     ]);
@@ -655,7 +677,7 @@ describe('moveModelUses', () => {
         status: 'moved',
         agents: 2,
         workflows: 1,
-        left: [{ workflowId: 'wf-a1', stepId: 'c', reason: 'chat_turn_by_id' }],
+        left: { chat_turn_by_id: 1 },
         agentsFollowingPlatform: 0,
       },
       {
@@ -664,12 +686,14 @@ describe('moveModelUses', () => {
         status: 'moved',
         agents: 1,
         workflows: 1,
-        left: [],
+        left: {},
         agentsFollowingPlatform: 0,
       },
     ]);
     // Erasure's locks for the org's workflows before any row is written.
     expect(writeOrder).toEqual([
+      // The settings first, under their row lock.
+      'settings lock',
       'subjects wf-a1',
       'agent ag-a1',
       'agent ag-a2',
@@ -686,25 +710,25 @@ describe('moveModelUses', () => {
     await moveModelUses(await target(), ACTOR);
     const rows = audit.map((r) => [r.action, r.entityId, r.scope]);
     expect(rows).toEqual([
+      ['settings.model_moved', 'global', null],
       ['agent.model_moved', 'ag-a1', 'org-a'],
       ['agent.model_moved', 'ag-a2', 'org-a'],
       ['workflow.model_moved', 'wf-a1', 'org-a'],
       ['agent.model_moved', 'ag-b1', 'org-b'],
       ['workflow.model_moved', 'wf-b1', 'org-b'],
-      ['settings.model_moved', 'global', null],
       ['provider_model.uses_moved', 'm-old', null],
     ]);
-    expect(audit[0]).toMatchObject({
+    expect(audit[1]).toMatchObject({
       userId: 'admin-1',
       clientIp: '203.0.113.9',
       changes: { model: { from: 'gpt-4o', to: 'gpt-4.1' } },
       metadata: { providerModelId: 'm-old', replacementId: 'm-new', version: 2 },
     });
-    expect(audit[2]).toMatchObject({
+    expect(audit[3]).toMatchObject({
       changes: { publishedVersion: { from: 3, to: 4 } },
       metadata: { draftChanged: true },
     });
-    expect(audit[5].changes).toEqual({
+    expect(audit[0].changes).toEqual({
       routing: { from: 'openai::gpt-4o', to: 'openai::gpt-4.1' },
       chat: { from: 'gpt-4o', to: 'openai::gpt-4.1' },
       confidential: { from: 'gpt-4o', to: 'gpt-4.1' },
@@ -846,7 +870,7 @@ describe('moveModelUses', () => {
         status: 'left',
         agents: 0,
         workflows: 0,
-        left: [{ workflowId: 'wf-a9', stepId: 't', reason: 'chat_turn_by_id' }],
+        left: { chat_turn_by_id: 1 },
         agentsFollowingPlatform: 0,
       },
       {
@@ -855,7 +879,7 @@ describe('moveModelUses', () => {
         status: 'moved',
         agents: 1,
         workflows: 0,
-        left: [],
+        left: {},
         agentsFollowingPlatform: 0,
       },
     ]);
@@ -899,11 +923,9 @@ describe('moveModelUses', () => {
     const result = await moveModelUses(await target(), ACTOR);
     expect(agent('ag-a1').model).toBe('gpt-4.1');
     expect(result.orgs[0]).toMatchObject({ status: 'moved', agents: 2, workflows: 0 });
-    expect(result.orgs[0].left).toContainEqual({
-      workflowId: 'wf-a1',
-      stepId: '',
-      reason: 'published_invalid',
-    });
+    expect(result.orgs[0].left).toEqual({ published_invalid: 1, chat_turn_by_id: 1 });
+    // Counts only: no other org's workflow or step id leaves the module.
+    expect(JSON.stringify(result)).not.toContain('wf-a1');
     expect(audit.map((r) => r.entityId)).not.toContain('wf-a1');
   });
 
@@ -930,15 +952,33 @@ describe('moveModelUses', () => {
     expect(audit.filter((r) => r.scope === 'org-a')).toEqual([]);
   });
 
-  it('reports a workflow saved during the move in its own words', async () => {
+  it('says a workflow changed during the move, not the generic stale text', async () => {
     vi.mocked(repinWorkflow).mockImplementationOnce(() => {
-      throw new StaleRecordError('That workflow changed a moment ago. Run the move again.');
+      throw new StaleRecordError();
     });
     const result = await moveModelUses(await target(), ACTOR);
     expect(result.orgs[0]).toMatchObject({
       status: 'failed',
-      reason: 'That workflow changed a moment ago. Run the move again.',
+      reason:
+        'One of its workflows was changed during the move, so nothing in it moved. Run the move again.',
     });
+  });
+
+  it('reports a validation failure in an org in its own words', async () => {
+    vi.mocked(repinWorkflow).mockImplementationOnce(() => {
+      throw new ValidationError('The published workflow is structurally invalid');
+    });
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(result.orgs[0].reason).toBe('The published workflow is structurally invalid');
+  });
+
+  it('previews a workflow whose published version fails the checks as left, not moving', async () => {
+    workflow('wf-a1').published = {
+      version: 3,
+      snapshot: { ...definition(step('a', 'llm_call', 'gpt-4o')), entryStepId: 'missing' },
+    };
+    const preview = await previewModelMove(await target());
+    expect(preview.orgs[0]).toMatchObject({ workflows: 0, left: { published_invalid: 1 } });
   });
 
   it('leaves pins naming the id alone when another provider offers it', async () => {
@@ -947,25 +987,27 @@ describe('moveModelUses', () => {
     // The bare llm_call in A's published version stays; the draft's pair moves.
     expect(overridesOf(workflow('wf-a1').published?.snapshot)).toEqual(['gpt-4o', 'gpt-4o']);
     expect(overridesOf(workflow('wf-a1').draftDefinition)).toEqual(['openai::gpt-4.1', undefined]);
-    expect(result.orgs[0].left).toEqual([
-      { workflowId: 'wf-a1', stepId: 'a', reason: 'shared_id' },
-      { workflowId: 'wf-a1', stepId: 'c', reason: 'chat_turn_by_id' },
-    ]);
+    expect(result.orgs[0].left).toEqual({ shared_id: 1, chat_turn_by_id: 1 });
     // The suggested chat default names the id alone too.
     expect(world.settings.defaultModels.chat).toBeUndefined();
     expect(result.settings.left).toContainEqual({ slot: 'chat', reason: 'shared_id' });
   });
 
   it('does not version or audit an agent moved off the model since it was read', async () => {
-    const realUpdate = vi.mocked(prisma.$transaction).getMockImplementation();
-    vi.mocked(prisma.$transaction).mockImplementationOnce((async (fn: never, opts: never) => {
-      agent('ag-a2').model = 'gpt-4o-mini'; // an editor's save lands first
-      return realUpdate?.(fn, opts);
+    const real = vi.mocked(prisma.$transaction).getMockImplementation();
+    let calls = 0;
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: never, opts: never) => {
+      // The second transaction is org A's (the settings' is first): an
+      // editor's save lands after the move read A's agents.
+      if (++calls === 2) agent('ag-a2').model = 'gpt-4o-mini';
+      return real?.(fn, opts);
     }) as never);
     const result = await moveModelUses(await target(), ACTOR);
     expect(agent('ag-a2').model).toBe('gpt-4o-mini');
     expect(result.orgs[0].agents).toBe(1);
     expect(audit.map((r) => r.entityId)).not.toContain('ag-a2');
+    // No baseline version written for an agent the move did not change.
+    expect(vi.mocked(ensureBaselineVersion).mock.calls.map((c) => c[1])).not.toContain('ag-a2');
   });
 
   it('leaves a settings slot someone changed since the plan was made', async () => {

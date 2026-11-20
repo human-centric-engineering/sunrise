@@ -615,6 +615,21 @@ export async function lockRepinSubjects(
   return new Map(rows.map((row) => [row.id, workflowDefinitionVersion(row)]));
 }
 
+/**
+ * Why a rewritten published definition cannot be published by
+ * {@link repinWorkflow}, or `null` when it can: it fails the workflow schema
+ * or the DAG rules (published before they changed). Shared with the move's
+ * preview, so the preview does not promise a workflow the move will leave.
+ */
+export function repinRefusal(rewritten: unknown): string | null {
+  const parsed = workflowDefinitionSchema.safeParse(rewritten);
+  if (!parsed.success) return 'Its published version no longer matches the workflow schema.';
+  if (!validateWorkflow(parsed.data).ok) {
+    return 'Its published version no longer passes the workflow structure checks.';
+  }
+  return null;
+}
+
 export interface RepinWorkflowArgs {
   /** The org's transaction: the move writes each org's changes as one (§136 t-1066). */
   tx: Prisma.TransactionClient;
@@ -687,22 +702,9 @@ export async function repinWorkflow(args: RepinWorkflowArgs): Promise<RepinWorkf
   if (current) {
     const rewritten = rewrite(current.snapshot);
     if (rewritten !== current.snapshot) {
-      const parsed = workflowDefinitionSchema.safeParse(rewritten);
-      if (!parsed.success) {
-        return {
-          draftChanged: false,
-          published: null,
-          refused: 'Its published version no longer matches the workflow schema.',
-        };
-      }
-      if (!validateWorkflow(parsed.data).ok) {
-        return {
-          draftChanged: false,
-          published: null,
-          refused: 'Its published version no longer passes the workflow structure checks.',
-        };
-      }
-      toPublish = parsed.data;
+      const refused = repinRefusal(rewritten);
+      if (refused) return { draftChanged: false, published: null, refused };
+      toPublish = workflowDefinitionSchema.parse(rewritten);
     }
   }
 

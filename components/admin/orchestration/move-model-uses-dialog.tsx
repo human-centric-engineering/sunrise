@@ -46,16 +46,11 @@ import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import {
   LEFT_REASON_TEXT,
+  type LeftCounts,
   type LeftReason,
   type SettingsMovePlan,
 } from '@/lib/orchestration/model-lifecycle/move-plan';
 import type { SettingsPinSlot } from '@/lib/orchestration/model-lifecycle/settings-pins';
-
-interface LeftStep {
-  workflowId: string;
-  stepId: string;
-  reason: LeftReason;
-}
 
 /** One org in the preview, as the route answers it. */
 export interface OrgPreview {
@@ -65,7 +60,7 @@ export interface OrgPreview {
   inactiveAgents: number;
   agentsFollowingPlatform: number;
   workflows: number;
-  left: LeftStep[];
+  left: LeftCounts;
   ownKey: boolean;
 }
 
@@ -84,7 +79,7 @@ export interface OrgResult {
   reason?: string;
   agents: number;
   workflows: number;
-  left: LeftStep[];
+  left: LeftCounts;
   agentsFollowingPlatform: number;
 }
 
@@ -118,10 +113,11 @@ function plural(n: number, word: string): string {
 }
 
 /** What was left in one org, grouped by reason. */
-function LeftList({ left, followingPlatform }: { left: LeftStep[]; followingPlatform: number }) {
-  if (left.length === 0 && followingPlatform === 0) return null;
-  const byReason = new Map<LeftReason, number>();
-  for (const step of left) byReason.set(step.reason, (byReason.get(step.reason) ?? 0) + 1);
+function LeftList({ left, followingPlatform }: { left: LeftCounts; followingPlatform: number }) {
+  const byReason = Object.entries(left).filter(
+    (entry): entry is [LeftReason, number] => (entry[1] ?? 0) > 0
+  );
+  if (byReason.length === 0 && followingPlatform === 0) return null;
   return (
     <ul className="text-muted-foreground mt-1 space-y-1 text-xs">
       {followingPlatform > 0 && (
@@ -131,7 +127,7 @@ function LeftList({ left, followingPlatform }: { left: LeftStep[]; followingPlat
           its own.
         </li>
       )}
-      {[...byReason].map(([reason, count]) => (
+      {byReason.map(([reason, count]) => (
         <li key={reason}>
           {plural(count, reason === 'published_invalid' ? 'workflow' : 'workflow step')} left:{' '}
           {LEFT_REASON_TEXT[reason]}
@@ -202,7 +198,12 @@ export function MoveModelUsesDialog({
   const [loading, setLoading] = useState(false);
   const [moving, setMoving] = useState(false);
   const [result, setResult] = useState<MoveResult | null>(null);
-  const failure = useSaveFailure({ fallback: 'The move could not be run. Try again.' });
+  // A move cut off part way has committed the orgs it finished, so this does
+  // not say nothing moved.
+  const failure = useSaveFailure({
+    fallback:
+      'The move stopped before it could answer. Some organisations may have moved: reload the page to see what still uses the model, then run it again.',
+  });
   const { report, clear } = failure;
 
   // Only the newest preview request may show: an earlier one answering late
