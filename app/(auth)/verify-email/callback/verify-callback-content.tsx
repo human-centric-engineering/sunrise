@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { authLandingLabel, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { SaveError } from '@/components/forms/form-error';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { isRecord } from '@/lib/utils';
@@ -29,6 +29,8 @@ import { isRecord } from '@/lib/utils';
  */
 function VerifyEmailCallbackContent() {
   const t = useTranslations('auth');
+  const tNav = useTranslations('layout.nav');
+  const landing = authLandingLabel(tNav('dashboard'));
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -69,7 +71,7 @@ function VerifyEmailCallbackContent() {
         <CardContent>
           <Button asChild className="w-full">
             <Link href={AUTH_LANDING_ROUTE}>
-              {t('verifyEmail.callback.continueTo', { destination: AUTH_LANDING_LABEL })}
+              {t('verifyEmail.callback.continueTo', { destination: landing })}
             </Link>
           </Button>
         </CardContent>
@@ -91,7 +93,7 @@ function VerifyEmailCallbackContent() {
             {t('verifyEmail.callback.verifiedTitle')}
           </CardTitle>
           <CardDescription>
-            {t('verifyEmail.callback.redirectingTo', { destination: AUTH_LANDING_LABEL })}
+            {t('verifyEmail.callback.redirectingTo', { destination: landing })}
           </CardDescription>
         </CardHeader>
       </Card>

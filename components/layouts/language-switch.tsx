@@ -16,7 +16,7 @@
  * as it was.
  */
 
-import { useId, useState } from 'react';
+import { useId, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Languages } from 'lucide-react';
@@ -49,16 +49,14 @@ export function LanguageSwitch({ options, current }: LanguageSwitchProps) {
   const t = useTranslations('layout.languageSwitch');
   const router = useRouter();
   const id = useId();
-  // The language picked, shown until the refreshed page renders in it.
+  // The language picked, shown while it is stored and the page refreshes.
   const [pending, setPending] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [renderedIn, setRenderedIn] = useState(current);
-  if (renderedIn !== current) {
-    // The refresh landed: the page now says which language it is in.
-    setRenderedIn(current);
-    setPending(null);
-  }
+  // Settles when the refreshed page has rendered, whichever language it came
+  // back in (a signed-in user's own choice outranks the cookie this sets).
+  const [refreshing, startRefresh] = useTransition();
+  const shown = pending !== null && (saving || refreshing) ? pending : current;
 
   if (options.length < 2) return null;
 
@@ -69,7 +67,7 @@ export function LanguageSwitch({ options, current }: LanguageSwitchProps) {
     setFailed(false);
     try {
       await apiClient.put(API.PUBLIC.LOCALE, { body: { locale } });
-      router.refresh();
+      startRefresh(() => router.refresh());
     } catch (error) {
       logger.warn('Could not store the visitor’s language', {
         locale,
@@ -92,11 +90,7 @@ export function LanguageSwitch({ options, current }: LanguageSwitchProps) {
         <Label htmlFor={id} className="sr-only">
           {t('label')}
         </Label>
-        <Select
-          value={pending ?? current}
-          onValueChange={(locale) => void onChange(locale)}
-          disabled={saving}
-        >
+        <Select value={shown} onValueChange={(locale) => void onChange(locale)} disabled={saving}>
           <SelectTrigger
             id={id}
             className="h-8 w-auto gap-2 text-sm"

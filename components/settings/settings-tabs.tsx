@@ -35,11 +35,11 @@ import {
   SETTINGS_TABS,
   SETTINGS_TAB_VALUES,
   DEFAULT_SETTINGS_TAB,
+  settingsTabTitles,
   type SettingsTab,
 } from '@/lib/constants/settings';
 import type { UserPreferences } from '@/types';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
-import { BRAND } from '@/lib/brand';
 
 /**
  * User data passed from server component
@@ -95,20 +95,8 @@ export function SettingsTabs({
   const t = useTranslations('account.settings');
   const format = useFormatter();
 
-  // document.title per tab, in the viewer's language. Replaces the layout's
-  // `%s - brand` template, so it carries the brand itself.
-  const titles = useMemo<Record<SettingsTab, string>>(
-    () => ({
-      [SETTINGS_TABS.PROFILE]: t('tabTitle', { tab: t('tabs.profile'), brand: BRAND.name }),
-      [SETTINGS_TABS.SECURITY]: t('tabTitle', { tab: t('tabs.security'), brand: BRAND.name }),
-      [SETTINGS_TABS.NOTIFICATIONS]: t('tabTitle', {
-        tab: t('tabs.notifications'),
-        brand: BRAND.name,
-      }),
-      [SETTINGS_TABS.ACCOUNT]: t('tabTitle', { tab: t('tabs.account'), brand: BRAND.name }),
-    }),
-    [t]
-  );
+  // document.title per tab, in the viewer's language.
+  const titles = useMemo(() => settingsTabTitles(t), [t]);
 
   const { activeTab, setActiveTab } = useTrackedUrlTabs<SettingsTab>({
     defaultTab: DEFAULT_SETTINGS_TAB,

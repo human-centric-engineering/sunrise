@@ -73,18 +73,37 @@ describe('LanguageSwitch', () => {
   });
 
   it('stores the picked language and refreshes the page', async () => {
-    mockPut.mockResolvedValue({ locale: 'de' });
+    let store!: (value: unknown) => void;
+    mockPut.mockReturnValue(new Promise((resolve) => (store = resolve)));
     const user = userEvent.setup();
     render(<LanguageSwitch options={OPTIONS} current="en" />);
 
     await user.click(screen.getByRole('combobox', { name: 'Language' }));
     await user.click(await screen.findByRole('option', { name: 'Deutsch' }));
 
-    await waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
     expect(mockPut).toHaveBeenCalledWith(API.PUBLIC.LOCALE, { body: { locale: 'de' } });
-    // The pick shows while the refreshed page is on its way.
+    // The pick shows while it is being stored.
     expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('Deutsch');
+
+    store({ locale: 'de' });
+    await waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it("shows the page's language again when the refreshed page comes back unchanged", async () => {
+    mockPut.mockResolvedValue({ locale: 'de' });
+    const user = userEvent.setup();
+    render(<LanguageSwitch options={OPTIONS} current="en" />);
+
+    await user.click(screen.getByRole('combobox', { name: 'Language' }));
+    await user.click(await screen.findByRole('option', { name: 'Deutsch' }));
+    await waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
+
+    // The refresh settled with the page still in English (a signed-in user's
+    // own choice outranks the cookie): the pick is not left showing.
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('English')
+    );
   });
 
   it('follows the language the refreshed page renders in, dropping the pending pick', async () => {

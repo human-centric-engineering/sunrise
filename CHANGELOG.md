@@ -40,7 +40,9 @@ release process.
   text, which moved to `lib/i18n/messages/en.json`; to change wording, use
   `overridePlatformMessages('en', …)` rather than editing the component. A
   fork test rendering one of these components needs `next-intl` mocked, as
-  `tests/setup.ts` now does with the real catalogue.
+  `tests/setup.ts` now does with the real catalogue. `authLandingLabel(default)`
+  (`lib/auth-landing/route.ts`) gives `AUTH_LANDING_LABEL` in the viewer's
+  language: a fork's own label as given, otherwise the translated default.
 
 - **A new fork seam, `lib/app/model-pins.ts` (ships empty), for the models an
   app names itself (§136, t-1067).** Fill `initAppModelPins()` with
@@ -611,6 +613,19 @@ release process.
   `tests/unit/lib/app/defaults.test.ts`.
 
 ### Changed
+
+- **Three exports that carried the user screens' English now carry none (§138
+  t-1073).** The words moved to the catalogue, and these no longer held what
+  the screens show. `SETTINGS_TAB_TITLES` (`lib/constants/settings.ts`) is
+  replaced by `settingsTabTitles(t)`, which builds the settings page's browser
+  tab titles from `account.settings.tabTitle`. `CookieCategory` and
+  `COOKIE_CATEGORIES` (`lib/consent`) lose `name` and `description`, which are
+  now `cookies.categories.<id>.name|description`. `getStatusConfig()`
+  (`components/status`) returns only `{ color }`, and a status's words are
+  `status.indicator.<status>.label|description`. **Fork impact:** code that
+  read one of these fails to compile. Read the catalogue key instead, and
+  change the wording with `overridePlatformMessages('en', …)`, not the
+  constant.
 
 - **Every model pin can name its provider (§136, t-1068).** A task default
   (`AiOrchestrationSettings.defaultModels.routing|chat|reasoning`) and a

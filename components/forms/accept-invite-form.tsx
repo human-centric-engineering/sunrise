@@ -73,8 +73,9 @@ function parseOAuthError(error: string): LoadError {
 
   // Check for email mismatch error (our custom error from before hook)
   if (decoded.includes('invitation was sent to')) {
-    // Extract the email from the message
-    const emailMatch = decoded.match(/sent to ([^\s.]+)/);
+    // The address runs to the full stop that ends the sentence, so the dots
+    // inside it ("jane.doe@acme.com") stay part of it.
+    const emailMatch = decoded.match(/sent to (\S+?)\.?(?:\s|$)/);
     return emailMatch
       ? { key: 'oauthWrongEmail', email: emailMatch[1] }
       : { key: 'oauthWrongEmailUnknown' };

@@ -52,7 +52,9 @@ import { BrandMark } from '@/components/brand/brand-mark';
 import { PublicFooter } from '@/components/layouts/public-footer';
 import { ProtectedFooter } from '@/components/layouts/protected-footer';
 import { KNOWLEDGE_TAB_TITLES, KNOWLEDGE_TAB_VALUES } from '@/lib/constants/knowledge';
-import { SETTINGS_TAB_TITLES, SETTINGS_TAB_VALUES } from '@/lib/constants/settings';
+import { settingsTabTitles, SETTINGS_TAB_VALUES } from '@/lib/constants/settings';
+import { createTranslator } from 'next-intl';
+import en from '@/lib/i18n/messages/en.json';
 import WelcomeEmail from '@/emails/welcome';
 
 describe('BRAND resolves from the seam', () => {
@@ -93,7 +95,14 @@ describe.each([
 
 describe.each([
   ['KNOWLEDGE_TAB_TITLES', KNOWLEDGE_TAB_TITLES, KNOWLEDGE_TAB_VALUES],
-  ['SETTINGS_TAB_TITLES', SETTINGS_TAB_TITLES, SETTINGS_TAB_VALUES],
+  // The settings titles are built from the catalogue, as the settings page builds them.
+  [
+    'settingsTabTitles',
+    settingsTabTitles(
+      createTranslator({ locale: 'en', messages: en, namespace: 'account.settings' })
+    ),
+    SETTINGS_TAB_VALUES,
+  ],
 ] as const)('%s', (_name, titles, values) => {
   // Written straight to `document.title`, so they override the layout's
   // `%s - ${BRAND.name}` template — a hardcoded name here shows a fork

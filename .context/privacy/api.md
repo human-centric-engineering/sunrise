@@ -302,16 +302,13 @@ interface ConsentContextValue {
 
 ### `CookieCategory`
 
-Cookie category definition for display in consent UI.
+Cookie category definition for display in consent UI. Its name and
+description are in the catalogue under `cookies.categories.<id>`.
 
 ```typescript
 interface CookieCategory {
   /** Category ID */
   id: 'essential' | 'optional';
-  /** Display name */
-  name: string;
-  /** Description shown to users */
-  description: string;
   /** Whether this category can be toggled (false = user can disable) */
   required: boolean;
 }

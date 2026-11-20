@@ -25,20 +25,8 @@ const mockUseConsent = vi.fn();
 vi.mock('@/lib/consent', () => ({
   useConsent: () => mockUseConsent(),
   COOKIE_CATEGORIES: [
-    {
-      id: 'essential',
-      name: 'Essential',
-      description:
-        'These cookies are necessary for the website to function. They include authentication, security, and user preferences like theme settings.',
-      required: true,
-    },
-    {
-      id: 'optional',
-      name: 'Analytics & Marketing',
-      description:
-        'These cookies help us understand how visitors interact with our website and allow us to show relevant advertisements. They may be set by third-party services.',
-      required: false,
-    },
+    { id: 'essential', required: true },
+    { id: 'optional', required: false },
   ],
 }));
 

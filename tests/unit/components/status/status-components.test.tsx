@@ -21,7 +21,7 @@ vi.mock('@/components/status/use-health-check', () => ({
   useHealthCheck: () => health.current,
 }));
 
-const MB = 1024 * 1024;
+const MB = 1000 * 1000;
 
 function response(overrides: Partial<HealthCheckResponse> = {}): HealthCheckResponse {
   return {

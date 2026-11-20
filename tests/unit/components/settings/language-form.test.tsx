@@ -82,6 +82,21 @@ describe('components/settings/language-form', () => {
     expect(picker()).toHaveTextContent(FOLLOW_ORG);
   });
 
+  it('lets a stored language that is no longer offered be cleared', async () => {
+    const user = userEvent.setup();
+    render(<LanguageForm locale="de" options={OPTIONS} />);
+
+    // The stored "de" differs from what is shown, so there is something to save.
+    const save = screen.getByRole('button', { name: 'Save Language' });
+    expect(save).toBeEnabled();
+    await user.click(save);
+
+    await waitFor(() =>
+      expect(apiClient.patch).toHaveBeenCalledWith(API.USERS.ME, { body: { locale: null } })
+    );
+    await waitFor(() => expect(save).toBeDisabled());
+  });
+
   it('keeps Save disabled until the choice changes', async () => {
     const user = userEvent.setup();
     render(<LanguageForm locale={null} options={OPTIONS} />);

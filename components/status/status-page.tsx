@@ -53,11 +53,14 @@ function formatUptime(format: Formatter, seconds: number): string {
 
 const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as const;
 
-/** `12.5 MB`, in 1024 steps like `formatBytes`, with the unit in the viewer's language. */
+/**
+ * `12.5 MB`, with the unit in the viewer's language. In 1000 steps: Intl's
+ * units are the SI ones (it has no kibibyte), so 1024 steps would put a figure
+ * about 5% out under the MB label.
+ */
 function formatMemory(format: Formatter, bytes: number): string {
-  const i =
-    bytes > 0 ? Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1) : 0;
-  return format.number(bytes / Math.pow(1024, i), {
+  const i = bytes > 0 ? Math.min(Math.floor(Math.log10(bytes) / 3), BYTE_UNITS.length - 1) : 0;
+  return format.number(bytes / Math.pow(1000, i), {
     style: 'unit',
     unit: BYTE_UNITS[i],
     unitDisplay: 'short',

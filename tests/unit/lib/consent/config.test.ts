@@ -107,28 +107,14 @@ describe('COOKIE_CATEGORIES', () => {
       expect(essential?.id).toBe('essential');
     });
 
-    it('should have a name', () => {
-      const essential = COOKIE_CATEGORIES.find((cat) => cat.id === 'essential');
-      expect(essential?.name).toBe('Essential');
-    });
-
-    it('should have a description', () => {
-      const essential = COOKIE_CATEGORIES.find((cat) => cat.id === 'essential');
-      expect(essential?.description).toBeDefined();
-      expect(essential?.description.length).toBeGreaterThan(0);
-    });
-
     it('should be required', () => {
       const essential = COOKIE_CATEGORIES.find((cat) => cat.id === 'essential');
       expect(essential?.required).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
     });
 
-    it('should have all expected properties', () => {
+    it('should carry only its id and whether it is required', () => {
       const essential = COOKIE_CATEGORIES.find((cat) => cat.id === 'essential');
-      expect(essential).toHaveProperty('id');
-      expect(essential).toHaveProperty('name');
-      expect(essential).toHaveProperty('description');
-      expect(essential).toHaveProperty('required');
+      expect(essential).toEqual({ id: 'essential', required: true });
     });
   });
 
@@ -143,28 +129,14 @@ describe('COOKIE_CATEGORIES', () => {
       expect(optional?.id).toBe('optional');
     });
 
-    it('should have a name', () => {
-      const optional = COOKIE_CATEGORIES.find((cat) => cat.id === 'optional');
-      expect(optional?.name).toBe('Analytics & Marketing');
-    });
-
-    it('should have a description', () => {
-      const optional = COOKIE_CATEGORIES.find((cat) => cat.id === 'optional');
-      expect(optional?.description).toBeDefined();
-      expect(optional?.description.length).toBeGreaterThan(0);
-    });
-
     it('should not be required', () => {
       const optional = COOKIE_CATEGORIES.find((cat) => cat.id === 'optional');
       expect(optional?.required).toBe(false);
     });
 
-    it('should have all expected properties', () => {
+    it('should carry only its id and whether it is required', () => {
       const optional = COOKIE_CATEGORIES.find((cat) => cat.id === 'optional');
-      expect(optional).toHaveProperty('id');
-      expect(optional).toHaveProperty('name');
-      expect(optional).toHaveProperty('description');
-      expect(optional).toHaveProperty('required');
+      expect(optional).toEqual({ id: 'optional', required: false });
     });
   });
 

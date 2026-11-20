@@ -23,16 +23,27 @@ export type SettingsTab = (typeof SETTINGS_TABS)[keyof typeof SETTINGS_TABS];
  */
 export const DEFAULT_SETTINGS_TAB: SettingsTab = SETTINGS_TABS.PROFILE;
 
+/** The part of `useTranslations('account.settings')` that {@link settingsTabTitles} needs. */
+type TabTitleTranslator = (
+  key: 'tabTitle' | `tabs.${SettingsTab}`,
+  values?: Record<string, string>
+) => string;
+
 /**
- * Page titles for each settings tab
+ * Page titles for each settings tab, in the viewer's language.
  *
- * Used by useUrlTabs to update document.title on tab change — which OVERWRITES
- * the layout's `%s - ${BRAND.name}` metadata template, so these must route
- * through the same seam or a fork sees "Sunrise" in the browser tab.
+ * Pass `useTranslations('account.settings')`. Written to document.title on tab
+ * change, which OVERWRITES the layout's `%s - ${BRAND.name}` metadata template,
+ * so each title carries the brand itself or a fork sees "Sunrise" in the
+ * browser tab (#432). The words are the catalogue's `account.settings.tabTitle`
+ * and `account.settings.tabs.<tab>`.
  */
-export const SETTINGS_TAB_TITLES: Record<SettingsTab, string> = {
-  [SETTINGS_TABS.PROFILE]: `Profile - Settings - ${BRAND.name}`,
-  [SETTINGS_TABS.SECURITY]: `Security - Settings - ${BRAND.name}`,
-  [SETTINGS_TABS.NOTIFICATIONS]: `Notifications - Settings - ${BRAND.name}`,
-  [SETTINGS_TABS.ACCOUNT]: `Account - Settings - ${BRAND.name}`,
-};
+export function settingsTabTitles(t: TabTitleTranslator): Record<SettingsTab, string> {
+  const title = (tab: SettingsTab) => t('tabTitle', { tab: t(`tabs.${tab}`), brand: BRAND.name });
+  return {
+    [SETTINGS_TABS.PROFILE]: title('profile'),
+    [SETTINGS_TABS.SECURITY]: title('security'),
+    [SETTINGS_TABS.NOTIFICATIONS]: title('notifications'),
+    [SETTINGS_TABS.ACCOUNT]: title('account'),
+  };
+}

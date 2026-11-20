@@ -154,24 +154,23 @@ When disabled, the provider assumes all consent is granted and the banner never 
 
 ### Customize Categories
 
-Edit `lib/consent/config.ts` to modify category descriptions:
+Change a category's name or description in the catalogue:
 
 ```typescript
-export const COOKIE_CATEGORIES: CookieCategory[] = [
-  {
-    id: 'essential',
-    name: 'Essential',
-    description: 'Your custom description...',
-    required: true,
+// lib/app/messages.ts, inside initAppMessages()
+overridePlatformMessages('en', {
+  cookies: {
+    categories: {
+      essential: { description: 'Your custom description...' },
+      optional: { name: 'Analytics', description: 'Your custom description...' },
+    },
   },
-  {
-    id: 'optional',
-    name: 'Analytics & Marketing',
-    description: 'Your custom description...',
-    required: false,
-  },
-];
+});
 ```
+
+`COOKIE_CATEGORIES` in `lib/consent/config.ts` holds only each category's `id`
+and whether it is `required`; the words are in the catalogue under
+`cookies.categories.<id>` (see `.context/ui/i18n.md`).
 
 ### Banner Delay
 

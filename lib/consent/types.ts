@@ -47,15 +47,12 @@ export interface ConsentContextValue {
 }
 
 /**
- * Cookie category definition for display
+ * Cookie category definition for display. Its name and description are in
+ * the catalogue under `cookies.categories.<id>`.
  */
 export interface CookieCategory {
   /** Category ID */
   id: 'essential' | 'optional';
-  /** Display name */
-  name: string;
-  /** Description shown to users */
-  description: string;
   /** Whether this category can be toggled */
   required: boolean;
 }

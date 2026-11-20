@@ -56,9 +56,10 @@ export function LanguageForm({ locale, options }: LanguageFormProps) {
   const save = useSaveFailure({ fallback: t('saveFailed'), fields: NO_SERVER_FIELDS });
 
   // A stored tag the install no longer offers shows as following the org,
-  // which is what the resolution does with it too.
+  // which is what the resolution does with it too. `saved` keeps the stored
+  // tag, so Save stays enabled and saving clears it.
   const initial = locale && options.some((o) => o.tag === locale) ? locale : FOLLOW_ORG;
-  const [saved, setSaved] = useState(initial);
+  const [saved, setSaved] = useState(locale ?? FOLLOW_ORG);
   const [value, setValue] = useState(initial);
   const [isLoading, setIsLoading] = useState(false);
   const [success, setSuccess] = useState(false);
