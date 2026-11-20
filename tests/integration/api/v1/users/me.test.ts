@@ -132,6 +132,7 @@ const mockUserData = {
   bio: 'Software developer',
   phone: '+1 (555) 123-4567',
   timezone: 'America/New_York',
+  locale: null,
   location: 'New York, NY',
   preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
   signupOrgId: null,

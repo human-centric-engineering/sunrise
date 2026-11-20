@@ -567,6 +567,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "A bounded set of error fingerprints already handled, so the handler cannot loop on itself; browser-only (initialised from a client component, `typeof window` guarded), so the process it is global to is one visitor's tab.",
   },
   {
+    file: 'lib/i18n/catalogue.ts',
+    holders: ['pseudo'],
+    posture: 'no-tenant-data',
+    why: 'The pseudo-locale catalogue, generated once from the shipped `en` messages (§138 t-1071). Built from code, never from a row.',
+  },
+  {
     file: 'lib/admin/logs.ts',
     holders: ['tenancy'],
     posture: 'no-tenant-data',

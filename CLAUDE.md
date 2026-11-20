@@ -420,6 +420,7 @@ All commands default to branch diff mode but accept file/folder paths. The test-
 | Form Save Errors         | `.context/ui/form-errors.md`                              | `<SaveError>` + `useSaveFailure()`: one way every form shows a failed save, beside Save; `check:save-errors` fails a hand-drawn box              |
 | UI Hooks                 | `.context/ui/hooks.md`                                    | `useLocalStorage`, `useWizard`, `useTimeout`                                                                                                     |
 | Per-Surface Theming      | `.context/ui/surface-theming.md`                          | `data-surface` seam: proxy classification, `<SurfaceSync>`, fork-owned `brand-theme.css`, the six design constraints                             |
+| Interface Languages      | `.context/ui/i18n.md`                                     | next-intl without routing; the catalogue, the locale resolution order, `User.locale` / org default / cookie, named formats, the pseudo-locale    |
 
 ## Troubleshooting
 

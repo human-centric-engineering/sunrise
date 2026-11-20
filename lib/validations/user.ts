@@ -11,6 +11,7 @@ import { emailSchema, passwordSchema } from '@/lib/validations/auth';
 import { paginationQuerySchema, sortingQuerySchema, cuidSchema } from '@/lib/validations/common';
 import { USER_ROLES, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import { ORG_ROLES } from '@/lib/tenancy/roles';
+import { localeChoiceSchema } from '@/lib/validations/locale';
 
 /**
  * Update user profile schema (PATCH /api/v1/users/me)
@@ -52,6 +53,8 @@ export const updateUserSchema = z.object({
     .optional()
     .nullable(),
   timezone: z.string().max(50, 'Timezone must be less than 50 characters').optional(),
+  // The interface language (§138 t-1071); null follows the org default.
+  locale: localeChoiceSchema.optional(),
   location: z
     .string()
     .trim()

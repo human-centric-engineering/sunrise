@@ -652,6 +652,7 @@ describe('GET /api/v1/users/me', () => {
       bio: null,
       phone: null,
       timezone: 'UTC',
+      locale: null,
       location: null,
       preferences: null,
       signupOrgId: null,
@@ -711,6 +712,7 @@ describe('PATCH /api/v1/users/me', () => {
       bio: null,
       phone: null,
       timezone: 'UTC',
+      locale: null,
       location: null,
       preferences: null,
       signupOrgId: null,
@@ -749,6 +751,68 @@ describe('PATCH /api/v1/users/me', () => {
       })
     );
   });
+
+  // §138 t-1071: the interface language a user chose.
+  it('stores a supported locale in its canonical spelling, and returns it', async () => {
+    const session = buildUserSession('USER');
+    vi.mocked(prisma.user.update).mockResolvedValue({
+      id: session.user.id,
+      locale: 'en-XA',
+    } as never);
+
+    const response = await PATCH(
+      createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/me',
+        body: { locale: 'en-xa' },
+      }),
+      session
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { locale: 'en-XA' },
+        select: expect.objectContaining({ locale: true }),
+      })
+    );
+    expect((await parseJSON<SuccessBody>(response)).data).toMatchObject({ locale: 'en-XA' });
+  });
+
+  it('clears the locale with null, to follow the org default', async () => {
+    const session = buildUserSession('USER');
+    vi.mocked(prisma.user.update).mockResolvedValue({ id: session.user.id, locale: null } as never);
+
+    const response = await PATCH(
+      createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/me',
+        body: { locale: null },
+      }),
+      session
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { locale: null } })
+    );
+  });
+
+  it('refuses a locale with no catalogue, writing nothing', async () => {
+    const session = buildUserSession('USER');
+
+    const response = await PATCH(
+      createMockRequest({
+        method: 'PATCH',
+        url: 'http://localhost:3000/api/v1/users/me',
+        body: { locale: 'fr' },
+      }),
+      session
+    );
+
+    expect(response.status).toBe(400);
+    expect(prisma.user.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused by validation;
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -776,6 +840,7 @@ describe('PATCH /api/v1/users/me — email change', () => {
     bio: null,
     phone: null,
     timezone: 'UTC',
+    locale: null,
     location: null,
     preferences: null,
     signupOrgId: null,

@@ -57,6 +57,7 @@ export const GET = withAuth(
         bio: true,
         phone: true,
         timezone: true,
+        locale: true,
         location: true,
         preferences: true,
         // Explicitly exclude password
@@ -82,7 +83,8 @@ export const GET = withAuth(
  * PATCH /api/v1/users/me
  *
  * Updates the current user's profile.
- * Supports updating name, email, and extended profile fields (bio, phone, timezone, location).
+ * Supports updating name, email, and extended profile fields (bio, phone, timezone, location),
+ * and the interface language (`locale`, §138 t-1071; `null` follows the org default).
  *
  * Validates:
  * - Request body matches updateUserSchema
@@ -95,7 +97,7 @@ export const GET = withAuth(
  * flow began. Changing it also requires `currentPassword` on accounts that have
  * one, and revokes the user's sessions when it finally lands.
  *
- * @param request - Request with JSON body { name?, email?, currentPassword?, bio?, phone?, timezone?, location? }
+ * @param request - Request with JSON body { name?, email?, currentPassword?, bio?, phone?, timezone?, location?, locale? }
  * @returns Updated user profile, plus `emailChangeRequested`
  * @throws UnauthorizedError if not authenticated
  * @throws ValidationError if invalid data
@@ -229,6 +231,7 @@ export const PATCH = withAuth(
         bio: true,
         phone: true,
         timezone: true,
+        locale: true,
         location: true,
         preferences: true,
       },

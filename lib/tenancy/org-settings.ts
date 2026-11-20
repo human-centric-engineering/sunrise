@@ -13,7 +13,9 @@
  * privacy minimum and protected terms (see {@link readOrgPrivacy}), and an
  * `entitlements` slice holding the switches set on it and off it (see
  * {@link readOrgEntitlements}), and an `awaitingOnboarding` mark on an org
- * whose onboarding the app has not finished (see {@link readOrgOnboarded}).
+ * whose onboarding the app has not finished (see {@link readOrgOnboarded}),
+ * and a `locale` naming the org's default interface language (see
+ * {@link readOrgLocale}).
  * Everything else in that JSON belongs to
  * whoever put it there — a fork's own org-level config — and every write path
  * below preserves it rather than replacing the object.
@@ -58,6 +60,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { isSerializableConflict } from '@/lib/db/serializable-conflict';
+import { isLanguageTag } from '@/lib/i18n/locales';
 import { logger as defaultLogger, type Logger } from '@/lib/logging';
 import {
   ORG_QUOTA_KEYS,
@@ -335,6 +338,58 @@ export async function clearOrgAwaitingOnboarding(
 ): Promise<{ written: boolean } | null> {
   const result = await writeSettingsSlice(orgId, ORG_AWAITING_ONBOARDING_KEY, null, db);
   return result === null ? null : { written: result.written };
+}
+
+/**
+ * The key an org's default interface language lives under in `Org.settings`
+ * (§138 t-1071): a BCP 47 tag, or absent for "no default".
+ */
+export const ORG_LOCALE_KEY = 'locale';
+
+/**
+ * An org's default interface language, or `null` when it has none.
+ *
+ * Degrades to `null` on anything that is not a language tag, with a warning:
+ * the value only picks the language of a page, and the next step of the
+ * resolution (`lib/i18n/resolve.ts`) still serves one. Whether the tag has a
+ * catalogue is the resolution's question, not this one's, so a locale an app
+ * stops registering is kept here and skipped there.
+ */
+export function readOrgLocale(
+  settings: unknown,
+  context: Record<string, unknown> = {},
+  log: Logger = defaultLogger
+): string | null {
+  if (!isJsonObject(settings)) return null;
+  const value = settings[ORG_LOCALE_KEY];
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string' && isLanguageTag(value)) return value;
+  log.warn('Org default locale is malformed; treating the org as having no default', context);
+  return null;
+}
+
+/**
+ * Set or clear (`null`) an org's default interface language, preserving
+ * every other key. Through {@link writeSettingsSlice}: a SERIALIZABLE
+ * read-modify-write, so a clash throws `P2034` ({@link isSettingsWriteConflict})
+ * rather than dropping another slice. The caller validates the tag against
+ * the supported locales first.
+ *
+ * @returns the previous and the stored value, and whether anything was
+ *   written; `null` when the org does not exist.
+ */
+export async function writeOrgLocale(
+  orgId: string,
+  locale: string | null,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<{ previous: string | null; stored: string | null; written: boolean } | null> {
+  const replaced = await writeSettingsSlice(orgId, ORG_LOCALE_KEY, locale, db);
+  if (replaced === null) return null;
+  return {
+    previous: readOrgLocale(replaced.settings, { orgId }),
+    stored: locale,
+    written: replaced.written,
+  };
 }
 
 /** The key the org-created seam owns inside `Org.settings` (§134 t-1061). */

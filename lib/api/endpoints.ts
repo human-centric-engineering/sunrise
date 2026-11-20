@@ -56,6 +56,8 @@ export const API = {
     SWITCH: '/api/v1/orgs/switch',
     /** One org, as one of its members */
     byId: (id: string): string => `/api/v1/orgs/${id}`,
+    /** An org's default interface language (OWNER/ADMIN of that org, §138) */
+    locale: (id: string): string => `/api/v1/orgs/${id}/locale`,
     /** An org's roster (OWNER/ADMIN of that org) */
     members: (id: string): string => `/api/v1/orgs/${id}/members`,
     /** One membership (OWNER/ADMIN of that org) */
@@ -432,6 +434,8 @@ export const API = {
     WAITLIST: '/api/v1/waitlist',
     WAITLIST_CONFIRM: '/api/v1/waitlist/confirm',
     WAITLIST_LEAVE: '/api/v1/waitlist/leave',
+    /** A visitor's own choice of interface language, kept in a cookie (§138) */
+    LOCALE: '/api/v1/locale',
     CSP_REPORT: '/api/csp-report',
   },
 } as const;

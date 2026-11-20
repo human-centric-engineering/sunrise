@@ -94,6 +94,7 @@ describe('POST /api/auth/send-verification-email', () => {
     bio: null,
     phone: null,
     timezone: null,
+    locale: null,
     location: null,
     preferences: {},
     signupOrgId: null,

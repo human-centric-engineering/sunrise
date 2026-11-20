@@ -34,6 +34,11 @@ model User {
   bio         String? @db.Text // User biography (long text)
   phone       String? @db.VarChar(20) // Phone number
   timezone    String? @default("UTC") // IANA timezone (e.g., "America/New_York")
+  // The interface language this user chose (§138 t-1071): a BCP 47 tag, or
+  // null to follow their org's default and then the browser. Validated on
+  // write against the supported locales; a tag that later loses its
+  // catalogue is skipped by the resolution (lib/i18n/resolve.ts), not trusted.
+  locale      String? @db.VarChar(35)
   location    String? @db.VarChar(100) // Free-form location string
   preferences Json?   @default("{}") // Email preferences as JSON
 

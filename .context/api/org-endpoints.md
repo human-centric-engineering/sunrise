@@ -30,6 +30,7 @@ the per-admin export sub-cap noted below.
 | `GET /api/v1/orgs/[id]`                     | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
 | `GET/POST /api/v1/orgs/[id]/members`        | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
 | `PATCH/DELETE …/members/[userId]`           | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `PUT /api/v1/orgs/[id]/locale`              | `withAuth`      | The org's OWNER/ADMIN **while acting in it**. Browser session only; not a support session.                                                             |
 | `GET /api/v1/orgs/[id]/audit-log`           | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
 | `POST /api/v1/orgs/[id]/invitations`        | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
 | `POST /api/v1/invitations/accept`           | `withAuth`      | A session signed in as the invited, verified address; browser session only. Per-IP accept-invite sub-cap.                                              |
@@ -153,7 +154,7 @@ GET /api/v1/orgs/[id]
     "name": "Acme",
     "status": "ACTIVE",
     "createdAt": "…",
-    "settings": { "retention": { "executionRetentionDays": 365 } },
+    "settings": { "retention": { "executionRetentionDays": 365 }, "locale": "en" },
     "memberCount": 4,
     "role": "MEMBER",
     "joinedAt": "…"
@@ -170,7 +171,28 @@ platform can only vouch for the key it owns. The whole column is on the
 platform-admin view below. A window whose stored value cannot be read is
 reported as absent, exactly as the sweep treats it.
 
+`settings.locale` is the org's default interface language (§138), `null` when
+it has none. A value that is not a language tag reads as `null`. See
+[Interface languages](../ui/i18n.md).
+
 - **403 Forbidden** `Access denied`: not a member, or no such org.
+
+### The org's default language
+
+```
+PUT /api/v1/orgs/[id]/locale
+{ "locale": "en-XA" }
+```
+
+Sets the language the org's members see when they have not chosen one of their
+own; `null` clears it. The locale must be one the interface has a catalogue
+for (`400` otherwise). Answers `{ "orgId": "…", "locale": "en-XA" }`. A change
+is audited as `org.locale.update`; saving the value already stored writes and
+audits nothing.
+
+- **403 Forbidden**: not the org's OWNER/ADMIN, not acting in this org, an API
+  key, or a support session (it is the org's own choice).
+- **409 Conflict**: another settings write landed at the same time; retry.
 
 ### The roster
 

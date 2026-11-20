@@ -45,6 +45,21 @@ release process.
   `modelOverride` is neither counted by the uses finder nor moved, as before;
   pins a fork keeps elsewhere get a seam in t-1067, still to come.
 
+- **The interface can be shown in another language (§138 t-1071).** next-intl 4,
+  without i18n routing (no URL changes), wired in `next.config.js` through
+  `lib/i18n/request.ts`; `<html lang>` now carries the request's locale. The
+  locale resolves from the signed-in user's choice (new nullable column
+  `User.locale`, set through `PATCH /api/v1/users/me`), then the acting org's
+  default (new `Org.settings.locale` key, `ORG_LOCALE_KEY`, read with
+  `readOrgLocale()` and set by an org OWNER/ADMIN through the new
+  `PUT /api/v1/orgs/[id]/locale`, audited as `org.locale.update`; members read
+  it as `settings.locale` on `GET /api/v1/orgs/[id]`), then a visitor cookie
+  (`sunrise_locale`, set through the new public `PUT /api/v1/locale`), then
+  `Accept-Language`, then `en`. Sunrise ships `en` and a generated pseudo-locale
+  `en-XA` for checking screens. Named date and number formats (`I18N_FORMATS`,
+  `formatterFor()`) are in `lib/i18n/format.ts`. Screens are not on the
+  catalogue yet. Guide: `.context/ui/i18n.md`.
+
 - **An app can send a new org's owners and admins to a welcome step until it says
   onboarding is done (§134 t-1063).** Every org created through
   `lib/tenancy/lifecycle.ts` (staff, an app's `createOrg()`, a self-serve

@@ -206,6 +206,7 @@ function makeUserFixture(overrides: Record<string, unknown> = {}) {
     bio: null,
     phone: null,
     timezone: 'UTC',
+    locale: null,
     location: null,
     preferences: {},
     signupOrgId: null,
