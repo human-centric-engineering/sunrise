@@ -38,6 +38,7 @@
  * the run.
  */
 import '@/prisma/load-env';
+import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { prisma } from '@/lib/db/client';
 import { formatModelPin } from '@/lib/orchestration/llm/model-pin';
 import {
@@ -161,7 +162,10 @@ async function main(): Promise<void> {
   const modelIds: string[] = [];
   const startedAt = new Date();
   try {
-    const admin = await prisma.user.findFirst({ where: { role: 'ADMIN' }, select: { id: true } });
+    const admin = await prisma.user.findFirst({
+      where: { role: PLATFORM_ADMIN_ROLE },
+      select: { id: true },
+    });
     if (!admin) throw new Error('No admin user to run the move as. Seed the database first.');
 
     // ── Fixtures ──────────────────────────────────────────────────────────
