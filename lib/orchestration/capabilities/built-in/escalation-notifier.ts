@@ -17,6 +17,9 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { sendEmail } from '@/lib/email/send';
 import { EscalationNotification } from '@/emails/escalation-notification';
+import { emailLocaleForOrg } from '@/lib/email/locale';
+import { emailTranslator } from '@/lib/email/translate';
+import { orgIdForCall } from '@/lib/tenancy/context';
 import { env } from '@/lib/env';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { loggableUrl } from '@/lib/logging/redact-path';
@@ -158,7 +161,11 @@ async function notify(payload: EscalationPayload): Promise<void> {
 
     if (!meetsPriorityThreshold(payload.priority, config.notifyOnPriority)) return;
 
-    const agentName = payload.agentName ?? 'Unknown Agent';
+    // In the language of the org the agent escalated in (§138 t-1075): the
+    // recipients are configured addresses, not users with a choice of their own.
+    const where = await emailLocaleForOrg(orgIdForCall());
+    const t = emailTranslator(where, 'emails.escalationNotification');
+    const agentName = payload.agentName ?? t('unknownAgent');
     const appUrl = env.BETTER_AUTH_URL ?? env.NEXT_PUBLIC_APP_URL;
 
     // Send emails. Not awaited before the webhook: the email may wait up to
@@ -167,13 +174,17 @@ async function notify(payload: EscalationPayload): Promise<void> {
     const emailed =
       config.emailAddresses.length > 0
         ? emailLiveRecipients(config.emailAddresses, payload.userId, takenAt, {
-            subject: `Escalation (${payload.priority}): ${payload.reason.slice(0, 80)}`,
+            subject: t('subject', {
+              priority: t('priority', { priority: payload.priority }),
+              reason: payload.reason.slice(0, 80),
+            }),
             react: EscalationNotification({
               agentName,
               reason: payload.reason,
               priority: payload.priority,
               conversationId: payload.conversationId,
               appUrl: appUrl || undefined,
+              ...where,
             }),
           })
         : Promise.resolve();

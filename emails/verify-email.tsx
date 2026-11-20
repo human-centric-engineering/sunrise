@@ -10,59 +10,49 @@ import {
   Button,
 } from '@react-email/components';
 import { BRAND } from '@/lib/brand';
+import { DEFAULT_EMAIL_LOCALE, emailDateTime, emailTranslator } from '@/lib/email/translate';
 
 interface VerifyEmailProps {
   userName: string;
   verificationUrl: string;
   expiresAt: Date;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export default function VerifyEmail({
   userName,
   verificationUrl,
   expiresAt,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: VerifyEmailProps): React.ReactElement {
-  // Format expiration time
-  const expirationTime = new Date(expiresAt).toLocaleString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
+  const where = { locale, timeZone };
+  const t = emailTranslator(where, 'emails.verifyEmail');
+  const common = emailTranslator(where, 'emails.common');
+  const expirationTime = emailDateTime(where, expiresAt);
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>Verify your email address</Preview>
+      <Preview>{t('preview')}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>Verify Your Email Address</Text>
-            <Text style={text}>Hi {userName},</Text>
-            <Text style={text}>
-              Thanks for signing up! To complete your registration and start using {BRAND.name},
-              please verify your email address by clicking the button below.
-            </Text>
+            <Text style={heading}>{t('heading')}</Text>
+            <Text style={text}>{common('greeting', { name: userName })}</Text>
+            <Text style={text}>{t('body', { brand: BRAND.name })}</Text>
             <Button href={verificationUrl} style={button}>
-              Verify Email
+              {t('button')}
             </Button>
-            <Text style={expiryNotice}>This verification link will expire on {expirationTime}</Text>
+            <Text style={expiryNotice}>{t('expiry', { time: expirationTime })}</Text>
             <Section style={securitySection}>
-              <Text style={securityHeading}>Security Note</Text>
-              <Text style={securityText}>
-                For your security, this link can only be used once and will expire after the time
-                shown above.
-              </Text>
-              <Text style={securityText}>
-                If you didn&apos;t request this verification email, you can safely ignore it. Your
-                account will not be created without clicking the verification link.
-              </Text>
+              <Text style={securityHeading}>{t('securityHeading')}</Text>
+              <Text style={securityText}>{t('securityOnce')}</Text>
+              <Text style={securityText}>{t('securityIgnore')}</Text>
             </Section>
-            <Text style={footerSmall}>
-              If the button doesn&apos;t work, copy and paste this link into your browser:
-            </Text>
+            <Text style={footerSmall}>{common('buttonFallback')}</Text>
             <Text style={link}>{verificationUrl}</Text>
           </Section>
         </Container>

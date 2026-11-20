@@ -12,6 +12,7 @@ import {
   Heading,
 } from '@react-email/components';
 import { BRAND } from '@/lib/brand';
+import { DEFAULT_EMAIL_LOCALE, emailDateTime, emailTranslator } from '@/lib/email/translate';
 
 interface InvitationEmailProps {
   inviterName: string;
@@ -23,6 +24,9 @@ interface InvitationEmailProps {
   orgName?: string;
   /** The address already has an account: sign in and accept, no password to set. */
   hasAccount?: boolean;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export default function InvitationEmail({
@@ -33,95 +37,84 @@ export default function InvitationEmail({
   expiresAt,
   orgName,
   hasAccount = false,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: InvitationEmailProps): React.ReactElement {
-  const appName = BRAND.name;
-  const joining = orgName ?? appName;
-  const previewText = `You've been invited to join ${joining}`;
-
-  // Format expiration time
-  const expirationTime = new Date(expiresAt).toLocaleString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
+  const where = { locale, timeZone };
+  const t = emailTranslator(where, 'emails.invitation');
+  const common = emailTranslator(where, 'emails.common');
+  const brand = BRAND.name;
+  const joining = orgName ?? brand;
+  const expirationTime = emailDateTime(where, expiresAt);
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>{previewText}</Preview>
+      <Preview>{t('preview', { org: joining })}</Preview>
       <Body style={main}>
         <Container style={container}>
-          <Heading style={h1}>You&apos;ve Been Invited!</Heading>
+          <Heading style={h1}>{t('heading')}</Heading>
 
-          <Text style={text}>Hi {inviteeName},</Text>
+          <Text style={text}>{common('greeting', { name: inviteeName })}</Text>
 
           <Text style={text}>
-            <strong>{inviterName}</strong> has invited you to join <strong>{joining}</strong>
-            {orgName ? (
-              <>
-                {' '}
-                on <strong>{appName}</strong>
-              </>
-            ) : null}
-            . We&apos;re excited to have you on board!
+            {orgName
+              ? t.rich('invitedToOrg', {
+                  inviter: inviterName,
+                  org: orgName,
+                  brand,
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })
+              : t.rich('invitedToApp', {
+                  inviter: inviterName,
+                  brand,
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
           </Text>
 
           <Section style={infoBox}>
             <Text style={infoText}>
-              <strong>Your Account:</strong>
+              <strong>{t('accountLabel')}</strong>
               <br />
               {inviteeEmail}
             </Text>
           </Section>
 
           <Text style={text}>
-            {hasAccount
-              ? `You already have a ${appName} account with this address. Click the button below, sign in as ${inviteeEmail}, and accept the invitation:`
-              : 'Click the button below to accept your invitation and set up your password:'}
+            {hasAccount ? t('hasAccount', { brand, email: inviteeEmail }) : t('newAccount')}
           </Text>
 
           <Section style={buttonContainer}>
             <Button href={invitationUrl} style={button}>
-              Accept Invitation
+              {t('button')}
             </Button>
           </Section>
 
-          <Text style={text}>
-            This invitation will expire on {expirationTime}. After accepting, you&apos;ll be able
-            to:
-          </Text>
+          <Text style={text}>{t('expiry', { time: expirationTime })}</Text>
 
           <ul style={list}>
             {hasAccount ? (
-              <li style={listItem}>Switch to {joining} from your account</li>
+              <li style={listItem}>{t('switchTo', { org: joining })}</li>
             ) : (
-              <li style={listItem}>Set your own secure password</li>
+              <li style={listItem}>{t('setPassword')}</li>
             )}
-            <li style={listItem}>Access your personalized dashboard</li>
-            <li style={listItem}>Start collaborating with your team</li>
+            <li style={listItem}>{t('dashboard')}</li>
+            <li style={listItem}>{t('collaborate')}</li>
           </ul>
 
           <Hr style={hr} />
 
-          <Text style={footer}>
-            If you weren&apos;t expecting this invitation or don&apos;t want to join, you can safely
-            ignore this email.
-          </Text>
+          <Text style={footer}>{t('notExpecting')}</Text>
 
           <Text style={footer}>
-            If the button doesn&apos;t work, copy and paste this link into your browser:
+            {common('buttonFallback')}
             <br />
             <a href={invitationUrl} style={link}>
               {invitationUrl}
             </a>
           </Text>
 
-          <Text style={footer}>
-            Questions? Contact {inviterName} or our support team for assistance.
-          </Text>
+          <Text style={footer}>{t('questions', { inviter: inviterName })}</Text>
         </Container>
       </Body>
     </Html>

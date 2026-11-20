@@ -10,12 +10,16 @@ import {
   Section,
   Text,
 } from '@react-email/components';
+import { DEFAULT_EMAIL_LOCALE, emailTranslator } from '@/lib/email/translate';
 
 interface CleanupReadyProps {
   documentName: string;
   cleanupUrl: string;
   sizeClass: 'small' | 'medium' | 'large' | 'too-large';
   sizeTokens: number;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export function CleanupReady({
@@ -23,36 +27,35 @@ export function CleanupReady({
   cleanupUrl,
   sizeClass,
   sizeTokens,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: CleanupReadyProps): React.ReactElement {
+  const t = emailTranslator({ locale, timeZone }, 'emails.cleanupReady');
   const sizeNote =
-    sizeClass === 'too-large'
-      ? 'This document is too large for whole-document LLM rewrites — deterministic strips and per-section rewrites still work.'
-      : `Size class: ${sizeClass} (~${sizeTokens.toLocaleString()} tokens).`;
+    sizeClass === 'too-large' ? t('tooLarge') : t('size', { sizeClass, tokens: sizeTokens });
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>Document Clean Up session ready: {documentName}</Preview>
+      <Preview>{t('preview', { name: documentName })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>Document Clean Up</Text>
+            <Text style={heading}>{t('heading')}</Text>
             <Text style={label}>{documentName}</Text>
             <Hr style={divider} />
-            <Text style={text}>
-              You opened a Document Clean Up session. The cleanup chat is ready whenever you are —
-              your session is saved, so you can come back to it at any time.
-            </Text>
+            <Text style={text}>{t('body')}</Text>
             <Text style={text}>{sizeNote}</Text>
             <Section style={{ textAlign: 'center', margin: '24px 0 8px' }}>
               <Button href={cleanupUrl} style={button}>
-                Open cleanup chat
+                {t('button')}
               </Button>
             </Section>
             <Text style={fineprint}>
-              Until you click <strong>Mark cleaned</strong> or <strong>Use original</strong>, the
-              document stays in the <em>Cleaning</em> tab of your knowledge base and won&apos;t be
-              searchable by your agents.
+              {t.rich('fineprint', {
+                strong: (chunks) => <strong>{chunks}</strong>,
+                em: (chunks) => <em>{chunks}</em>,
+              })}
             </Text>
           </Section>
         </Container>

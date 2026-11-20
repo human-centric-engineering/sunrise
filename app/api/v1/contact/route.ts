@@ -39,6 +39,9 @@ import {
 import { getClientIP } from '@/lib/security/ip';
 import { sendEmail } from '@/lib/email/send';
 import ContactNotificationEmail from '@/emails/contact-notification';
+import { emailLocaleForOrg } from '@/lib/email/locale';
+import { emailTranslator } from '@/lib/email/translate';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isRecord } from '@/lib/utils';
 import { getRouteLogger } from '@/lib/api/context';
 import { env } from '@/lib/env';
@@ -123,15 +126,21 @@ export async function POST(request: NextRequest): Promise<Response> {
       });
     } else {
       try {
+        // The install's operator reads it: the install org's language (§138 t-1075).
+        const where = await emailLocaleForOrg(INSTALL_ORG_ID);
         const emailResult = await sendEmail({
           to: adminEmail,
-          subject: `[${BRAND.name} Contact] ${body.subject}`,
+          subject: emailTranslator(where, 'emails.contactNotification')('subject', {
+            brand: BRAND.name,
+            subject: body.subject,
+          }),
           react: ContactNotificationEmail({
             name: body.name,
             email: body.email,
             subject: body.subject,
             message: body.message,
             submittedAt: submission.createdAt,
+            ...where,
           }),
           replyTo: body.email,
         });

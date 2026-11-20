@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Html, Head, Preview, Body, Container, Section, Text, Link } from '@react-email/components';
 import { BRAND } from '@/lib/brand';
+import { DEFAULT_EMAIL_LOCALE, emailTranslator } from '@/lib/email/translate';
 
 /**
  * The note a confirmed address gets when it is submitted again (§125 t-977).
@@ -14,32 +15,39 @@ import { BRAND } from '@/lib/brand';
 interface WaitlistAlreadyOnListEmailProps {
   firstName: string | null;
   leaveUrl: string;
+  /** The recipient's language (`lib/email/locale.ts`). Absent ⇒ English. */
+  locale?: string;
 }
 
 export default function WaitlistAlreadyOnListEmail({
   firstName,
   leaveUrl,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
 }: WaitlistAlreadyOnListEmailProps): React.ReactElement {
+  const where = { locale, timeZone: 'UTC' };
+  const t = emailTranslator(where, 'emails.waitlistAlreadyOnList');
+  const common = emailTranslator(where, 'emails.common');
+  const brand = BRAND.name;
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>You&apos;re already on the {BRAND.name} waitlist</Preview>
+      <Preview>{t('preview', { brand })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>You&apos;re already on the list</Text>
-            <Text style={text}>{firstName ? `Hi ${firstName},` : 'Hello,'}</Text>
+            <Text style={heading}>{t('heading')}</Text>
             <Text style={text}>
-              This address was just submitted to the {BRAND.name} waitlist again. It&apos;s already
-              confirmed, so there&apos;s nothing you need to do. We&apos;ll be in touch when
-              there&apos;s a place for you.
+              {firstName ? common('greeting', { name: firstName }) : common('hello')}
             </Text>
+            <Text style={text}>{t('body', { brand })}</Text>
             <Text style={small}>
-              If you want to come off the list,{' '}
-              <Link href={leaveUrl} style={link}>
-                remove this address
-              </Link>
-              .
+              {t.rich('leave', {
+                link: (chunks) => (
+                  <Link href={leaveUrl} style={link}>
+                    {chunks}
+                  </Link>
+                ),
+              })}
             </Text>
           </Section>
         </Container>

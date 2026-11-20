@@ -10,6 +10,8 @@ import { env } from '@/lib/env';
 import { sendEmail } from '@/lib/email/send';
 import { validateEmailConfig } from '@/lib/email/client';
 import { resolveEmailTemplate } from '@/lib/email/registry';
+import { emailLocaleForUser } from '@/lib/email/locale';
+import { emailTranslator, type EmailLocale } from '@/lib/email/translate';
 import { logger } from '@/lib/logging';
 import { dispatchUserCreated, type RedeemedInvitation } from '@/lib/auth/user-created-hooks';
 import { linkWaitlistEntryToAccount } from '@/lib/waitlist/link';
@@ -685,15 +687,7 @@ export async function userCreateAfterHook(
       isInvitation: viaInvitation,
     });
 
-    await sendEmail({
-      to: user.email,
-      subject: `Welcome to ${BRAND.name}`,
-      react: resolveEmailTemplate('welcome', {
-        userName: user.name || 'User',
-        userEmail: user.email,
-        baseUrl: env.BETTER_AUTH_URL,
-      }),
-    }).catch((error) => {
+    await sendWelcomeEmail(user).catch((error) => {
       logger.warn('Failed to send welcome email', {
         userId: user.id,
         userEmail: user.email,
@@ -736,6 +730,37 @@ export async function userCreateAfterHook(
   });
 }
 
+/** What an email calls a user who gave no name, in their language. */
+function fallbackName(where: EmailLocale): string {
+  return emailTranslator(where, 'emails.common')('fallbackName');
+}
+
+/**
+ * The welcome email, in the new user's language (§138 t-1075): their own
+ * choice, else their org's default, else English. Sent at signup or after
+ * verification; the caller decides which, and handles a failure.
+ */
+async function sendWelcomeEmail(user: {
+  id: string;
+  email: string;
+  name: string | null;
+}): Promise<void> {
+  const where = await emailLocaleForUser(user.id);
+  await sendEmail({
+    to: user.email,
+    subject: emailTranslator(where, 'emails.welcome')('subject', { brand: BRAND.name }),
+    react: resolveEmailTemplate(
+      'welcome',
+      {
+        userName: user.name || fallbackName(where),
+        userEmail: user.email,
+        baseUrl: env.BETTER_AUTH_URL,
+      },
+      where
+    ),
+  });
+}
+
 /**
  * Send password reset email for users with a password account.
  *
@@ -768,14 +793,19 @@ export async function sendResetPasswordHook(params: {
     return;
   }
 
+  const where = await emailLocaleForUser(user.id);
   await sendEmail({
     to: user.email,
-    subject: 'Reset your password',
-    react: resolveEmailTemplate('resetPassword', {
-      userName: user.name || 'User',
-      resetUrl: url,
-      expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000),
-    }),
+    subject: emailTranslator(where, 'emails.resetPassword')('subject'),
+    react: resolveEmailTemplate(
+      'resetPassword',
+      {
+        userName: user.name || fallbackName(where),
+        resetUrl: url,
+        expiresAt: new Date(Date.now() + 1 * 60 * 60 * 1000),
+      },
+      where
+    ),
   });
 }
 
@@ -883,15 +913,7 @@ export async function afterEmailVerificationHook(
   }
 
   // Send welcome email AFTER verification completes
-  await sendEmail({
-    to: user.email,
-    subject: `Welcome to ${BRAND.name}`,
-    react: resolveEmailTemplate('welcome', {
-      userName: user.name || 'User',
-      userEmail: user.email,
-      baseUrl: env.BETTER_AUTH_URL,
-    }),
-  }).catch((error) => {
+  await sendWelcomeEmail(user).catch((error) => {
     logger.warn('Failed to send welcome email after verification', {
       userId: user.id,
       error: error instanceof Error ? error.message : String(error),
@@ -961,14 +983,19 @@ export async function sendVerificationEmailHook({
   // Only the default: a caller's own callback is left alone, not prefixed.
   const verificationUrl = url.replace(/callbackURL=%2F(?=&|$)/, `callbackURL=${callbackPath}`);
 
+  const where = await emailLocaleForUser(user.id);
   await sendEmail({
     to: user.email,
-    subject: 'Verify your email address',
-    react: resolveEmailTemplate('verifyEmail', {
-      userName: user.name || 'User',
-      verificationUrl,
-      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
-    }),
+    subject: emailTranslator(where, 'emails.verifyEmail')('subject'),
+    react: resolveEmailTemplate(
+      'verifyEmail',
+      {
+        userName: user.name || fallbackName(where),
+        verificationUrl,
+        expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
+      },
+      where
+    ),
   });
 }
 
@@ -1001,16 +1028,21 @@ export async function sendChangeEmailConfirmationHook(params: {
     userId: user.id,
   });
 
+  const where = await emailLocaleForUser(user.id);
   await sendEmail({
     to: user.email, // The CURRENT address — never `newEmail`.
-    subject: 'Approve the email change on your account',
-    react: resolveEmailTemplate('changeEmailApproval', {
-      userName: user.name || 'User',
-      currentEmail: user.email,
-      newEmail,
-      approvalUrl: url,
-      expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
-    }),
+    subject: emailTranslator(where, 'emails.changeEmailApproval')('subject'),
+    react: resolveEmailTemplate(
+      'changeEmailApproval',
+      {
+        userName: user.name || fallbackName(where),
+        currentEmail: user.email,
+        newEmail,
+        approvalUrl: url,
+        expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TOKEN_TTL_MS),
+      },
+      where
+    ),
   });
 }
 

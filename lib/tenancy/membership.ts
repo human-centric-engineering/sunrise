@@ -749,16 +749,8 @@ export async function activeOrgForSession(
     select: { orgId: true, createdAt: true, org: { select: { status: true } } },
     orderBy: { createdAt: 'desc' },
   });
-  // Choose among active orgs; fall back to the suspended ones only when
-  // there is nothing else — never to no membership at all.
-  const active = all.filter((m) => m.org.status === 'ACTIVE');
-  const memberships = active.length > 0 ? active : all;
-
-  if (memberships.length === 1) return { orgId: memberships[0].orgId, healed: false };
-  if (memberships.some((m) => m.orgId === INSTALL_ORG_ID)) {
-    return { orgId: INSTALL_ORG_ID, healed: false };
-  }
-  if (memberships.length > 0) return { orgId: memberships[0].orgId, healed: false };
+  const chosen = sessionOrgOf(all);
+  if (chosen) return { orgId: chosen, healed: false };
 
   const user = await db.user.findUnique({
     where: { id: userId },
@@ -779,6 +771,28 @@ export async function activeOrgForSession(
   const membership = initialMembershipFor(user);
   await ensureMembership(userId, membership, db);
   return { orgId: membership.orgId, healed: true };
+}
+
+/**
+ * Which of a user's memberships a sign-in starts in, as
+ * {@link activeOrgForSession} chooses it: among the active orgs (the
+ * suspended ones only when there is nothing else), the only one; else the
+ * install org; else the most recent. `null` for no membership at all.
+ *
+ * Pure and exported so a reader that must not heal (an email working out
+ * whose org default applies, `lib/email/locale.ts`) picks the same org a
+ * sign-in would. `memberships` must be newest first.
+ */
+export function sessionOrgOf(
+  memberships: ReadonlyArray<{ orgId: string; org: { status: string } }>
+): string | null {
+  // Choose among active orgs; fall back to the suspended ones only when
+  // there is nothing else — never to no membership at all.
+  const active = memberships.filter((m) => m.org.status === 'ACTIVE');
+  const pool = active.length > 0 ? active : memberships;
+  if (pool.length === 1) return pool[0].orgId;
+  if (pool.some((m) => m.orgId === INSTALL_ORG_ID)) return INSTALL_ORG_ID;
+  return pool[0]?.orgId ?? null;
 }
 
 /**

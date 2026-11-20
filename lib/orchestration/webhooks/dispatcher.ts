@@ -33,7 +33,10 @@ import {
   withOutboundDispatcher,
 } from '@/lib/security/safe-dispatcher';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
-import EventNotification from '@/emails/event-notification';
+import EventNotification, { eventNotificationSubject } from '@/emails/event-notification';
+import { emailLocaleForOrg } from '@/lib/email/locale';
+import type { EmailLocale } from '@/lib/email/translate';
+import { orgIdForCall } from '@/lib/tenancy/context';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import {
@@ -106,32 +109,6 @@ function resolveRetryPolicy(sub: {
         ? sub.retryBackoffMs
         : DEFAULT_RETRY_BACKOFF_MS,
   };
-}
-
-/**
- * Best-effort subject line for an email notification. Uses the friendly
- * event title plus any human-readable identifier in the payload so the
- * recipient's inbox shows something actionable.
- */
-function buildEmailSubject(eventType: string, data: Record<string, unknown>): string {
-  const titles: Record<string, string> = {
-    budget_exceeded: 'Budget exceeded',
-    workflow_failed: 'Workflow failed',
-    approval_required: 'Approval required',
-    circuit_breaker_opened: 'Provider circuit breaker opened',
-    agent_updated: 'Agent updated',
-    execution_crashed: 'Workflow execution crashed',
-  };
-  const base = titles[eventType] ?? `Sunrise event: ${eventType}`;
-  const subject =
-    typeof data.agentName === 'string'
-      ? `${base} · ${data.agentName}`
-      : typeof data.workflowName === 'string'
-        ? `${base} · ${data.workflowName}`
-        : typeof data.providerSlug === 'string'
-          ? `${base} · ${data.providerSlug}`
-          : base;
-  return `[Sunrise] ${subject}`;
 }
 
 /**
@@ -869,7 +846,9 @@ async function attemptEmailDelivery(
   }
 
   const to = sub.emailAddress;
-  const idempotencyKey = emailIdempotencyKey(record, to);
+  // In the language of the org the subscription belongs to (§138 t-1075).
+  const where = await emailLocaleForOrg(orgIdForCall());
+  const idempotencyKey = emailIdempotencyKey(record, to, where);
   try {
     // Bounded, render and send together, so the attempt ends well inside the
     // retry claim's lease and no second sender claims the row while it is
@@ -877,8 +856,8 @@ async function attemptEmailDelivery(
     // attempt even if something ignores it. Expiry is retriable, like any
     // other failed send.
     const result = await withTimeout(DISPATCH_TIMEOUT_MS.email, 'Email send', async (signal) => {
-      const html = await render(EventNotification({ event, timestamp, data }));
-      const subject = buildEmailSubject(event, data);
+      const html = await render(EventNotification({ event, timestamp, data, ...where }));
+      const subject = eventNotificationSubject(event, data, where);
       return resend.emails.send(
         { from: getDefaultSender(), to, subject, html },
         { signal, idempotencyKey }
@@ -899,9 +878,11 @@ async function attemptEmailDelivery(
  * The Resend idempotency key for one send of a delivery to `to`. The address
  * goes in as a hash: the key is stored by Resend and shown in its dashboard.
  */
-function emailIdempotencyKey(record: AttemptRecord, to: string): string {
+function emailIdempotencyKey(record: AttemptRecord, to: string, where: EmailLocale): string {
   const addressHash = createHash('sha256').update(to.trim().toLowerCase()).digest('hex');
-  return `webhook-delivery/${record.id}/${record.sendGeneration}/${addressHash.slice(0, 16)}`;
+  // The language too: a retry after the org changed its language is a
+  // different email, which Resend would refuse under the same key.
+  return `webhook-delivery/${record.id}/${record.sendGeneration}/${addressHash.slice(0, 16)}/${where.locale}`;
 }
 
 /**

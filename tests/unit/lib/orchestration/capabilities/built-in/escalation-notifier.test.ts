@@ -233,7 +233,7 @@ describe('notifyEscalation', () => {
 
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
         expect.objectContaining({
-          subject: expect.stringContaining('high'),
+          subject: expect.stringContaining('High'),
         })
       );
     });

@@ -11,6 +11,7 @@ import {
   Link,
 } from '@react-email/components';
 import { BRAND } from '@/lib/brand';
+import { DEFAULT_EMAIL_LOCALE, emailDate, emailTranslator } from '@/lib/email/translate';
 
 /**
  * The waitlist confirmation email (§125 t-977). Registry kind
@@ -25,6 +26,9 @@ interface WaitlistConfirmEmailProps {
   confirmUrl: string;
   leaveUrl: string;
   expiresAt: Date;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export default function WaitlistConfirmEmail({
@@ -32,45 +36,41 @@ export default function WaitlistConfirmEmail({
   confirmUrl,
   leaveUrl,
   expiresAt,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
 }: WaitlistConfirmEmailProps): React.ReactElement {
-  // In UTC, and said so: the server's own zone is no more the reader's.
-  const expiry = new Date(expiresAt).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+  // In UTC, and said so: nobody on the list has a zone of their own.
+  const where = { locale, timeZone: 'UTC' };
+  const t = emailTranslator(where, 'emails.waitlistConfirm');
+  const common = emailTranslator(where, 'emails.common');
+  const brand = BRAND.name;
+  const expiry = emailDate(where, expiresAt);
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>Confirm your place on the {BRAND.name} waitlist</Preview>
+      <Preview>{t('preview', { brand })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>Confirm your email address</Text>
-            <Text style={text}>{firstName ? `Hi ${firstName},` : 'Hello,'}</Text>
+            <Text style={heading}>{t('heading')}</Text>
             <Text style={text}>
-              Someone added this address to the {BRAND.name} waitlist. If it was you, confirm it
-              below and we&apos;ll keep your place.
+              {firstName ? common('greeting', { name: firstName }) : common('hello')}
             </Text>
+            <Text style={text}>{t('body', { brand })}</Text>
             <Button href={confirmUrl} style={button}>
-              Confirm my address
+              {t('button')}
             </Button>
+            <Text style={small}>{t('expiry', { date: expiry })}</Text>
             <Text style={small}>
-              This link works once and expires on {expiry} (UTC). If you don&apos;t confirm, we
-              delete the entry.
+              {t.rich('leave', {
+                link: (chunks) => (
+                  <Link href={leaveUrl} style={link}>
+                    {chunks}
+                  </Link>
+                ),
+              })}
             </Text>
-            <Text style={small}>
-              If you didn&apos;t join, ignore this email, or{' '}
-              <Link href={leaveUrl} style={link}>
-                remove this address from the list
-              </Link>{' '}
-              now.
-            </Text>
-            <Text style={footer}>
-              If the button doesn&apos;t work, paste this link into your browser:
-            </Text>
+            <Text style={footer}>{t('buttonFallback')}</Text>
             <Text style={rawLink}>{confirmUrl}</Text>
           </Section>
         </Container>

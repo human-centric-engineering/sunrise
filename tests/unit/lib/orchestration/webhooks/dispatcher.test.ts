@@ -1486,7 +1486,7 @@ describe('email-channel delivery', () => {
       await processPendingRetries();
 
       expect(mockResendSend).toHaveBeenCalledTimes(2);
-      expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/0\/[0-9a-f]{16}$/);
+      expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/0\/[0-9a-f]{16}\/en$/);
       expect(keyOf(1)).toBe(keyOf(0));
       // Resend refuses a reused key on a different request, so both attempts
       // render the row's own time, not the per-attempt body timestamp.

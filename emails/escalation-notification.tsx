@@ -10,6 +10,7 @@ import {
   Hr,
   Link,
 } from '@react-email/components';
+import { DEFAULT_EMAIL_LOCALE, emailTranslator } from '@/lib/email/translate';
 
 interface EscalationNotificationProps {
   agentName: string;
@@ -17,13 +18,10 @@ interface EscalationNotificationProps {
   priority: 'low' | 'medium' | 'high';
   conversationId: string | null;
   appUrl?: string;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
-
-const PRIORITY_LABELS: Record<string, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-};
 
 export function EscalationNotification({
   agentName,
@@ -31,25 +29,30 @@ export function EscalationNotification({
   priority,
   conversationId,
   appUrl,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: EscalationNotificationProps): React.ReactElement {
+  const t = emailTranslator({ locale, timeZone }, 'emails.escalationNotification');
+  const priorityLabel = t('priority', { priority });
   const conversationUrl =
     appUrl && conversationId
       ? `${appUrl}/admin/orchestration/conversations/${conversationId}`
       : null;
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>
-        Escalation ({PRIORITY_LABELS[priority]}): {reason.slice(0, 80)}
-      </Preview>
+      <Preview>{t('preview', { priority: priorityLabel, reason: reason.slice(0, 80) })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>Human Escalation Required</Text>
+            <Text style={heading}>{t('heading')}</Text>
             <Text style={label}>
-              Agent: <strong>{agentName}</strong> &middot; Priority:{' '}
-              <strong>{PRIORITY_LABELS[priority]}</strong>
+              {t.rich('meta', {
+                agent: agentName,
+                priority: priorityLabel,
+                strong: (chunks) => <strong>{chunks}</strong>,
+              })}
             </Text>
             <Hr style={divider} />
             <Text style={text}>{reason}</Text>
@@ -57,7 +60,7 @@ export function EscalationNotification({
               <>
                 <Hr style={divider} />
                 <Link href={conversationUrl} style={link}>
-                  View conversation
+                  {t('view')}
                 </Link>
               </>
             )}

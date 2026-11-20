@@ -10,47 +10,46 @@ import {
   Button,
 } from '@react-email/components';
 import { BRAND } from '@/lib/brand';
+import { DEFAULT_EMAIL_LOCALE, emailTranslator } from '@/lib/email/translate';
 
 interface WelcomeEmailProps {
   userName: string;
   userEmail: string;
   /** Base URL of the application (e.g., "https://example.com") */
   baseUrl: string;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export default function WelcomeEmail({
   userName,
   userEmail,
   baseUrl,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: WelcomeEmailProps): React.ReactElement {
   const dashboardUrl = `${baseUrl}/dashboard`;
+  const t = emailTranslator({ locale, timeZone }, 'emails.welcome');
+  const common = emailTranslator({ locale, timeZone }, 'emails.common');
+  const brand = BRAND.name;
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>Welcome to {BRAND.name} - Let&apos;s get started</Preview>
+      <Preview>{t('preview', { brand })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>{`Welcome to ${BRAND.name}!`}</Text>
-            <Text style={text}>Hi {userName},</Text>
-            <Text style={text}>
-              We&apos;re excited to have you on board! {BRAND.name} is your production-ready Next.js
-              starter template designed for rapid application development.
-            </Text>
-            <Text style={text}>
-              You&apos;re all set up and ready to go. Click the button below to access your
-              dashboard and start exploring.
-            </Text>
+            <Text style={heading}>{t('heading', { brand })}</Text>
+            <Text style={text}>{common('greeting', { name: userName })}</Text>
+            <Text style={text}>{t('intro', { brand })}</Text>
+            <Text style={text}>{t('ready')}</Text>
             <Button href={dashboardUrl} style={button}>
-              Get Started
+              {t('button')}
             </Button>
-            <Text style={footer}>
-              If you have any questions, feel free to reach out. We&apos;re here to help!
-            </Text>
-            <Text style={footerSmall}>
-              You&apos;re receiving this email because you signed up at {userEmail}
-            </Text>
+            <Text style={footer}>{t('help')}</Text>
+            <Text style={footerSmall}>{t('reason', { email: userEmail })}</Text>
           </Section>
         </Container>
       </Body>
