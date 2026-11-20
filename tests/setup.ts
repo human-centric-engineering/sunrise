@@ -261,6 +261,24 @@ vi.mock('next/navigation', async () => {
 });
 
 /**
+ * next-intl, read from the real source catalogue (§138 t-1073).
+ *
+ * Components take their text from `lib/i18n/messages/en.json`, so a test
+ * renders the English a viewer sees with no provider wrapper, and a key the
+ * catalogue lacks fails the test. `next-intl/server` cannot load outside a
+ * request, so it is replaced outright. See `tests/helpers/i18n.ts`; a file
+ * that needs another locale mocks the module itself.
+ */
+vi.mock('next-intl', async (importOriginal) => {
+  const { nextIntlClientMock } = await import('@/tests/helpers/i18n');
+  return { ...(await importOriginal<typeof import('next-intl')>()), ...nextIntlClientMock };
+});
+vi.mock('next-intl/server', async () => {
+  const { nextIntlServerMock } = await import('@/tests/helpers/i18n');
+  return nextIntlServerMock;
+});
+
+/**
  * Mock Next.js headers
  *
  * Used in Server Components and API routes

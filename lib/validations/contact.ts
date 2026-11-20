@@ -8,7 +8,8 @@
  */
 
 import { z } from 'zod';
-import { emailSchema } from '@/lib/validations/auth';
+import { createEmailSchema } from '@/lib/validations/auth';
+import { englishValidation, type ValidationT } from '@/lib/validations/messages';
 
 /**
  * Contact form submission schema
@@ -19,24 +20,23 @@ import { emailSchema } from '@/lib/validations/auth';
  * - Subject: Required, max 200 chars
  * - Message: Required, min 10 chars, max 5000 chars
  */
-export const contactSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters'),
-  email: emailSchema,
-  subject: z
-    .string()
-    .trim()
-    .min(1, 'Subject is required')
-    .max(200, 'Subject must be less than 200 characters'),
-  message: z
-    .string()
-    .trim()
-    .min(10, 'Message must be at least 10 characters')
-    .max(5000, 'Message must be less than 5000 characters'),
-});
+/** The contact form's fields. */
+type ContactShape = {
+  name: z.ZodString;
+  email: z.ZodString;
+  subject: z.ZodString;
+  message: z.ZodString;
+};
+
+export function createContactSchema(t: ValidationT): z.ZodObject<ContactShape> {
+  return z.object({
+    name: z.string().trim().min(1, t('nameRequired')).max(100, t('nameTooLong')),
+    email: createEmailSchema(t),
+    subject: z.string().trim().min(1, t('subjectRequired')).max(200, t('subjectTooLong')),
+    message: z.string().trim().min(10, t('messageTooShort')).max(5000, t('messageTooLong')),
+  });
+}
+export const contactSchema = createContactSchema(englishValidation);
 
 /**
  * Contact form with honeypot field (client-side)
@@ -44,9 +44,12 @@ export const contactSchema = z.object({
  * Extends contactSchema with honeypot field for spam prevention.
  * Client-side allows any value - the check happens server-side.
  */
-export const contactClientSchema = contactSchema.extend({
-  website: z.string().optional(),
-});
+export function createContactClientSchema(
+  t: ValidationT
+): z.ZodObject<ContactShape & { website: z.ZodOptional<z.ZodString> }> {
+  return createContactSchema(t).extend({ website: z.string().optional() });
+}
+export const contactClientSchema = createContactClientSchema(englishValidation);
 
 /**
  * Contact form with honeypot field (server-side)

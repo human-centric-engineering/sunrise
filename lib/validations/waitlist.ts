@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import { emailSchema } from '@/lib/validations/auth';
+import { englishValidation, type ValidationT } from '@/lib/validations/messages';
 import { paginationQuerySchema, queryBooleanSchema } from '@/lib/validations/common';
 
 /** The parts of a waitlist field the schema needs: serialisable, so a page can hand them to the form. */
@@ -40,11 +41,11 @@ const optionalTrimmed = (max: number) =>
     .nullable()
     .transform((v) => (v ? v : null));
 
-function answerSchema(field: WaitlistFieldShape): z.ZodType<string | undefined> {
+function answerSchema(field: WaitlistFieldShape, t: ValidationT): z.ZodType<string | undefined> {
   if (field.kind === 'select') {
     const values = (field.options ?? []).map((o) => o.value);
     const choice = z.string().refine((v) => values.includes(v), {
-      message: `Choose one of the options for ${field.label}`,
+      message: t('chooseOption', { label: field.label }),
     });
     if (field.required) return choice;
     // Unanswered is '' from the form (every field defaults to it) or absent
@@ -52,9 +53,12 @@ function answerSchema(field: WaitlistFieldShape): z.ZodType<string | undefined> 
     return z.preprocess((v) => (v === '' ? undefined : v), choice.optional());
   }
   const max = field.maxLength ?? WAITLIST_FIELD_MAX_LENGTH[field.kind];
-  const text = z.string().trim().max(max, `${field.label} must be ${max} characters or fewer`);
+  const text = z
+    .string()
+    .trim()
+    .max(max, t('answerTooLong', { label: field.label, max: String(max) }));
   return field.required
-    ? text.min(1, `${field.label} is required`)
+    ? text.min(1, t('answerRequired', { label: field.label }))
     : text.optional().transform((v) => (v ? v : undefined));
 }
 
@@ -62,12 +66,17 @@ function answerSchema(field: WaitlistFieldShape): z.ZodType<string | undefined> 
  * The answers to the fork's fields, keyed by field key. Unknown keys are
  * refused rather than stored: an answer the fork did not declare has no
  * label, no column and no place in the privacy notice.
+ *
+ * `t` gives the messages: the form passes `useTranslations('validation')`;
+ * the server takes the default, the source catalogue's English. A field's
+ * own `label` is the fork's text and goes in as it is.
  */
 export function buildWaitlistDetailsSchema(
-  fields: readonly WaitlistFieldShape[]
+  fields: readonly WaitlistFieldShape[],
+  t: ValidationT = englishValidation
 ): z.ZodObject<Record<string, z.ZodType<string | undefined>>, z.core.$strict> {
   const shape: Record<string, z.ZodType<string | undefined>> = {};
-  for (const field of fields) shape[field.key] = answerSchema(field);
+  for (const field of fields) shape[field.key] = answerSchema(field, t);
   return z.object(shape).strict();
 }
 

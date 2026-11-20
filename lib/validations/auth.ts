@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { englishValidation, type ValidationT } from '@/lib/validations/messages';
 
 /**
  * Password validation schema
@@ -12,15 +13,24 @@ import { z } from 'zod';
  * - At least one special character
  *
  * Based on NIST password guidelines with a balance between security and usability.
+ *
+ * Each schema a form shows has a `create…Schema(t)` factory: a form passes
+ * `useTranslations('validation')` so its errors read in the viewer's
+ * language, and the exported constant is the same schema in the source
+ * catalogue's English, which is what the API returns (§138 t-1073,
+ * `lib/validations/messages.ts`).
  */
-export const passwordSchema = z
-  .string()
-  .min(8, 'Password must be at least 8 characters')
-  .max(100, 'Password must be less than 100 characters')
-  .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-  .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-  .regex(/[0-9]/, 'Password must contain at least one number')
-  .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character');
+export function createPasswordSchema(t: ValidationT): z.ZodString {
+  return z
+    .string()
+    .min(8, t('passwordTooShort'))
+    .max(100, t('passwordTooLong'))
+    .regex(/[A-Z]/, t('passwordUppercase'))
+    .regex(/[a-z]/, t('passwordLowercase'))
+    .regex(/[0-9]/, t('passwordNumber'))
+    .regex(/[^A-Za-z0-9]/, t('passwordSpecial'));
+}
+export const passwordSchema = createPasswordSchema(englishValidation);
 
 /**
  * Email validation schema
@@ -31,89 +41,118 @@ export const passwordSchema = z
  * - Converted to lowercase
  * - Whitespace trimmed
  */
-export const emailSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .min(1, 'Email is required')
-  .email('Invalid email address')
-  .max(255, 'Email must be less than 255 characters');
+export function createEmailSchema(t: ValidationT): z.ZodString {
+  return z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(1, t('emailRequired'))
+    .email(t('emailInvalid'))
+    .max(255, t('emailTooLong'));
+}
+export const emailSchema = createEmailSchema(englishValidation);
 
 /**
  * Sign-up validation schema
  *
  * Validates user registration data
  */
-export const signUpSchema = z
-  .object({
-    email: emailSchema,
-    password: passwordSchema,
-    name: z
-      .string()
-      .trim()
-      .min(1, 'Name is required')
-      .max(100, 'Name must be less than 100 characters'),
-    confirmPassword: z.string(),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords don't match",
-    path: ['confirmPassword'],
-  });
+export function createSignUpSchema(t: ValidationT): z.ZodObject<{
+  email: z.ZodString;
+  password: z.ZodString;
+  name: z.ZodString;
+  confirmPassword: z.ZodString;
+}> {
+  return z
+    .object({
+      email: createEmailSchema(t),
+      password: createPasswordSchema(t),
+      name: z.string().trim().min(1, t('nameRequired')).max(100, t('nameTooLong')),
+      confirmPassword: z.string(),
+    })
+    .refine((data) => data.password === data.confirmPassword, {
+      message: t('passwordsDontMatch'),
+      path: ['confirmPassword'],
+    });
+}
+export const signUpSchema = createSignUpSchema(englishValidation);
 
 /**
  * Sign-in validation schema
  *
  * Validates user login data
  */
-export const signInSchema = z.object({
-  email: emailSchema,
-  password: z.string().min(1, 'Password is required').max(100), // Don't validate password strength on login
-});
+export function createSignInSchema(
+  t: ValidationT
+): z.ZodObject<{ email: z.ZodString; password: z.ZodString }> {
+  return z.object({
+    email: createEmailSchema(t),
+    password: z.string().min(1, t('passwordRequired')).max(100), // Don't validate password strength on login
+  });
+}
+export const signInSchema = createSignInSchema(englishValidation);
 
 /**
  * Change password validation schema
  *
  * Validates password change requests
  */
-export const changePasswordSchema = z
-  .object({
-    currentPassword: z.string().min(1, 'Current password is required'),
-    newPassword: passwordSchema,
-    confirmPassword: z.string(),
-  })
-  .refine((data) => data.newPassword === data.confirmPassword, {
-    message: "Passwords don't match",
-    path: ['confirmPassword'],
-  })
-  .refine((data) => data.currentPassword !== data.newPassword, {
-    message: 'New password must be different from current password',
-    path: ['newPassword'],
-  });
+export function createChangePasswordSchema(t: ValidationT): z.ZodObject<{
+  currentPassword: z.ZodString;
+  newPassword: z.ZodString;
+  confirmPassword: z.ZodString;
+}> {
+  return z
+    .object({
+      currentPassword: z.string().min(1, t('currentPasswordRequired')),
+      newPassword: createPasswordSchema(t),
+      confirmPassword: z.string(),
+    })
+    .refine((data) => data.newPassword === data.confirmPassword, {
+      message: t('passwordsDontMatch'),
+      path: ['confirmPassword'],
+    })
+    .refine((data) => data.currentPassword !== data.newPassword, {
+      message: t('newPasswordSameAsCurrent'),
+      path: ['newPassword'],
+    });
+}
+export const changePasswordSchema = createChangePasswordSchema(englishValidation);
 
 /**
  * Password reset request validation schema
  *
  * Validates password reset request (forgot password)
  */
-export const resetPasswordRequestSchema = z.object({
-  email: emailSchema,
-});
+export function createResetPasswordRequestSchema(
+  t: ValidationT
+): z.ZodObject<{ email: z.ZodString }> {
+  return z.object({ email: createEmailSchema(t) });
+}
+export const resetPasswordRequestSchema = createResetPasswordRequestSchema(englishValidation);
 
 /**
  * Password reset validation schema
  *
  * Validates password reset with token
  */
-export const resetPasswordSchema = z
-  .object({
-    token: z.string().min(1, 'Reset token is required'),
-    password: passwordSchema,
-    confirmPassword: z.string(),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords don't match",
-    path: ['confirmPassword'],
-  });
+export function createResetPasswordSchema(t: ValidationT): z.ZodObject<{
+  token: z.ZodString;
+  password: z.ZodString;
+  confirmPassword: z.ZodString;
+}> {
+  return z
+    .object({
+      token: z.string().min(1, t('resetTokenRequired')),
+      password: createPasswordSchema(t),
+      confirmPassword: z.string(),
+    })
+    .refine((data) => data.password === data.confirmPassword, {
+      message: t('passwordsDontMatch'),
+      path: ['confirmPassword'],
+    });
+}
+export const resetPasswordSchema = createResetPasswordSchema(englishValidation);
 
 /**
  * Email verification schema
@@ -121,7 +160,7 @@ export const resetPasswordSchema = z
  * Validates email verification token
  */
 export const verifyEmailSchema = z.object({
-  token: z.string().min(1, 'Verification token is required'),
+  token: z.string().min(1, englishValidation('verificationTokenRequired')),
 });
 
 /**
