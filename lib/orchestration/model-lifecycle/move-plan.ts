@@ -40,7 +40,8 @@ import type {
 import type { TaskType } from '@/types/orchestration';
 
 /** Why a pin naming the model is left where it is. */
-export type LeftReason = 'shared_id' | 'chat_turn_by_id' | 'embedding_switch';
+export type LeftReason =
+  'shared_id' | 'chat_turn_by_id' | 'embedding_switch' | 'published_invalid' | 'changed_since';
 
 /** What a person reads for each {@link LeftReason}. */
 export const LEFT_REASON_TEXT: Record<LeftReason, string> = {
@@ -50,6 +51,10 @@ export const LEFT_REASON_TEXT: Record<LeftReason, string> = {
     'A chat-turn step that names the model by its id alone runs on its agent’s provider. Choose the model again in the step.',
   embedding_switch:
     'Changing the embedding model means re-embedding every document, so it is not moved with the rest.',
+  published_invalid:
+    'Its published version no longer passes the workflow checks, so nothing in the workflow was moved. Fix and publish it in the builder, then run the move again.',
+  changed_since:
+    'It was changed after the move read it, so it was left as it is now. Check it, then run the move again if it still names the model.',
 };
 
 /** The model whose uses move, and the replacement's model id on the same provider. */

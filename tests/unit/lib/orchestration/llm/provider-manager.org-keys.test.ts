@@ -86,6 +86,8 @@ const refusedKeys = vi.hoisted((): { keys: Set<unknown> } => ({
 }));
 /** Models the vendor will not serve on any key here, as a key restricted to some models. */
 const refusedModels = vi.hoisted((): { models: Set<unknown> } => ({ models: new Set() }));
+/** Models that spend a small budget thinking, and stop with no visible text. */
+const thinkingModels = vi.hoisted((): { models: Set<unknown> } => ({ models: new Set() }));
 vi.mock('@anthropic-ai/sdk', () => {
   class MockAnthropic {
     public messages: { create: ReturnType<typeof vi.fn> };
@@ -99,6 +101,14 @@ vi.mock('@anthropic-ai/sdk', () => {
           throw Object.assign(new Error(`403 model not allowed for ${String(opts.apiKey)}`), {
             status: 403,
           });
+        }
+        if (thinkingModels.models.has(args?.model)) {
+          return {
+            content: [],
+            usage: { input_tokens: 1, output_tokens: 16 },
+            model: String(args?.model),
+            stop_reason: 'max_tokens',
+          };
         }
         const failure = sdkFailure.next;
         sdkFailure.next = null;
@@ -469,7 +479,19 @@ describe('testing a key before it is saved (t-1045)', () => {
 describe('testing an org’s key against one model, before the model move (§136 t-1066)', () => {
   afterEach(() => {
     refusedModels.models.clear();
+    thinkingModels.models.clear();
     refusedKeys.keys.delete(KEY_B);
+  });
+
+  it('passes a model that spends the short message thinking and answers nothing visible', async () => {
+    thinkingModels.models.add('claude-thinks');
+
+    const result = await testProviderKeyOnModel(ROW as never, KEY_B, 'claude-thinks', {
+      chat: true,
+    });
+
+    // The vendor served the model on this key; an empty reply is not a refusal.
+    expect(result).toEqual({ ok: true });
   });
 
   it('passes a key the vendor accepts and a short message to the model succeeds on', async () => {

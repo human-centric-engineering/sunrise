@@ -88,7 +88,7 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
             modelName={model.name}
             replacementOptions={replacementOptions.filter((o) => o.id !== model.id)}
             replacementId={model.replacementId ?? null}
-            hasUses={modelHasUses(model.uses)}
+            hasUses={modelHasUses(model.uses) || model.lifecycle.state !== 'current'}
           />
         }
       />

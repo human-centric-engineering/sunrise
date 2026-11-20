@@ -24,7 +24,8 @@ release process.
   body `{ replacementId }`, and a **Move uses…** dialog on the model's page.
   The replacement is re-checked and must be on the same provider. Each active
   org is moved inside its own scope and transaction: agents bound to the model
-  get the replacement as a new agent version, workflows get the pin in their
+  get the replacement as a new agent version (not those whose model the
+  platform picks, which it moves itself), workflows get the pin in their
   draft and a new published version, and the install's task defaults, audio
   default and confidential-message model follow (the embedding pins never
   move). Every moved pin is written as `provider::model`. An org on its own key
@@ -34,7 +35,8 @@ release process.
   `workflow.model_moved`, `settings.model_moved` and the summary
   `provider_model.uses_moved`. New: `moveModelUses()` / `previewModelMove()` /
   `loadMoveTarget()` (`lib/orchestration/model-lifecycle/move.ts`),
-  `repinWorkflow()` (`workflows/version-service.ts`), `testProviderKeyOnModel()`
+  `lockRepinSubjects()` and `repinWorkflow()` (`workflows/version-service.ts`),
+  `testProviderKeyOnModel()`
   (`llm/provider-manager.ts`), `workflowsMayPinWhere()`
   (`admin/global-config-usage.ts`), and `MODEL_OVERRIDE_STEP_TYPES` now
   exported from `llm/model-pin.ts`.

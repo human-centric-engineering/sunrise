@@ -15,7 +15,7 @@
  * move writes the install's settings.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
@@ -63,6 +63,7 @@ export interface OrgPreview {
   name: string;
   agents: number;
   inactiveAgents: number;
+  agentsFollowingPlatform: number;
   workflows: number;
   left: LeftStep[];
   ownKey: boolean;
@@ -79,11 +80,12 @@ export interface MovePreview {
 export interface OrgResult {
   orgId: string;
   name: string;
-  status: 'moved' | 'skipped' | 'failed';
+  status: 'moved' | 'left' | 'skipped' | 'failed';
   reason?: string;
   agents: number;
   workflows: number;
   left: LeftStep[];
+  agentsFollowingPlatform: number;
 }
 
 export interface MoveResult {
@@ -106,6 +108,7 @@ const SLOT_LABEL: Record<SettingsPinSlot, string> = {
 
 const STATUS_LABEL: Record<OrgResult['status'], string> = {
   moved: 'Moved',
+  left: 'Nothing moved',
   skipped: 'Skipped',
   failed: 'Failed',
 };
@@ -115,15 +118,23 @@ function plural(n: number, word: string): string {
 }
 
 /** What was left in one org, grouped by reason. */
-function LeftList({ left }: { left: LeftStep[] }) {
-  if (left.length === 0) return null;
+function LeftList({ left, followingPlatform }: { left: LeftStep[]; followingPlatform: number }) {
+  if (left.length === 0 && followingPlatform === 0) return null;
   const byReason = new Map<LeftReason, number>();
   for (const step of left) byReason.set(step.reason, (byReason.get(step.reason) ?? 0) + 1);
   return (
     <ul className="text-muted-foreground mt-1 space-y-1 text-xs">
+      {followingPlatform > 0 && (
+        <li>
+          {plural(followingPlatform, 'agent')} left: Sunrise picks{' '}
+          {followingPlatform === 1 ? 'its' : 'their'} model, and moves it off a retiring model on
+          its own.
+        </li>
+      )}
       {[...byReason].map(([reason, count]) => (
         <li key={reason}>
-          {plural(count, 'workflow step')} left: {LEFT_REASON_TEXT[reason]}
+          {plural(count, reason === 'published_invalid' ? 'workflow' : 'workflow step')} left:{' '}
+          {LEFT_REASON_TEXT[reason]}
         </li>
       ))}
     </ul>
@@ -167,9 +178,11 @@ export interface MoveModelUsesDialogProps {
   /** The stored replacement, chosen first when there is one. */
   replacementId: string | null;
   /**
-   * Whether anything uses the model. When nothing does, the trigger is not
-   * offered; an open dialog stays, since a move's own refresh makes this false
-   * while its result is still to be read.
+   * Whether to offer the move: something uses the model, or it is retiring
+   * or retired (its only uses may be turned-off agents and workflows, which
+   * the uses list leaves out and the move takes too). When false the trigger
+   * is not offered; an open dialog stays, since a move's own refresh makes
+   * this false while its result is still to be read.
    */
   hasUses: boolean;
 }
@@ -192,9 +205,13 @@ export function MoveModelUsesDialog({
   const failure = useSaveFailure({ fallback: 'The move could not be run. Try again.' });
   const { report, clear } = failure;
 
+  // Only the newest preview request may show: an earlier one answering late
+  // would show one replacement's preview while Move runs on another.
+  const latest = useRef(0);
   const loadPreview = useCallback(
     async (replacement: string) => {
       if (!replacement) return;
+      const request = ++latest.current;
       setLoading(true);
       setPreview(null);
       clear();
@@ -203,11 +220,11 @@ export function MoveModelUsesDialog({
           API.ADMIN.ORCHESTRATION.providerModelMoveUsesPreview(modelId),
           { body: { replacementId: replacement } }
         );
-        setPreview(data);
+        if (request === latest.current) setPreview(data);
       } catch (err) {
-        report(err, 'Couldn’t preview the move');
+        if (request === latest.current) report(err, 'Couldn’t preview the move');
       } finally {
-        setLoading(false);
+        if (request === latest.current) setLoading(false);
       }
     },
     [modelId, report, clear]
@@ -238,6 +255,7 @@ export function MoveModelUsesDialog({
       void loadPreview(chosen);
     },
     onClose: () => {
+      latest.current++; // a preview still on its way is for a dialog that has gone
       setOpen(false);
       setPreview(null);
       setResult(null);
@@ -329,7 +347,10 @@ export function MoveModelUsesDialog({
                               organisation is skipped if that fails.
                             </p>
                           )}
-                          <LeftList left={org.left} />
+                          <LeftList
+                            left={org.left}
+                            followingPlatform={org.agentsFollowingPlatform}
+                          />
                         </li>
                       ))}
                     </ul>
@@ -366,7 +387,7 @@ export function MoveModelUsesDialog({
                     {org.status === 'moved' &&
                       ` (${plural(org.agents, 'agent')}, ${plural(org.workflows, 'workflow')})`}
                     {org.reason && <p className="text-muted-foreground text-xs">{org.reason}</p>}
-                    <LeftList left={org.left} />
+                    <LeftList left={org.left} followingPlatform={org.agentsFollowingPlatform} />
                   </li>
                 ))}
               </ul>

@@ -41,6 +41,7 @@ const PREVIEW: MovePreview = {
       name: 'Acme',
       agents: 2,
       inactiveAgents: 1,
+      agentsFollowingPlatform: 1,
       workflows: 1,
       left: [{ workflowId: 'wf', stepId: 'c', reason: 'chat_turn_by_id' }],
       ownKey: false,
@@ -50,6 +51,7 @@ const PREVIEW: MovePreview = {
       name: 'Bolt',
       agents: 1,
       inactiveAgents: 0,
+      agentsFollowingPlatform: 0,
       workflows: 0,
       left: [],
       ownKey: true,
@@ -65,7 +67,15 @@ const PREVIEW: MovePreview = {
 const RESULT: MoveResult = {
   replacement: PREVIEW.replacement,
   orgs: [
-    { orgId: 'org-a', name: 'Acme', status: 'moved', agents: 2, workflows: 1, left: [] },
+    {
+      orgId: 'org-a',
+      name: 'Acme',
+      status: 'moved',
+      agents: 2,
+      workflows: 1,
+      left: [],
+      agentsFollowingPlatform: 0,
+    },
     {
       orgId: 'org-b',
       name: 'Bolt',
@@ -74,6 +84,16 @@ const RESULT: MoveResult = {
       agents: 0,
       workflows: 0,
       left: [],
+      agentsFollowingPlatform: 0,
+    },
+    {
+      orgId: 'org-c',
+      name: 'Cove',
+      status: 'left',
+      agents: 0,
+      workflows: 0,
+      left: [{ workflowId: 'wf', stepId: '', reason: 'published_invalid' }],
+      agentsFollowingPlatform: 0,
     },
   ],
   settings: { moved: PREVIEW.settings.moved, left: [] },
@@ -123,6 +143,9 @@ describe('MoveModelUsesDialog', () => {
     );
     expect(dialog).toHaveTextContent('1 workflow step left: A chat-turn step');
     expect(dialog).toHaveTextContent(
+      '1 agent left: Sunrise picks its model, and moves it off a retiring model on its own.'
+    );
+    expect(dialog).toHaveTextContent(
       "Default model for chat: moves (the system's suggestion, saved as the replacement)"
     );
     expect(dialog).toHaveTextContent('Default model for embeddings: left');
@@ -145,6 +168,35 @@ describe('MoveModelUsesDialog', () => {
     );
   });
 
+  it('shows only the newest preview when an earlier one answers late', async () => {
+    let answerFirst: (value: MovePreview) => void = () => {};
+    vi.mocked(apiClient.post)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answerFirst = resolve;
+          })
+      )
+      .mockResolvedValueOnce({
+        ...PREVIEW,
+        replacement: { id: 'm-alt', name: 'GPT-4.1 mini', modelId: 'gpt-4.1-mini' },
+        orgs: [{ ...PREVIEW.orgs[1], name: 'Only B' }],
+      });
+    renderDialog();
+    const { user, dialog } = await open();
+
+    await user.click(within(dialog).getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: 'GPT-4.1 mini (gpt-4.1-mini)' }));
+    await within(dialog).findByText('Only B');
+
+    // The first replacement's preview arrives after: it is not shown.
+    answerFirst(PREVIEW);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(within(dialog).queryByText('Acme')).toBeNull();
+    expect(within(dialog).getByText('Only B')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeEnabled();
+  });
+
   it('moves, then reports every org’s outcome and refreshes the page', async () => {
     vi.mocked(apiClient.post).mockResolvedValueOnce(PREVIEW).mockResolvedValueOnce(RESULT);
     renderDialog();
@@ -164,6 +216,9 @@ describe('MoveModelUsesDialog', () => {
     expect(status).toHaveTextContent('Acme: Moved (2 agents, 1 workflow)');
     expect(status).toHaveTextContent(
       'Bolt: SkippedThe provider refused its own key for this provider.'
+    );
+    expect(status).toHaveTextContent(
+      'Cove: Nothing moved1 workflow left: Its published version no longer passes the workflow checks'
     );
     expect(refresh).toHaveBeenCalledTimes(1);
   });

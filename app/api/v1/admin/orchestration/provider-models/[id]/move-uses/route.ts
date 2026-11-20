@@ -32,6 +32,13 @@ import { cuidSchema } from '@/lib/validations/common';
 import { moveModelUsesSchema } from '@/lib/validations/orchestration';
 import { loadMoveTarget, moveModelUses } from '@/lib/orchestration/model-lifecycle/move';
 
+/**
+ * The move walks every org in one request, testing an own-key org's key on
+ * the way, so it can outlast a default function timeout. An org that finished
+ * has committed; a request cut off leaves the rest for a second run.
+ */
+export const maxDuration = 300;
+
 export const POST = withAdminAuth<{ id: string }>(
   async (request, session, { params }) => {
     const log = await getRouteLogger(request);

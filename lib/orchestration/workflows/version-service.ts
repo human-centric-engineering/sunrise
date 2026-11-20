@@ -582,15 +582,48 @@ export async function createInitialVersion(
   return version;
 }
 
+/**
+ * Take the erasure locks for everyone the given workflows name, in their
+ * drafts and published snapshots, and answer the definition version each was
+ * read at (§136 t-1066). The model move calls this first in each org's
+ * transaction, before any row lock: every definition writer takes erasure's
+ * locks before the workflow's row (`lockWorkflowRow`), and one that took a
+ * row first could deadlock with an erasure holding a subject's lock and
+ * waiting on that row. All of them in one sorted pass, since the move holds
+ * every workflow's row until its org commits. {@link repinWorkflow} then
+ * refuses a workflow whose definition moved on since this read, so it never
+ * writes a definition naming someone whose lock it did not take.
+ */
+export async function lockRepinSubjects(
+  tx: Prisma.TransactionClient,
+  workflowIds: readonly string[]
+): Promise<Map<string, string>> {
+  const rows = await tx.aiWorkflow.findMany({
+    where: { id: { in: [...workflowIds] } },
+    select: { id: true, ...WORKFLOW_DEFINITION_VERSION_SELECT },
+  });
+  const addresses: string[] = [];
+  const userIds: string[] = [];
+  for (const row of rows) {
+    for (const definition of [row.draftDefinition, row.publishedVersion?.snapshot]) {
+      const named = definitionRecipients(definition ?? null);
+      addresses.push(...named.addresses);
+      userIds.push(...named.userIds);
+    }
+  }
+  await lockSubjects(tx, { addresses, userIds });
+  return new Map(rows.map((row) => [row.id, workflowDefinitionVersion(row)]));
+}
+
 export interface RepinWorkflowArgs {
   /** The org's transaction: the move writes each org's changes as one (§136 t-1066). */
   tx: Prisma.TransactionClient;
   workflowId: string;
+  /** The definition version {@link lockRepinSubjects} read it at, inside `tx`. */
+  readAt: string;
   /**
    * The definition with its pins rewritten, or the same object when nothing
-   * in it changes. Called on the draft and on the published snapshot as they
-   * stand under the row lock, so a save that committed after the caller's
-   * read is rewritten, never overwritten.
+   * in it changes. Called on the draft and on the published snapshot.
    */
   rewrite: (definition: unknown) => unknown;
   changeSummary: string;
@@ -601,6 +634,12 @@ export interface RepinWorkflowResult {
   draftChanged: boolean;
   /** The published version before and after, when a new one was published. */
   published: { from: number; to: number } | null;
+  /**
+   * Set when nothing was written because the rewritten published version
+   * fails the schema or the DAG rules (it was published before they
+   * changed): why, for the move to report. The rest of the org still moves.
+   */
+  refused?: string;
 }
 
 /**
@@ -610,23 +649,29 @@ export interface RepinWorkflowResult {
  * published snapshot is never edited, so an execution pinned to it keeps
  * running exactly what it started on.
  *
- * Under the row lock a builder save takes (`lockWorkflowRow`): a save that
- * committed first is read and rewritten here, and one that waits is refused
- * by its `If-Match` afterwards, since the definition version moves.
+ * Call {@link lockRepinSubjects} first, in the same transaction: it takes
+ * erasure's locks, and this takes the row lock a builder save takes, in that
+ * order. A workflow saved, published or scrubbed since that read is refused
+ * with 412 (`StaleRecordError`), which fails the org's move: running it again
+ * reads it afresh. A builder opened before the move is refused its next save
+ * the same way, since the definition version moves.
  *
- * The new published version is checked against the schema and the DAG rules.
- * It skips the semantic check publishing runs, on purpose: the only change is
- * a model pin, to a replacement the move has already checked
- * (`checkReplacement`: same provider, so no approval changes), and anything
- * else the semantic check could say was equally true of the version it
- * copies, which runs today. Failing a move over an unrelated deleted agent
- * would leave the workflow on the retiring model instead.
+ * The new published version is checked against the schema and the DAG rules,
+ * before anything is written; one that fails is not written, and the result
+ * says why (`refused`). It skips the semantic check publishing runs, on
+ * purpose: the only change is a model pin, to a replacement the move has
+ * already checked (`checkReplacement`: same provider, so no approval
+ * changes), and anything else the semantic check could say was equally true
+ * of the version it copies, which runs today. Failing a move over an
+ * unrelated deleted agent would leave the workflow on the retiring model.
  *
  * Writes no audit row: the move writes one per entity once its org commits.
  */
 export async function repinWorkflow(args: RepinWorkflowArgs): Promise<RepinWorkflowResult> {
-  const { tx, workflowId, rewrite, changeSummary, userId } = args;
-  await lockWorkflowRow(tx, workflowId);
+  const { tx, workflowId, readAt, rewrite, changeSummary, userId } = args;
+  // Takes the row lock, and refuses a definition that moved since the read
+  // the erasure locks were taken for.
+  await assertUnchangedSince(tx, { kind: 'workflow-definition', id: workflowId }, [readAt]);
   const row = await tx.aiWorkflow.findUnique({
     where: { id: workflowId },
     select: {
@@ -635,6 +680,31 @@ export async function repinWorkflow(args: RepinWorkflowArgs): Promise<RepinWorkf
     },
   });
   if (!row) throw new NotFoundError(`Workflow ${workflowId} not found`);
+
+  // The published version first: one that fails the checks writes nothing.
+  let toPublish: WorkflowDefinition | null = null;
+  const current = row.publishedVersion;
+  if (current) {
+    const rewritten = rewrite(current.snapshot);
+    if (rewritten !== current.snapshot) {
+      const parsed = workflowDefinitionSchema.safeParse(rewritten);
+      if (!parsed.success) {
+        return {
+          draftChanged: false,
+          published: null,
+          refused: 'Its published version no longer matches the workflow schema.',
+        };
+      }
+      if (!validateWorkflow(parsed.data).ok) {
+        return {
+          draftChanged: false,
+          published: null,
+          refused: 'Its published version no longer passes the workflow structure checks.',
+        };
+      }
+      toPublish = parsed.data;
+    }
+  }
 
   let draftChanged = false;
   if (row.draftDefinition !== null) {
@@ -650,41 +720,25 @@ export async function repinWorkflow(args: RepinWorkflowArgs): Promise<RepinWorkf
   }
 
   let published: RepinWorkflowResult['published'] = null;
-  const current = row.publishedVersion;
-  if (current) {
-    const rewritten = rewrite(current.snapshot);
-    if (rewritten !== current.snapshot) {
-      const parsed = workflowDefinitionSchema.safeParse(rewritten);
-      if (!parsed.success) {
-        throw new ValidationError('The published workflow does not match the current schema', {
-          definition: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
-        });
-      }
-      const dag = validateWorkflow(parsed.data);
-      if (!dag.ok) {
-        throw new ValidationError('The published workflow is structurally invalid', {
-          definition: dag.errors.map((e) => e.message),
-        });
-      }
-      // A new version row is one an erasure scanning the versions would not
-      // see: take its locks, as every version writer does (§122 t-900).
-      const toWrite = await lockedWithoutErasedApprovers(tx, parsed.data);
-      const next = await nextVersionNumber(tx, workflowId);
-      const version = await tx.aiWorkflowVersion.create({
-        data: {
-          workflowId,
-          version: next,
-          snapshot: toWrite as unknown as Prisma.InputJsonValue,
-          changeSummary,
-          createdBy: userId,
-        },
-      });
-      await tx.aiWorkflow.update({
-        where: { id: workflowId },
-        data: { publishedVersionId: version.id },
-      });
-      published = { from: current.version, to: next };
-    }
+  if (current && toPublish) {
+    // Erasure's locks are already held (`lockRepinSubjects`), so this waits
+    // on nothing; it strips an erased approver id as every writer does.
+    const toWrite = await lockedWithoutErasedApprovers(tx, toPublish);
+    const next = await nextVersionNumber(tx, workflowId);
+    const version = await tx.aiWorkflowVersion.create({
+      data: {
+        workflowId,
+        version: next,
+        snapshot: toWrite as unknown as Prisma.InputJsonValue,
+        changeSummary,
+        createdBy: userId,
+      },
+    });
+    await tx.aiWorkflow.update({
+      where: { id: workflowId },
+      data: { publishedVersionId: version.id },
+    });
+    published = { from: current.version, to: next };
   }
   return { draftChanged, published };
 }

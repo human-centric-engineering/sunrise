@@ -40,7 +40,16 @@ vi.mock('@/lib/orchestration/agents/agent-versioning', () => ({
   recordAgentVersion: vi.fn(),
   isAgentVersionConflict: vi.fn(() => false),
 }));
-vi.mock('@/lib/orchestration/workflows/version-service', () => ({ repinWorkflow: vi.fn() }));
+vi.mock('@/lib/orchestration/workflows/version-service', () => ({
+  lockRepinSubjects: vi.fn(),
+  repinWorkflow: vi.fn(),
+}));
+// The platform-agent rule needs a platform definition by slug; here an agent
+// follows the platform when its binding says so.
+vi.mock('@/lib/orchestration/agents/platform-agent-guard', () => ({
+  bindingFollowsPlatform: (agent: { bindingOwner: string | null }) =>
+    agent.bindingOwner === 'platform',
+}));
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({ logAdminAction: vi.fn() }));
 vi.mock('@/lib/orchestration/llm/org-provider-keys', () => ({
   openOrgProviderKey: vi.fn(),
@@ -66,13 +75,13 @@ import {
   ensureBaselineVersion,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
-import { repinWorkflow } from '@/lib/orchestration/workflows/version-service';
+import { lockRepinSubjects, repinWorkflow } from '@/lib/orchestration/workflows/version-service';
 import { logAdminAction, type AdminAuditEntry } from '@/lib/orchestration/audit/admin-audit-logger';
 import { openOrgProviderKey } from '@/lib/orchestration/llm/org-provider-keys';
 import { testProviderKeyOnModel } from '@/lib/orchestration/llm/provider-manager';
 import { logger } from '@/lib/logging';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
 import {
   loadMoveTarget,
   moveModelUses,
@@ -125,6 +134,7 @@ interface Agent {
   model: string;
   isActive: boolean;
   deletedAt: Date | null;
+  bindingOwner?: string | null;
 }
 
 interface Workflow {
@@ -156,6 +166,8 @@ let world: World;
 let scope: string | null = null;
 let multi = true;
 const audit: Array<AdminAuditEntry & { scope: string | null }> = [];
+/** Every write and lock, in order. */
+const writeOrder: string[] = [];
 
 function step(id: string, type: string, modelOverride?: string) {
   return {
@@ -353,10 +365,14 @@ function installFakes(): void {
   }) => {
     assertScope(args.where.orgId);
     return Promise.resolve(
-      inOrgRows(world.agents, args.where.orgId).filter(
-        (a) =>
-          a.provider === args.where.provider && a.model === args.where.model && a.deletedAt === null
-      )
+      inOrgRows(world.agents, args.where.orgId)
+        .filter(
+          (a) =>
+            a.provider === args.where.provider &&
+            a.model === args.where.model &&
+            a.deletedAt === null
+        )
+        .map((a) => ({ ...a, isSystem: false, slug: a.id, bindingOwner: a.bindingOwner ?? null }))
     );
   }) as never);
   vi.mocked(prisma.aiWorkflow.findMany).mockImplementation(((args: {
@@ -389,6 +405,7 @@ function installFakes(): void {
               a.deletedAt === null
           );
           for (const a of hit) a.model = args.data.model;
+          writeOrder.push(`agent ${args.where.id}`);
           return Promise.resolve({ count: hit.length });
         }
       ),
@@ -411,10 +428,16 @@ function installFakes(): void {
     }
   }) as never);
 
-  vi.mocked(repinWorkflow).mockImplementation(async ({ workflowId, rewrite }) => {
+  vi.mocked(lockRepinSubjects).mockImplementation(async (_tx, ids) => {
+    writeOrder.push(`subjects ${[...ids].join(',')}`);
+    return new Map(ids.map((id) => [id, `v-${id}`]));
+  });
+  vi.mocked(repinWorkflow).mockImplementation(async ({ workflowId, rewrite, readAt }) => {
     const w = world.workflows.find((x) => x.id === workflowId);
     if (!w) throw new Error('no workflow');
     assertScope(multi ? w.orgId : undefined);
+    expect(readAt).toBe(`v-${workflowId}`);
+    writeOrder.push(`workflow ${workflowId}`);
     let draftChanged = false;
     if (w.draftDefinition !== null) {
       const next = rewrite(w.draftDefinition);
@@ -474,6 +497,7 @@ beforeEach(() => {
   scope = null;
   multi = true;
   audit.length = 0;
+  writeOrder.length = 0;
   installFakes();
 });
 
@@ -539,6 +563,7 @@ describe('previewModelMove', () => {
         name: 'Acme',
         agents: 2,
         inactiveAgents: 1,
+        agentsFollowingPlatform: 0,
         workflows: 1,
         left: [{ workflowId: 'wf-a1', stepId: 'c', reason: 'chat_turn_by_id' }],
         ownKey: false,
@@ -548,6 +573,7 @@ describe('previewModelMove', () => {
         name: 'Bolt',
         agents: 1,
         inactiveAgents: 0,
+        agentsFollowingPlatform: 0,
         workflows: 1,
         left: [],
         ownKey: true,
@@ -630,8 +656,27 @@ describe('moveModelUses', () => {
         agents: 2,
         workflows: 1,
         left: [{ workflowId: 'wf-a1', stepId: 'c', reason: 'chat_turn_by_id' }],
+        agentsFollowingPlatform: 0,
       },
-      { orgId: 'org-b', name: 'Bolt', status: 'moved', agents: 1, workflows: 1, left: [] },
+      {
+        orgId: 'org-b',
+        name: 'Bolt',
+        status: 'moved',
+        agents: 1,
+        workflows: 1,
+        left: [],
+        agentsFollowingPlatform: 0,
+      },
+    ]);
+    // Erasure's locks for the org's workflows before any row is written.
+    expect(writeOrder).toEqual([
+      'subjects wf-a1',
+      'agent ag-a1',
+      'agent ag-a2',
+      'workflow wf-a1',
+      'subjects wf-b1',
+      'agent ag-b1',
+      'workflow wf-b1',
     ]);
     expect(result.totals).toEqual({ agents: 3, workflows: 2, settings: 3, skipped: 0, failed: 0 });
     expect(result.suspendedOrgs).toBe(1);
@@ -798,15 +843,68 @@ describe('moveModelUses', () => {
       {
         orgId: 'org-a',
         name: 'Acme',
-        status: 'moved',
+        status: 'left',
         agents: 0,
         workflows: 0,
         left: [{ workflowId: 'wf-a9', stepId: 't', reason: 'chat_turn_by_id' }],
+        agentsFollowingPlatform: 0,
       },
-      { orgId: 'org-b', name: 'Bolt', status: 'moved', agents: 1, workflows: 0, left: [] },
+      {
+        orgId: 'org-b',
+        name: 'Bolt',
+        status: 'moved',
+        agents: 1,
+        workflows: 0,
+        left: [],
+        agentsFollowingPlatform: 0,
+      },
     ]);
     expect(testProviderKeyOnModel).not.toHaveBeenCalled();
     expect(repinWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('leaves an agent whose model the platform picks, and counts it', async () => {
+    agent('ag-a1').bindingOwner = 'platform';
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(agent('ag-a1').model).toBe('gpt-4o');
+    expect(agent('ag-a2').model).toBe('gpt-4.1');
+    expect(result.orgs[0]).toMatchObject({ agents: 1, agentsFollowingPlatform: 1 });
+    expect(audit.map((r) => r.entityId)).not.toContain('ag-a1');
+  });
+
+  it('reports an org whose only use is an agent the platform moves as left', async () => {
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-b');
+    agent('ag-b1').bindingOwner = 'platform';
+    const preview = await previewModelMove(await target());
+    expect(preview.orgs[1]).toMatchObject({
+      orgId: 'org-b',
+      agents: 0,
+      agentsFollowingPlatform: 1,
+    });
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(result.orgs[1]).toMatchObject({
+      orgId: 'org-b',
+      status: 'left',
+      agentsFollowingPlatform: 1,
+    });
+    expect(agent('ag-b1').model).toBe('gpt-4o');
+  });
+
+  it('leaves a workflow whose published version fails the checks, and moves the rest of the org', async () => {
+    vi.mocked(repinWorkflow).mockImplementationOnce(async () => ({
+      draftChanged: false,
+      published: null,
+      refused: 'Its published version no longer matches the workflow schema.',
+    }));
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(agent('ag-a1').model).toBe('gpt-4.1');
+    expect(result.orgs[0]).toMatchObject({ status: 'moved', agents: 2, workflows: 0 });
+    expect(result.orgs[0].left).toContainEqual({
+      workflowId: 'wf-a1',
+      stepId: '',
+      reason: 'published_invalid',
+    });
+    expect(audit.map((r) => r.entityId)).not.toContain('wf-a1');
   });
 
   it('rolls back an org that fails, reports it, and still moves the others', async () => {
@@ -832,12 +930,15 @@ describe('moveModelUses', () => {
     expect(audit.filter((r) => r.scope === 'org-a')).toEqual([]);
   });
 
-  it('reports a validation failure in an org in its own words', async () => {
+  it('reports a workflow saved during the move in its own words', async () => {
     vi.mocked(repinWorkflow).mockImplementationOnce(() => {
-      throw new ValidationError('The published workflow is structurally invalid');
+      throw new StaleRecordError('That workflow changed a moment ago. Run the move again.');
     });
     const result = await moveModelUses(await target(), ACTOR);
-    expect(result.orgs[0].reason).toBe('The published workflow is structurally invalid');
+    expect(result.orgs[0]).toMatchObject({
+      status: 'failed',
+      reason: 'That workflow changed a moment ago. Run the move again.',
+    });
   });
 
   it('leaves pins naming the id alone when another provider offers it', async () => {
@@ -885,6 +986,8 @@ describe('moveModelUses', () => {
     const result = await moveModelUses(await target(), ACTOR);
     expect(world.settings.defaultModels.routing).toBe('anthropic::claude-sonnet');
     expect(result.settings.moved).toEqual([]);
+    // Reported, not dropped.
+    expect(result.settings.left).toContainEqual({ slot: 'routing', reason: 'changed_since' });
     expect(audit.map((r) => r.action)).not.toContain('settings.model_moved');
   });
 

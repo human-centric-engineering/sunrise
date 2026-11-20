@@ -17,7 +17,11 @@
  * org and one pass.
  *
  * **Each org is one transaction.** Its agents and workflows move together or
- * not at all. One org failing rolls back that org only, and is reported with
+ * not at all. It takes erasure's locks for everyone its workflows name before
+ * any row lock (`lockRepinSubjects`), the order every definition writer
+ * keeps, so it cannot deadlock with an erasure. A workflow whose published
+ * version fails the schema or the DAG rules is left, with the reason, and the
+ * rest of the org still moves. One org failing rolls back that org only, and is reported with
  * its reason; the orgs before and after it still move. The settings are the
  * install's, written once after the orgs.
  *
@@ -26,8 +30,10 @@
  * - **Agents** bound to the model, active or not (a turned-off agent turned
  *   back on would otherwise be on a retired model): the model id changes and
  *   the provider stays. Each change is a new agent version, through
- *   `agent-versioning.ts`. `bindingOwner` is left as it was, so an agent that
- *   follows the platform's pick still does.
+ *   `agent-versioning.ts`. An agent whose binding follows the platform's pick
+ *   (`bindingFollowsPlatform`) is left and counted: the platform-agent
+ *   reconcile re-picks it, ranking a retiring model last, and would undo a
+ *   model the move wrote.
  * - **Workflows** pinning it in a step's `modelOverride`: the draft in place,
  *   and a new published version that differs only in the pins
  *   (`repinWorkflow`).
@@ -60,6 +66,7 @@ import { APIError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { workflowsMayPinWhere } from '@/lib/orchestration/admin/global-config-usage';
+import { bindingFollowsPlatform } from '@/lib/orchestration/agents/platform-agent-guard';
 import {
   AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
   ensureBaselineVersion,
@@ -85,7 +92,7 @@ import {
   invalidateOrchestrationSettingsCache,
   parseStoredDefaults,
 } from '@/lib/orchestration/settings';
-import { repinWorkflow } from '@/lib/orchestration/workflows/version-service';
+import { lockRepinSubjects, repinWorkflow } from '@/lib/orchestration/workflows/version-service';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant, listActiveOrgIds, runAsOrg } from '@/lib/tenancy/context';
 import type { TaskType } from '@/types/orchestration';
@@ -230,6 +237,8 @@ export interface LeftStep {
 
 interface OrgUses {
   agents: Array<{ id: string; name: string; isActive: boolean }>;
+  /** Agents on the model whose binding follows the platform's pick: left, as it moves them. */
+  followingPlatform: number;
   /** Workflows with a step that moves: the draft, the published snapshot, or both. */
   workflows: Array<{ id: string; name: string; draft: boolean; published: boolean }>;
   left: LeftStep[];
@@ -245,7 +254,14 @@ async function readOrgUses(pass: OrgPass, target: MoveTarget): Promise<OrgUses> 
         model: target.model.modelId,
         deletedAt: null,
       },
-      select: { id: true, name: true, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        isSystem: true,
+        slug: true,
+        bindingOwner: true,
+      },
       orderBy: { name: 'asc' },
     }),
     prisma.aiWorkflow.findMany({
@@ -262,7 +278,13 @@ async function readOrgUses(pass: OrgPass, target: MoveTarget): Promise<OrgUses> 
       orderBy: { name: 'asc' },
     }),
   ]);
-  const uses: OrgUses = { agents, workflows: [], left: [] };
+  const moving = agents.filter((a) => !bindingFollowsPlatform(a));
+  const uses: OrgUses = {
+    agents: moving.map(({ id, name, isActive }) => ({ id, name, isActive })),
+    followingPlatform: agents.length - moving.length,
+    workflows: [],
+    left: [],
+  };
   for (const w of workflows) {
     const draft = w.draftDefinition === null ? null : repinDefinition(w.draftDefinition, pins);
     const published = w.publishedVersion
@@ -282,6 +304,11 @@ async function readOrgUses(pass: OrgPass, target: MoveTarget): Promise<OrgUses> 
   return uses;
 }
 
+/** Whether the org has anything to move or to report as left. */
+function usesSomething(uses: OrgUses): boolean {
+  return uses.agents.length + uses.workflows.length + uses.left.length + uses.followingPlatform > 0;
+}
+
 /** The provider row for the model's slug, which an org's own key is saved against. */
 function providerConfigFor(slug: string) {
   return prisma.aiProviderConfig.findUnique({ where: { slug } });
@@ -296,6 +323,8 @@ export interface OrgMovePreview {
   agents: number;
   /** How many of {@link agents} are turned off. */
   inactiveAgents: number;
+  /** Agents left because the platform picks their model, and moves them itself. */
+  agentsFollowingPlatform: number;
   workflows: number;
   left: LeftStep[];
   /** The org pays for the provider with its own key, which the move tests first. */
@@ -341,7 +370,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
   for (const pass of passes) {
     const preview = await inOrg(pass, async () => {
       const uses = await readOrgUses(pass, target);
-      if (uses.agents.length + uses.workflows.length + uses.left.length === 0) return null;
+      if (!usesSomething(uses)) return null;
       const ownKey =
         isMultiTenant() && config
           ? (await prisma.aiOrgProviderKey.count({
@@ -353,6 +382,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
         name: pass.name,
         agents: uses.agents.length,
         inactiveAgents: uses.agents.filter((a) => !a.isActive).length,
+        agentsFollowingPlatform: uses.followingPlatform,
         workflows: uses.workflows.length,
         left: uses.left,
         ownKey,
@@ -371,8 +401,11 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
 
 // ── Move ────────────────────────────────────────────────────────────────────
 
-/** How one org fared. */
-export type OrgMoveStatus = 'moved' | 'skipped' | 'failed';
+/**
+ * How one org fared: `left` when it had nothing the move could change, only
+ * uses it leaves (listed in `left` and `agentsFollowingPlatform`).
+ */
+export type OrgMoveStatus = 'moved' | 'left' | 'skipped' | 'failed';
 
 export interface OrgMoveResult {
   orgId: string;
@@ -383,6 +416,8 @@ export interface OrgMoveResult {
   agents: number;
   workflows: number;
   left: LeftStep[];
+  /** Agents left because the platform picks their model, and moves them itself. */
+  agentsFollowingPlatform: number;
 }
 
 /** What {@link moveModelUses} answers. */
@@ -458,6 +493,8 @@ function failureReason(err: unknown): string {
 
 interface OrgWrites {
   agents: Array<{ id: string; name: string; version: number | null }>;
+  /** Workflows left because their published version fails the checks. */
+  refused: LeftStep[];
   workflows: Array<{
     id: string;
     name: string;
@@ -477,7 +514,13 @@ async function writeOrg(
   const label = changeLabel(target);
   return prisma.$transaction(
     async (tx) => {
-      const writes: OrgWrites = { agents: [], workflows: [] };
+      const writes: OrgWrites = { agents: [], refused: [], workflows: [] };
+      // Erasure's locks for everyone the workflows name, before any row lock
+      // (an agent's included), the order every definition writer keeps.
+      const readAt = await lockRepinSubjects(
+        tx,
+        uses.workflows.map((w) => w.id)
+      );
       for (const agent of uses.agents) {
         await ensureBaselineVersion(tx, agent.id, actor.userId);
         // Exactly the binding read above: an agent moved off the model since
@@ -500,15 +543,32 @@ async function writeOrg(
         writes.agents.push({ id: agent.id, name: agent.name, version });
       }
       for (const workflow of uses.workflows) {
+        const at = readAt.get(workflow.id);
+        if (at === undefined) continue; // deleted since it was read
         const result = await repinWorkflow({
           tx,
           workflowId: workflow.id,
+          readAt: at,
           rewrite: (definition) => repinDefinition(definition, pins).definition,
           changeSummary: label,
           userId: actor.userId,
         });
+        if (result.refused) {
+          logger.warn('Model move: a workflow was left', {
+            orgId: pass.orgId,
+            workflowId: workflow.id,
+            reason: result.refused,
+          });
+          writes.refused.push({ workflowId: workflow.id, stepId: '', reason: 'published_invalid' });
+          continue;
+        }
         if (result.draftChanged || result.published) {
-          writes.workflows.push({ id: workflow.id, name: workflow.name, ...result });
+          writes.workflows.push({
+            id: workflow.id,
+            name: workflow.name,
+            draftChanged: result.draftChanged,
+            published: result.published,
+          });
         }
       }
       return writes;
@@ -559,10 +619,15 @@ async function moveOrg(
 ): Promise<OrgMoveResult | null> {
   return inOrg(pass, async () => {
     const uses = await readOrgUses(pass, target);
-    if (uses.agents.length + uses.workflows.length + uses.left.length === 0) return null;
-    const base = { orgId: pass.orgId, name: pass.name, left: uses.left };
+    if (!usesSomething(uses)) return null;
+    const base = {
+      orgId: pass.orgId,
+      name: pass.name,
+      left: uses.left,
+      agentsFollowingPlatform: uses.followingPlatform,
+    };
     if (uses.agents.length + uses.workflows.length === 0) {
-      return { ...base, status: 'moved', agents: 0, workflows: 0 };
+      return { ...base, status: 'left', agents: 0, workflows: 0 };
     }
     let problem: string | null;
     try {
@@ -587,9 +652,11 @@ async function moveOrg(
       return { ...base, status: 'failed', reason: failureReason(err), agents: 0, workflows: 0 };
     }
     auditOrg(target, writes, actor);
+    const moved = writes.agents.length + writes.workflows.length;
     return {
       ...base,
-      status: 'moved',
+      left: [...writes.refused, ...uses.left],
+      status: moved > 0 ? 'moved' : 'left',
       agents: writes.agents.length,
       workflows: writes.workflows.length,
     };
@@ -599,7 +666,8 @@ async function moveOrg(
 /**
  * Write the install settings' moved slots. The task defaults are merged into
  * what is stored, as the settings route merges a save, and only the slots
- * the plan names change; a slot changed since the plan was made is left.
+ * the plan names change; a slot changed since the plan was made is left and
+ * reported (`changed_since`).
  */
 async function moveSettings(
   target: MoveTarget,
@@ -609,11 +677,16 @@ async function moveSettings(
   if (plan.moved.length === 0) return plan;
   const written = await prisma.$transaction(async (tx) => {
     const row = await tx.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } });
-    if (!row) return [];
+    if (!row)
+      return {
+        done: [],
+        changed: plan.moved.map((m) => ({ slot: m.slot, reason: 'changed_since' as const })),
+      };
     const stored = parseStoredDefaults(row.defaultModels);
     const defaults: Partial<Record<TaskType, string>> = { ...stored };
     let confidential: string | null = null;
     const done: SettingsMovePlan['moved'] = [];
+    const changed: SettingsMovePlan['left'] = [];
     for (const slot of plan.moved) {
       if (slot.slot === 'confidential') {
         if (
@@ -622,6 +695,8 @@ async function moveSettings(
         ) {
           confidential = slot.to;
           done.push(slot);
+        } else {
+          changed.push({ slot: slot.slot, reason: 'changed_since' });
         }
         continue;
       }
@@ -629,11 +704,14 @@ async function moveSettings(
       // A saved slot must still hold what the plan read; a suggested one must
       // still be unsaved.
       const now = stored[slot.slot];
-      if (slot.source === 'saved' ? now !== slot.from : now !== undefined && now !== '') continue;
+      if (slot.source === 'saved' ? now !== slot.from : now !== undefined && now !== '') {
+        changed.push({ slot: slot.slot, reason: 'changed_since' });
+        continue;
+      }
       defaults[slot.slot] = slot.to;
       done.push(slot);
     }
-    if (done.length === 0) return done;
+    if (done.length === 0) return { done, changed };
     await tx.aiOrchestrationSettings.update({
       where: { slug: 'global' },
       data: {
@@ -641,22 +719,22 @@ async function moveSettings(
         ...(confidential !== null ? { confidentialModel: confidential } : {}),
       },
     });
-    return done;
+    return { done, changed };
   });
   invalidateSettingsCache();
   invalidateOrchestrationSettingsCache();
-  if (written.length > 0) {
+  if (written.done.length > 0) {
     logAdminAction({
       userId: actor.userId,
       action: 'settings.model_moved',
       entityType: 'settings',
       entityId: 'global',
-      changes: Object.fromEntries(written.map((s) => [s.slot, { from: s.from, to: s.to }])),
+      changes: Object.fromEntries(written.done.map((s) => [s.slot, { from: s.from, to: s.to }])),
       metadata: { providerModelId: target.model.id, replacementId: target.replacement.id },
       clientIp: actor.clientIp,
     });
   }
-  return { moved: written, left: plan.left };
+  return { moved: written.done, left: [...plan.left, ...written.changed] };
 }
 
 /**
@@ -697,7 +775,7 @@ export async function moveModelUses(
       ...totals,
       suspendedOrgs: suspended,
       skippedOrgs: orgs
-        .filter((o) => o.status !== 'moved')
+        .filter((o) => o.status === 'skipped' || o.status === 'failed')
         .map((o) => ({ orgId: o.orgId, status: o.status, reason: o.reason })),
     },
     clientIp: actor.clientIp,

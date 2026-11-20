@@ -918,6 +918,10 @@ export async function testProviderKeyOnModel(
     });
     return { ok: true };
   } catch (err) {
+    // A reasoning model can spend the whole small budget thinking and answer
+    // with no visible text, which the adapter raises as a truncation. The
+    // vendor served the model on this key all the same, which is the question.
+    if (err instanceof ProviderError && err.code === 'truncated_no_output') return { ok: true };
     return {
       ok: false,
       failedAt: 'model',
