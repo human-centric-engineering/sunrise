@@ -84,6 +84,7 @@
     "smoke:erasure-stale-saves": "tsx --env-file=.env.local scripts/smoke/erasure-stale-saves.ts",
     "smoke:tenancy": "tsx --env-file=.env.local scripts/smoke/tenancy.ts",
     "smoke:tenancy-isolation": "tsx --env-file=.env.local scripts/smoke/tenancy-isolation.ts",
+    "smoke:model-move": "TENANCY_MODE=multi tsx --env-file=.env.local scripts/smoke/model-move.ts",
     "smoke:send-message-target": "tsx --env-file=.env.local scripts/smoke/send-message-target.ts",
     "smoke:embed-visitor": "tsx --env-file=.env.local scripts/smoke/embed-visitor.ts",
     "postinstall": "prisma generate",

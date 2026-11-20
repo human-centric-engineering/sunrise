@@ -60,6 +60,7 @@ import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compati
 import { forgetProviderRow } from '@/lib/orchestration/llm/org-provider-policy';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import {
+  keyTestSignal,
   ProviderError,
   type LlmProvider,
   type ProviderTestResult,
@@ -874,6 +875,59 @@ export async function testProviderKey(
 ): Promise<ProviderTestResult> {
   const provider = buildProviderFromConfig(config, apiKey);
   return provider.testKey ? provider.testKey() : provider.testConnection();
+}
+
+/** What {@link testProviderKeyOnModel} answers. */
+export interface ModelKeyTestResult {
+  ok: boolean;
+  /** Which call failed: the key test, or the message to the model. */
+  failedAt?: 'key' | 'model';
+  /** The vendor's message. It can repeat the key, as {@link testProviderKey}'s can. */
+  error?: string;
+}
+
+/**
+ * Test an org's own key against one model (§136 t-1066), before the model
+ * move takes the org's uses to it: {@link testProviderKey}'s call the vendor
+ * authenticates, then, when `chat` is set, a short message to `model` sent
+ * with that key. The key test alone cannot say the key may use the model: a
+ * vendor can restrict a key to some models (an OpenAI project key can), and
+ * the key test names no model, or a fixed one.
+ *
+ * Neither call sends user content, so the call-time gate, the spend caps and
+ * the privacy stage are not asked, as for {@link testProviderKey}. The message
+ * is billed to the org's key: a few tokens.
+ *
+ * @throws ProviderError when no client can be built for the row.
+ */
+export async function testProviderKeyOnModel(
+  config: AiProviderConfig,
+  apiKey: string,
+  model: string,
+  { chat }: { chat: boolean }
+): Promise<ModelKeyTestResult> {
+  const provider = buildProviderFromConfig(config, apiKey);
+  const key = provider.testKey ? await provider.testKey() : await provider.testConnection();
+  if (!key.ok) return { ok: false, failedAt: 'key', ...(key.error ? { error: key.error } : {}) };
+  if (!chat) return { ok: true };
+  try {
+    await provider.chat([{ role: 'user', content: 'ping' }], {
+      model,
+      maxTokens: 16,
+      signal: keyTestSignal(),
+    });
+    return { ok: true };
+  } catch (err) {
+    // A reasoning model can spend the whole small budget thinking and answer
+    // with no visible text, which the adapter raises as a truncation. The
+    // vendor served the model on this key all the same, which is the question.
+    if (err instanceof ProviderError && err.code === 'truncated_no_output') return { ok: true };
+    return {
+      ok: false,
+      failedAt: 'model',
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 /**

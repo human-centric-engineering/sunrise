@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 
 import {
+  modelHasUses,
   ProviderModelUses,
   type ProviderModelUsesData,
 } from '@/components/admin/orchestration/provider-model-uses';
@@ -182,5 +183,30 @@ describe('ProviderModelUses', () => {
 
     expect(region).not.toHaveTextContent('by its id alone');
     expect(region).not.toHaveTextContent('chat*');
+  });
+});
+
+describe('the move action (§136 t-1066)', () => {
+  function withAction(uses: Partial<ProviderModelUsesData>) {
+    render(
+      <ProviderModelUses
+        retiresAt={null}
+        lifecycle={{ state: 'current', replacement: null }}
+        uses={{ ...NONE, ...uses }}
+        action={<button type="button">Move uses…</button>}
+      />
+    );
+  }
+
+  it('is rendered beside the heading whatever the uses, so an open dialog outlives a refresh', () => {
+    withAction({});
+    expect(screen.getByRole('button', { name: 'Move uses…' })).toBeInTheDocument();
+  });
+
+  it('modelHasUses counts agents, workflows (any org) and settings', () => {
+    expect(modelHasUses(NONE)).toBe(false);
+    expect(modelHasUses({ ...NONE, otherOrgWorkflows: 1 })).toBe(true);
+    expect(modelHasUses({ ...NONE, otherOrgAgents: 1 })).toBe(true);
+    expect(modelHasUses({ ...NONE, settings: [{ slot: 'chat', source: 'suggested' }] })).toBe(true);
   });
 });

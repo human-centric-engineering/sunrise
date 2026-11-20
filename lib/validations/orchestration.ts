@@ -2285,6 +2285,15 @@ export const updateProviderModelSchema = z.object({
 });
 
 /**
+ * POST body for previewing or running the model move (§136 t-1066): the
+ * catalogue row every use moves to. Whether it qualifies spans two rows, so
+ * the route checks it (`checkReplacement`), not this schema.
+ */
+export const moveModelUsesSchema = z.object({
+  replacementId: cuidSchema,
+});
+
+/**
  * POST body for the bulk-create endpoint. Each row mirrors
  * `createProviderModelSchema` but `slug` and `providerSlug` come
  * from the top-level envelope so the operator can't accidentally

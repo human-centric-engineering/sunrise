@@ -14,6 +14,9 @@
  *   - listVersions paginates correctly and exposes nextCursor
  *   - getVersion 404s on unknown
  *   - createInitialVersion runs inside a caller-provided transaction
+ *   - lockRepinSubjects + repinWorkflow (§136 t-1066): erasure locks before
+ *     the row lock, a new version inside the caller's transaction, a workflow
+ *     changed since refused, one failing the checks left
  *   - save / publish / discard carry the definition version the builder
  *     loaded and are refused with 412 once it moved on; rollback re-reads its
  *     target under erasure's locks (§122 t-900)
@@ -93,6 +96,8 @@ import {
   createInitialVersion,
   listVersions,
   getVersion,
+  lockRepinSubjects,
+  repinWorkflow,
 } from '@/lib/orchestration/workflows/version-service';
 import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
 import {
@@ -1325,4 +1330,255 @@ it('audits a draft save under the name it wrote, when the save renames the workf
   expect(logAdminAction).toHaveBeenCalledWith(
     expect.objectContaining({ action: 'workflow.draft.save', entityName: 'Renamed' })
   );
+});
+
+// ─── repinWorkflow (§136 t-1066) ─────────────────────────────────────────────
+
+describe('lockRepinSubjects and repinWorkflow', () => {
+  const PINNED: WorkflowDefinition = {
+    steps: [
+      {
+        id: 'ask',
+        name: 'Ask',
+        type: 'llm_call',
+        config: { prompt: 'hi', modelOverride: 'openai::gpt-4o' },
+        nextSteps: [],
+      },
+    ],
+    entryStepId: 'ask',
+    errorStrategy: 'fail',
+  };
+  const MOVED: WorkflowDefinition = {
+    ...PINNED,
+    steps: [{ ...PINNED.steps[0], config: { prompt: 'hi', modelOverride: 'openai::gpt-4.1' } }],
+  };
+  /** The move's rewrite, for these tests: the pin to its replacement. */
+  const rewrite = (definition: unknown): unknown => {
+    const json = JSON.stringify(definition);
+    return json.includes('openai::gpt-4o"')
+      ? JSON.parse(json.replace('openai::gpt-4o"', 'openai::gpt-4.1"'))
+      : definition;
+  };
+
+  interface StoredRow {
+    draftDefinition: unknown;
+    publishedVersionId: string | null;
+    publishedVersion: { version: number; snapshot: unknown } | null;
+  }
+
+  /** A transaction over one stored workflow, recording the order locks are taken in. */
+  function repinTx(row: StoredRow | null) {
+    const order: string[] = [];
+    let stored = row;
+    const tx = {
+      $queryRaw: vi.fn(async () => {
+        order.push('row lock');
+        return [];
+      }),
+      $executeRaw: vi.fn(async () => {
+        order.push('subject lock');
+        return 1;
+      }),
+      dataErasureReceipt: { findMany: vi.fn().mockResolvedValue([]) },
+      user: { findMany: vi.fn().mockResolvedValue([]) },
+      aiWorkflow: {
+        findMany: vi.fn(async () => (stored ? [{ id: WORKFLOW_ID, ...stored }] : [])),
+        findUniqueOrThrow: vi.fn(async () => {
+          if (!stored) throw new Error('not found');
+          return stored;
+        }),
+        findUnique: vi.fn(async () => stored),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      aiWorkflowVersion: {
+        findFirst: vi.fn().mockResolvedValue({ version: 5 }),
+        create: vi.fn().mockResolvedValue({ id: VERSION_ID_NEW }),
+      },
+    };
+    return {
+      tx,
+      order,
+      change(next: StoredRow) {
+        stored = next;
+      },
+    };
+  }
+
+  async function repin(tx: unknown, readAt: string) {
+    return repinWorkflow({
+      tx: tx as never,
+      workflowId: WORKFLOW_ID,
+      readAt,
+      rewrite,
+      changeSummary: 'Model gpt-4o moved to gpt-4.1 (retiring model)',
+      userId: ADMIN_ID,
+    });
+  }
+
+  it('takes erasure locks for everyone named before the row lock, then rewrites and republishes', async () => {
+    const withApprover: WorkflowDefinition = {
+      ...PINNED,
+      steps: [
+        { ...PINNED.steps[0], nextSteps: [{ targetStepId: 'approve' }] },
+        {
+          id: 'approve',
+          name: 'Approve',
+          type: 'human_approval',
+          config: { prompt: 'OK?', approverUserIds: ['cmjbv4i3x00003wsloputappr'] },
+          nextSteps: [],
+        },
+      ],
+    };
+    const { tx, order } = repinTx({
+      draftDefinition: withApprover,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 4, snapshot: withApprover },
+    });
+
+    const readAt = await lockRepinSubjects(tx as never, [WORKFLOW_ID]);
+    const result = await repin(tx, readAt.get(WORKFLOW_ID) ?? '');
+
+    expect(result).toEqual({ draftChanged: true, published: { from: 4, to: 6 } });
+    // The approver's lock before the row lock: the order every definition
+    // writer keeps, so the move cannot deadlock with an erasure. The one taken
+    // again after the row (stripping erased approvers) is already held, so it
+    // waits on nothing.
+    expect(order).toEqual(['subject lock', 'row lock', 'subject lock']);
+    expect(tx.aiWorkflowVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        workflowId: WORKFLOW_ID,
+        version: 6,
+        changeSummary: 'Model gpt-4o moved to gpt-4.1 (retiring model)',
+        createdBy: ADMIN_ID,
+      }),
+    });
+    const [{ data }] = tx.aiWorkflowVersion.create.mock.calls[0] as unknown as [
+      { data: { snapshot: WorkflowDefinition } },
+    ];
+    expect(data.snapshot.steps[0].config.modelOverride).toBe('openai::gpt-4.1');
+    expect(tx.aiWorkflow.update).toHaveBeenCalledWith({
+      where: { id: WORKFLOW_ID },
+      data: { publishedVersionId: VERSION_ID_NEW },
+    });
+    // Inside the caller's transaction, and the caller audits.
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(logAdminAction).not.toHaveBeenCalled();
+    // The publish-time semantic check is not run: only a pin changed.
+    expect(semanticValidateWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses a workflow saved since the subject locks were taken (412), writing nothing', async () => {
+    const { tx, change } = repinTx({
+      draftDefinition: PINNED,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 1, snapshot: PINNED },
+    });
+    const readAt = await lockRepinSubjects(tx as never, [WORKFLOW_ID]);
+    change({
+      draftDefinition: VALID_DEF,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 1, snapshot: PINNED },
+    });
+
+    await expect(repin(tx, readAt.get(WORKFLOW_ID) ?? '')).rejects.toBeInstanceOf(StaleRecordError);
+    expect(tx.aiWorkflow.update).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when neither the draft nor the published version pins the model', async () => {
+    const { tx } = repinTx({
+      draftDefinition: VALID_DEF,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 1, snapshot: VALID_DEF },
+    });
+    const readAt = await lockRepinSubjects(tx as never, [WORKFLOW_ID]);
+    expect(await repin(tx, readAt.get(WORKFLOW_ID) ?? '')).toEqual({
+      draftChanged: false,
+      published: null,
+    });
+    expect(tx.aiWorkflow.update).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('moves only the published version when there is no draft', async () => {
+    const { tx } = repinTx({
+      draftDefinition: null,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 2, snapshot: PINNED },
+    });
+    const readAt = await lockRepinSubjects(tx as never, [WORKFLOW_ID]);
+    expect(await repin(tx, readAt.get(WORKFLOW_ID) ?? '')).toEqual({
+      draftChanged: false,
+      published: { from: 2, to: 6 },
+    });
+    expect(tx.aiWorkflow.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a workflow whose published version fails the checks, draft included, and says why', async () => {
+    const broken = { ...PINNED, entryStepId: 'missing' };
+    const { tx } = repinTx({
+      draftDefinition: PINNED,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 2, snapshot: broken },
+    });
+    const readAt = await lockRepinSubjects(tx as never, [WORKFLOW_ID]);
+    const result = await repin(tx, readAt.get(WORKFLOW_ID) ?? '');
+    expect(result).toEqual({
+      draftChanged: false,
+      published: null,
+      refused: 'Its published version no longer passes the workflow structure checks.',
+    });
+    expect(tx.aiWorkflow.update).not.toHaveBeenCalled();
+    expect(tx.aiWorkflowVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('leaves one that no longer matches the schema', async () => {
+    const { tx } = repinTx({
+      draftDefinition: null,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 2, snapshot: { ...PINNED, errorStrategy: 'explode' } },
+    });
+    const readAt = await lockRepinSubjects(tx as never, [WORKFLOW_ID]);
+    expect((await repin(tx, readAt.get(WORKFLOW_ID) ?? '')).refused).toBe(
+      'Its published version no longer matches the workflow schema.'
+    );
+  });
+
+  it('leaves an erased approver out of the new version, as every version writer does', async () => {
+    const ERASED_ID = 'cmjbv4i3x00003wsloputgone';
+    const withErased: WorkflowDefinition = {
+      ...PINNED,
+      steps: [
+        { ...PINNED.steps[0], nextSteps: [{ targetStepId: 'approve' }] },
+        {
+          id: 'approve',
+          name: 'Approve',
+          type: 'human_approval',
+          config: { prompt: 'OK?', approverUserIds: [ERASED_ID] },
+          nextSteps: [],
+        },
+      ],
+    };
+    const { tx } = repinTx({
+      draftDefinition: null,
+      publishedVersionId: VERSION_ID_V1,
+      publishedVersion: { version: 2, snapshot: withErased },
+    });
+    tx.dataErasureReceipt.findMany.mockResolvedValue([
+      { subjectUserId: ERASED_ID, subjectEmailHash: null, metadata: null },
+    ]);
+    const readAt = await lockRepinSubjects(tx as never, [WORKFLOW_ID]);
+    await repin(tx, readAt.get(WORKFLOW_ID) ?? '');
+    const [{ data }] = tx.aiWorkflowVersion.create.mock.calls[0] as unknown as [
+      { data: { snapshot: WorkflowDefinition } },
+    ];
+    expect(data.snapshot.steps[1].config).toEqual({ prompt: 'OK?', approverUserIds: [] });
+    expect(data.snapshot).not.toEqual(MOVED);
+  });
+
+  it('answers no version for a workflow that is gone, and repin refuses one gone since', async () => {
+    const { tx } = repinTx(null);
+    expect((await lockRepinSubjects(tx as never, [WORKFLOW_ID])).size).toBe(0);
+    await expect(repin(tx, 'v')).rejects.toThrow('not found');
+  });
 });

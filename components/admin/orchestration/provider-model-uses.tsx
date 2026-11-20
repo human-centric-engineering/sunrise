@@ -7,12 +7,14 @@
  * the model route's `lifecycle` and `uses` (`GET /provider-models/:id`).
  *
  * An agent whose model the platform picks says so: it moves off a retiring
- * model on its own. The embedding settings say they are not moved with the
+ * model on its own. Everything else moves with the page's `action`, the move
+ * dialog (§136 t-1066). The embedding settings say they are not moved with the
  * rest, since changing the embedding model means re-embedding (§132).
  *
  * Server-safe (no hooks).
  */
 
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 
 import { Badge } from '@/components/ui/badge';
@@ -90,16 +92,28 @@ export interface ProviderModelUsesProps {
   retiresAt: string | null;
   lifecycle: ProviderModelLifecycleData;
   uses: ProviderModelUsesData;
+  /**
+   * Shown beside the heading: the move (§136 t-1066). Rendered whatever the
+   * uses, so a dialog open across the page's refresh stays mounted; it decides
+   * itself when to show its trigger (`modelHasUses`).
+   */
+  action?: ReactNode;
 }
 
-export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelUsesProps) {
-  const nothing =
+/** Whether anything uses the model: an agent or workflow in any org, or a setting. */
+export function modelHasUses(uses: ProviderModelUsesData): boolean {
+  return (
     uses.agents.length +
       uses.otherOrgAgents +
       uses.workflows.length +
       uses.otherOrgWorkflows +
-      uses.settings.length ===
-    0;
+      uses.settings.length >
+    0
+  );
+}
+
+export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: ProviderModelUsesProps) {
+  const nothing = !modelHasUses(uses);
   const { state, replacement } = lifecycle;
 
   return (
@@ -119,6 +133,10 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses }: ProviderModelU
         {state === 'retired' && retiresAt && (
           <Badge variant="destructive">Retired on {formatDay(retiresAt)}</Badge>
         )}
+        {/* Always rendered: an open move dialog must outlive the refresh that
+            follows a move, after which nothing may use the model. The dialog
+            hides its own trigger then. */}
+        {action && <div className="ml-auto">{action}</div>}
       </div>
 
       {state !== 'current' && (
