@@ -7,7 +7,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('auth.layout.meta');
   return {
     title: {
-      template: t('titleTemplate', { brand: BRAND.name }),
+      // No words to translate, and `%s` must reach Next intact.
+      template: `%s - ${BRAND.name}`,
       default: t('defaultTitle', { brand: BRAND.name }),
     },
     description: t('description'),

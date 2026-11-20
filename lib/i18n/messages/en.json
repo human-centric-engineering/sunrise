@@ -447,7 +447,6 @@
   "auth": {
     "layout": {
       "meta": {
-        "titleTemplate": "%s - {brand}",
         "defaultTitle": "Authentication - {brand}",
         "description": "Sign in or create an account"
       }
@@ -678,7 +677,6 @@
   "account": {
     "layout": {
       "meta": {
-        "titleTemplate": "%s - {brand}",
         "titleDefault": "Dashboard - {brand}",
         "description": "Your dashboard"
       }

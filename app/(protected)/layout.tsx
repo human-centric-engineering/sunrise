@@ -11,7 +11,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('account.layout.meta');
   return {
     title: {
-      template: t('titleTemplate', { brand: BRAND.name }),
+      // No words to translate, and `%s` must reach Next intact.
+      template: `%s - ${BRAND.name}`,
       default: t('titleDefault', { brand: BRAND.name }),
     },
     description: t('description'),
