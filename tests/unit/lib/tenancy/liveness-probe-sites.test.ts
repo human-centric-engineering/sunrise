@@ -1,11 +1,12 @@
 /**
- * Tests: `runAsLivenessProbe` has one caller (#1262). The whole checkout is
+ * Tests: `runAsLivenessProbe` is called from one file (#1262). The whole checkout is
  * read — root files like `proxy.ts` too.
  *
  * The scope is the audited bypass, logged at debug instead of info because
  * monitors poll the health route every few seconds. That trade is only safe
  * while the one thing inside is the database liveness probe's `SELECT 1`,
- * which reads no rows — `getDatabaseHealth()` in `lib/db/utils.ts`. A new
+ * which reads no rows — `getDatabaseHealth()` and `checkDatabaseConnection()`
+ * in `lib/db/utils.ts`. A new
  * caller anywhere else is a bypass nobody would see in the info log. If this
  * fails naming your file: use `runAsSystem`.
  *
@@ -27,7 +28,7 @@ const NAME = 'runAsLivenessProbe';
 
 const ALLOWED = new Set([
   'lib/tenancy/context.ts', // the definition
-  'lib/db/utils.ts', // the one caller: getDatabaseHealth()
+  'lib/db/utils.ts', // the callers: getDatabaseHealth() and checkDatabaseConnection()
 ]);
 
 /** Every source file in the checkout — root files like `proxy.ts` included — but tests. */

@@ -736,7 +736,9 @@ release process.
   `TENANCY_MODE=multi` (#1262).** `getDatabaseHealth()` ran its `SELECT 1`
   probe with no tenant context, which the data layer refuses at `multi`, so
   the route returned 503 on every call. The probe now runs in
-  `runAsLivenessProbe`.
+  `runAsLivenessProbe`, and so does `checkDatabaseConnection()`, which
+  had the same fault: with no org entered it answered `false` and logged a
+  failed connection to a healthy database (t-1055).
 
 - **Phone photos are stored upright (#1152, t-1002).** `processImage`
   (`lib/storage/image.ts`) ignored the EXIF Orientation tag and dropped it on
