@@ -95,6 +95,8 @@ describe('OrgOptionsForm (t-1054)', () => {
 
   it('says there are none when the app registers no org-set switch', () => {
     render(<OrgOptionsForm orgId={ORG} options={view({ switches: [] })} />);
-    expect(screen.getByText(/no options your organisation can change/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/no parts of the app your organisation can turn on or off/)
+    ).toBeInTheDocument();
   });
 });

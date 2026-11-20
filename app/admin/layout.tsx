@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
+import { getTranslations } from 'next-intl/server';
 import { getServerSession } from '@/lib/auth/utils';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminHeader } from '@/components/admin/admin-header';
@@ -17,7 +18,6 @@ import {
 } from '@/lib/auth/admin-page-viewer';
 import { SupportBanner } from '@/components/admin/support-banner';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
-import { orgSettableSwitches } from '@/lib/tenancy/entitlements';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import {
@@ -37,13 +37,16 @@ import { AdminTierGate } from '@/components/admin/admin-tier-gate';
 import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
-export const metadata: Metadata = {
-  title: {
-    template: `%s - Admin - ${BRAND.name}`,
-    default: `Admin - ${BRAND.name}`,
-  },
-  description: `Admin dashboard for ${BRAND.name}`,
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('admin.shell');
+  return {
+    title: {
+      template: `%s - ${t('admin')} - ${BRAND.name}`,
+      default: t('metaTitle', { brand: BRAND.name }),
+    },
+    description: t('metaDescription', { brand: BRAND.name }),
+  };
+}
 
 /**
  * Admin Layout (Phase 4.4)
@@ -159,7 +162,6 @@ export default async function AdminLayout({
           pageRequirements={pageRequirements}
           lockedSwitches={lockedSwitches}
           waitlistEnabled={isWaitlistEnabled()}
-          orgOptionsEnabled={orgSettableSwitches().length > 0}
         />
         <div className="flex flex-1 flex-col overflow-hidden">
           {supportSession && <SupportBanner view={supportSession} />}

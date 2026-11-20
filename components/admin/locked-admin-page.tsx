@@ -11,11 +11,13 @@
  */
 
 import { Lock } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 
 import { Button } from '@/components/ui/button';
 import type { LockedAdminSwitch } from '@/lib/auth/admin-tier';
 
 export function LockedAdminPage({ locked }: { locked: LockedAdminSwitch }) {
+  const t = useTranslations('admin.shell');
   return (
     <section
       aria-labelledby="locked-admin-page-title"
@@ -24,7 +26,7 @@ export function LockedAdminPage({ locked }: { locked: LockedAdminSwitch }) {
       <div className="flex items-center gap-2">
         <Lock className="text-muted-foreground h-5 w-5" aria-hidden="true" />
         <h1 id="locked-admin-page-title" className="text-xl font-semibold">
-          {locked.label} is not available
+          {t('notAvailable', { label: locked.label })}
         </h1>
       </div>
       <p className="text-muted-foreground text-sm">{locked.message}</p>
@@ -41,13 +43,14 @@ export function UpgradeLink({
   locked: LockedAdminSwitch;
   size?: 'default' | 'sm';
 }) {
+  const t = useTranslations('admin.shell');
   if (!locked.upgradeUrl) return null;
   // A path on this site or an https address, checked when the app registered it.
   const external = !locked.upgradeUrl.startsWith('/');
   return (
     <Button asChild size={size}>
       <a href={locked.upgradeUrl} {...(external ? { rel: 'noopener noreferrer' } : {})}>
-        How to get {locked.label}
+        {t('howToGet', { label: locked.label })}
       </a>
     </Button>
   );

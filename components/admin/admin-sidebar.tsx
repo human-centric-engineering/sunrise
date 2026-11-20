@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
@@ -67,7 +68,7 @@ import {
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { authLandingLabel, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
 // Auto-wire the app's admin-nav registrations (fork-readiness — the `lib/app/`
 // bootstrap surface). Runs once when this client module loads (and during the
@@ -112,7 +113,7 @@ export const coreNavSections: NavSection[] = [
         tier: 'org',
         label: 'Options',
         icon: SlidersHorizontal,
-        description: 'Parts of the app this organisation turns on or off',
+        description: 'Language, and parts of the app this organisation turns on or off',
       },
       {
         href: '/admin/provider-keys',
@@ -347,6 +348,7 @@ function LockedOr({
   nested?: boolean;
   children: React.ReactNode;
 }) {
+  const t = useTranslations('admin.shell');
   const locked = useContext(LockedItemsContext).get(item.href);
   if (!locked) return <>{children}</>;
   const Icon = item.icon;
@@ -360,8 +362,8 @@ function LockedOr({
             nested ? 'gap-2.5 px-2 py-1.5 text-[13px]' : 'gap-3 px-2 py-2 text-sm font-medium',
             collapsed && 'justify-center'
           )}
-          title={collapsed ? `${item.label} (locked)` : undefined}
-          aria-label={`${item.label} (locked)`}
+          title={collapsed ? t('lockedItem', { label: item.label }) : undefined}
+          aria-label={t('lockedItem', { label: item.label })}
         >
           <Icon className={cn('shrink-0', nested ? 'h-4 w-4' : 'h-5 w-5')} />
           {!collapsed && <span className="flex-1">{item.label}</span>}
@@ -369,7 +371,7 @@ function LockedOr({
         </button>
       </PopoverTrigger>
       <PopoverContent side="right" align="start" className="space-y-3 text-sm">
-        <p className="font-medium">{locked.label} is not available</p>
+        <p className="font-medium">{t('notAvailable', { label: locked.label })}</p>
         <p className="text-muted-foreground">{locked.message}</p>
         <UpgradeLink locked={locked} size="sm" />
       </PopoverContent>
@@ -567,12 +569,6 @@ interface AdminSidebarProps {
    * Its item is hidden otherwise, as its routes answer 404.
    */
   waitlistEnabled?: boolean;
-  /**
-   * The app registers a switch an org's own admins may set (`setBy: 'org'`,
-   * §135 t-1054). The Options item is hidden otherwise, as its page lists
-   * nothing.
-   */
-  orgOptionsEnabled?: boolean;
 }
 
 /**
@@ -602,30 +598,79 @@ export function sectionsForMode(sections: NavSection[], multiTenant: boolean): N
   }));
 }
 
-/** Items shown only when the app has switched their capability on. */
+/**
+ * Items shown only when the app has switched their capability on. Options
+ * (t-1054) is not among them: it carries the org's language (§138 t-1074),
+ * which every install has, whether or not the app registers an org-set switch.
+ */
 const WAITLIST_ITEM = '/admin/waitlist';
-/** Shown only when the app registers a switch an org's own admins may set (t-1054). */
-const ORG_OPTIONS_ITEM = '/admin/org-options';
 
-/** The sections without the waitlist item when the app has no waitlist, nor the options item when it has no org-set switch. */
+/** The sections without the waitlist item when the app has no waitlist. */
 export function sectionsForCapabilities(
   sections: NavSection[],
-  {
-    waitlistEnabled,
-    orgOptionsEnabled = false,
-  }: { waitlistEnabled: boolean; orgOptionsEnabled?: boolean }
+  { waitlistEnabled }: { waitlistEnabled: boolean }
 ): NavSection[] {
-  if (waitlistEnabled && orgOptionsEnabled) return sections;
-  const hidden = new Set([
-    ...(waitlistEnabled ? [] : [WAITLIST_ITEM]),
-    ...(orgOptionsEnabled ? [] : [ORG_OPTIONS_ITEM]),
-  ]);
-  const kept = (items: NavItem[]) => items.filter((item) => !hidden.has(item.href));
+  if (waitlistEnabled) return sections;
+  const kept = (items: NavItem[]) => items.filter((item) => item.href !== WAITLIST_ITEM);
   return sections.map((section) => ({
     ...section,
     ...(section.items ? { items: kept(section.items) } : {}),
     ...(section.subgroups
       ? { subgroups: section.subgroups.map((group) => ({ ...group, items: kept(group.items) })) }
+      : {}),
+  }));
+}
+
+/**
+ * The core items an org admin opens for the org-settings pages, and the
+ * section that holds them, read from the catalogue (§138 t-1074) by href and
+ * by title. Everything else keeps the English in {@link coreNavSections}:
+ * staff-only items and the orchestration items stay English (owner ruling,
+ * §138 planning), and a fork's own items are the fork's copy, used as given.
+ */
+type NavKey =
+  | 'management'
+  | 'members'
+  | 'membersDescription'
+  | 'orgOptions'
+  | 'orgOptionsDescription'
+  | 'providerKeys'
+  | 'providerKeysDescription'
+  | 'supportAccess'
+  | 'supportAccessDescription'
+  | 'waitlist'
+  | 'waitlistDescription';
+
+const CATALOGUE_ITEMS: Readonly<Record<string, { label: NavKey; description: NavKey }>> = {
+  '/admin/members': { label: 'members', description: 'membersDescription' },
+  '/admin/org-options': { label: 'orgOptions', description: 'orgOptionsDescription' },
+  '/admin/provider-keys': { label: 'providerKeys', description: 'providerKeysDescription' },
+  '/admin/support-access': { label: 'supportAccess', description: 'supportAccessDescription' },
+  '/admin/waitlist': { label: 'waitlist', description: 'waitlistDescription' },
+};
+const CATALOGUE_SECTIONS: Readonly<Record<string, NavKey>> = { Management: 'management' };
+
+/** A section's heading: the catalogue's word for a section listed above, else its title. */
+function sectionHeading(title: string, t: (key: NavKey) => string): string {
+  return Object.hasOwn(CATALOGUE_SECTIONS, title) ? t(CATALOGUE_SECTIONS[title]) : title;
+}
+
+/**
+ * The items listed above with the catalogue's words, the rest as given. The
+ * href, the tier and everything the sidebar decides by are untouched.
+ */
+export function itemsInLanguage(sections: NavSection[], t: (key: NavKey) => string): NavSection[] {
+  const item = (navItem: NavItem): NavItem => {
+    const keys = Object.hasOwn(CATALOGUE_ITEMS, navItem.href)
+      ? CATALOGUE_ITEMS[navItem.href]
+      : null;
+    return keys ? { ...navItem, label: t(keys.label), description: t(keys.description) } : navItem;
+  };
+  return sections.map((section) => ({
+    ...section,
+    ...(section.items ? { items: section.items.map(item) } : {}),
+    ...(section.subgroups
+      ? { subgroups: section.subgroups.map((g) => ({ ...g, items: g.items.map(item) })) }
       : {}),
   }));
 }
@@ -831,8 +876,10 @@ export function AdminSidebar({
   lockedSwitches = NO_LOCKED_SWITCHES,
   multiTenant = false,
   waitlistEnabled = false,
-  orgOptionsEnabled = false,
 }: AdminSidebarProps) {
+  const t = useTranslations('admin.shell');
+  const tNav = useTranslations('admin.nav');
+  const tLayout = useTranslations('layout.nav');
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const counts = useExecutionCounts(BADGE_STATUSES, reach === 'platform');
@@ -844,16 +891,19 @@ export function AdminSidebar({
       // is module-import-time and synchronous, so reading it during render is
       // safe — see lib/admin-nav/registry.ts.
       injectBadges(
-        sectionsForViewer(
-          sectionsForCapabilities(
-            sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
-            { waitlistEnabled, orgOptionsEnabled }
+        itemsInLanguage(
+          sectionsForViewer(
+            sectionsForCapabilities(
+              sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
+              { waitlistEnabled }
+            ),
+            reach,
+            orgTierPages,
+            namedTierPages,
+            pageRequirements,
+            lockedSwitches
           ),
-          reach,
-          orgTierPages,
-          namedTierPages,
-          pageRequirements,
-          lockedSwitches
+          tNav
         ),
         {
           '/admin/orchestration/approvals': approvalCount,
@@ -870,7 +920,7 @@ export function AdminSidebar({
       lockedSwitches,
       multiTenant,
       waitlistEnabled,
-      orgOptionsEnabled,
+      tNav,
     ]
   );
   // Which shown items are locked, by href, for every item renderer below.
@@ -911,7 +961,7 @@ export function AdminSidebar({
           <div className="flex h-16 items-center justify-between border-b px-4">
             {!collapsed && (
               <Link href="/admin" className="text-lg font-semibold">
-                Admin
+                {t('admin')}
               </Link>
             )}
             <Button
@@ -919,7 +969,7 @@ export function AdminSidebar({
               size="icon"
               onClick={() => setCollapsed(!collapsed)}
               className={cn('h-8 w-8', collapsed && 'mx-auto')}
-              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={collapsed ? t('expandSidebar') : t('collapseSidebar')}
             >
               {collapsed ? (
                 <ChevronRight className="h-4 w-4" />
@@ -944,7 +994,7 @@ export function AdminSidebar({
                         'text-muted-foreground text-xs font-semibold tracking-wider uppercase'
                     )}
                   >
-                    {section.titleNode ?? section.title}
+                    {section.titleNode ?? sectionHeading(section.title, tNav)}
                   </h3>
                 )}
                 {section.items && (
@@ -1004,7 +1054,9 @@ export function AdminSidebar({
               )}
             >
               <ChevronLeft className="h-4 w-4" />
-              {!collapsed && <span>Back to {AUTH_LANDING_LABEL}</span>}
+              {!collapsed && (
+                <span>{t('backTo', { destination: authLandingLabel(tLayout('dashboard')) })}</span>
+              )}
             </Link>
           </div>
         </div>

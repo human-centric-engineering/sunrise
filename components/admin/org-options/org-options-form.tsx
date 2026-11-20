@@ -15,6 +15,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -52,12 +53,13 @@ export function OrgOptionsForm({
   orgId: string;
   options: OrgOptionsView;
 }) {
+  const t = useTranslations('admin.orgOptions');
   const [view, setView] = useState(initial);
   const [ticked, setTicked] = useState(() => onKeys(initial));
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const failure = useSaveFailure({
-    fallback: 'Could not save the options',
+    fallback: t('saveFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
@@ -97,19 +99,10 @@ export function OrgOptionsForm({
   };
 
   if (view.registrationFailed) {
-    return (
-      <p className="text-destructive text-sm">
-        The app&apos;s options could not be loaded, so none of them is on. Ask whoever manages your
-        organisation&apos;s account to look at it.
-      </p>
-    );
+    return <p className="text-destructive text-sm">{t('registrationFailed')}</p>;
   }
   if (view.switches.length === 0) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        There are no options your organisation can change on this install.
-      </p>
-    );
+    return <p className="text-muted-foreground text-sm">{t('none')}</p>;
   }
 
   return (
@@ -119,30 +112,22 @@ export function OrgOptionsForm({
           role="note"
           className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm"
         >
-          This organisation&apos;s options could not be read, so they are all off and cannot be
-          changed here. Ask whoever manages your organisation&apos;s account to look at them.
+          {t('unreadable')}
         </div>
       )}
       {!view.unreadable && !view.mayChange && (
         <p role="note" className="rounded-md border p-3 text-sm">
-          Support staff can see these options but cannot change them.
+          {t('supportReadOnly')}
         </p>
       )}
 
       {/* Locked while a save runs, so a tick made meanwhile is not lost when it lands. */}
       <fieldset className="grid gap-2" disabled={saving || !view.mayChange}>
         <legend className="mb-2 text-sm font-medium">
-          Options for this organisation{' '}
-          <FieldHelp title="Organisation options">
-            <p>
-              Each option turns a part of the app on or off for everyone in this organisation. Your
-              organisation&apos;s admins can change these; what your organisation pays for is set by
-              whoever manages its account and is not listed here.
-            </p>
-            <p className="mt-2">
-              An option nobody has changed follows its default, marked <em>on by default</em> when
-              that is on.
-            </p>
+          {t('legend')}{' '}
+          <FieldHelp title={t('helpTitle')}>
+            <p>{t('help')}</p>
+            <p className="mt-2">{t.rich('helpDefault', { em: (chunks) => <em>{chunks}</em> })}</p>
           </FieldHelp>
         </legend>
         <div className="space-y-3 rounded-md border p-3">
@@ -163,15 +148,13 @@ export function OrgOptionsForm({
                   {s.label}
                   {s.whenNothingSet && (
                     <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-                      on by default
+                      {t('onByDefault')}
                     </Badge>
                   )}
                 </label>
                 {s.description && <p className="text-muted-foreground text-xs">{s.description}</p>}
                 {s.atDefault && (
-                  <p className="text-muted-foreground text-xs italic">
-                    Not changed here yet, so it follows its default.
-                  </p>
+                  <p className="text-muted-foreground text-xs italic">{t('atDefault')}</p>
                 )}
               </div>
             </div>
@@ -183,9 +166,9 @@ export function OrgOptionsForm({
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => void save()} disabled={saving || !anyChange}>
-              {saving ? 'Saving…' : 'Save options'}
+              {saving ? t('saving') : t('save')}
             </Button>
-            {saved && <span className="text-sm text-green-600">Saved</span>}
+            {saved && <span className="text-sm text-green-600">{t('saved')}</span>}
           </div>
           <SaveError failure={failure.failure} />
         </div>
