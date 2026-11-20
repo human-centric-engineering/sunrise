@@ -643,6 +643,8 @@ release process.
   `durationLabel(hours, t)` (`components/admin/support-access/support-grant-form`)
   takes the translator, and `SUPPORT_GRANT_DURATIONS` is the list of hours.
   `SUPPORT_GRANT_LEVEL_LABELS` stays, as the English for staff screens.
+  The admin sidebar no longer takes `orgOptionsEnabled` (prop or
+  `sectionsForCapabilities()` option): Options is always listed.
   **Fork impact:** code that read one of these fails to compile; read the
   catalogue key instead.
 

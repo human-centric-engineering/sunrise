@@ -1,5 +1,3 @@
-'use client';
-
 /**
  * What each org role may do, for the Members page's role fields (§111 t-813).
  *

@@ -1,11 +1,13 @@
-'use client';
-
 /**
  * What each support-grant level lets the vendor's support staff do (§121
  * t-823), for the Support access page.
  *
  * Describes the rules; enforces none of them. Entering under a grant, and
  * refusing writes at read-only, are the guard's (§121 t-824).
+ *
+ * Not a client module: `SUPPORT_GRANT_LEVEL_LABELS` is read by a Server
+ * Component (`components/admin/orgs/orgs-table.tsx`), and a client module's
+ * exports reach the server only as references (t-1074 review).
  *
  * The Support access page reads its words from the catalogue (§138 t-1074),
  * `admin.supportAccess.levels`. {@link SUPPORT_GRANT_LEVEL_LABELS} is the
