@@ -12,6 +12,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useFormatter, useTranslations } from 'next-intl';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,11 +34,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ClientDate } from '@/components/ui/client-date';
-import {
-  SupportLevelHelp,
-  SUPPORT_GRANT_LEVEL_LABELS,
-} from '@/components/admin/support-access/support-level-help';
+import { SupportLevelHelp } from '@/components/admin/support-access/support-level-help';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -63,26 +60,33 @@ export interface SupportGrantsTableProps {
   grants: SupportGrantRow[];
 }
 
-function statusOf(grant: SupportGrantRow): { label: string; when: string } {
-  if (grant.open) return { label: 'Open', when: grant.expiresAt };
-  if (grant.revokedAt) return { label: 'Revoked', when: grant.revokedAt };
-  return { label: 'Expired', when: grant.expiresAt };
-}
-
-/** A person named on a grant, or what to say when their account is gone. */
-function personName(person: { name: string | null } | null): string {
-  if (!person) return 'Deleted account';
-  return person.name || 'Unnamed';
+function statusOf(grant: SupportGrantRow): {
+  label: 'open' | 'revoked' | 'expired';
+  when: string;
+} {
+  if (grant.open) return { label: 'open', when: grant.expiresAt };
+  if (grant.revokedAt) return { label: 'revoked', when: grant.revokedAt };
+  return { label: 'expired', when: grant.expiresAt };
 }
 
 export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
+  const t = useTranslations('admin.supportAccess');
+  const tShell = useTranslations('admin.shell');
+  const format = useFormatter();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+
+  /** A person named on a grant, or what to say when their account is gone. */
+  const personName = (person: { name: string | null } | null): string => {
+    if (!person) return tShell('deletedAccount');
+    return person.name || tShell('unnamed');
+  };
+  const when = (iso: string) => format.dateTime(new Date(iso), 'dateTime');
   const [revoking, setRevoking] = useState<SupportGrantRow | null>(null);
   // Revoke is the only row action, and it is confirmed in the dialog: its
   // failure shows there, and the dialog stays open.
   const revokeSave = useSaveFailure({
-    fallback: 'Could not revoke support access. Try again.',
+    fallback: t('grants.revokeFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
@@ -114,18 +118,18 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Status</TableHead>
+              <TableHead>{t('grants.status')}</TableHead>
               <TableHead>
                 <span className="flex items-center gap-1">
-                  Level <SupportLevelHelp />
+                  {t('grants.level')} <SupportLevelHelp />
                 </span>
               </TableHead>
-              <TableHead>Reason</TableHead>
-              <TableHead>Granted by</TableHead>
-              <TableHead>Granted</TableHead>
-              <TableHead>Ends</TableHead>
+              <TableHead>{t('grants.reason')}</TableHead>
+              <TableHead>{t('grants.grantedBy')}</TableHead>
+              <TableHead>{t('grants.granted')}</TableHead>
+              <TableHead>{t('grants.ends')}</TableHead>
               <TableHead className="w-24">
-                <span className="sr-only">Actions</span>
+                <span className="sr-only">{tShell('actions')}</span>
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -133,7 +137,7 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
             {grants.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
-                  Support has never been given access to this organisation.
+                  {t('grants.empty')}
                 </TableCell>
               </TableRow>
             ) : (
@@ -146,22 +150,20 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
                         variant={grant.open ? 'default' : 'outline'}
                         className="px-1.5 py-0 text-[10px]"
                       >
-                        {status.label}
+                        {t(`grants.${status.label}`)}
                       </Badge>
                     </TableCell>
-                    <TableCell>{SUPPORT_GRANT_LEVEL_LABELS[grant.level]}</TableCell>
+                    <TableCell>{t(`levels.${grant.level}`)}</TableCell>
                     <TableCell className="max-w-xs text-sm break-words whitespace-pre-wrap">
                       {grant.reason}
                     </TableCell>
                     <TableCell>{personName(grant.grantedBy)}</TableCell>
+                    <TableCell>{when(grant.createdAt)}</TableCell>
                     <TableCell>
-                      <ClientDate date={grant.createdAt} showTime />
-                    </TableCell>
-                    <TableCell>
-                      <ClientDate date={status.when} showTime />
+                      {when(status.when)}
                       {grant.revokedAt && (
                         <span className="text-muted-foreground block text-xs">
-                          by {personName(grant.revokedBy)}
+                          {t('grants.revokedBy', { who: personName(grant.revokedBy) })}
                         </span>
                       )}
                     </TableCell>
@@ -173,7 +175,7 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
                           disabled={busy}
                           onClick={() => setRevoking(grant)}
                         >
-                          Revoke
+                          {t('grants.revoke')}
                         </Button>
                       )}
                     </TableCell>
@@ -188,15 +190,12 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
       <AlertDialog open={!!revoking} onOpenChange={revokeDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke support access</AlertDialogTitle>
-            <AlertDialogDescription>
-              Support loses access to this organisation now, including anyone from support who is
-              working in it. You can grant access again at any time.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t('grants.revokeTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('grants.revokeDescription')}</AlertDialogDescription>
           </AlertDialogHeader>
           <SaveError failure={revokeSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel {...revokeDialog.cancelProps}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...revokeDialog.cancelProps}>{tShell('cancel')}</AlertDialogCancel>
             <AlertDialogAction
               {...revokeDialog.actionProps()}
               onClick={(e) =>
@@ -205,7 +204,7 @@ export function SupportGrantsTable({ orgId, grants }: SupportGrantsTableProps) {
                 })
               }
             >
-              Revoke
+              {t('grants.revoke')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -9,8 +9,9 @@
  * before it is sent.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ShieldCheck } from 'lucide-react';
@@ -29,45 +30,53 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { FormError, SaveError } from '@/components/forms/form-error';
-import {
-  SupportLevelHelp,
-  SUPPORT_GRANT_LEVEL_LABELS,
-} from '@/components/admin/support-access/support-level-help';
+import { SupportLevelHelp } from '@/components/admin/support-access/support-level-help';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { DEFAULT_SUPPORT_GRANT_LEVEL, SUPPORT_GRANT_LEVELS } from '@/lib/tenancy/roles';
 import {
-  createSupportGrantSchema,
+  buildSupportGrantSchema,
   SUPPORT_GRANT_DEFAULT_HOURS,
   SUPPORT_GRANT_MAX_HOURS,
 } from '@/lib/validations/tenancy';
+import type { ValidationT } from '@/lib/validations/messages';
+
+/** Looks up a duration in `admin.supportAccess`; ICU plurals do the counting. */
+export type DurationT = (
+  key: 'duration' | 'durationDays',
+  values: { hours: number } | { days: number }
+) => string;
 
 /** A duration as the form shows it: hours up to a day, whole days beyond. */
-export function durationLabel(hours: number): string {
-  if (hours > 24 && hours % 24 === 0) return `${hours / 24} days`;
-  return hours === 1 ? '1 hour' : `${hours} hours`;
+export function durationLabel(hours: number, t: DurationT): string {
+  if (hours > 24 && hours % 24 === 0) return t('durationDays', { days: hours / 24 });
+  return t('duration', { hours });
 }
 
 /**
  * The durations offered, in hours: the default and the API's maximum always
  * among them, none past the maximum, each once.
  */
-export const SUPPORT_GRANT_DURATIONS: readonly { hours: number; label: string }[] = [
+export const SUPPORT_GRANT_DURATIONS: readonly number[] = [
   ...new Set([1, 4, SUPPORT_GRANT_DEFAULT_HOURS, 72, SUPPORT_GRANT_MAX_HOURS]),
 ]
   .filter((hours) => hours <= SUPPORT_GRANT_MAX_HOURS)
-  .sort((a, b) => a - b)
-  .map((hours) => ({ hours, label: durationLabel(hours) }));
+  .sort((a, b) => a - b);
 
 // The route's own schema, with level and duration required because the form
-// always has one selected. Unwrapped, not redeclared, so the route's bounds hold.
-const grantFormSchema = createSupportGrantSchema.extend({
-  level: createSupportGrantSchema.shape.level.unwrap(),
-  durationHours: createSupportGrantSchema.shape.durationHours.unwrap(),
-});
+// always has one selected. Unwrapped, not redeclared, so the route's bounds
+// hold. Built with the form's translator, so its errors read in the viewer's
+// language.
+function grantFormSchemaFor(t: ValidationT) {
+  const base = buildSupportGrantSchema(t);
+  return base.extend({
+    level: base.shape.level.unwrap(),
+    durationHours: base.shape.durationHours.unwrap(),
+  });
+}
 
-type GrantFormData = z.infer<typeof grantFormSchema>;
+type GrantFormData = z.infer<ReturnType<typeof grantFormSchemaFor>>;
 
 /**
  * Server path → the field that shows its message. Only the reason renders
@@ -85,6 +94,10 @@ export interface SupportGrantFormProps {
 }
 
 export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormProps) {
+  const t = useTranslations('admin.supportAccess');
+  const tv = useTranslations('validation');
+  const grantFormSchema = useMemo(() => grantFormSchemaFor(tv), [tv]);
+  const duration = (hours: number) => durationLabel(hours, t);
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
 
@@ -108,7 +121,7 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
   const level = watch('level');
   const durationHours = watch('durationHours');
   const save = useSaveFailure({
-    fallback: 'An unexpected error occurred',
+    fallback: t('form.failed'),
     fields: SERVER_FIELDS,
     setError,
     errors,
@@ -130,11 +143,8 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Grant support access</CardTitle>
-        <CardDescription>
-          Let the platform&apos;s support staff into this organisation for a limited time, to help
-          with a problem. Any of them can enter until the grant ends or you revoke it.
-        </CardDescription>
+        <CardTitle className="text-lg">{t('form.title')}</CardTitle>
+        <CardDescription>{t('form.description')}</CardDescription>
       </CardHeader>
       <CardContent>
         <form
@@ -146,7 +156,7 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="grant-level" className="flex items-center gap-1">
-                Access level <SupportLevelHelp />
+                {t('form.level')} <SupportLevelHelp />
               </Label>
               <Select
                 value={level}
@@ -160,7 +170,7 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
                 <SelectContent>
                   {SUPPORT_GRANT_LEVELS.map((value) => (
                     <SelectItem key={value} value={value}>
-                      {SUPPORT_GRANT_LEVEL_LABELS[value]}
+                      {t(`levels.${value}`)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -168,15 +178,11 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
             </div>
             <div className="space-y-2">
               <Label htmlFor="grant-duration" className="flex items-center gap-1">
-                For{' '}
-                <FieldHelp title="How long access lasts">
-                  <p>
-                    Support can enter until this time runs out. Nothing needs doing when it ends:
-                    access stops on its own.
-                  </p>
+                {t('form.for')}{' '}
+                <FieldHelp title={t('form.durationHelpTitle')}>
+                  <p>{t('form.durationHelp')}</p>
                   <p className="mt-2">
-                    The longest grant is {durationLabel(SUPPORT_GRANT_MAX_HOURS)}. If support needs
-                    longer, grant again with a new reason.
+                    {t('form.durationHelpMax', { max: duration(SUPPORT_GRANT_MAX_HOURS) })}
                   </p>
                 </FieldHelp>
               </Label>
@@ -188,9 +194,9 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {SUPPORT_GRANT_DURATIONS.map((option) => (
-                    <SelectItem key={option.hours} value={String(option.hours)}>
-                      {option.label}
+                  {SUPPORT_GRANT_DURATIONS.map((hours) => (
+                    <SelectItem key={hours} value={String(hours)}>
+                      {duration(hours)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -199,13 +205,9 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
           </div>
           <div className="space-y-2">
             <Label htmlFor="grant-reason" className="flex items-center gap-1">
-              Reason{' '}
-              <FieldHelp title="Why support needs access">
-                <p>
-                  Say what support is helping with, for example a ticket number or the agent that is
-                  not working. Support sees this when they enter, and it stays on the record of this
-                  grant.
-                </p>
+              {t('form.reason')}{' '}
+              <FieldHelp title={t('form.reasonHelpTitle')}>
+                <p>{t('form.reasonHelp')}</p>
               </FieldHelp>
             </Label>
             <Textarea id="grant-reason" rows={3} {...register('reason')} />
@@ -213,14 +215,16 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
           </div>
 
           {replacesOpenGrant && (
-            <p className="text-muted-foreground text-sm">
-              Support already has access. Granting again ends the current grant and starts this one.
-            </p>
+            <p className="text-muted-foreground text-sm">{t('form.replaces')}</p>
           )}
 
           <Button type="submit" disabled={submitting}>
             <ShieldCheck className="mr-2 h-4 w-4" />
-            {submitting ? 'Granting…' : replacesOpenGrant ? 'Replace grant' : 'Grant access'}
+            {submitting
+              ? t('form.granting')
+              : replacesOpenGrant
+                ? t('form.replace')
+                : t('form.grant')}
           </Button>
 
           <SaveError failure={save.failure} />
