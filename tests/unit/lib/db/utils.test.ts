@@ -383,18 +383,30 @@ describe('checkDatabaseConnection at TENANCY_MODE=multi', () => {
     mockEnv.TENANCY_MODE = 'single';
   });
 
-  it('reports connected when called with no tenant context, from the system scope', async () => {
+  it('reports connected when called with no tenant context, through the refusal rule', async () => {
+    expect(getTenantContext()).toBeNull();
+
+    // The beforeEach mock refuses raw SQL with no tenant context, so `true`
+    // here means the probe entered a scope the data layer accepts.
+    expect(await checkDatabaseConnection()).toBe(true); // test-review:accept tobe_true — boolean return
+    expect(vi.mocked(logger.error)).toHaveBeenCalledTimes(0);
+  });
+
+  it('runs the probe in the system scope, logged at debug, not an org', async () => {
     let probeContext: ReturnType<typeof getTenantContext> = null;
     vi.mocked(prisma.$queryRaw).mockImplementation((() => {
       probeContext = getTenantContext();
       return Promise.resolve([{ result: 1 }]);
     }) as any);
-    expect(getTenantContext()).toBeNull();
 
-    expect(await checkDatabaseConnection()).toBe(true); // test-review:accept tobe_true — boolean return
+    await checkDatabaseConnection();
 
     expect(probeContext).toMatchObject({ orgId: null, source: 'system' });
-    expect(vi.mocked(logger.error)).toHaveBeenCalledTimes(0);
+    // Not runAsSystem, which logs at info on every entry.
+    expect(vi.mocked(logger.debug)).toHaveBeenCalledWith(
+      'Entering system tenant scope for the database liveness probe'
+    );
+    expect(vi.mocked(logger.info)).toHaveBeenCalledTimes(0);
   });
 
   it('still reports the database down when it is', async () => {

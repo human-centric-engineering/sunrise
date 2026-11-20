@@ -156,9 +156,10 @@ level.
   read-only; that module's queries do, which is why it is confined there.
 - **`runAsLivenessProbe(fn)`** (#1262) — the same null-org system scope, for
   the database liveness probe's `SELECT 1` in `getDatabaseHealth()`, which the
-  unauthenticated `/api/health` route calls with no org to enter. Logged at
-  `debug` for `runAsCredentialLookup`'s reason: monitors poll it every few
-  seconds. It reads no rows, has one caller, `lib/db/utils.ts`, and
+  unauthenticated `/api/health` route calls with no org to enter, and in
+  `checkDatabaseConnection()` (t-1055). Logged at `debug` for
+  `runAsCredentialLookup`'s reason: monitors poll it every few seconds. It
+  reads no rows, is called from one file, `lib/db/utils.ts`, and
   `tests/unit/lib/tenancy/liveness-probe-sites.test.ts` (always-run) fails
   naming any other.
 - **`runDetached(fn)`** (§108 t-715) — runs `fn` outside every scope, for
