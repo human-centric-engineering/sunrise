@@ -2,8 +2,9 @@
 
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useState } from 'react';
-import { contactClientSchema, type ContactClientInput } from '@/lib/validations/contact';
+import { useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { createContactClientSchema, type ContactClientInput } from '@/lib/validations/contact';
 import { useFormAnalytics } from '@/lib/analytics/events';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,6 +47,9 @@ export function ContactForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const { trackFormSubmitted } = useFormAnalytics();
+  const t = useTranslations('marketing.contact.form');
+  const tv = useTranslations('validation');
+  const schema = useMemo(() => createContactClientSchema(tv), [tv]);
 
   const {
     register,
@@ -54,7 +58,7 @@ export function ContactForm() {
     setError,
     formState: { errors },
   } = useForm<ContactClientInput>({
-    resolver: zodResolver(contactClientSchema),
+    resolver: zodResolver(schema),
     mode: 'onTouched',
     defaultValues: {
       name: '',
@@ -66,7 +70,7 @@ export function ContactForm() {
   });
 
   const save = useSaveFailure({
-    fallback: 'An unexpected error occurred. Please try again.',
+    fallback: t('saveFailed'),
     fields: SERVER_FIELDS,
     setError,
     errors,
@@ -101,10 +105,8 @@ export function ContactForm() {
           <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
         </div>
         <div>
-          <h3 className="text-lg font-semibold">Message Sent!</h3>
-          <p className="text-muted-foreground mt-1">
-            Thank you for reaching out. We&apos;ll get back to you as soon as possible.
-          </p>
+          <h3 className="text-lg font-semibold">{t('successTitle')}</h3>
+          <p className="text-muted-foreground mt-1">{t('successBody')}</p>
         </div>
       </div>
     );
@@ -120,17 +122,17 @@ export function ContactForm() {
       <NoScriptNotice />
       {/* Hidden honeypot field - invisible to real users, attracts bots */}
       <div className="absolute -left-[9999px] opacity-0" aria-hidden="true">
-        <label htmlFor="website">Website (leave blank)</label>
+        <label htmlFor="website">{t('honeypotLabel')}</label>
         <input type="text" id="website" tabIndex={-1} autoComplete="off" {...register('website')} />
       </div>
 
       {/* Name Field */}
       <div className="space-y-2">
-        <Label htmlFor="name">Name</Label>
+        <Label htmlFor="name">{t('name')}</Label>
         <Input
           id="name"
           type="text"
-          placeholder="Your name"
+          placeholder={t('namePlaceholder')}
           autoComplete="name"
           disabled={isLoading}
           {...register('name')}
@@ -140,7 +142,7 @@ export function ContactForm() {
 
       {/* Email Field */}
       <div className="space-y-2">
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="email">{t('email')}</Label>
         <Input
           id="email"
           type="email"
@@ -154,11 +156,11 @@ export function ContactForm() {
 
       {/* Subject Field */}
       <div className="space-y-2">
-        <Label htmlFor="subject">Subject</Label>
+        <Label htmlFor="subject">{t('subject')}</Label>
         <Input
           id="subject"
           type="text"
-          placeholder="What is this about?"
+          placeholder={t('subjectPlaceholder')}
           disabled={isLoading}
           {...register('subject')}
         />
@@ -167,10 +169,10 @@ export function ContactForm() {
 
       {/* Message Field */}
       <div className="space-y-2">
-        <Label htmlFor="message">Message</Label>
+        <Label htmlFor="message">{t('message')}</Label>
         <Textarea
           id="message"
-          placeholder="Your message..."
+          placeholder={t('messagePlaceholder')}
           className="min-h-[120px] resize-y"
           disabled={isLoading}
           {...register('message')}
@@ -185,10 +187,10 @@ export function ContactForm() {
         {isLoading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Sending...
+            {t('submitting')}
           </>
         ) : (
-          'Send Message'
+          t('submit')
         )}
       </Button>
     </form>

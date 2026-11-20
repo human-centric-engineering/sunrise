@@ -4,22 +4,28 @@ import { Mail, Clock } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ContactForm } from '@/components/forms/contact-form';
 import { BRAND } from '@/lib/brand';
+import { getTranslations } from 'next-intl/server';
 
-const description = `Get in touch with the ${BRAND.name} team. Questions, feedback, or just want to say hello? We would love to hear from you.`;
+const CONTACT_EMAIL = 'hello@example.com';
 
-export const metadata: Metadata = {
-  title: 'Contact',
-  description,
-  openGraph: {
-    title: `Contact - ${BRAND.name}`,
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('marketing.contact.meta');
+  const description = t('description', { brand: BRAND.name });
+  const socialTitle = t('socialTitle', { brand: BRAND.name });
+  return {
+    title: t('title'),
     description,
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: `Contact - ${BRAND.name}`,
-    description,
-  },
-};
+    openGraph: {
+      title: socialTitle,
+      description,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: socialTitle,
+      description,
+    },
+  };
+}
 
 /**
  * Contact Page
@@ -28,17 +34,16 @@ export const metadata: Metadata = {
  *
  * Phase 3.5: Landing Page & Marketing
  */
-export default function ContactPage() {
+export default async function ContactPage() {
+  const t = await getTranslations('marketing.contact');
+
   return (
     <div className="container mx-auto px-4 py-16 md:py-24">
       <div className="mx-auto max-w-5xl">
         {/* Page Header */}
         <div className="mb-12 text-center">
-          <h1 className="mb-4 text-4xl font-bold tracking-tight">Get in Touch</h1>
-          <p className="text-muted-foreground mx-auto max-w-2xl text-lg">
-            Have a question about Sunrise? Want to discuss a custom implementation? Or just want to
-            say hello? We&apos;d love to hear from you.
-          </p>
+          <h1 className="mb-4 text-4xl font-bold tracking-tight">{t('title')}</h1>
+          <p className="text-muted-foreground mx-auto max-w-2xl text-lg">{t('intro')}</p>
         </div>
 
         {/* Two-column layout */}
@@ -47,10 +52,8 @@ export default function ContactPage() {
           <div className="lg:col-span-3">
             <Card>
               <CardHeader>
-                <CardTitle>Send a Message</CardTitle>
-                <CardDescription>
-                  Fill out the form below and we&apos;ll get back to you as soon as possible.
-                </CardDescription>
+                <CardTitle>{t('formCard.title')}</CardTitle>
+                <CardDescription>{t('formCard.description')}</CardDescription>
               </CardHeader>
               <CardContent>
                 <ContactForm />
@@ -68,14 +71,14 @@ export default function ContactPage() {
                     <Mail className="h-5 w-5" />
                   </div>
                   <div>
-                    <CardTitle className="text-base">Email</CardTitle>
-                    <CardDescription>For general inquiries</CardDescription>
+                    <CardTitle className="text-base">{t('email.title')}</CardTitle>
+                    <CardDescription>{t('email.description')}</CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
-                <a href="mailto:hello@example.com" className="text-primary hover:underline">
-                  hello@example.com
+                <a href={`mailto:${CONTACT_EMAIL}`} className="text-primary hover:underline">
+                  {CONTACT_EMAIL}
                 </a>
               </CardContent>
             </Card>
@@ -88,16 +91,13 @@ export default function ContactPage() {
                     <Clock className="h-5 w-5" />
                   </div>
                   <div>
-                    <CardTitle className="text-base">Response Time</CardTitle>
-                    <CardDescription>When to expect a reply</CardDescription>
+                    <CardTitle className="text-base">{t('responseTime.title')}</CardTitle>
+                    <CardDescription>{t('responseTime.description')}</CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
-                <p className="text-muted-foreground text-sm">
-                  We typically respond within 1-2 business days. For urgent matters, please mention
-                  &quot;URGENT&quot; in the subject line.
-                </p>
+                <p className="text-muted-foreground text-sm">{t('responseTime.body')}</p>
               </CardContent>
             </Card>
 
@@ -117,22 +117,20 @@ export default function ContactPage() {
                     </svg>
                   </div>
                   <div>
-                    <CardTitle className="text-base">GitHub</CardTitle>
-                    <CardDescription>Issues and discussions</CardDescription>
+                    <CardTitle className="text-base">{t('github.title')}</CardTitle>
+                    <CardDescription>{t('github.description')}</CardDescription>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
-                <p className="text-muted-foreground mb-2 text-sm">
-                  For bug reports and feature requests, open an issue on GitHub.
-                </p>
+                <p className="text-muted-foreground mb-2 text-sm">{t('github.body')}</p>
                 <a
                   href="https://github.com/human-centric-engineering/sunrise/issues"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary text-sm hover:underline"
                 >
-                  Open an Issue
+                  {t('github.link')}
                 </a>
               </CardContent>
             </Card>
@@ -140,15 +138,12 @@ export default function ContactPage() {
             {/* Support Options */}
             <Card className="border-primary/50 bg-primary/5">
               <CardHeader className="pb-3">
-                <CardTitle className="text-base">Need Priority Support?</CardTitle>
+                <CardTitle className="text-base">{t('support.title')}</CardTitle>
               </CardHeader>
               <CardContent className="pt-0">
-                <p className="text-muted-foreground mb-3 text-sm">
-                  Our Pro Support package includes dedicated email support, priority bug fixes, and
-                  architecture review sessions.
-                </p>
+                <p className="text-muted-foreground mb-3 text-sm">{t('support.body')}</p>
                 <Link href="/#pricing" className="text-primary text-sm font-medium hover:underline">
-                  View Support Options
+                  {t('support.link')}
                 </Link>
               </CardContent>
             </Card>

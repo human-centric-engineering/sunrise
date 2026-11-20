@@ -1,96 +1,111 @@
 import type { Metadata } from 'next';
+import { getFormatter, getTranslations } from 'next-intl/server';
 import { BRAND } from '@/lib/brand';
 
-const description = `Privacy Policy for ${BRAND.name}. Learn how we collect, use, and protect your data.`;
+/** When this placeholder was last revised: a calendar date, so it is read in UTC. */
+const LAST_UPDATED = new Date('2026-01-19T00:00:00Z');
+const CONTACT_EMAIL = 'privacy@example.com';
 
-export const metadata: Metadata = {
-  title: 'Privacy Policy',
-  description,
-  openGraph: {
-    title: `Privacy Policy - ${BRAND.name}`,
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('legal.privacy.meta');
+  const description = t('description', { brand: BRAND.name });
+  const socialTitle = t('socialTitle', { brand: BRAND.name });
+  return {
+    title: t('title'),
     description,
+    openGraph: {
+      title: socialTitle,
+      description,
+    },
+    twitter: {
+      card: 'summary',
+      title: socialTitle,
+      description,
+    },
+  };
+}
+
+/** The policy's sections in order, with the keys of the list items each one has. */
+const SECTIONS = [
+  { key: 'introduction', items: [] },
+  {
+    key: 'informationWeCollect',
+    items: [
+      'informationWeCollect.items.account',
+      'informationWeCollect.items.usage',
+      'informationWeCollect.items.cookies',
+      'informationWeCollect.items.thirdParty',
+    ],
   },
-  twitter: {
-    card: 'summary',
-    title: `Privacy Policy - ${BRAND.name}`,
-    description,
+  {
+    key: 'howWeUse',
+    items: [
+      'howWeUse.items.services',
+      'howWeUse.items.communicating',
+      'howWeUse.items.security',
+      'howWeUse.items.legal',
+    ],
   },
-};
+  { key: 'sharing', items: [] },
+  {
+    key: 'rights',
+    items: [
+      'rights.items.access',
+      'rights.items.correction',
+      'rights.items.marketing',
+      'rights.items.consent',
+    ],
+  },
+] as const;
 
 /**
  * Privacy Policy Page
  *
  * Placeholder privacy policy page.
- * Replace with your actual privacy policy content.
+ * Replace with your actual privacy policy content (`legal.privacy` in the catalogue).
  *
  * Phase 3.5: Landing Page & Marketing
  */
-export default function PrivacyPolicyPage() {
+export default async function PrivacyPolicyPage() {
+  const t = await getTranslations('legal');
+  const ts = await getTranslations('legal.privacy.sections');
+  const format = await getFormatter();
+
   return (
     <div className="container mx-auto px-4 py-16 md:py-24">
       <div className="mx-auto max-w-3xl">
-        <h1 className="mb-8 text-4xl font-bold tracking-tight">Privacy Policy</h1>
+        <h1 className="mb-8 text-4xl font-bold tracking-tight">{t('privacy.title')}</h1>
 
         <div className="prose prose-neutral dark:prose-invert max-w-none">
-          <p className="text-muted-foreground lead">Last updated: January 19, 2026</p>
+          <p className="text-muted-foreground lead">
+            {t('lastUpdated', { date: format.dateTime(LAST_UPDATED, 'long', { timeZone: 'UTC' }) })}
+          </p>
+
+          {SECTIONS.map(({ key, items }) => (
+            <section key={key} className="mt-8">
+              <h2>{ts(`${key}.title`)}</h2>
+              <p>{ts(`${key}.body`)}</p>
+              {items.length > 0 && (
+                <ul>
+                  {items.map((item) => (
+                    <li key={item}>{ts(item)}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
 
           <section className="mt-8">
-            <h2>Introduction</h2>
+            <h2>{ts('contact.title')}</h2>
             <p>
-              This is a placeholder privacy policy. Replace this content with your actual privacy
-              policy that complies with applicable laws and regulations (GDPR, CCPA, etc.).
-            </p>
-          </section>
-
-          <section className="mt-8">
-            <h2>Information We Collect</h2>
-            <p>Describe what personal information you collect, such as:</p>
-            <ul>
-              <li>Account information (name, email address)</li>
-              <li>Usage data and analytics</li>
-              <li>Cookies and tracking technologies</li>
-              <li>Information from third-party services</li>
-            </ul>
-          </section>
-
-          <section className="mt-8">
-            <h2>How We Use Your Information</h2>
-            <p>Explain how you use the collected information:</p>
-            <ul>
-              <li>Providing and improving our services</li>
-              <li>Communicating with you</li>
-              <li>Security and fraud prevention</li>
-              <li>Legal compliance</li>
-            </ul>
-          </section>
-
-          <section className="mt-8">
-            <h2>Data Sharing and Disclosure</h2>
-            <p>
-              Describe when and with whom you share user data, including third-party service
-              providers, legal requirements, and business transfers.
-            </p>
-          </section>
-
-          <section className="mt-8">
-            <h2>Your Rights</h2>
-            <p>Outline the rights users have regarding their data:</p>
-            <ul>
-              <li>Access and portability</li>
-              <li>Correction and deletion</li>
-              <li>Opt-out of marketing</li>
-              <li>Withdraw consent</li>
-            </ul>
-          </section>
-
-          <section className="mt-8">
-            <h2>Contact Us</h2>
-            <p>
-              If you have questions about this Privacy Policy, please contact us at{' '}
-              <a href="mailto:privacy@example.com" className="text-primary hover:underline">
-                privacy@example.com
-              </a>
-              .
+              {ts.rich('contact.body', {
+                email: CONTACT_EMAIL,
+                link: (chunks) => (
+                  <a href={`mailto:${CONTACT_EMAIL}`} className="text-primary hover:underline">
+                    {chunks}
+                  </a>
+                ),
+              })}
             </p>
           </section>
         </div>
