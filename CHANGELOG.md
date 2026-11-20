@@ -18,6 +18,30 @@ release process.
 
 ### Added
 
+- **The user and public screens read their text from the catalogue (§138
+  t-1073).** Every page under `app/(auth)`, `app/(public)` and
+  `app/(protected)`, and the components they render, now shows the viewer's
+  language. A user picks theirs in settings; a visitor who is not signed in
+  gets a language switch in the public footer. `localeOptions()` and
+  `nativeLocaleName()` (`lib/i18n/locale-options.ts`, server-only) list the
+  languages a person may pick, each named in itself. Each validation schema a
+  form shows gains a `create…Schema(t)` factory (`createPasswordSchema`,
+  `createEmailSchema`, `createSignUpSchema`, `createSignInSchema`,
+  `createChangePasswordSchema`, `createResetPasswordRequestSchema`,
+  `createResetPasswordSchema`, `createUpdateUserSchema`,
+  `createAcceptInvitationSchema`, `createContactSchema`,
+  `createContactClientSchema`), and `buildWaitlistDetailsSchema()` takes an
+  optional translator. `ValidationT` and `englishValidation` are in
+  `lib/validations/messages.ts`. A form passes `useTranslations('validation')`.
+  The exported schemas are unchanged: built from the source English, so an
+  API route returns the same error text as before. ESLint now rejects English
+  written into the JSX of those paths (`react/jsx-no-literals`).
+  **Fork impact:** a fork that edited one of these screens conflicts on the
+  text, which moved to `lib/i18n/messages/en.json`; to change wording, use
+  `overridePlatformMessages('en', …)` rather than editing the component. A
+  fork test rendering one of these components needs `next-intl` mocked, as
+  `tests/setup.ts` now does with the real catalogue.
+
 - **A new fork seam, `lib/app/model-pins.ts` (ships empty), for the models an
   app names itself (§136, t-1067).** Fill `initAppModelPins()` with
   `registerModelPinReporter()`, asked once per org inside that org's scope for
