@@ -20,6 +20,7 @@ npm run smoke:epub                  # EPUB ingestion through a real (ideally pro
 npm run smoke:tenancy               # the install-org invariant, org lifecycle, export/erase (CI: `smoke`)
 npm run smoke:delivery-destination  # webhook/hook deliveries record their destination and outlive their sender (CI: `smoke`)
 npm run smoke:tenancy-isolation     # two orgs at TENANCY_MODE=multi as the restricted role — THROWAWAY DB only (CI: `smoke-multi`)
+npm run smoke:model-move            # §136 model move: two orgs at TENANCY_MODE=multi, each moved in its own scope (dev DB or throwaway)
 ```
 
 Or directly:
