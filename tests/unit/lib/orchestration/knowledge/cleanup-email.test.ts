@@ -37,6 +37,14 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+// The email's language is worked out from the recipient (§138 t-1075), tested
+// in tests/unit/lib/email/locale.test.ts; here it is English, with no reads
+// of its own, so the assertions below see only this module's reads.
+vi.mock('@/lib/email/locale', () => ({
+  emailLocaleForUser: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+  emailLocaleForOrg: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+  emailLocaleForAddress: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+}));
 vi.mock('@/lib/email/send', () => ({
   sendEmail: mockSendEmail,
 }));
