@@ -73,6 +73,7 @@ import { APP_CAPABILITY_PAIRS, APP_UNCHECKED_SEEDS } from '@/lib/app/capability-
 import * as userCreatedHooks from '@/lib/auth/user-created-hooks';
 import * as orgCreatedHooks from '@/lib/tenancy/org-created-hooks';
 import * as signupOrg from '@/lib/tenancy/signup-org';
+import * as appModelPins from '@/lib/orchestration/model-lifecycle/app-pins';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
   getAppSubjectSources,
@@ -161,7 +162,7 @@ import {
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
 
-// tests/setup.ts pins these five seams for every file (#1125, #1139). This
+// tests/setup.ts pins these six seams for every file (#1125, #1139). This
 // file asserts what Sunrise really ships, so it puts the real scaffolds back:
 // their rows below read them through the registries' own lazy wiring, which a
 // per-row `importActual` would bypass.
@@ -170,6 +171,7 @@ vi.mock('@/lib/app/user-created', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/erasure', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/org-created', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/signup-org', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/model-pins', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -509,6 +511,20 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     },
   },
   {
+    seam: 'lib/app/model-pins.ts',
+    risk: 'a stray reporter would add uses to every model on every install, and a stray check could refuse every model move',
+    assert: () => {
+      appModelPins.__resetAppModelPinsForTests();
+      // The read runs the lazy init, so this exercises the REAL seam; nothing
+      // registered is what leaves the finder and the move as they were.
+      expect(appModelPins.appModelPinsRegistered()).toEqual({
+        reporter: false,
+        check: false,
+        failed: false,
+      });
+    },
+  },
+  {
     seam: 'lib/app/mcp-resources.ts',
     risk: 'a stray handler would expose app data over MCP to every install\u2019s connected clients',
     assert: () => {
@@ -782,6 +798,7 @@ describe('lib/app/ seams ship empty', () => {
     ['user-created', 'user-created', []],
     ['org-created', 'org-created', []],
     ['signup-org', 'signup-org', []],
+    ['model-pins', 'model-pins', []],
     ['erasure', 'erasure', [STALE]],
   ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so

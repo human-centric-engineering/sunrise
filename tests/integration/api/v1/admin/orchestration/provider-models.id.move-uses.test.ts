@@ -45,6 +45,7 @@ vi.mock('@/lib/orchestration/model-lifecycle/move', async (importOriginal) => ({
 }));
 
 import { auth } from '@/lib/auth/config';
+import { ConflictError } from '@/lib/api/errors';
 import { prisma } from '@/lib/db/client';
 import { moveModelUses, previewModelMove } from '@/lib/orchestration/model-lifecycle/move';
 import { POST as MOVE } from '@/app/api/v1/admin/orchestration/provider-models/[id]/move-uses/route';
@@ -181,5 +182,25 @@ describe('POST …/move-uses', () => {
     const [target, actor] = vi.mocked(moveModelUses).mock.calls[0];
     expect(target.replacement.modelId).toBe('gpt-4.1');
     expect(actor).toEqual({ userId: mockAdminUser().user.id, clientIp: '203.0.113.9' });
+  });
+});
+
+describe('POST …/move-uses — the app refuses (§136 t-1067)', () => {
+  it('answers 409 with the app’s reason', async () => {
+    vi.mocked(moveModelUses).mockRejectedValue(
+      new ConflictError('GPT-4.1 failed the contract panel', { refusedBy: 'app' })
+    );
+
+    const response = await MOVE(post('move-uses', { replacementId: REPLACEMENT_ID }), context);
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      error: { code: string; message: string; details: unknown };
+    };
+    expect(body.error).toMatchObject({
+      code: 'CONFLICT',
+      message: 'GPT-4.1 failed the contract panel',
+      details: { refusedBy: 'app' },
+    });
   });
 });

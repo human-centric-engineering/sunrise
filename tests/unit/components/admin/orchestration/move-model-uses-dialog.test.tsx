@@ -311,3 +311,86 @@ describe('MoveModelUsesDialog', () => {
     expect(screen.queryByRole('button', { name: 'Move uses…' })).toBeNull();
   });
 });
+
+describe('the app’s own pins and its check (§136 t-1067)', () => {
+  it('counts the app’s pins in an org, and says the app moves them itself', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      ...PREVIEW,
+      orgs: [{ ...PREVIEW.orgs[0], appPins: 2 }, PREVIEW.orgs[1]],
+      app: { pinsUnavailable: false, refused: null },
+    });
+    renderDialog();
+    const { dialog } = await open();
+    await within(dialog).findByText('Acme');
+
+    expect(dialog).toHaveTextContent(
+      '2 uses the app reports: the app moves them itself, not this move.'
+    );
+    expect(dialog).not.toHaveTextContent('The app refuses this move');
+    expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeEnabled();
+  });
+
+  it('lists an org with only the app’s uses apart, and says no agent or workflow uses the model', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      ...PREVIEW,
+      orgs: [
+        {
+          orgId: 'org-z',
+          name: 'Zeta',
+          agents: 0,
+          inactiveAgents: 0,
+          agentsFollowingPlatform: 0,
+          workflows: 0,
+          left: {},
+          ownKey: false,
+          appPins: 3,
+        },
+      ],
+      settings: { moved: [], left: [] },
+      app: { pinsUnavailable: false, refused: null },
+    });
+    renderDialog();
+    const { dialog } = await open();
+    await within(dialog).findByText('Zeta');
+
+    expect(dialog).toHaveTextContent('No agent or workflow in any organisation uses this model.');
+    expect(dialog).toHaveTextContent('Zeta: 3 uses the app reports');
+    expect(dialog).toHaveTextContent('The app moves these itself; this move does not change them.');
+    expect(dialog).not.toHaveTextContent('Zeta: 0 agents');
+    expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeDisabled();
+  });
+
+  it('shows the app’s refusal and offers no move', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      ...PREVIEW,
+      app: { pinsUnavailable: true, refused: 'GPT-4.1 failed the contract panel' },
+    });
+    renderDialog();
+    const { dialog } = await open();
+    await within(dialog).findByText('Acme');
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(
+      'The app refuses this moveGPT-4.1 failed the contract panel'
+    );
+    expect(dialog).toHaveTextContent('could not all be read, so they may be undercounted here');
+    expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeDisabled();
+  });
+
+  it('shows a refusal the move itself met, beside its button', async () => {
+    vi.mocked(apiClient.post)
+      .mockResolvedValueOnce(PREVIEW)
+      .mockRejectedValueOnce(
+        new APIClientError('GPT-4.1 failed the contract panel', 'CONFLICT', 409)
+      );
+    renderDialog();
+    const { user, dialog } = await open();
+    await within(dialog).findByText('Acme');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Move uses' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'GPT-4.1 failed the contract panel'
+    );
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});

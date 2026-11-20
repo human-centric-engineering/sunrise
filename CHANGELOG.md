@@ -18,6 +18,28 @@ release process.
 
 ### Added
 
+- **A new fork seam, `lib/app/model-pins.ts` (ships empty), for the models an
+  app names itself (§136, t-1067).** Fill `initAppModelPins()` with
+  `registerModelPinReporter()`, asked once per org inside that org's scope for
+  the app's uses of a model (`{ label, where }[]`), and/or
+  `registerModelMoveCheck()`, asked with both models, every org's pins and a
+  `phase` (`'preview'` on each replacement an admin picks, `'move'` just
+  before the move writes), answering `{ allow: true }` or
+  `{ allow: false, reason }` (both in
+  `lib/orchestration/model-lifecycle/app-pins.ts`). Reported pins appear in
+  `GET /provider-models/:id`'s `uses` (`appPins`, `otherOrgAppPins`,
+  `appPinsUnavailable`), block the model's delete (`409 MODEL_IN_USE`, or
+  `409 MODEL_USES_UNREADABLE` while a report failed), count in config
+  health's retiring-model checks, and are counted per org in the move's
+  preview (`orgs[].appPins`). A refusal shows in the preview (`app.refused`) and stops
+  the move with 409 before any key is tested or anything is written. The check
+  fails closed: one that throws, times out (2 minutes) or answers badly
+  refuses, as does an init that throws. Sunrise never writes an app's pins.
+  **Fork impact:** none until you fill the seam; with it empty the uses, the
+  delete and the move behave as before. The ships-empty test gains a row, and
+  `tests/setup.ts` pins the seam empty for every test file, like the
+  `signup-org` seam.
+
 - **Move every use of a retiring model to its replacement in one audited
   action (§136, t-1066).** `POST /api/v1/admin/orchestration/provider-models/:id/move-uses/preview`
   and `POST …/move-uses` (platform admin; the move from the install org only),

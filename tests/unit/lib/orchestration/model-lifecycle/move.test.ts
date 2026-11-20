@@ -85,7 +85,13 @@ import { openOrgProviderKey } from '@/lib/orchestration/llm/org-provider-keys';
 import { testProviderKeyOnModel } from '@/lib/orchestration/llm/provider-manager';
 import { logger } from '@/lib/logging';
 import { getOrchestrationSettings, hydrateSettings } from '@/lib/orchestration/settings';
-import { NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, NotFoundError, StaleRecordError, ValidationError } from '@/lib/api/errors';
+import {
+  __resetAppModelPinsForTests,
+  registerModelMoveCheck,
+  registerModelPinReporter,
+  type AppModelMoveCheckRequest,
+} from '@/lib/orchestration/model-lifecycle/app-pins';
 import {
   loadMoveTarget,
   moveModelUses,
@@ -358,8 +364,11 @@ function installFakes(): void {
       )
     )) as never);
   vi.mocked(prisma.org.findUnique).mockResolvedValue({ name: 'Install' } as never);
-  vi.mocked(prisma.org.findMany).mockImplementation(((args: { where: { id: { in: string[] } } }) =>
-    Promise.resolve(world.orgs.filter((o) => args.where.id.in.includes(o.id)))) as never);
+  // By id for the move's passes; every org, suspended too, for the app's report.
+  vi.mocked(prisma.org.findMany).mockImplementation(((args: { where?: { id: { in: string[] } } }) =>
+    Promise.resolve(
+      args.where ? world.orgs.filter((o) => args.where?.id.in.includes(o.id)) : world.orgs
+    )) as never);
   vi.mocked(prisma.org.count).mockImplementation((() =>
     Promise.resolve(world.orgs.filter((o) => o.status !== 'ACTIVE').length)) as never);
   vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue({
@@ -531,6 +540,8 @@ beforeEach(() => {
   audit.length = 0;
   writeOrder.length = 0;
   installFakes();
+  // tests/setup.ts pins lib/app/model-pins.ts empty; each test registers here.
+  __resetAppModelPinsForTests();
 });
 
 function agent(id: string): Agent {
@@ -599,6 +610,7 @@ describe('previewModelMove', () => {
         workflows: 1,
         left: { chat_turn_by_id: 1 },
         ownKey: false,
+        appPins: 0,
       },
       {
         orgId: 'org-b',
@@ -609,8 +621,12 @@ describe('previewModelMove', () => {
         workflows: 1,
         left: {},
         ownKey: true,
+        appPins: 0,
       },
     ]);
+    // Nothing registered at lib/app/model-pins.ts: no app uses, no refusal,
+    // and no org entered for them (runAsOrg below counts the two orgs only).
+    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null });
     expect(preview.suspendedOrgs).toBe(1);
     expect(preview.settings.moved.map((s) => s.slot)).toEqual(['routing', 'chat', 'confidential']);
     expect(preview.settings.left).toEqual([{ slot: 'embeddings', reason: 'embedding_switch' }]);
@@ -1116,5 +1132,142 @@ describe('moveModelUses', () => {
     // Every row is the install's at single, the suspended org's included.
     expect(agent('ag-c1').model).toBe('gpt-4.1');
     expect(result.suspendedOrgs).toBe(0);
+  });
+});
+
+// ── The app's pins and check (§136 t-1067) ───────────────────────────────────
+
+describe('the app’s own pins and its check', () => {
+  /** A reporter answering `count` pins per org, recording the scope it ran in. */
+  function reportPins(count: Record<string, number>) {
+    const seen: Array<{ orgId: string; scope: string | null }> = [];
+    registerModelPinReporter(({ orgId }) => {
+      seen.push({ orgId, scope });
+      return Array.from({ length: count[orgId] ?? 0 }, (_, i) => ({
+        label: `Panel ${i + 1}`,
+        where: 'Panels › Judge',
+      }));
+    });
+    return seen;
+  }
+
+  it('previews the app’s pins per org, each asked in its org, an org with only those included', async () => {
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-b');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-b');
+    const seen = reportPins({ 'org-a': 2, 'org-b': 1 });
+
+    const preview = await previewModelMove(await target());
+
+    // Every org is asked for its pins, the suspended one too (a read); only
+    // active orgs are listed, since only they are moved.
+    expect(seen).toEqual([
+      { orgId: 'org-a', scope: 'org-a' },
+      { orgId: 'org-b', scope: 'org-b' },
+      { orgId: 'org-c', scope: 'org-c' },
+    ]);
+    expect(preview.orgs.map((o) => [o.orgId, o.agents, o.workflows, o.appPins])).toEqual([
+      ['org-a', 2, 1, 2],
+      ['org-b', 0, 0, 1],
+    ]);
+    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null });
+  });
+
+  it('shows the check’s refusal in the preview, and writes nothing', async () => {
+    reportPins({ 'org-a': 1 });
+    const phases: string[] = [];
+    registerModelMoveCheck(({ phase }) => {
+      phases.push(phase);
+      return { allow: false, reason: 'GPT-4.1 failed the contract panel' };
+    });
+
+    const preview = await previewModelMove(await target());
+
+    // Told it is a preview, so it can answer without running anything billed.
+    expect(phases).toEqual(['preview']);
+    expect(preview.app).toEqual({
+      pinsUnavailable: false,
+      refused: 'GPT-4.1 failed the contract panel',
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(world).toEqual(freshWorld());
+  });
+
+  it('marks the preview when a report fails, and the check then refuses', async () => {
+    registerModelPinReporter(({ orgId }) => {
+      if (orgId === 'org-b') throw new Error('panel table missing');
+      return [];
+    });
+    registerModelMoveCheck(() => ({ allow: true }));
+
+    const preview = await previewModelMove(await target());
+
+    expect(preview.app.pinsUnavailable).toBe(true);
+    expect(preview.app.refused).toContain('could not all be read');
+  });
+
+  it('stops the whole move on a refusal: no key tested, no setting, row or audit written', async () => {
+    world.keyed = ['org-b'];
+    reportPins({ 'org-a': 1 });
+    registerModelMoveCheck(() => ({ allow: false, reason: 'GPT-4.1 failed the contract panel' }));
+
+    const move = moveModelUses(await target(), ACTOR);
+
+    await expect(move).rejects.toBeInstanceOf(ConflictError);
+    await expect(move).rejects.toMatchObject({
+      message: 'GPT-4.1 failed the contract panel',
+      status: 409,
+      details: { refusedBy: 'app' },
+    });
+    expect(testProviderKeyOnModel).not.toHaveBeenCalled();
+    expect(openOrgProviderKey).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.aiOrchestrationSettings.update).not.toHaveBeenCalled();
+    expect(logAdminAction).not.toHaveBeenCalled();
+    expect(world).toEqual({ ...freshWorld(), keyed: ['org-b'] });
+  });
+
+  it('refuses the move when the check throws: it fails closed', async () => {
+    registerModelMoveCheck(() => {
+      throw new Error('eval service down');
+    });
+
+    await expect(moveModelUses(await target(), ACTOR)).rejects.toMatchObject({
+      status: 409,
+      message: 'The app’s check on this move failed. Nothing was moved; see the server log.',
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(world).toEqual(freshWorld());
+  });
+
+  it('moves as before when the check allows it, having given it every org’s pins', async () => {
+    reportPins({ 'org-a': 1, 'org-b': 2 });
+    const asked: AppModelMoveCheckRequest[] = [];
+    registerModelMoveCheck((request) => {
+      asked.push(request);
+      return { allow: true };
+    });
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(asked).toHaveLength(1);
+    expect(asked[0].phase).toBe('move');
+    expect(asked[0].model).toEqual({
+      id: 'm-old',
+      name: RETIRING.name,
+      providerSlug: 'openai',
+      modelId: 'gpt-4o',
+    });
+    expect(asked[0].replacement.id).toBe('m-new');
+    expect(asked[0].pins.map((p) => p.orgId)).toEqual(['org-a', 'org-b', 'org-b']);
+    expect(result.totals).toMatchObject({ agents: 3, workflows: 2, failed: 0 });
+  });
+
+  it('does not ask a reporter during a move when no check is registered', async () => {
+    const seen = reportPins({ 'org-a': 1 });
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(seen).toEqual([]);
+    expect(result.totals.agents).toBe(3);
   });
 });

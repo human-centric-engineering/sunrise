@@ -62,6 +62,8 @@ export interface OrgPreview {
   workflows: number;
   left: LeftCounts;
   ownKey: boolean;
+  /** The app's own uses in the org (§136 t-1067), which the app moves itself. */
+  appPins?: number;
 }
 
 export interface MovePreview {
@@ -69,6 +71,8 @@ export interface MovePreview {
   orgs: OrgPreview[];
   settings: SettingsMovePlan;
   suspendedOrgs: number;
+  /** What the app said (§136 t-1067): `refused` is its reason, and blocks the move. */
+  app?: { pinsUnavailable: boolean; refused: string | null };
 }
 
 /** One org in the result. */
@@ -266,6 +270,17 @@ export function MoveModelUsesDialog({
 
   if (readOnly || replacementOptions.length === 0 || (!open && !hasUses)) return null;
 
+  const refused = preview?.app?.refused ?? null;
+  // An org with only the app's own uses has nothing this move changes: it is
+  // listed apart, under the app's heading.
+  const platformUse = (o: OrgPreview) =>
+    o.agents +
+      o.workflows +
+      o.agentsFollowingPlatform +
+      Object.values(o.left).reduce((n, c) => n + (c ?? 0), 0) >
+    0;
+  const platformOrgs = preview?.orgs.filter(platformUse) ?? [];
+  const appOnlyOrgs = preview?.orgs.filter((o) => !platformUse(o) && (o.appPins ?? 0) > 0) ?? [];
   const nothingToMove =
     preview !== null &&
     preview.orgs.every((o) => o.agents + o.workflows === 0) &&
@@ -324,7 +339,7 @@ export function MoveModelUsesDialog({
 
             {preview && (
               <div className="space-y-4">
-                {preview.orgs.length === 0 ? (
+                {platformOrgs.length === 0 ? (
                   <p className="text-muted-foreground text-sm">
                     No agent or workflow in any organisation uses this model.
                   </p>
@@ -334,7 +349,7 @@ export function MoveModelUsesDialog({
                       Organisations
                     </h3>
                     <ul className="space-y-2 text-sm">
-                      {preview.orgs.map((org) => (
+                      {platformOrgs.map((org) => (
                         <li key={org.orgId}>
                           <span className="font-medium">{org.name}</span>:{' '}
                           {plural(org.agents, 'agent')}
@@ -352,12 +367,51 @@ export function MoveModelUsesDialog({
                             left={org.left}
                             followingPlatform={org.agentsFollowingPlatform}
                           />
+                          {(org.appPins ?? 0) > 0 && (
+                            <p className="text-muted-foreground text-xs">
+                              {plural(org.appPins ?? 0, 'use')} the app reports: the app moves{' '}
+                              {org.appPins === 1 ? 'it' : 'them'} itself, not this move.
+                            </p>
+                          )}
                         </li>
                       ))}
                     </ul>
                   </div>
                 )}
                 <SettingsList settings={preview.settings} done={false} />
+                {appOnlyOrgs.length > 0 && (
+                  <div className="space-y-1">
+                    <h3 className="text-muted-foreground text-xs font-medium uppercase">
+                      In the app
+                    </h3>
+                    <ul className="space-y-1 text-sm">
+                      {appOnlyOrgs.map((org) => (
+                        <li key={org.orgId}>
+                          <span className="font-medium">{org.name}</span>:{' '}
+                          {plural(org.appPins ?? 0, 'use')} the app reports
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-muted-foreground text-xs">
+                      The app moves these itself; this move does not change them.
+                    </p>
+                  </div>
+                )}
+                {preview.app?.pinsUnavailable && (
+                  <p className="text-muted-foreground text-xs">
+                    The app’s own uses of this model could not all be read, so they may be
+                    undercounted here.
+                  </p>
+                )}
+                {refused && (
+                  <div
+                    role="alert"
+                    className="border-destructive/50 text-destructive rounded-md border p-3 text-sm"
+                  >
+                    <p className="font-medium">The app refuses this move</p>
+                    <p>{refused}</p>
+                  </div>
+                )}
                 {preview.suspendedOrgs > 0 && (
                   <p className="text-muted-foreground text-xs">
                     {plural(preview.suspendedOrgs, 'suspended organisation')} not looked at: nothing
@@ -412,7 +466,9 @@ export function MoveModelUsesDialog({
               </Button>
               <Button
                 onClick={(e) => dialog.confirm(e, runMove)}
-                {...dialog.actionProps({ disabled: !preview || loading || nothingToMove })}
+                {...dialog.actionProps({
+                  disabled: !preview || loading || nothingToMove || refused !== null,
+                })}
               >
                 {moving ? 'Moving…' : 'Move uses'}
               </Button>

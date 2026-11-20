@@ -19,10 +19,29 @@ import { prisma } from '@/lib/db/client';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
-import { retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
+import {
+  retiringModelsInUse,
+  type RetiringModelsInUse,
+} from '@/lib/orchestration/model-lifecycle/uses';
 import { isSealedSecretKeyConfigured } from '@/lib/security/sealed-secrets';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import type { ConfigHealthCheck } from '@/lib/config-health/types';
+
+/**
+ * A retiring-model check's presence signal: `false` when a model in `state`
+ * is known to be in use; `true` when none is and none is unknown. Throws
+ * when none is known but the app's report on one failed (§136 t-1067), so
+ * the runner reports the check as unable to run rather than clear or alert.
+ */
+function inUseIn(state: 'retiring' | 'retired', uses: RetiringModelsInUse): boolean {
+  if (uses[state] > 0) return false;
+  if (uses.unknown[state] > 0) {
+    throw new Error(
+      `The app's own uses of ${uses.unknown[state]} ${state} model(s) could not be read`
+    );
+  }
+  return true;
+}
 
 /**
  * Substrings that mark a `DATABASE_URL` as going through a pooler: Neon's
@@ -144,8 +163,8 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
     label: 'Retired AI model still in use',
     severity: 'critical',
     description:
-      'A model its provider has retired is still used by an agent, a workflow or a default ' +
-      'setting, so calls to it fail.',
+      'A model its provider has retired is still used by an agent, a workflow, a default ' +
+      "setting or the app's own code, so calls to it fail.",
     remediation:
       'Under Admin → Orchestration → Providers → Models, open each model marked Retired: it lists ' +
       'what still uses it. Move those to its replacement, or to another model. A default shown as ' +
@@ -153,20 +172,23 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
     docsPath: '.context/orchestration/llm-providers.md',
     // §136 t-1065. Counts every org's agents and workflows: the catalogue is
     // shared, so a retired model one org still uses is the operator's to see.
-    detect: async (): Promise<boolean> => (await retiringModelsInUse()).retired === 0,
+    // And the app's own uses (§136 t-1067); a failed report of them makes
+    // this check unable to run, never an alert, unless a retired model is
+    // known to be in use anyway.
+    detect: async (): Promise<boolean> => inUseIn('retired', await retiringModelsInUse()),
   },
   {
     key: 'retiring_model_in_use',
     label: 'Retiring AI model in use',
     severity: 'warning',
     description:
-      'A model its provider is about to retire is still used by an agent, a workflow or a default ' +
-      'setting. It works until its retirement day, then calls to it fail.',
+      'A model its provider is about to retire is still used by an agent, a workflow, a default ' +
+      "setting or the app's own code. It works until its retirement day, then calls to it fail.",
     remediation:
       'Under Admin → Orchestration → Providers → Models, open each model marked Retiring: it lists ' +
       'what uses it and its replacement. Move those before the day.',
     docsPath: '.context/orchestration/llm-providers.md',
-    detect: async (): Promise<boolean> => (await retiringModelsInUse()).retiring === 0,
+    detect: async (): Promise<boolean> => inUseIn('retiring', await retiringModelsInUse()),
   },
   {
     key: 'email',

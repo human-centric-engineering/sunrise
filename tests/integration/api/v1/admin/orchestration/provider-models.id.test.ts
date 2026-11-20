@@ -93,6 +93,10 @@ import { prisma } from '@/lib/db/client';
 import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
+import {
+  __resetAppModelPinsForTests,
+  registerModelPinReporter,
+} from '@/lib/orchestration/model-lifecycle/app-pins';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -1487,6 +1491,73 @@ describe('DELETE refuses while a saved setting names the model (§136 t-1065)', 
       },
     });
     vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.delete).toHaveBeenCalled();
+  });
+});
+
+describe('the app’s own uses of the model (§136 t-1067)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(makeModel() as never);
+    vi.mocked(prisma.aiProviderModel.delete).mockResolvedValue(makeModel() as never);
+    // tests/setup.ts pins lib/app/model-pins.ts empty; each test registers here.
+    __resetAppModelPinsForTests();
+  });
+
+  it('lists them with the model’s uses', async () => {
+    registerModelPinReporter(() => [{ label: 'Panel: Contracts', where: 'Panels › Judge' }]);
+
+    const body = await parseJson<{
+      data: { uses: { appPins: unknown; otherOrgAppPins: number; appPinsUnavailable: boolean } };
+    }>(await GET(makeGetRequest(MODEL_ID), routeContext(MODEL_ID)));
+
+    expect(body.data.uses.appPins).toEqual([
+      { label: 'Panel: Contracts', where: 'Panels › Judge' },
+    ]);
+    expect(body.data.uses.otherOrgAppPins).toBe(0);
+    expect(body.data.uses.appPinsUnavailable).toBe(false);
+  });
+
+  it('refuses the delete while the app reports a use, and says so', async () => {
+    registerModelPinReporter(() => [{ label: 'Panel: Contracts', where: 'Panels › Judge' }]);
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{
+      error: { code: string; message: string; details: { appPins: unknown } };
+    }>(response);
+    expect(body.error.code).toBe('MODEL_IN_USE');
+    expect(body.error.message).toBe(
+      'Cannot delete model "Claude Opus 4" — 1 use the app reports still references it. Re-point them to a different model first. The app moves its own uses itself.'
+    );
+    expect(body.error.details.appPins).toEqual([
+      { label: 'Panel: Contracts', where: 'Panels › Judge' },
+    ]);
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('refuses the delete while the app’s report failed: it cannot be undone', async () => {
+    registerModelPinReporter(() => {
+      throw new Error('panel table missing');
+    });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ error: { code: string; message: string } }>(response);
+    expect(body.error.code).toBe('MODEL_USES_UNREADABLE');
+    expect(body.error.message).toContain('could not all be read, so it may still be in use');
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes as before when the app reports no use', async () => {
+    registerModelPinReporter(() => []);
 
     const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
 

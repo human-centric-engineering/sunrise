@@ -901,6 +901,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The org-created hooks an app registers from code (§134 t-1061), the same for every org. Which hooks an org is still owed is in its own `settings` row, read on every run and never held here.',
   },
   {
+    file: 'lib/orchestration/model-lifecycle/app-pins.ts',
+    holders: ['reporter', 'check', 'initFailed', 'appInit'],
+    posture: 'no-tenant-data',
+    why: "The model-pin reporter and move check an app registers from code (§136 t-1067), the same for every org, and whether its init failed. Each org's pins are asked for inside that org's scope on every read and never held here.",
+  },
+  {
     file: 'lib/tenancy/signup-org.ts',
     holders: ['resolver', 'appInit'],
     posture: 'no-tenant-data',

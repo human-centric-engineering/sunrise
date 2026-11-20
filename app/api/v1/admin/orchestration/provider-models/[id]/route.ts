@@ -8,7 +8,10 @@
  *        change is written to the admin audit log.
  * DELETE /api/v1/admin/orchestration/provider-models/:id — hard delete, refused
  *        (409 MODEL_IN_USE) when any active agent or active workflow still
- *        references the row's (providerSlug, modelId) pair.
+ *        references the row's (providerSlug, modelId) pair, a saved setting
+ *        names it (§136 t-1065), or the app reports a use of it; and refused
+ *        (409 MODEL_USES_UNREADABLE) while the app's report of its own uses
+ *        failed (§136 t-1067).
  *
  * Authentication: Admin role required.
  */
@@ -286,7 +289,13 @@ export const DELETE = withAdminAuth<{ id: string }>(
       (pin) => pin.source === 'saved' && !(pin.byIdOnly && usage.sharedWith.length > 0)
     );
 
-    if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0) {
+    // And while the app reports a use of it (§136 t-1067): its own code or
+    // tables would name a row that no longer exists. The delete cannot be
+    // undone, so a report that failed refuses it too (below): the model is
+    // not known to be unused.
+    const appCount = usage.appPins.length + usage.otherOrgAppPins;
+
+    if (agentCount > 0 || workflowCount > 0 || savedSettings.length > 0 || appCount > 0) {
       log.info('Provider model delete refused — model in use', {
         modelId: id,
         slug: current.slug,
@@ -295,8 +304,9 @@ export const DELETE = withAdminAuth<{ id: string }>(
         otherOrgAgentCount: usage.otherOrgAgents,
         otherOrgWorkflowCount: usage.otherOrgWorkflows,
         savedSettings: savedSettings.map((pin) => pin.slot),
+        appCount,
       });
-      return errorResponse(buildInUseMessage(current.name, usage, savedSettings.length), {
+      return errorResponse(buildInUseMessage(current.name, usage, savedSettings.length, appCount), {
         code: 'MODEL_IN_USE',
         status: 409,
         details: {
@@ -305,8 +315,23 @@ export const DELETE = withAdminAuth<{ id: string }>(
           otherOrgAgentCount: usage.otherOrgAgents,
           otherOrgWorkflowCount: usage.otherOrgWorkflows,
           settings: savedSettings.map((pin) => pin.slot),
+          // Only when the app reports a use: with nothing registered the
+          // answer is as it was before the seam.
+          ...(appCount > 0
+            ? { appPins: usage.appPins, otherOrgAppPinCount: usage.otherOrgAppPins }
+            : {}),
         },
       });
+    }
+    if (usage.appPinsUnavailable) {
+      log.warn('Provider model delete refused — the app’s uses could not be read', {
+        modelId: id,
+        slug: current.slug,
+      });
+      return errorResponse(
+        `Cannot delete model "${current.name}" — the app’s own uses of it could not all be read, so it may still be in use. Try again once the app’s report works; the server log says why it failed.`,
+        { code: 'MODEL_USES_UNREADABLE', status: 409 }
+      );
     }
 
     // Models naming this one as their replacement lose it (`ON DELETE SET
@@ -355,7 +380,8 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
 function buildInUseMessage(
   modelName: string,
   usage: ProviderModelUsage,
-  savedSettings: number
+  savedSettings: number,
+  appUses: number = 0
 ): string {
   const agents = usage.agents.length + usage.otherOrgAgents;
   const workflows = usage.workflows.length + usage.otherOrgWorkflows;
@@ -368,7 +394,9 @@ function buildInUseMessage(
   if (savedSettings > 0) {
     parts.push(`${savedSettings} saved setting${savedSettings === 1 ? '' : 's'}`);
   }
+  if (appUses > 0) parts.push(`${appUses} use${appUses === 1 ? '' : 's'} the app reports`);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
-  const one = agents + workflows + savedSettings === 1;
-  return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.`;
+  const one = agents + workflows + savedSettings + appUses === 1;
+  const appNote = appUses > 0 ? ' The app moves its own uses itself.' : '';
+  return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.${appNote}`;
 }

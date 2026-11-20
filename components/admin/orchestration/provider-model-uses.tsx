@@ -9,7 +9,9 @@
  * An agent whose model the platform picks says so: it moves off a retiring
  * model on its own. Everything else moves with the page's `action`, the move
  * dialog (§136 t-1066). The embedding settings say they are not moved with the
- * rest, since changing the embedding model means re-embedding (§132).
+ * rest, since changing the embedding model means re-embedding (§132). The
+ * app's own uses, when it reports any (§136 t-1067), are listed after the
+ * rest: the app moves those itself.
  *
  * Server-safe (no hooks).
  */
@@ -49,6 +51,12 @@ export interface ProviderModelUsesData {
   settings: SettingsPin[];
   /** Other providers that offer the same model id (§136 t-1065). */
   sharedWith: string[];
+  /** The app's own uses in the caller's org, as it reports them (§136 t-1067). */
+  appPins?: Array<{ label: string; where: string }>;
+  /** The app's uses in other orgs, counted. */
+  otherOrgAppPins?: number;
+  /** Some org's report of the app's uses failed. */
+  appPinsUnavailable?: boolean;
 }
 
 const SLOT_LABEL: Record<SettingsPinSlot, string> = {
@@ -100,20 +108,71 @@ export interface ProviderModelUsesProps {
   action?: ReactNode;
 }
 
-/** Whether anything uses the model: an agent or workflow in any org, or a setting. */
+/**
+ * Whether anything uses the model: an agent or workflow in any org, a
+ * setting, or a use the app reports.
+ */
 export function modelHasUses(uses: ProviderModelUsesData): boolean {
   return (
     uses.agents.length +
       uses.otherOrgAgents +
       uses.workflows.length +
       uses.otherOrgWorkflows +
-      uses.settings.length >
+      uses.settings.length +
+      (uses.appPins?.length ?? 0) +
+      (uses.otherOrgAppPins ?? 0) >
     0
+  );
+}
+
+/**
+ * Whether anything the move can change uses the model: everything
+ * {@link modelHasUses} counts but the app's own uses, which the app moves
+ * itself. What gates the move's trigger.
+ */
+export function modelHasMovableUses(uses: ProviderModelUsesData): boolean {
+  return modelHasUses({ ...uses, appPins: [], otherOrgAppPins: 0 });
+}
+
+/** The app's own uses (§136 t-1067): named in the caller's org, counted elsewhere. */
+function AppUses({ uses }: { uses: ProviderModelUsesData }) {
+  const own = uses.appPins ?? [];
+  const elsewhere = uses.otherOrgAppPins ?? 0;
+  if (own.length === 0 && elsewhere === 0 && !uses.appPinsUnavailable) return null;
+  return (
+    <div className="space-y-1">
+      <h3 className="text-muted-foreground text-xs font-medium uppercase">In the app</h3>
+      <ul className="space-y-1 text-sm">
+        {own.map((pin, i) => (
+          <li key={`${pin.label}-${i}`}>
+            {pin.label}
+            <p className="text-muted-foreground text-xs">{pin.where}</p>
+          </li>
+        ))}
+      </ul>
+      {elsewhere > 0 && (
+        <p className="text-muted-foreground text-xs">
+          {elsewhere} in other organisations. They are counted, not named.
+        </p>
+      )}
+      {(own.length > 0 || elsewhere > 0) && (
+        <p className="text-muted-foreground text-xs">
+          The app sets these itself, so moving the model’s uses does not change them.
+        </p>
+      )}
+      {uses.appPinsUnavailable && (
+        <p className="text-muted-foreground text-xs">
+          The app’s own uses could not all be read, so there may be more.
+        </p>
+      )}
+    </div>
   );
 }
 
 export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: ProviderModelUsesProps) {
   const nothing = !modelHasUses(uses);
+  // The platform's own uses: the grid, which the app's uses alone leave out.
+  const platform = modelHasMovableUses(uses);
   const { state, replacement } = lifecycle;
 
   return (
@@ -163,8 +222,14 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
         </p>
       )}
 
-      {nothing ? (
-        <p className="text-muted-foreground text-sm">Nothing uses this model.</p>
+      {nothing || !platform ? (
+        nothing && (
+          <p className="text-muted-foreground text-sm">
+            {uses.appPinsUnavailable
+              ? 'Nothing Sunrise can see uses this model.'
+              : 'Nothing uses this model.'}
+          </p>
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1">
@@ -261,7 +326,9 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
         </div>
       )}
 
-      {!nothing &&
+      <AppUses uses={uses} />
+
+      {platform &&
         uses.sharedWith.length > 0 &&
         (uses.workflows.some((workflow) => workflow.byIdOnly) ||
           uses.otherOrgWorkflowsByIdOnly > 0 ||
