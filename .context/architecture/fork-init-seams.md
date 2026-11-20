@@ -1,10 +1,10 @@
 # Fork Init Seams
 
-Twenty-five `initApp*()` functions, in twenty-four of the `lib/app/*` scaffolds Sunrise
+Twenty-six `initApp*()` functions, in twenty-five of the `lib/app/*` scaffolds Sunrise
 ships (`evaluations.ts` holds two), are reached the same way: a core registry runs
 the fork's function **once, lazily, before its first read**. (Most of `lib/app/`
 is not this — the majority of those files are value and config scaffolds with no
-init function at all, and two of the twenty-seven `initApp*` exports are different
+init function at all, and two of the twenty-eight `initApp*` exports are different
 shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -67,6 +67,7 @@ Three properties come with it:
 | `jobs.ts`                          | `initAppJobs`                        | `lib/orchestration/maintenance/app-jobs.ts`                 | roll back, log, degrade        |
 | `knowledge-access-contributors.ts` | `initAppKnowledgeAccessContributors` | `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts` | roll back, log, degrade        |
 | `mcp-resources.ts`                 | `initAppMcpResources`                | `lib/orchestration/mcp/resource-registry.ts`                | roll back, log, degrade        |
+| `model-pins.ts`                    | `initAppModelPins`                   | `lib/orchestration/model-lifecycle/app-pins.ts`             | roll back, log, **refuse**     |
 | `org-created.ts`                   | `initAppOrgCreatedHooks`             | `lib/tenancy/org-created-hooks.ts`                          | roll back, log, degrade        |
 | `org-export.ts`                    | `initAppOrgSources`                  | `lib/privacy/org-source-registry.ts`                        | roll back, log, **remembered** |
 | `owner-classification.ts`          | `initAppOwnerClassification`         | `lib/db/owner-classification.ts`                            | roll back, log, degrade        |
@@ -173,6 +174,14 @@ the old one, and the operator's next step is to remove the old key, which
 makes those values unreadable for good. So a failed `initAppSealedStores`
 makes `resealSealedStores()` throw `SealedStoreRegistrationError` until it is
 fixed. Sealing and opening are unaffected: they do not read the registry.
+
+**`model-pins` refuses moves.** An app registers a check on a model move
+because it asked to be consulted before its pins and the platform's part
+company (§136 t-1067). Which check a throwing init meant to register is
+unknown, so `checkAppModelMove()` refuses every move while it is known to have
+thrown, and the move dialog shows that reason; nothing is written. The uses
+finder only marks the app's uses as unreadable (`appPinsUnavailable`), since
+it reports and changes nothing.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

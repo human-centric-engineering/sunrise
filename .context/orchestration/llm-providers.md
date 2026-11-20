@@ -600,6 +600,19 @@ Both re-check the replacement with `checkReplacement()` first (`loadMoveTarget`)
 
 What is left is answered as counts by reason, never another org's workflow or step ids. The move runs inside one request (`maxDuration` 300 seconds), so a very large install (many orgs, each with an own-key test) may take a while to answer; nothing is lost if it is cut off, since each org that finished has committed and a second run finds only what is left. The dialog offers the move whenever something uses the model, and on any retiring or retired model, since its only uses may be turned-off agents and workflows, which the uses list leaves out.
 
+### An app's own model pins (§136 t-1067)
+
+An app built on Sunrise may name models in its own code and tables, which Sunrise cannot read. The `lib/app/model-pins.ts` seam (ships empty; `initAppModelPins()`) lets it register two things, in `lib/orchestration/model-lifecycle/app-pins.ts`:
+
+- **A reporter** (`registerModelPinReporter`), asked `{ model, orgId, signal }` once per org, **inside that org's scope** (`runAsOrg` at `multi`; the install org once at `single`), so its reads stay under row isolation. It answers `{ label, where }[]`; Sunrise stamps the org. Each org's report has 10 seconds (`APP_MODEL_PIN_REPORT_TIMEOUT_MS`); up to eight orgs are asked at once.
+- **A check** (`registerModelMoveCheck`), asked `{ model, replacement, pins, signal }` with every org's reported pins, in the admin's scope. It answers `{ allow: true }` or `{ allow: false, reason }`.
+
+**Where the app's pins show.** `modelUses()` adds `appPins` (the caller's org's, named), `otherOrgAppPins` (every other org's, counted, by the same rule as agents and workflows) and `appPinsUnavailable` (some org's report failed: the list may be short). The model's page lists them under **In the app**; the delete refuses (409, `MODEL_IN_USE`) while the app reports a use; config health counts a dated model the app alone uses; and the move's preview counts them per org (`appPins`), an org with nothing but app pins included. **Sunrise never writes them**: the app moves its own pins after the move.
+
+**The check, at the preview and the move.** The preview answers `app: { pinsUnavailable, refused }`, `refused` being the app's reason, and the dialog then shows it and offers no move. The move asks again, first of all: a refusal throws `ConflictError` (409, `details.refusedBy: 'app'`) **before any org's key is tested or anything is written**, and no audit row is written for it (it is logged). With no check registered the move reads no app pins at all.
+
+**It fails closed.** A check that throws, runs past two minutes (`APP_MODEL_MOVE_CHECK_TIMEOUT_MS`) or answers anything else refuses the move, because the app asked to be consulted. So does an `initAppModelPins()` that throws (the gate rolls back both registrations, and which check it meant to register is unknown), and a report that failed while a check is registered, since the check cannot be asked with every pin. A reporter failing with no check registered only marks the uses as unreadable: it is informational, and it never blocks a delete. With nothing registered no org is entered for the app and every answer is as it was before the seam.
+
 ## Cost Tracking
 
 Every provider call should be followed by `costTracker.logCost(...)`. Local models cost \$0 but their token counts are still recorded for benchmarking (`isLocal: true`).
