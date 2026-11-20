@@ -30,8 +30,9 @@ release process.
   default and confidential-message model follow (the embedding pins never
   move). Every moved pin is written as `provider::model`. An org on its own key
   for the provider has the key tested against the replacement first, with a
-  short message billed to that key, and is skipped if it fails. An org that
-  fails rolls back alone. Audit rows: `agent.model_moved`,
+  short message billed to that key, and is skipped if it fails; the install
+  settings are then left too, since agents with no model of their own follow
+  them. An org that fails rolls back alone. Audit rows: `agent.model_moved`,
   `workflow.model_moved`, `settings.model_moved` and the summary
   `provider_model.uses_moved`. New: `moveModelUses()` / `previewModelMove()` /
   `loadMoveTarget()` (`lib/orchestration/model-lifecycle/move.ts`),
