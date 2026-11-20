@@ -9,8 +9,9 @@
  * invitation is already pending for the email, the form offers to re-send it.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { CheckCircle, Send } from 'lucide-react';
@@ -29,18 +30,22 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { FormError, SaveError } from '@/components/forms/form-error';
-import { OrgRoleHelp, ORG_ROLE_LABELS } from '@/components/admin/members/org-role-help';
+import { OrgRoleHelp } from '@/components/admin/members/org-role-help';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { DEFAULT_ORG_ROLE, isOrgRole, ORG_ROLES } from '@/lib/tenancy/roles';
-import { inviteOrgMemberSchema } from '@/lib/validations/tenancy';
+import { createInviteOrgMemberSchema } from '@/lib/validations/tenancy';
+import type { ValidationT } from '@/lib/validations/messages';
 
 // The route's own schema, with the role required because the form always
-// has one selected.
-const inviteFormSchema = inviteOrgMemberSchema.extend({ orgRole: z.enum(ORG_ROLES) });
+// has one selected. Built with the form's translator, so its field errors
+// read in the viewer's language.
+function inviteFormSchemaFor(t: ValidationT) {
+  return createInviteOrgMemberSchema(t).extend({ orgRole: z.enum(ORG_ROLES) });
+}
 
-type InviteFormData = z.infer<typeof inviteFormSchema>;
+type InviteFormData = z.infer<ReturnType<typeof inviteFormSchemaFor>>;
 
 /**
  * Server path → the field that shows its message. Only fields that render
@@ -63,6 +68,9 @@ export interface MemberInviteFormProps {
 }
 
 export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
+  const t = useTranslations('admin.members');
+  const tv = useTranslations('validation');
+  const inviteFormSchema = useMemo(() => inviteFormSchemaFor(tv), [tv]);
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<OrgInvitationResponse | null>(null);
@@ -87,7 +95,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   const orgRole = watch('orgRole');
   // One failure for both sends: "Send it again" is a save of the same form.
   const save = useSaveFailure({
-    fallback: 'An unexpected error occurred',
+    fallback: t('invite.failed'),
     fields: SERVER_FIELDS,
     setError,
     errors,
@@ -123,11 +131,8 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Invite a member</CardTitle>
-        <CardDescription>
-          They get an email with a link to create their account. They appear in the list once they
-          accept.
-        </CardDescription>
+        <CardTitle className="text-lg">{t('invite.title')}</CardTitle>
+        <CardDescription>{t('invite.description')}</CardDescription>
       </CardHeader>
       <CardContent>
         <form
@@ -138,22 +143,16 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
         >
           <div className="grid gap-4 md:grid-cols-[1fr_1fr_12rem_auto] md:items-end">
             <div className="space-y-2">
-              <Label htmlFor="invite-name">Name</Label>
+              <Label htmlFor="invite-name">{t('invite.name')}</Label>
               <Input id="invite-name" autoComplete="off" {...register('name')} />
               <FormError message={errors.name?.message} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="invite-email" className="flex items-center gap-1">
-                Email{' '}
-                <FieldHelp title="Who can be invited">
-                  <p>
-                    Anyone without an account here. The invitation link works for 7 days, and only
-                    for this email address.
-                  </p>
-                  <p className="mt-2">
-                    If the person already has an account, ask a platform admin to add them to this
-                    organisation.
-                  </p>
+                {t('invite.email')}{' '}
+                <FieldHelp title={t('invite.emailHelpTitle')}>
+                  <p>{t('invite.emailHelp')}</p>
+                  <p className="mt-2">{t('invite.emailHelpExisting')}</p>
                 </FieldHelp>
               </Label>
               <Input id="invite-email" type="email" autoComplete="off" {...register('email')} />
@@ -161,7 +160,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
             </div>
             <div className="space-y-2">
               <Label htmlFor="invite-role" className="flex items-center gap-1">
-                Role <OrgRoleHelp />
+                {t('invite.role')} <OrgRoleHelp />
               </Label>
               <Select
                 value={orgRole}
@@ -175,7 +174,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
                 <SelectContent>
                   {ORG_ROLES.map((role) => (
                     <SelectItem key={role} value={role}>
-                      {ORG_ROLE_LABELS[role]}
+                      {t(`roles.${role}`)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -183,7 +182,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
             </div>
             <Button type="submit" disabled={submitting}>
               <Send className="mr-2 h-4 w-4" />
-              {submitting ? 'Sending…' : 'Send invitation'}
+              {submitting ? t('invite.sending') : t('invite.send')}
             </Button>
           </div>
 
@@ -194,11 +193,12 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
         {result?.emailStatus === 'pending' && pending && (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
             <span>
-              An invitation to {result.invitation.email} is already pending
               {result.invitation.orgRole && isOrgRole(result.invitation.orgRole)
-                ? ` as ${ORG_ROLE_LABELS[result.invitation.orgRole]}`
-                : ''}
-              . Sending it again keeps that role.
+                ? t('invite.pendingAs', {
+                    email: result.invitation.email,
+                    role: t(`roles.${result.invitation.orgRole}`),
+                  })
+                : t('invite.pending', { email: result.invitation.email })}
             </span>
             <Button
               variant="outline"
@@ -209,7 +209,7 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
                 void send(pending, true);
               }}
             >
-              Send it again
+              {t('invite.sendAgain')}
             </Button>
           </div>
         )}
@@ -218,13 +218,12 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
           <div className="mt-4 space-y-2 text-sm">
             <p className="flex items-center gap-2">
               <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-              {result.message} ({result.invitation.email})
+              {result.emailStatus === 'sent'
+                ? t('invite.sent', { email: result.invitation.email })
+                : t('invite.saved', { email: result.invitation.email })}
             </p>
             {result.emailStatus !== 'sent' && (
-              <p className="text-muted-foreground">
-                The invitation is saved, but the email did not go out. Ask a platform admin to
-                re-send it from Users.
-              </p>
+              <p className="text-muted-foreground">{t('invite.emailNotSent')}</p>
             )}
           </div>
         )}

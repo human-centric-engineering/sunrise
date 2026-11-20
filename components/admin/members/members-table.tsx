@@ -12,6 +12,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useFormatter, useTranslations } from 'next-intl';
 import { Trash2 } from 'lucide-react';
 
 import {
@@ -40,8 +41,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ClientDate } from '@/components/ui/client-date';
-import { OrgRoleHelp, ORG_ROLE_LABELS } from '@/components/admin/members/org-role-help';
+import { OrgRoleHelp } from '@/components/admin/members/org-role-help';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -64,17 +64,20 @@ export interface MembersTableProps {
 }
 
 export function MembersTable({ orgId, members, currentUserId }: MembersTableProps) {
+  const t = useTranslations('admin.members');
+  const tShell = useTranslations('admin.shell');
+  const format = useFormatter();
   const router = useRouter();
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [removing, setRemoving] = useState<OrgMember | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   // A role change reports above the table; the remove dialog has its own.
   const listSave = useSaveFailure({
-    fallback: 'Could not change the role. Try again.',
+    fallback: t('table.roleChangeFailed'),
     fields: NO_SERVER_FIELDS,
   });
   const removeSave = useSaveFailure({
-    fallback: 'Could not remove the member. Try again.',
+    fallback: t('table.removeFailed'),
     fields: NO_SERVER_FIELDS,
   });
 
@@ -86,7 +89,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
       await apiClient.patch(API.ORGS.member(orgId, member.id), { body: { role } });
       router.refresh();
     } catch (err) {
-      listSave.report(err, `Couldn't change the role of "${member.name || member.email}"`);
+      listSave.report(err, t('table.roleChangeFailedFor', { who: member.name || member.email }));
     } finally {
       setBusyUserId(null);
     }
@@ -125,16 +128,16 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
+              <TableHead>{t('table.name')}</TableHead>
+              <TableHead>{t('table.email')}</TableHead>
               <TableHead>
                 <span className="flex items-center gap-1">
-                  Role <OrgRoleHelp />
+                  {t('table.role')} <OrgRoleHelp />
                 </span>
               </TableHead>
-              <TableHead>Joined</TableHead>
+              <TableHead>{t('table.joined')}</TableHead>
               <TableHead className="w-12">
-                <span className="sr-only">Actions</span>
+                <span className="sr-only">{tShell('actions')}</span>
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -142,7 +145,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
             {members.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
-                  No members yet.
+                  {t('table.empty')}
                 </TableCell>
               </TableRow>
             ) : (
@@ -151,7 +154,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                   <TableCell className="font-medium">
                     {member.name || '—'}
                     {member.id === currentUserId && (
-                      <span className="text-muted-foreground ml-1 text-xs">(you)</span>
+                      <span className="text-muted-foreground ml-1 text-xs">{t('table.you')}</span>
                     )}
                   </TableCell>
                   <TableCell>{member.email}</TableCell>
@@ -163,29 +166,27 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                     >
                       <SelectTrigger
                         className="h-8 w-32"
-                        aria-label={`Role for ${member.name || member.email}`}
+                        aria-label={t('table.roleFor', { who: member.name || member.email })}
                       >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         {ORG_ROLES.map((role) => (
                           <SelectItem key={role} value={role}>
-                            {ORG_ROLE_LABELS[role]}
+                            {t(`roles.${role}`)}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </TableCell>
-                  <TableCell>
-                    <ClientDate date={member.joinedAt} />
-                  </TableCell>
+                  <TableCell>{format.dateTime(new Date(member.joinedAt), 'short')}</TableCell>
                   <TableCell>
                     <Button
                       variant="ghost"
                       size="icon"
                       disabled={busyUserId === member.id}
                       onClick={() => setRemoving(member)}
-                      aria-label={`Remove ${member.name || member.email}`}
+                      aria-label={t('table.remove', { who: member.name || member.email })}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -200,16 +201,16 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
       <AlertDialog open={!!removing} onOpenChange={removeDialog.onOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove member</AlertDialogTitle>
+            <AlertDialogTitle>{t('table.removeTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
               {removing?.id === currentUserId
-                ? 'You will lose access to this organisation, including this page, and be signed out of it. Your account and your access to other organisations are not affected.'
-                : `${removing?.name || removing?.email} will lose access to this organisation and be signed out of it. Their account and their access to other organisations are not affected.`}
+                ? t('table.removeSelf')
+                : t('table.removeOther', { who: removing?.name || removing?.email || '' })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <SaveError failure={removeSave.failure} />
           <AlertDialogFooter>
-            <AlertDialogCancel {...removeDialog.cancelProps}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel {...removeDialog.cancelProps}>{tShell('cancel')}</AlertDialogCancel>
             <AlertDialogAction
               {...removeDialog.actionProps()}
               onClick={(e) =>
@@ -218,7 +219,7 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                 })
               }
             >
-              Remove
+              {t('table.removeConfirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
