@@ -108,9 +108,15 @@ Exports: `sendEmail()`, `SendEmailOptions`, `SendEmailResult`, `EmailStatus`
 | `replyTo` | `string`                 | No       | Reply-to address (used by contact form)                                                                                                                     |
 | `headers` | `Record<string, string>` | No       | Extra message headers passed to Resend unchanged, e.g. `List-Unsubscribe` / `List-Unsubscribe-Post` for one-click unsubscribe. Only header names are logged |
 
+**`lib/email/locale.ts`** and **`lib/email/translate.ts`** (§138 t-1075)
+
+- `emailLocaleForUser(userId)`, `emailLocaleForOrg(orgId, { locale })`, `emailLocaleForAddress(email, orgId)` - the language and time zone an email to that recipient is written in
+- `emailTranslator(where, namespace)` - the catalogue's strings in that language, for the body and the subject; `emailDateTime()` / `emailDate()` for dates
+- `sendEmail()` takes no locale: the send site renders the template and the subject in it first. Which recipient gets which language is in [`.context/ui/i18n.md`](../ui/i18n.md#emails)
+
 ### Templates
 
-All templates use React Email components (`Html`, `Head`, `Preview`, `Body`, etc.) with inline CSS styling.
+All templates use React Email components (`Html`, `Head`, `Preview`, `Body`, etc.) with inline CSS styling. Every one also takes `locale` and `timeZone` and reads its copy from the catalogue (`emails.<kind>` in `lib/i18n/messages/en.json`); none holds English of its own.
 
 **`emails/welcome.tsx`**
 

@@ -18,6 +18,35 @@ release process.
 
 ### Added
 
+- **Every email goes out in its recipient's language (§138 t-1075).** The
+  templates in `emails/` and their subjects read from the catalogue's new
+  `emails` namespace. Each send site works out the language from who
+  receives it, in the new `lib/email/locale.ts`: `emailLocaleForUser(userId)`
+  (the user's own choice, then their org's default, then `en`, in their time
+  zone), `emailLocaleForOrg(orgId, { locale })` (a tag the site holds, such as
+  a waitlist entry's, then the org's default) and
+  `emailLocaleForAddress(email, orgId)` (an invitee's account, if they have
+  one). `lib/email/translate.ts` has `emailTranslator(where, namespace)`,
+  `emailDateTime()`, `emailDate()`, `EmailLocale` and `DEFAULT_EMAIL_LOCALE`.
+  `resolveEmailTemplate(kind, props, where?)` takes the locale as an optional
+  third argument and passes `locale` and `timeZone` to the template
+  (`EmailLocaleProps`); `EmailTemplate<K>` takes `EmailPropsMap[K] &
+  EmailLocaleProps`. `sessionOrgOf()` (`lib/tenancy/membership.ts`) is the org
+  a sign-in starts a user in, without the self-heal. `sendEmail()` is
+  unchanged. Dates in emails now use the shared named formats, so an English
+  expiry reads "Nov 20, 2026, 10:00 AM UTC" rather than "November 20, 2026 at
+  10:00 AM UTC", and the escalation subject names the priority as "High"
+  rather than "high". An event email's subject names the brand instead of a
+  literal "Sunrise".
+  **Fork impact:** an email override keeps working and type-checking; it gets
+  `locale` and `timeZone` too, and renders in English unless it translates
+  with `emailTranslator()`. A fork that edited a template in `emails/`
+  conflicts on its text, which moved to `lib/i18n/messages/en.json`: change
+  wording, including a subject, with `overridePlatformMessages('en', { emails:
+  … })`. A fork test asserting an email's exact English date, or the event
+  delivery's Resend idempotency key (which now ends in the locale), needs
+  updating.
+
 - **The user and public screens read their text from the catalogue (§138
   t-1073).** Every page under `app/(auth)`, `app/(public)` and
   `app/(protected)`, and the components they render, now shows the viewer's

@@ -383,7 +383,12 @@ sync-safe.
   deliverability). Your override must accept that kind's props — the platform
   publishes a stable typed `EmailPropsMap` contract per kind in
   `lib/email/registry.ts`; changing a kind's props is a versioned public-surface
-  change.
+  change. Each template is also handed the recipient's `locale` and `timeZone`
+  (§138): translate your copy with `emailTranslator()` from
+  `lib/email/translate.ts`, or it goes out in English whatever the recipient
+  reads. To change only the wording, including a subject, override the
+  `emails.<kind>` strings with `overridePlatformMessages()` instead of
+  copying the template. See [`.context/ui/i18n.md`](./.context/ui/i18n.md#emails).
 
 **Other project metadata:**
 
