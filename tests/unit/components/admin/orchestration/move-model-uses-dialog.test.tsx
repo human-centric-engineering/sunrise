@@ -88,6 +88,7 @@ function renderDialog(props: Partial<Parameters<typeof MoveModelUsesDialog>[0]> 
       modelName="GPT-4o"
       replacementOptions={OPTIONS}
       replacementId="m-new"
+      hasUses
       {...props}
     />
   );
@@ -210,7 +211,32 @@ describe('MoveModelUsesDialog', () => {
     expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeDisabled();
   });
 
-  it('is not offered where shared settings are read-only, or with no model to move to', () => {
+  it('keeps showing the result after the page refreshes to nothing using the model', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce(PREVIEW).mockResolvedValueOnce(RESULT);
+    const { rerender } = renderDialog();
+    const { user, dialog } = await open();
+    await within(dialog).findByText('Acme');
+    await user.click(within(dialog).getByRole('button', { name: 'Move uses' }));
+    await within(dialog).findByRole('status');
+
+    // The refresh the move asks for: nothing uses the model now.
+    rerender(
+      <MoveModelUsesDialog
+        modelId="m-old"
+        modelName="GPT-4o"
+        replacementOptions={OPTIONS}
+        replacementId="m-new"
+        hasUses={false}
+      />
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('Moved 2 agents');
+
+    // Closed, it offers nothing more to move.
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.queryByRole('button', { name: 'Move uses…' })).toBeNull();
+  });
+
+  it('is not offered where shared settings are read-only, with no model to move to, or with nothing to move', () => {
     const { unmount } = render(
       <SharedSettingsAccessProvider readOnly canSwitch={false}>
         <MoveModelUsesDialog
@@ -218,12 +244,15 @@ describe('MoveModelUsesDialog', () => {
           modelName="GPT-4o"
           replacementOptions={OPTIONS}
           replacementId="m-new"
+          hasUses
         />
       </SharedSettingsAccessProvider>
     );
     expect(screen.queryByRole('button', { name: 'Move uses…' })).toBeNull();
     unmount();
-    renderDialog({ replacementOptions: [] });
+    renderDialog({ replacementOptions: [] }).unmount();
+    expect(screen.queryByRole('button', { name: 'Move uses…' })).toBeNull();
+    renderDialog({ hasUses: false });
     expect(screen.queryByRole('button', { name: 'Move uses…' })).toBeNull();
   });
 });

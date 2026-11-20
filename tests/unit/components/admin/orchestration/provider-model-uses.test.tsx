@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 
 import {
+  modelHasUses,
   ProviderModelUses,
   type ProviderModelUsesData,
 } from '@/components/admin/orchestration/provider-model-uses';
@@ -197,13 +198,15 @@ describe('the move action (§136 t-1066)', () => {
     );
   }
 
-  it('is shown beside the heading when something uses the model', () => {
-    withAction({ otherOrgWorkflows: 1 });
+  it('is rendered beside the heading whatever the uses, so an open dialog outlives a refresh', () => {
+    withAction({});
     expect(screen.getByRole('button', { name: 'Move uses…' })).toBeInTheDocument();
   });
 
-  it('is not shown when nothing uses it', () => {
-    withAction({});
-    expect(screen.queryByRole('button', { name: 'Move uses…' })).toBeNull();
+  it('modelHasUses counts agents, workflows (any org) and settings', () => {
+    expect(modelHasUses(NONE)).toBe(false);
+    expect(modelHasUses({ ...NONE, otherOrgWorkflows: 1 })).toBe(true);
+    expect(modelHasUses({ ...NONE, otherOrgAgents: 1 })).toBe(true);
+    expect(modelHasUses({ ...NONE, settings: [{ slot: 'chat', source: 'suggested' }] })).toBe(true);
   });
 });

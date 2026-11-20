@@ -11,6 +11,7 @@ import { requireAllServerData, requireServerData } from '@/lib/api/server-load';
 import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import { MoveModelUsesDialog } from '@/components/admin/orchestration/move-model-uses-dialog';
 import {
+  modelHasUses,
   ProviderModelUses,
   type ProviderModelLifecycleData,
   type ProviderModelUsesData,
@@ -87,6 +88,7 @@ export default async function EditProviderModelPage({ params, searchParams }: Pr
             modelName={model.name}
             replacementOptions={replacementOptions.filter((o) => o.id !== model.id)}
             replacementId={model.replacementId ?? null}
+            hasUses={modelHasUses(model.uses)}
           />
         }
       />

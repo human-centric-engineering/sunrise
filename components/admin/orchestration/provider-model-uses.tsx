@@ -92,18 +92,28 @@ export interface ProviderModelUsesProps {
   retiresAt: string | null;
   lifecycle: ProviderModelLifecycleData;
   uses: ProviderModelUsesData;
-  /** Shown beside the heading when something uses the model: the move (§136 t-1066). */
+  /**
+   * Shown beside the heading: the move (§136 t-1066). Rendered whatever the
+   * uses, so a dialog open across the page's refresh stays mounted; it decides
+   * itself when to show its trigger (`modelHasUses`).
+   */
   action?: ReactNode;
 }
 
-export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: ProviderModelUsesProps) {
-  const nothing =
+/** Whether anything uses the model: an agent or workflow in any org, or a setting. */
+export function modelHasUses(uses: ProviderModelUsesData): boolean {
+  return (
     uses.agents.length +
       uses.otherOrgAgents +
       uses.workflows.length +
       uses.otherOrgWorkflows +
-      uses.settings.length ===
-    0;
+      uses.settings.length >
+    0
+  );
+}
+
+export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: ProviderModelUsesProps) {
+  const nothing = !modelHasUses(uses);
   const { state, replacement } = lifecycle;
 
   return (
@@ -123,7 +133,10 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
         {state === 'retired' && retiresAt && (
           <Badge variant="destructive">Retired on {formatDay(retiresAt)}</Badge>
         )}
-        {!nothing && action && <div className="ml-auto">{action}</div>}
+        {/* Always rendered: an open move dialog must outlive the refresh that
+            follows a move, after which nothing may use the model. The dialog
+            hides its own trigger then. */}
+        {action && <div className="ml-auto">{action}</div>}
       </div>
 
       {state !== 'current' && (

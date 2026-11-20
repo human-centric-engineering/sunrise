@@ -166,6 +166,12 @@ export interface MoveModelUsesDialogProps {
   replacementOptions: ReplacementOption[];
   /** The stored replacement, chosen first when there is one. */
   replacementId: string | null;
+  /**
+   * Whether anything uses the model. When nothing does, the trigger is not
+   * offered; an open dialog stays, since a move's own refresh makes this false
+   * while its result is still to be read.
+   */
+  hasUses: boolean;
 }
 
 export function MoveModelUsesDialog({
@@ -173,6 +179,7 @@ export function MoveModelUsesDialog({
   modelName,
   replacementOptions,
   replacementId,
+  hasUses,
 }: MoveModelUsesDialogProps) {
   const router = useRouter();
   const readOnly = useSharedSettingsReadOnly();
@@ -238,7 +245,7 @@ export function MoveModelUsesDialog({
     clear,
   });
 
-  if (readOnly || replacementOptions.length === 0) return null;
+  if (readOnly || replacementOptions.length === 0 || (!open && !hasUses)) return null;
 
   const nothingToMove =
     preview !== null &&
