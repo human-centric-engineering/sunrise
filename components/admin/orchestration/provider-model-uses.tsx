@@ -171,6 +171,8 @@ function AppUses({ uses }: { uses: ProviderModelUsesData }) {
 
 export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: ProviderModelUsesProps) {
   const nothing = !modelHasUses(uses);
+  // The platform's own uses: the grid, which the app's uses alone leave out.
+  const platform = modelHasMovableUses(uses);
   const { state, replacement } = lifecycle;
 
   return (
@@ -220,12 +222,14 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
         </p>
       )}
 
-      {nothing ? (
-        <p className="text-muted-foreground text-sm">
-          {uses.appPinsUnavailable
-            ? 'Nothing Sunrise can see uses this model.'
-            : 'Nothing uses this model.'}
-        </p>
+      {nothing || !platform ? (
+        nothing && (
+          <p className="text-muted-foreground text-sm">
+            {uses.appPinsUnavailable
+              ? 'Nothing Sunrise can see uses this model.'
+              : 'Nothing uses this model.'}
+          </p>
+        )
       ) : (
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-1">
@@ -324,7 +328,7 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
 
       <AppUses uses={uses} />
 
-      {!nothing &&
+      {platform &&
         uses.sharedWith.length > 0 &&
         (uses.workflows.some((workflow) => workflow.byIdOnly) ||
           uses.otherOrgWorkflowsByIdOnly > 0 ||

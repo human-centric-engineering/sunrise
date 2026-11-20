@@ -102,7 +102,11 @@ beforeEach(() => {
   } as never);
   (prisma.aiAgent.findFirst as Mock).mockResolvedValue(null);
   vi.mocked(confidentialModelProblem).mockResolvedValue(null);
-  vi.mocked(retiringModelsInUse).mockResolvedValue({ retiring: 0, retired: 0 });
+  vi.mocked(retiringModelsInUse).mockResolvedValue({
+    retiring: 0,
+    retired: 0,
+    unknown: { retiring: 0, retired: 0 },
+  });
   vi.stubEnv('TEST_PROVIDER_KEY', 'sk-test-not-a-real-key');
   // Healthy defaults; individual tests unset what they exercise.
   vi.stubEnv('CRON_SECRET', 'x'.repeat(40));
@@ -428,7 +432,11 @@ describe('retiring and retired models still in use (§136 t-1065)', () => {
   });
 
   it('flags a retired model in use as critical, and only that check', async () => {
-    vi.mocked(retiringModelsInUse).mockResolvedValue({ retiring: 0, retired: 1 });
+    vi.mocked(retiringModelsInUse).mockResolvedValue({
+      retiring: 0,
+      retired: 1,
+      unknown: { retiring: 0, retired: 0 },
+    });
 
     const report = await runConfigHealthChecks();
 
@@ -439,7 +447,11 @@ describe('retiring and retired models still in use (§136 t-1065)', () => {
   });
 
   it('flags a retiring model in use as a warning', async () => {
-    vi.mocked(retiringModelsInUse).mockResolvedValue({ retiring: 2, retired: 0 });
+    vi.mocked(retiringModelsInUse).mockResolvedValue({
+      retiring: 2,
+      retired: 0,
+      unknown: { retiring: 0, retired: 0 },
+    });
 
     const report = await runConfigHealthChecks();
 
@@ -448,6 +460,36 @@ describe('retiring and retired models still in use (§136 t-1065)', () => {
       severity: 'warning',
     });
     expect(check(report.checks, 'retired_model_in_use').present).toBe(true);
+  });
+
+  it('reports only the state whose app report failed as unable to run, and keeps a known alert (§136 t-1067)', async () => {
+    // A retired model known to be in use; a retiring one the app's report on
+    // failed. The critical alert stands; the retiring check could not run.
+    vi.mocked(retiringModelsInUse).mockResolvedValue({
+      retiring: 0,
+      retired: 1,
+      unknown: { retiring: 1, retired: 0 },
+    });
+
+    const report = await runConfigHealthChecks();
+
+    expect(check(report.checks, 'retired_model_in_use')).toMatchObject({ present: false });
+    expect(check(report.checks, 'retired_model_in_use').failed).toBeUndefined();
+    expect(check(report.checks, 'retiring_model_in_use').failed).toBe(true);
+    expect(report.summary.critical).toBe(1);
+  });
+
+  it('keeps a known alert in a state even when that state also has an unknown model', async () => {
+    vi.mocked(retiringModelsInUse).mockResolvedValue({
+      retiring: 0,
+      retired: 1,
+      unknown: { retiring: 0, retired: 2 },
+    });
+
+    const report = await runConfigHealthChecks();
+
+    expect(check(report.checks, 'retired_model_in_use')).toMatchObject({ present: false });
+    expect(check(report.checks, 'retiring_model_in_use').present).toBe(true);
   });
 
   it('reports the checks as failed, not as missing, when the lookup throws', async () => {

@@ -230,6 +230,8 @@ describe('the app’s own uses (§136 t-1067)', () => {
     expect(app).toHaveTextContent('3 in other organisations. They are counted, not named.');
     expect(app).toHaveTextContent('moving the model’s uses does not change them');
     expect(region).not.toHaveTextContent('Nothing uses this model.');
+    // The platform's grid is left out: it would say None three times.
+    expect(within(region).queryByRole('heading', { name: 'Agents' })).not.toBeInTheDocument();
   });
 
   it('says when the app’s uses could not all be read, and not that nothing uses the model', () => {

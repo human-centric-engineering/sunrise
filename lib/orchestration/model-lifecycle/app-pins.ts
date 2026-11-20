@@ -47,7 +47,8 @@ import { initAppModelPins } from '@/lib/app/model-pins';
 import { createAppInitGate } from '@/lib/fork-init';
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { getTenantContext, isMultiTenant, listActiveOrgIds, runAsOrg } from '@/lib/tenancy/context';
+import { prisma } from '@/lib/db/client';
+import { getTenantContext, isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
 import { withTimeout } from '@/lib/utils/with-timeout';
 
 /** How long one org's report may take before it counts as failed. */
@@ -60,8 +61,11 @@ export const APP_MODEL_PIN_REPORT_TIMEOUT_MS = 10_000;
 export const APP_MODEL_PIN_REPORT_BUDGET_MS = 20_000;
 /** How long the check may take before it counts as a refusal. */
 export const APP_MODEL_MOVE_CHECK_TIMEOUT_MS = 120_000;
-/** Orgs asked for their report at once. */
-const REPORT_CONCURRENCY = 8;
+/**
+ * Orgs asked for their report at once: well under the database pool, since a
+ * reporter that ignores its signal keeps its connection after its timeout.
+ */
+const REPORT_CONCURRENCY = 4;
 /** The most pins one org's report may hold; more is a reporter bug. */
 const MAX_PINS_PER_ORG = 1_000;
 
@@ -79,7 +83,11 @@ export interface AppModelPinQuery {
   model: AppPinModel;
   /** The org whose pins to report: the scope the reporter runs in. */
   orgId: string;
-  /** Aborts when the report runs out of time. */
+  /**
+   * Aborts when the report runs out of time. Honour it (pass it to your
+   * queries or stop on it): Sunrise stops waiting either way, but a reporter
+   * that runs on holds its database connection.
+   */
   signal: AbortSignal;
 }
 
@@ -202,13 +210,18 @@ export interface AppModelPinReport {
 }
 
 /**
- * The orgs whose pins a read covers. Every active org at `multi` when
- * `acrossOrgs`, else the entered org alone (none when no org is entered); the
- * install org at `single`, where every row is the install's.
+ * The orgs whose pins a read covers. Every org at `multi` when `acrossOrgs`,
+ * suspended ones too, as `providerModelUsage` counts every org's agents: an
+ * org suspended today may be back, still naming the model, after a delete.
+ * Else the entered org alone (none when no org is entered); the install org at
+ * `single`, where every row is the install's.
  */
 async function orgsToAsk(acrossOrgs: boolean): Promise<string[]> {
   if (!isMultiTenant()) return [INSTALL_ORG_ID];
-  if (acrossOrgs) return listActiveOrgIds();
+  if (acrossOrgs) {
+    const orgs = await prisma.org.findMany({ select: { id: true }, orderBy: { createdAt: 'asc' } });
+    return orgs.map((org) => org.id);
+  }
   const current = getTenantContext()?.orgId;
   return current ? [current] : [];
 }
@@ -244,9 +257,9 @@ async function reportOne(
 }
 
 /**
- * The app's uses of `model`, in every active org by default, or in the
+ * The app's uses of `model`, in every org by default (suspended ones too), or in the
  * caller's org alone with `acrossOrgs: false` (as `providerModelUsage`'s
- * option). Each org is asked inside its own scope, eight at a time, each for
+ * option). Each org is asked inside its own scope, four at a time, each for
  * at most {@link APP_MODEL_PIN_REPORT_TIMEOUT_MS} and all of them within
  * {@link APP_MODEL_PIN_REPORT_BUDGET_MS}: an org not answered in time counts
  * as failed. With no reporter registered nothing is asked and the report is

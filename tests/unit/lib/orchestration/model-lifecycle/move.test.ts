@@ -364,8 +364,11 @@ function installFakes(): void {
       )
     )) as never);
   vi.mocked(prisma.org.findUnique).mockResolvedValue({ name: 'Install' } as never);
-  vi.mocked(prisma.org.findMany).mockImplementation(((args: { where: { id: { in: string[] } } }) =>
-    Promise.resolve(world.orgs.filter((o) => args.where.id.in.includes(o.id)))) as never);
+  // By id for the move's passes; every org, suspended too, for the app's report.
+  vi.mocked(prisma.org.findMany).mockImplementation(((args: { where?: { id: { in: string[] } } }) =>
+    Promise.resolve(
+      args.where ? world.orgs.filter((o) => args.where?.id.in.includes(o.id)) : world.orgs
+    )) as never);
   vi.mocked(prisma.org.count).mockImplementation((() =>
     Promise.resolve(world.orgs.filter((o) => o.status !== 'ACTIVE').length)) as never);
   vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue({
@@ -1155,9 +1158,12 @@ describe('the app’s own pins and its check', () => {
 
     const preview = await previewModelMove(await target());
 
+    // Every org is asked for its pins, the suspended one too (a read); only
+    // active orgs are listed, since only they are moved.
     expect(seen).toEqual([
       { orgId: 'org-a', scope: 'org-a' },
       { orgId: 'org-b', scope: 'org-b' },
+      { orgId: 'org-c', scope: 'org-c' },
     ]);
     expect(preview.orgs.map((o) => [o.orgId, o.agents, o.workflows, o.appPins])).toEqual([
       ['org-a', 2, 1, 2],

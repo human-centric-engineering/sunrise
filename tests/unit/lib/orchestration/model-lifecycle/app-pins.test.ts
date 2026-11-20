@@ -14,15 +14,16 @@ const appInit = vi.hoisted(() => ({ run: (): void => {} }));
 vi.mock('@/lib/app/model-pins', () => ({ initAppModelPins: () => appInit.run() }));
 vi.mock('@/lib/tenancy/context', () => ({
   isMultiTenant: vi.fn(),
-  listActiveOrgIds: vi.fn(),
   runAsOrg: vi.fn(),
   getTenantContext: vi.fn(),
 }));
+vi.mock('@/lib/db/client', () => ({ prisma: { org: { findMany: vi.fn() } } }));
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { getTenantContext, isMultiTenant, listActiveOrgIds, runAsOrg } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
+import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
@@ -43,6 +44,11 @@ const MODEL = { id: 'm-old', name: 'GPT-4o', providerSlug: 'openai', modelId: 'g
 const REPLACEMENT = { id: 'm-new', name: 'GPT-4.1', providerSlug: 'openai', modelId: 'gpt-4.1' };
 
 let scope: string | null = null;
+
+/** The orgs in the install, in creation order, suspended ones included. */
+function orgsAre(ids: string[]): void {
+  vi.mocked(prisma.org.findMany).mockResolvedValue(ids.map((id) => ({ id })) as never);
+}
 let multi = true;
 
 beforeEach(() => {
@@ -52,7 +58,7 @@ beforeEach(() => {
   scope = null;
   multi = true;
   vi.mocked(isMultiTenant).mockImplementation(() => multi);
-  vi.mocked(listActiveOrgIds).mockResolvedValue(['org-a', 'org-b']);
+  orgsAre(['org-a', 'org-b']);
   vi.mocked(getTenantContext).mockImplementation(() =>
     scope ? ({ orgId: scope } as never) : (undefined as never)
   );
@@ -87,7 +93,7 @@ describe('with nothing registered', () => {
 
     const report = await reportAppModelPins(MODEL);
     expect(report).toEqual({ pins: [], failed: false });
-    expect(listActiveOrgIds).not.toHaveBeenCalled();
+    expect(prisma.org.findMany).not.toHaveBeenCalled();
     expect(runAsOrg).not.toHaveBeenCalled();
 
     expect(await checkAppModelMove(MODEL, REPLACEMENT, report, 'move')).toEqual({ allowed: true });
@@ -96,7 +102,7 @@ describe('with nothing registered', () => {
 });
 
 describe('reportAppModelPins', () => {
-  it('asks each active org inside its own scope, and stamps the org on its pins', async () => {
+  it('asks every org inside its own scope, suspended ones too, and stamps the org on its pins', async () => {
     const seen = reportFrom({
       'org-a': [{ label: 'Panel: Contracts', where: 'Panels › Contracts › Judge' }],
       'org-b': [
@@ -112,6 +118,11 @@ describe('reportAppModelPins', () => {
       { orgId: 'org-a', scope: 'org-a' },
       { orgId: 'org-b', scope: 'org-b' },
     ]);
+    // Every org, whatever its status: no `status` filter on the read.
+    expect(prisma.org.findMany).toHaveBeenCalledWith({
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
     expect(report).toEqual({
       failed: false,
       pins: [
@@ -128,7 +139,7 @@ describe('reportAppModelPins', () => {
     scope = 'org-b';
     const own = await reportAppModelPins(MODEL, { acrossOrgs: false });
     expect(own.pins.map((p) => p.orgId)).toEqual(['org-b']);
-    expect(listActiveOrgIds).not.toHaveBeenCalled();
+    expect(prisma.org.findMany).not.toHaveBeenCalled();
 
     scope = null;
     expect(await reportAppModelPins(MODEL, { acrossOrgs: false })).toEqual({
@@ -151,7 +162,7 @@ describe('reportAppModelPins', () => {
 
   it('passes the model, and marks the report failed for an org that throws or answers badly', async () => {
     const asked: AppModelPinQuery[] = [];
-    vi.mocked(listActiveOrgIds).mockResolvedValue(['org-a', 'org-b', 'org-c']);
+    orgsAre(['org-a', 'org-b', 'org-c']);
     registerModelPinReporter((query) => {
       asked.push(query);
       if (query.orgId === 'org-a') throw new Error('panel table missing');
@@ -180,7 +191,7 @@ describe('reportAppModelPins', () => {
   it('stops asking once the whole report has used its time, however many orgs remain', async () => {
     vi.useFakeTimers();
     const orgIds = Array.from({ length: 20 }, (_, i) => `org-${i}`);
-    vi.mocked(listActiveOrgIds).mockResolvedValue(orgIds);
+    orgsAre(orgIds);
     const asked: string[] = [];
     registerModelPinReporter(({ orgId }) => {
       asked.push(orgId);
@@ -190,14 +201,14 @@ describe('reportAppModelPins', () => {
     const pending = reportAppModelPins(MODEL);
     await vi.advanceTimersByTimeAsync(APP_MODEL_PIN_REPORT_BUDGET_MS + 1);
 
-    // Two batches of eight, each given its 10 s, use the 20 s; the last four
-    // orgs are never asked, and the report says it is short.
+    // Two batches of four, each given its 10 s, use the 20 s; the other
+    // twelve orgs are never asked, and the report says it is short.
     expect(await pending).toEqual({ pins: [], failed: true });
-    expect(asked).toHaveLength(16);
+    expect(asked).toHaveLength(8);
     expect(logger.error).toHaveBeenCalledWith(
       'App model-pin report ran out of time; the rest of the orgs were not asked',
       undefined,
-      { providerModelId: 'm-old', notAsked: 4 }
+      { providerModelId: 'm-old', notAsked: 12 }
     );
   });
 
@@ -208,7 +219,7 @@ describe('reportAppModelPins', () => {
       signal = query.signal;
       return new Promise(() => {});
     });
-    vi.mocked(listActiveOrgIds).mockResolvedValue(['org-a']);
+    orgsAre(['org-a']);
 
     const pending = reportAppModelPins(MODEL);
     await vi.advanceTimersByTimeAsync(APP_MODEL_PIN_REPORT_TIMEOUT_MS);

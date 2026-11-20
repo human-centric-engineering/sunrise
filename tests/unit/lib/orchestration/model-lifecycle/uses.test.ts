@@ -12,7 +12,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/db/client', () => ({
-  prisma: { aiProviderModel: { findMany: vi.fn() } },
+  prisma: { aiProviderModel: { findMany: vi.fn() }, org: { findMany: vi.fn() } },
 }));
 vi.mock('@/lib/orchestration/admin/global-config-usage', () => ({
   providerModelUsage: vi.fn(),
@@ -21,7 +21,6 @@ vi.mock('@/lib/orchestration/settings', () => ({ getOrchestrationSettings: vi.fn
 vi.mock('@/lib/tenancy/context', () => ({
   isMultiTenant: vi.fn(() => false),
   getTenantContext: vi.fn(),
-  listActiveOrgIds: vi.fn(),
   runAsOrg: vi.fn((_orgId: string, fn: () => Promise<unknown>) => fn()),
 }));
 
@@ -30,11 +29,17 @@ import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usag
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { modelUses, retiringModelsInUse } from '@/lib/orchestration/model-lifecycle/uses';
 import {
+  APP_MODEL_PIN_REPORT_TIMEOUT_MS,
   __resetAppModelPinsForTests,
   registerModelPinReporter,
 } from '@/lib/orchestration/model-lifecycle/app-pins';
-import { getTenantContext, isMultiTenant, listActiveOrgIds } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+
+/** The orgs in the install, as the app's report reads them. */
+function orgsAre(ids: string[]): void {
+  vi.mocked(prisma.org.findMany).mockResolvedValue(ids.map((id) => ({ id })) as never);
+}
 
 const NOW = new Date('2027-03-01T12:00:00.000Z');
 const FUTURE = new Date('2027-06-01T00:00:00.000Z');
@@ -178,7 +183,11 @@ describe('modelUses', () => {
 
 describe('retiringModelsInUse', () => {
   it('reads only models with a retirement date, and nothing else when there are none', async () => {
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 0 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 0,
+      unknown: { retiring: 0, retired: 0 },
+    });
     expect(prisma.aiProviderModel.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { retiresAt: { not: null } } })
     );
@@ -204,7 +213,11 @@ describe('retiringModelsInUse', () => {
 
     // `pinned-chat` is named only by a default, by id alone; nobody else
     // offers the id, so that is exactly its use.
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 1, retired: 2 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 1,
+      retired: 2,
+      unknown: { retiring: 0, retired: 0 },
+    });
     // Counted across every org: no scope narrowing.
     expect(providerModelUsage).toHaveBeenCalledWith('openai', 'retiring-used');
   });
@@ -226,7 +239,11 @@ describe('retiringModelsInUse', () => {
       otherOrgWorkflowsByIdOnly: 3,
     });
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 0 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 0,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 
   it('alerts on a by-id-only use at the least severe state of the rows with the id', async () => {
@@ -242,7 +259,11 @@ describe('retiringModelsInUse', () => {
       otherOrgWorkflowsByIdOnly: 1,
     });
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 2, retired: 0 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 2,
+      retired: 0,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 
   it('is critical for a by-id-only use only when every row with the id is retired', async () => {
@@ -256,7 +277,11 @@ describe('retiringModelsInUse', () => {
       otherOrgWorkflowsByIdOnly: 1,
     });
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 2 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 2,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 
   it('ignores a turned-off row with the id, which the runtime cannot reach (the Azure row the seed ships)', async () => {
@@ -272,7 +297,11 @@ describe('retiringModelsInUse', () => {
       otherOrgWorkflowsByIdOnly: 1,
     });
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 1,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 
   it('alerts on a workflow pinning provider and model, whatever shares the id', async () => {
@@ -285,7 +314,11 @@ describe('retiringModelsInUse', () => {
       provider === 'microsoft' ? { ...UNUSED, otherOrgWorkflows: 1 } : UNUSED
     );
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 1,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 
   it("alerts on the caller's own workflow pinning the pair, not on one pinning the id alone", async () => {
@@ -296,10 +329,18 @@ describe('retiringModelsInUse', () => {
     const workflow = (byIdOnly: boolean) => ({ id: 'w', name: 'W', slug: 'w', byIdOnly });
 
     vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, workflows: [workflow(true)] });
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 0 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 0,
+      unknown: { retiring: 0, retired: 0 },
+    });
 
     vi.mocked(providerModelUsage).mockResolvedValue({ ...UNUSED, workflows: [workflow(false)] });
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 1,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 
   it('still alerts on an agent, which names provider and model, whatever shares the id', async () => {
@@ -311,7 +352,11 @@ describe('retiringModelsInUse', () => {
       provider === 'microsoft' ? { ...UNUSED, otherOrgAgents: 1 } : UNUSED
     );
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 1 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 1,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 });
 
@@ -321,7 +366,7 @@ describe('the app’s own pins (§136 t-1067)', () => {
   it('names the caller’s org’s pins and counts every other org’s, at multi', async () => {
     vi.mocked(isMultiTenant).mockReturnValue(true);
     vi.mocked(getTenantContext).mockReturnValue({ orgId: 'org-a' } as never);
-    vi.mocked(listActiveOrgIds).mockResolvedValue(['org-a', 'org-b']);
+    orgsAre(['org-a', 'org-b']);
     registerModelPinReporter(({ orgId, model }) =>
       model.id === 'm1'
         ? orgId === 'org-a'
@@ -352,7 +397,7 @@ describe('the app’s own pins (§136 t-1067)', () => {
     const uses = await modelUses(MODEL, { acrossOrgs: false });
 
     expect(asked).toEqual(['org-b']);
-    expect(listActiveOrgIds).not.toHaveBeenCalled();
+    expect(prisma.org.findMany).not.toHaveBeenCalled();
     expect(uses.appPins).toHaveLength(1);
     expect(uses.otherOrgAppPins).toBe(0);
   });
@@ -369,17 +414,21 @@ describe('the app’s own pins (§136 t-1067)', () => {
     expect(uses.appPinsUnavailable).toBe(true);
   });
 
-  it('cannot answer when the app’s report on an otherwise unused dated model failed', async () => {
-    // Config health then reports its checks as not able to run: no alert
-    // about uses nobody can name, and no all-clear either.
-    catalogue([{ id: 'd1', providerSlug: 'openai', modelId: 'app-maybe', retiresAt: PAST }]);
-    registerModelPinReporter(() => {
-      throw new Error('panel table missing');
+  it('counts a dated model whose app report failed as unknown, by its state, never guessed', async () => {
+    catalogue([
+      { id: 'd1', providerSlug: 'openai', modelId: 'app-maybe', retiresAt: PAST },
+      { id: 'r1', providerSlug: 'openai', modelId: 'app-used', retiresAt: FUTURE },
+    ]);
+    registerModelPinReporter(({ model }) => {
+      if (model.id === 'd1') throw new Error('panel table missing');
+      return [{ label: 'Panel', where: 'x' }];
     });
 
-    await expect(retiringModelsInUse(NOW)).rejects.toThrow(
-      "The app's own uses of dated model d1 could not be read"
-    );
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 1,
+      retired: 0,
+      unknown: { retiring: 0, retired: 1 },
+    });
   });
 
   it('still answers when a failed report could not change it', async () => {
@@ -397,7 +446,11 @@ describe('the app’s own pins (§136 t-1067)', () => {
       throw new Error('panel table missing');
     });
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 0, retired: 2 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 0,
+      retired: 2,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 
   it('tells the reporter about the model in its declared shape only', async () => {
@@ -419,8 +472,36 @@ describe('the app’s own pins (§136 t-1067)', () => {
     const reporter = vi.fn(() => []);
     registerModelPinReporter(reporter);
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 1, retired: 0 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 1,
+      retired: 0,
+      unknown: { retiring: 0, retired: 0 },
+    });
     expect(reporter).not.toHaveBeenCalled();
+  });
+
+  it('asks about every unused dated model at once, under one report’s time', async () => {
+    vi.useFakeTimers();
+    try {
+      catalogue([
+        { id: 'r1', providerSlug: 'openai', modelId: 'a', retiresAt: FUTURE },
+        { id: 'r2', providerSlug: 'openai', modelId: 'b', retiresAt: FUTURE },
+        { id: 'd1', providerSlug: 'openai', modelId: 'c', retiresAt: PAST },
+      ]);
+      registerModelPinReporter(() => new Promise(() => {}));
+
+      const pending = retiringModelsInUse(NOW);
+      // One org's timeout, not three models' one after another.
+      await vi.advanceTimersByTimeAsync(APP_MODEL_PIN_REPORT_TIMEOUT_MS);
+
+      expect(await pending).toEqual({
+        retiring: 0,
+        retired: 0,
+        unknown: { retiring: 2, retired: 1 },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('counts a dated model the app alone uses as in use, by its state', async () => {
@@ -432,6 +513,10 @@ describe('the app’s own pins (§136 t-1067)', () => {
       model.id === 'r1' ? [{ label: 'Panel: Contracts', where: 'Panels › Judge' }] : []
     );
 
-    expect(await retiringModelsInUse(NOW)).toEqual({ retiring: 1, retired: 0 });
+    expect(await retiringModelsInUse(NOW)).toEqual({
+      retiring: 1,
+      retired: 0,
+      unknown: { retiring: 0, retired: 0 },
+    });
   });
 });

@@ -127,6 +127,13 @@ export async function modelUses(model: UsesModel, options: CountScope = {}): Pro
 export interface RetiringModelsInUse {
   retiring: number;
   retired: number;
+  /**
+   * Dated models, by state, that nothing of the platform's uses and whose
+   * app report failed (§136 t-1067): not known to be used or unused. Each
+   * config-health check reads only its own state's, so a failed report on a
+   * retiring model never hides a retired one known to be in use.
+   */
+  unknown: { retiring: number; retired: number };
 }
 
 /**
@@ -134,22 +141,26 @@ export interface RetiringModelsInUse {
  * counted by state at `now`. For config health, which reports presence only.
  * Few models carry a date at once, so each is looked up on its own.
  *
- * The app's reporter (§136 t-1067) is asked only about a dated model nothing
- * of the platform's uses exactly, since it cannot change the answer for the
- * rest. A report that fails throws: config health then reports its checks as
- * not able to run, rather than raise an alert about uses nobody can name or
- * pass a model nobody can clear.
- *
- * @throws Error when the app's report on such a model failed.
+ * The app's reporter (§136 t-1067) is asked only about a dated model with no
+ * use of the platform's that counts it (an exact one, or a by-id-only one
+ * that alerts), since it cannot change the answer for the rest. Those models
+ * are asked about together, so a slow reporter delays this by one report's
+ * budget (`APP_MODEL_PIN_REPORT_BUDGET_MS`), not one per model. A report that
+ * fails is counted in `unknown`, never guessed.
  */
 export async function retiringModelsInUse(now: Date = new Date()): Promise<RetiringModelsInUse> {
   const dated = await prisma.aiProviderModel.findMany({
     where: { retiresAt: { not: null } },
     select: { id: true, name: true, providerSlug: true, modelId: true, retiresAt: true },
   });
-  const counts: RetiringModelsInUse = { retiring: 0, retired: 0 };
+  const counts: RetiringModelsInUse = {
+    retiring: 0,
+    retired: 0,
+    unknown: { retiring: 0, retired: 0 },
+  };
   if (dated.length === 0) return counts;
   const settings = await getOrchestrationSettings();
+  const askApp: Array<{ model: (typeof dated)[number]; state: 'retiring' | 'retired' }> = [];
   for (const model of dated) {
     const state = modelLifecycleState(model, now);
     if (state === 'current') continue;
@@ -170,18 +181,6 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
       counts[state]++;
       continue;
     }
-    // The app reports its uses of this row, so each is exact. A report that
-    // failed may have missed one: not known either way.
-    const app = await reportAppModelPins({
-      id: model.id,
-      name: model.name,
-      providerSlug: model.providerSlug,
-      modelId: model.modelId,
-    });
-    if (app.pins.length > 0) {
-      counts[state]++;
-      continue;
-    }
     // Pins naming the id alone may run on another row with the id. They alert
     // only when every such row is dated, and at the least severe of their
     // states: retired only when all of them are.
@@ -194,9 +193,24 @@ export async function retiringModelsInUse(now: Date = new Date()): Promise<Retir
       counts[states.includes('retiring') ? 'retiring' : 'retired']++;
       continue;
     }
-    if (app.failed) {
-      throw new Error(`The app's own uses of dated model ${model.id} could not be read`);
-    }
+    askApp.push({ model, state });
   }
+  // The app reports its uses of a row, so each is exact. A report that failed
+  // may have missed one: not known either way.
+  const reports = await Promise.all(
+    askApp.map(({ model }) =>
+      reportAppModelPins({
+        id: model.id,
+        name: model.name,
+        providerSlug: model.providerSlug,
+        modelId: model.modelId,
+      })
+    )
+  );
+  reports.forEach((report, i) => {
+    const { state } = askApp[i];
+    if (report.pins.length > 0) counts[state]++;
+    else if (report.failed) counts.unknown[state]++;
+  });
   return counts;
 }

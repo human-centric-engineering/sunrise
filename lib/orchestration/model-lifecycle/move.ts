@@ -428,7 +428,11 @@ export interface AppMovePreview {
 export interface ModelMovePreview {
   model: { id: string; name: string; modelId: string; providerSlug: string };
   replacement: { id: string; name: string; modelId: string };
-  /** Orgs with something that moves or is left; an org using nothing is not listed. */
+  /**
+   * Active orgs with something that moves or is left, or with the app's own
+   * uses (§136 t-1067; an org may be listed for those alone, with nothing to
+   * move); an org using nothing is not listed.
+   */
   orgs: OrgMovePreview[];
   settings: SettingsMovePlan;
   suspendedOrgs: number;

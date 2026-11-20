@@ -1240,7 +1240,9 @@ and so does this init throwing (rolled back, so nothing it registered is kept),
 or a reporter failing while a check is registered. A reporter failing on its own
 marks the app's uses as unreadable, refuses the model's delete (which cannot
 be undone), and leaves config health's retiring-model checks unable to run
-rather than guess. Each org's report has 10 seconds
+rather than guess. Honour the reporter's `signal`: one that runs on after its
+timeout holds a database connection. Every org is asked, suspended ones too.
+Each org's report has 10 seconds
 (`APP_MODEL_PIN_REPORT_TIMEOUT_MS`), and one report over every org 20 seconds
 in all (`APP_MODEL_PIN_REPORT_BUDGET_MS`): orgs not asked by then count as
 failed. See
