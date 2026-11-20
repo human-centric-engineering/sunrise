@@ -87,6 +87,22 @@ describe('LanguageSwitch', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('follows the language the refreshed page renders in, dropping the pending pick', async () => {
+    mockPut.mockResolvedValue({ locale: 'de' });
+    const user = userEvent.setup();
+    const { rerender } = render(<LanguageSwitch options={OPTIONS} current="en" />);
+
+    await user.click(screen.getByRole('combobox', { name: 'Language' }));
+    await user.click(await screen.findByRole('option', { name: 'Deutsch' }));
+    await waitFor(() => expect(router.refresh).toHaveBeenCalledTimes(1));
+
+    // The page came back in a language other than the pick (a user's own
+    // choice outranks the cookie): the switch shows what the page is in.
+    rerender(<LanguageSwitch options={OPTIONS} current="fr" />);
+
+    expect(screen.getByRole('combobox', { name: 'Language' })).toHaveTextContent('Français');
+  });
+
   it('does not store anything when the current language is picked again', async () => {
     const user = userEvent.setup();
     render(<LanguageSwitch options={OPTIONS} current="en" />);

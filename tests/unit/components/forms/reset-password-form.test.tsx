@@ -1241,4 +1241,35 @@ describe('components/forms/reset-password-form', () => {
       });
     });
   });
+
+  describe('a reset link that failed (?error= in the URL)', () => {
+    it.each([
+      ['INVALID_TOKEN', /has expired or is invalid/],
+      ['EXPIRED', /^Your password reset link has expired\. Please request a new one below\.$/],
+      ['USED', /has already been used/],
+      ['SOMETHING_ELSE', /There was an issue with your reset link/],
+    ])('explains %s from the catalogue', async (code, message) => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams(`error=${code}`) as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(<ResetPasswordForm />);
+
+      expect(screen.getByText(message)).toBeInTheDocument();
+    });
+
+    it('shows nothing for an empty error parameter', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('error=') as unknown as ReturnType<typeof useSearchParams>
+      );
+
+      render(<ResetPasswordForm />);
+
+      expect(
+        screen.queryByText(/expired|already been used|issue with your reset link/)
+      ).not.toBeInTheDocument();
+    });
+  });
 });

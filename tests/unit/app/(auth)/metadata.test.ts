@@ -12,8 +12,14 @@
 
 import { describe, it, expect } from 'vitest';
 import { generateMetadata as layoutMetadata } from '@/app/(auth)/layout';
-import { generateMetadata as verifyEmailMetadata } from '@/app/(auth)/verify-email/page';
-import { generateMetadata as verifyCallbackMetadata } from '@/app/(auth)/verify-email/callback/page';
+import VerifyEmailPage, {
+  generateMetadata as verifyEmailMetadata,
+} from '@/app/(auth)/verify-email/page';
+import VerifyEmailCallbackPage, {
+  generateMetadata as verifyCallbackMetadata,
+} from '@/app/(auth)/verify-email/callback/page';
+import { VerifyEmailClientContent } from '@/app/(auth)/verify-email/verify-email-content';
+import { VerifyCallbackClientContent } from '@/app/(auth)/verify-email/callback/verify-callback-content';
 import { BRAND } from '@/lib/brand';
 
 describe('auth metadata', () => {
@@ -39,5 +45,11 @@ describe('auth metadata', () => {
 
     expect(metadata.title).toBe('Email Verification');
     expect(metadata.description).toBe('Complete your email verification');
+  });
+
+  // The pages are thin shells; their content components have their own tests.
+  it('verify-email pages render their client content', () => {
+    expect(VerifyEmailPage().type).toBe(VerifyEmailClientContent);
+    expect(VerifyEmailCallbackPage().type).toBe(VerifyCallbackClientContent);
   });
 });
