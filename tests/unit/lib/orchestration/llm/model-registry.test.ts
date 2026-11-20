@@ -185,17 +185,17 @@ describe('refreshFromOpenRouter', () => {
             id: 'anthropic/claude-opus-4.6',
             name: 'Anthropic: Claude Opus 4.6',
             context_length: 1_000_000,
-            pricing: { prompt: '0.000005', completion: '0.000025' },
+            pricing: { prompt: '0.000006', completion: '0.00003' },
           },
         ],
       }),
     });
     // The static fallback already holds `claude-opus-4-6`, at another price.
-    expect(registry.getModel('claude-opus-4-6')?.inputCostPerMillion).toBe(15);
+    expect(registry.getModel('claude-opus-4-6')?.inputCostPerMillion).toBe(5);
 
     await registry.refreshFromOpenRouter({ force: true });
 
-    expect(registry.getModel('claude-opus-4-6')?.inputCostPerMillion).toBeCloseTo(5);
+    expect(registry.getModel('claude-opus-4-6')?.inputCostPerMillion).toBeCloseTo(6);
     // Discovery and the model pickers list by `id`; the API's id must survive.
     const opusIds = registry
       .getModelsByProvider('anthropic')
@@ -384,7 +384,7 @@ describe('OpenRouter merge overwrites fallback data', () => {
   it('replaces fallback pricing and context window with OpenRouter values', async () => {
     // Verify the fallback value before refresh
     const before = registry.getModel('claude-opus-4-6');
-    expect(before?.inputCostPerMillion).toBe(15);
+    expect(before?.inputCostPerMillion).toBe(5);
 
     // OpenRouter returns a different price for the same model
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -407,8 +407,8 @@ describe('OpenRouter merge overwrites fallback data', () => {
 
     const after = registry.getModel('claude-opus-4-6');
     expect(after).toBeDefined();
-    expect(after?.inputCostPerMillion).toBeCloseTo(20); // was 15 in fallback
-    expect(after?.outputCostPerMillion).toBeCloseTo(100); // was 75 in fallback
+    expect(after?.inputCostPerMillion).toBeCloseTo(20); // was 5 in fallback
+    expect(after?.outputCostPerMillion).toBeCloseTo(100); // was 25 in fallback
     expect(after?.maxContext).toBe(250_000); // was 200_000 in fallback
     expect(after?.name).toBe('Claude Opus 4.6 (updated)');
   });

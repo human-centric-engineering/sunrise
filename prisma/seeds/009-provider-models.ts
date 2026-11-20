@@ -1,5 +1,41 @@
 import type { SeedUnit } from '@/prisma/runner';
 import { serviceAccountWhere } from '@/lib/auth/account';
+import { checkReplacement, parseRetirementDate } from '@/lib/orchestration/model-lifecycle/state';
+
+/**
+ * Seeded models their vendor no longer serves, and what replaces each
+ * (t-1041). Found 2026-11-20 against each vendor's models list: every call to
+ * them already failed with "model not found".
+ *
+ * A fresh install never gets them. On an install that has the row, a re-seed
+ * marks it retired on {@link SEED_RETIREMENT_DAY} with its replacement and
+ * turns it off, unless an admin has edited it (`isDefault: false`). The
+ * replacement is found by provider and model id, so a row an admin added for
+ * it serves as well as the seed's own. Whatever
+ * still uses it then shows on the model's page and in config health, and
+ * moves with Move uses (§136).
+ */
+export const RETIRED_SEED_MODELS: ReadonlyArray<{ slug: string; replacementModelId: string }> = [
+  { slug: 'anthropic-claude-opus-4', replacementModelId: 'claude-opus-4-6' },
+  { slug: 'anthropic-claude-sonnet-4', replacementModelId: 'claude-sonnet-4-6' },
+  { slug: 'openai-o3-mini', replacementModelId: 'o3' },
+];
+
+/**
+ * The retirement day a re-seed records: the day the models were found no
+ * longer served. The vendors' own days were earlier and are not recorded.
+ */
+export const SEED_RETIREMENT_DAY = '2026-11-20';
+
+const RETIRE_SELECT = {
+  id: true,
+  name: true,
+  providerSlug: true,
+  capabilities: true,
+  isActive: true,
+  isDefault: true,
+  retiresAt: true,
+} as const;
 
 /**
  * Seed the provider model matrix with per-model entries.
@@ -48,11 +84,14 @@ const unit: SeedUnit = {
       // ========================================================================
       // Anthropic
       // ========================================================================
+      // Opus 4.6 and Sonnet 4.6 replace Opus 4 and Sonnet 4, which Anthropic
+      // no longer serves (t-1041): see RETIRED_SEED_MODELS below. Prices are
+      // Anthropic's published rates, checked 2026-11-20.
       {
-        slug: 'anthropic-claude-opus-4',
+        slug: 'anthropic-claude-opus-4-6',
         providerSlug: 'anthropic',
-        modelId: 'claude-opus-4',
-        name: 'Claude Opus 4',
+        modelId: 'claude-opus-4-6',
+        name: 'Claude Opus 4.6',
         description:
           'Anthropic flagship. Deepest reasoning, extended thinking, very large context. Best for planning and complex orchestration.',
         capabilities: ['chat', 'vision', 'documents'],
@@ -63,15 +102,15 @@ const unit: SeedUnit = {
         contextLength: 'very_high',
         toolUse: 'strong',
         bestRole: 'Planner / orchestrator',
-        costPerMillionTokens: 45, // ($15 in + $75 out) / 2
-        inputCostPerMillionTokens: 15,
-        outputCostPerMillionTokens: 75,
+        costPerMillionTokens: 15, // ($5 in + $25 out) / 2
+        inputCostPerMillionTokens: 5,
+        outputCostPerMillionTokens: 25,
       },
       {
-        slug: 'anthropic-claude-sonnet-4',
+        slug: 'anthropic-claude-sonnet-4-6',
         providerSlug: 'anthropic',
-        modelId: 'claude-sonnet-4',
-        name: 'Claude Sonnet 4',
+        modelId: 'claude-sonnet-4-6',
+        name: 'Claude Sonnet 4.6',
         description:
           'Balanced reasoning and speed. Strong tool use with good cost efficiency for worker tasks.',
         capabilities: ['chat', 'vision', 'documents'],
@@ -89,7 +128,8 @@ const unit: SeedUnit = {
       {
         slug: 'anthropic-claude-haiku-4-5',
         providerSlug: 'anthropic',
-        modelId: 'claude-haiku-4.5',
+        // Anthropic's id is hyphenated; `claude-haiku-4.5` was never served (t-1041).
+        modelId: 'claude-haiku-4-5',
         name: 'Claude Haiku 4.5',
         description:
           'Fast and cost-efficient. Good for high-volume, latency-sensitive agent loops.',
@@ -190,11 +230,13 @@ const unit: SeedUnit = {
       },
 
       // OpenAI — Reasoning model
+      // o3 replaces o3-mini, which OpenAI no longer serves (t-1041): see
+      // RETIRED_SEED_MODELS below. OpenAI's published rate, checked 2026-11-20.
       {
-        slug: 'openai-o3-mini',
+        slug: 'openai-o3',
         providerSlug: 'openai',
-        modelId: 'o3-mini',
-        name: 'o3-mini',
+        modelId: 'o3',
+        name: 'o3',
         description:
           'OpenAI reasoning model. Uses the /v1/responses API for explicit multi-step thinking; ideal for hard planning and verification tasks where chain-of-thought quality matters more than speed.',
         capabilities: ['reasoning'],
@@ -206,9 +248,9 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Hard reasoning, planning, verification',
         paramProfile: 'openai-reasoning',
-        costPerMillionTokens: 2.75, // ($1.10 in + $4.40 out) / 2
-        inputCostPerMillionTokens: 1.1,
-        outputCostPerMillionTokens: 4.4,
+        costPerMillionTokens: 5, // ($2 in + $8 out) / 2
+        inputCostPerMillionTokens: 2,
+        outputCostPerMillionTokens: 8,
       },
 
       // OpenAI — Audio (Whisper) — unlocks the streaming-chat mic input.
@@ -924,6 +966,25 @@ const unit: SeedUnit = {
         continue;
       }
 
+      // One row per provider and model id: a row an admin added under this id
+      // (say from Discover models) blocks the seed's own, rather than failing
+      // the whole unit on the unique index (t-1041).
+      const sameId = await prisma.aiProviderModel.findFirst({
+        where: {
+          providerSlug: model.providerSlug,
+          modelId: model.modelId,
+          slug: { not: model.slug },
+        },
+        select: { slug: true },
+      });
+      if (sameId) {
+        logger.warn(
+          `Provider model ${model.slug} not seeded: ${sameId.slug} already has ${model.providerSlug} ${model.modelId}`
+        );
+        skipped++;
+        continue;
+      }
+
       const data = {
         providerSlug: model.providerSlug,
         modelId: model.modelId,
@@ -987,6 +1048,45 @@ const unit: SeedUnit = {
     logger.info(
       `✅ Provider models: ${created} created, ${updated} updated, ${skipped} skipped (admin-customised)`
     );
+
+    // Models their vendor no longer serves: retired, with their replacement.
+    const retiresAt = parseRetirementDate(SEED_RETIREMENT_DAY);
+    if (!retiresAt) throw new Error(`Bad SEED_RETIREMENT_DAY ${SEED_RETIREMENT_DAY}`);
+    let retired = 0;
+    for (const { slug, replacementModelId } of RETIRED_SEED_MODELS) {
+      const row = await prisma.aiProviderModel.findUnique({
+        where: { slug },
+        select: RETIRE_SELECT,
+      });
+      // Absent on a fresh install; an admin's own edit is theirs to keep.
+      if (!row || !row.isDefault) continue;
+      const replacement = await prisma.aiProviderModel.findUnique({
+        where: {
+          providerSlug_modelId: { providerSlug: row.providerSlug, modelId: replacementModelId },
+        },
+        select: RETIRE_SELECT,
+      });
+      // Checked as the model page and the move check it: an admin may have
+      // turned the replacement off. Then the row is retired with none named.
+      const problem = replacement
+        ? checkReplacement(row, replacement)
+        : 'it is not in the catalogue';
+      if (problem) {
+        logger.warn(`Retiring ${slug} without a replacement: ${replacementModelId} — ${problem}`);
+      }
+      await prisma.aiProviderModel.update({
+        where: { slug },
+        data: {
+          retiresAt,
+          replacementId: replacement && !problem ? replacement.id : null,
+          isActive: false,
+        },
+      });
+      retired++;
+    }
+    if (retired > 0) {
+      logger.info(`✅ Provider models: ${retired} no longer served, marked retired`);
+    }
   },
 };
 
