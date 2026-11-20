@@ -55,7 +55,8 @@ export function stripModelDateStamp(modelId: string): string {
  *   - GPT-4o-mini ($0.15) → very_high
  *   - Haiku 4.5 ($1.00), Sonnet 4.6 ($3.00) → high / medium boundary
  *   - GPT-4o ($2.50) → high
- *   - Opus 4.6 ($15.00) → none (frontier; cost is the trade-off)
+ *   - Opus 4.6 ($5.00) → medium
+ *   - over $10 → none (frontier; cost is the trade-off)
  *
  * `null` (cost unknown) → medium so the row isn't auto-flagged as
  * "best in class" or "uneconomic" without evidence.

@@ -326,6 +326,43 @@ describe('009-provider-models seed — model ids the vendors serve (t-1041)', ()
     });
   });
 
+  it('brings a recorded day later than the seed’s forward: a model that fails now is retired, not retiring', async () => {
+    const { update } = await runSeed(() => null, {
+      'anthropic/claude-sonnet-4': stored({
+        id: 'row-sonnet-4',
+        slug: 'anthropic-claude-sonnet-4',
+        providerSlug: 'anthropic',
+        retiresAt: new Date('2027-03-01T00:00:00.000Z'),
+      }),
+      'anthropic/claude-sonnet-4-6': stored({
+        id: 'row-sonnet-4-6',
+        slug: 'anthropic-claude-sonnet-4-6',
+        providerSlug: 'anthropic',
+      }),
+    });
+
+    expect(retirements(update)['row-sonnet-4']).toMatchObject({ retiresAt: DAY, isActive: false });
+  });
+
+  it('moves the row aside under its own id when the plain not-served slug is taken', async () => {
+    const plain = `anthropic-claude-haiku-4-5${NOT_SERVED_SLUG_SUFFIX}`;
+    const { update } = await runSeed(
+      (slug) => (slug === plain ? { id: 'someone-else', isDefault: false } : null),
+      {
+        'anthropic/claude-haiku-4.5': stored({
+          id: 'row-haiku-dotted',
+          slug: 'anthropic-claude-haiku-4-5',
+          providerSlug: 'anthropic',
+        }),
+      }
+    );
+
+    expect(update).toHaveBeenNthCalledWith(1, {
+      where: { slug: 'anthropic-claude-haiku-4-5' },
+      data: { slug: `${plain}-row-haiku-dotted` },
+    });
+  });
+
   it('writes nothing when a row is already retired as it would be', async () => {
     const { update } = await runSeed(() => null, {
       'openai/o3-mini': stored({
@@ -377,8 +414,8 @@ describe('009-provider-models seed — model ids the vendors serve (t-1041)', ()
     );
   });
 
-  it('leaves a row an admin has edited as they left it', async () => {
-    const { update } = await runSeed(() => null, {
+  it('leaves a row an admin has edited as they left it, and says it is not served', async () => {
+    const { update, logger } = await runSeed(() => null, {
       'anthropic/claude-opus-4': stored({
         id: 'row-opus-4',
         slug: 'anthropic-claude-opus-4',
@@ -387,6 +424,11 @@ describe('009-provider-models seed — model ids the vendors serve (t-1041)', ()
       }),
     });
     expect(update).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Provider model anthropic-claude-opus-4 (anthropic claude-opus-4) is not served by its vendor, but an admin has edited it'
+      )
+    );
   });
 
   it('skips a model whose id another row holds, says why, and retires the dotted row onto that row', async () => {

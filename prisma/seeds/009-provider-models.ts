@@ -12,18 +12,22 @@ import { checkReplacement, parseRetirementDate } from '@/lib/orchestration/model
  * A fresh install never gets them. On an install that has one, a re-seed:
  *
  * - **moves it aside** when its slug is one the seed now gives its
- *   replacement (Haiku 4.5's): the slug gains {@link NOT_SERVED_SLUG_SUFFIX}.
+ *   replacement (Haiku 4.5's): the slug gains {@link NOT_SERVED_SLUG_SUFFIX}
+ *   (and the row's id, should that slug be taken).
  *   A pin names provider and model id, never a slug, so nothing that uses it
  *   changes;
  * - **retires it**: on {@link SEED_RETIREMENT_DAY}, or the day already
- *   recorded (the provider audit may have recorded the vendor's own); with the
+ *   recorded if it is earlier (the provider audit may have recorded the
+ *   vendor's own; a later one is brought forward, since the model fails now,
+ *   so it shows as retired, not retiring); with the
  *   successor already recorded if it still qualifies, else the replacement
  *   here, found by provider and model id so a row an admin added for it serves
  *   as well; and turned off.
  *
  * Whatever still uses it then shows on the model's page and in config health,
  * and moves with Move uses (§136). A row an admin has edited
- * (`isDefault: false`) is theirs, and left as it is.
+ * (`isDefault: false`, an approved audit change included) is theirs, and left
+ * as it is, with a warning in the seed's output.
  */
 export const RETIRED_SEED_MODELS: ReadonlyArray<{
   providerSlug: string;
@@ -995,15 +999,23 @@ const unit: SeedUnit = {
             modelId: notServed.modelId,
           },
         },
-        select: { slug: true, isDefault: true },
+        select: { id: true, slug: true, isDefault: true },
       });
       if (!row?.isDefault || !seededSlugs.has(row.slug)) continue;
+      // A slug is unique: should the plain one be taken already, the row's
+      // own id makes one that cannot be.
+      const plain = `${row.slug}${NOT_SERVED_SLUG_SUFFIX}`;
+      const taken = await prisma.aiProviderModel.findUnique({
+        where: { slug: plain },
+        select: { id: true },
+      });
+      const aside = taken ? `${plain}-${row.id}` : plain;
       await prisma.aiProviderModel.update({
         where: { slug: row.slug },
-        data: { slug: `${row.slug}${NOT_SERVED_SLUG_SUFFIX}` },
+        data: { slug: aside },
       });
       logger.info(
-        `Provider model ${row.slug} (${notServed.modelId}, not served) moved aside to ${row.slug}${NOT_SERVED_SLUG_SUFFIX}`
+        `Provider model ${row.slug} (${notServed.modelId}, not served) moved aside to ${aside}`
       );
     }
 
@@ -1118,8 +1130,16 @@ const unit: SeedUnit = {
         },
         select: RETIRE_SELECT,
       });
-      // Absent on a fresh install; an admin's own edit is theirs to keep.
-      if (!row || !row.isDefault) continue;
+      // Absent on a fresh install.
+      if (!row) continue;
+      // An admin's own edit (an approved audit change included) is theirs to
+      // keep, but every call to the model fails: say so.
+      if (!row.isDefault) {
+        logger.warn(
+          `Provider model ${row.slug} (${notServed.providerSlug} ${notServed.modelId}) is not served by its vendor, but an admin has edited it, so it was left as it is: retire it from its page`
+        );
+        continue;
+      }
       // A successor already recorded (the provider audit's, say) is kept
       // while it still qualifies, checked as the model page and the move
       // check it.
@@ -1150,7 +1170,10 @@ const unit: SeedUnit = {
           );
         }
       }
-      const retiresAt = row.retiresAt ?? seedDay;
+      // The vendor does not serve it now, so it is retired, never retiring: a
+      // day recorded later than ours is brought forward to ours.
+      const retiresAt =
+        row.retiresAt && row.retiresAt.getTime() < seedDay.getTime() ? row.retiresAt : seedDay;
       if (
         row.retiresAt?.getTime() === retiresAt.getTime() &&
         row.replacementId === replacementId &&

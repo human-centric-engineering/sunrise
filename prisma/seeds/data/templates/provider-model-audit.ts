@@ -492,15 +492,15 @@ ${PRICING_INSTRUCTIONS}
 
 ## Worked example
 
-Suppose the registry contains only \`claude-sonnet-4\` (anthropic). Web search result [2] reads "Claude Sonnet 4.5 released October 2025" at https://anthropic.com/news/sonnet-4-5 with description "Anthropic announces Claude Sonnet 4.5, available via API from October 2025." A well-formed proposal looks like this:
+Suppose the registry contains only \`claude-sonnet-4-5\` (anthropic). Web search result [2] reads "Introducing Claude Sonnet 4.6" at https://www.anthropic.com/news/claude-sonnet-4-6 with description "Anthropic announces Claude Sonnet 4.6, available via the API." A well-formed proposal looks like this:
 
 \`\`\`json
 {
-  "name": "Claude Sonnet 4.5",
-  "slug": "anthropic-claude-sonnet-4-5",
+  "name": "Claude Sonnet 4.6",
+  "slug": "anthropic-claude-sonnet-4-6",
   "providerSlug": "anthropic",
-  "modelId": "claude-sonnet-4-5",
-  "description": "Anthropic's mid-tier 4.5-generation chat model, balancing reasoning quality and cost.",
+  "modelId": "claude-sonnet-4-6",
+  "description": "Anthropic's mid-tier 4.6-generation chat model, balancing reasoning quality and cost.",
   "capabilities": ["chat", "vision", "documents"],
   "tierRole": "infrastructure",
   "deploymentProfiles": ["hosted"],
@@ -513,14 +513,14 @@ Suppose the registry contains only \`claude-sonnet-4\` (anthropic). Web search r
   "sources": [{
     "source": "web_search",
     "confidence": "high",
-    "reference": "https://anthropic.com/news/sonnet-4-5",
-    "snippet": "Anthropic announces Claude Sonnet 4.5, available via API from October 2025.",
+    "reference": "https://www.anthropic.com/news/claude-sonnet-4-6",
+    "snippet": "Anthropic announces Claude Sonnet 4.6, available via the API.",
     "note": "Result [2] announces the model's release."
   }]
 }
 \`\`\`
 
-Note: \`modelId\` is the bare canonical form (\`claude-sonnet-4-5\`, not the dated release id); the source is \`web_search\` with a verifiable URL; confidence is \`high\` because it's a vendor announcement.
+Note: \`modelId\` is the bare canonical form (\`claude-sonnet-4-6\`, not a dated release id); the source is \`web_search\` with a verifiable URL; confidence is \`high\` because it's a vendor announcement.
 
 ## Data
 
