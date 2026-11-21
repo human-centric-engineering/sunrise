@@ -850,6 +850,21 @@ release process.
   `hasBlockedFields()`. **A fork whose own form builds a blocked-save summary
   for `show()` gets the fix only once it moves that builder to `summarise`.**
 
+### Security
+
+- **The open Dependabot alert is cleared, and the open Dependabot PRs are
+  taken** (t-1080). **GHSA-7589-6fvf-x4pw** (high, `effect` ReDoS in
+  `Schema.TemplateLiteral`, fixed in 3.22.1) arrives through `prisma` →
+  `@prisma/config` 7.10.1, the last Prisma 7 release, which pins `effect` to
+  exactly 3.20.0. A new `overrides` entry, `@prisma/config` →
+  `effect: "^3.22.1"`, moves it within the same major, and its
+  `overrideReasons` entry says when it can go. Only the Prisma CLI loads
+  `@prisma/config`, so the app's runtime was never exposed. If your fork has
+  its own `overrides` block, keep this entry when you merge. better-auth
+  resolves to 1.7.27, so the exact `@better-auth/core` pin moves to 1.7.27 to
+  match. A fork that pins `@better-auth/core` itself must keep the two equal, or
+  every better-auth adapter's peer range is unmet.
+
 ## [0.19.0] — 2026-11-13
 
 > **Alpha release.** Twenty-sixth tagged Sunrise release. **MINOR bump**:
