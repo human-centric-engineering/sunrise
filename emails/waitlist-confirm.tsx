@@ -26,9 +26,11 @@ interface WaitlistConfirmEmailProps {
   confirmUrl: string;
   leaveUrl: string;
   expiresAt: Date;
-  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  /**
+   * The recipient's language (`lib/email/locale.ts`). Absent ⇒ English. No
+   * time zone: nobody on the list has one, so the expiry is stated in UTC.
+   */
   locale?: string;
-  timeZone?: string;
 }
 
 export default function WaitlistConfirmEmail({
