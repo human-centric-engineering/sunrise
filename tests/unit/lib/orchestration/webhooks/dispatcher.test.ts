@@ -35,6 +35,8 @@ vi.mock('@/lib/db/client', () => {
     aiConversation: { findUnique: vi.fn() },
     aiWorkflowExecution: { findUnique: vi.fn() },
     dataErasureReceipt: { findFirst: vi.fn() },
+    // The org's default language, for an email delivery (§138 t-1075).
+    org: { findUnique: vi.fn() },
   };
   // The erasure check's transaction runs on the same mock.
   return {
@@ -168,6 +170,7 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
     previousDestinations: null,
     stoppedByErasure: false,
     sendGeneration: 0,
+    emailLocale: null,
     ...overrides,
   };
 }
@@ -1486,7 +1489,7 @@ describe('email-channel delivery', () => {
       await processPendingRetries();
 
       expect(mockResendSend).toHaveBeenCalledTimes(2);
-      expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/0\/[0-9a-f]{16}\/en$/);
+      expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/0\/[0-9a-f]{16}$/);
       expect(keyOf(1)).toBe(keyOf(0));
       // Resend refuses a reused key on a different request, so both attempts
       // render the row's own time, not the per-attempt body timestamp.
@@ -1516,6 +1519,18 @@ describe('email-channel delivery', () => {
       expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/1\//);
     });
 
+    it('names no language, so a retry pending from before the language was pinned keeps its key', async () => {
+      const row = dueEmailRow({ emailLocale: null });
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([row] as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        { ...row, status: 'pending' },
+      ] as never);
+
+      await processPendingRetries();
+
+      expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/0\/[0-9a-f]{16}$/);
+    });
+
     it('changes when the subscription address was edited between attempts', async () => {
       const first = dueEmailRow();
       vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValueOnce([first] as never);
@@ -1537,6 +1552,122 @@ describe('email-channel delivery', () => {
       expect(mockResendSend).toHaveBeenCalledTimes(2);
       expect(keyOf(1)).not.toBe(keyOf(0));
       expect(keyOf(1)).toMatch(/^webhook-delivery\/del-1\/0\//);
+    });
+  });
+
+  describe('the email’s language (§138 t-1075)', () => {
+    const PSEUDO = 'en-XA';
+    const orgDefault = (locale: string): void => {
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ settings: { locale } } as never);
+    };
+    const renderedLocales = async (): Promise<Array<string | undefined>> => {
+      const { default: EventNotification } = await import('@/emails/event-notification');
+      return vi.mocked(EventNotification).mock.calls.map((c) => c[0].locale);
+    };
+
+    it('is fixed on an email row when it is created, and not on a webhook row', async () => {
+      orgDefault(PSEUDO);
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([
+        makeEmailSub(),
+        makeSub(),
+      ] as never);
+
+      await dispatchWebhookEvent('workflow_failed', { error: 'step exploded' });
+
+      const created = vi
+        .mocked(prisma.aiWebhookDelivery.create)
+        .mock.calls.map((c) => c[0].data as Record<string, unknown>);
+      expect(created.find((d) => d.subscriptionId === 'sub-email')?.emailLocale).toBe(PSEUDO);
+      expect(created.find((d) => d.subscriptionId === 'sub-1')).not.toHaveProperty('emailLocale');
+      // One read for the fan-out, before any attempt.
+      expect(prisma.org.findUnique).toHaveBeenCalledOnce();
+    });
+
+    it('reads nothing when no subscription emails', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+
+      await dispatchWebhookEvent('workflow_failed', { error: 'step exploded' });
+
+      expect(prisma.org.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('is the row’s on an automatic retry, though the org has changed its default since', async () => {
+      orgDefault('en');
+      const row = {
+        ...makeDelivery({
+          status: 'failed',
+          attempts: 1,
+          nextRetryAt: new Date(Date.now() - 1_000),
+          emailLocale: PSEUDO,
+        }),
+        subscription: makeEmailSub(),
+      };
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([row] as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        { ...row, status: 'pending' },
+      ] as never);
+
+      await processPendingRetries();
+
+      expect(mockResendSend).toHaveBeenCalledOnce();
+      expect(await renderedLocales()).toEqual([PSEUDO]);
+      // Not read again: the attempt waits on nothing but the send.
+      expect(prisma.org.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('is English on a row created before it was pinned', async () => {
+      orgDefault(PSEUDO);
+      const row = {
+        ...makeDelivery({
+          status: 'failed',
+          attempts: 1,
+          nextRetryAt: new Date(Date.now() - 1_000),
+        }),
+        subscription: makeEmailSub(),
+      };
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([row] as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        { ...row, status: 'pending' },
+      ] as never);
+
+      await processPendingRetries();
+
+      expect(await renderedLocales()).toEqual(['en']);
+    });
+
+    it('is read again by a manual retry or DLQ replay, a new send under a new key', async () => {
+      orgDefault(PSEUDO);
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValueOnce({
+        ...makeDelivery({ status: 'delivered', attempts: 1, emailLocale: 'en' }),
+        subscription: makeEmailSub(),
+      } as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        makeDelivery({ status: 'pending', sendGeneration: 1, emailLocale: PSEUDO }),
+      ] as never);
+
+      await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(prisma.aiWebhookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ sendGeneration: { increment: 1 }, emailLocale: PSEUDO }),
+        })
+      );
+      expect(await renderedLocales()).toEqual([PSEUDO]);
+    });
+
+    it('is cleared by a manual retry of a webhook row', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValueOnce({
+        ...makeDelivery({ status: 'failed', attempts: 3 }),
+        subscription: makeSub(),
+      } as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([]);
+
+      await retryDelivery('del-1');
+
+      expect(prisma.aiWebhookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ emailLocale: null }) })
+      );
+      expect(prisma.org.findUnique).not.toHaveBeenCalled();
     });
   });
 

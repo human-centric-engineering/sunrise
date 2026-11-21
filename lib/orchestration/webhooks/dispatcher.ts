@@ -34,8 +34,7 @@ import {
 } from '@/lib/security/safe-dispatcher';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification, { eventNotificationSubject } from '@/emails/event-notification';
-import { emailLocaleForOrg } from '@/lib/email/locale';
-import type { EmailLocale } from '@/lib/email/translate';
+import { emailLocaleForOrg, emailLocaleFrom } from '@/lib/email/locale';
 import { orgIdForCall } from '@/lib/tenancy/context';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
@@ -202,6 +201,12 @@ export async function deliverToSubscribers(
     'Webhook'
   );
 
+  // An email's language, read once for the fan-out and fixed on each row
+  // (§138 t-1075); only when some subscription emails.
+  const emailLocale = matched.some((sub) => sub.channel === 'email')
+    ? (await emailLocaleForOrg(orgIdForCall())).locale
+    : null;
+
   await Promise.allSettled(
     matched.map(async (sub) => {
       // Create delivery record
@@ -211,6 +216,7 @@ export async function deliverToSubscribers(
           eventType,
           payload: stored as unknown as Prisma.InputJsonValue,
           status: 'pending',
+          ...(sub.channel === 'email' ? { emailLocale } : {}),
           ...subscriptionDestination(sub),
         },
       });
@@ -256,6 +262,12 @@ export async function retryDelivery(
   // Stopped by an erasure: what it would send is about the erased person, or
   // goes to their address (t-793). Refused, and left as the record.
   if (delivery.stoppedByErasure) return false;
+  // A new send, so in the org's language now (§138 t-1075). Read before the
+  // reset, so no attempt waits on it.
+  const emailLocale =
+    subscription.channel === 'email'
+      ? (await emailLocaleForOrg(delivery.orgId ?? orgIdForCall())).locale
+      : null;
 
   // Reset status for retry, only if the row is as it was read. An erasure that
   // committed in between has redacted it or stopped it, and is not undone; a
@@ -275,6 +287,7 @@ export async function retryDelivery(
       attempts: 0,
       // A new send, so its email gets a new idempotency key (t-822).
       sendGeneration: { increment: 1 },
+      emailLocale,
       lastError: null,
       nextRetryAt: null,
       lastAttemptAt: null,
@@ -444,6 +457,7 @@ type AttemptRecord = DeliveryLike & {
   eventType: string;
   payload: Prisma.JsonValue;
   lastError: string | null;
+  emailLocale: string | null;
 };
 
 /**
@@ -846,9 +860,10 @@ async function attemptEmailDelivery(
   }
 
   const to = sub.emailAddress;
-  // In the language of the org the subscription belongs to (§138 t-1075).
-  const where = await emailLocaleForOrg(orgIdForCall());
-  const idempotencyKey = emailIdempotencyKey(record, to, where);
+  // In the language fixed on the row (§138 t-1075), so a retry is the same
+  // request under the same key. A row from before it was English.
+  const where = emailLocaleFrom({ userLocale: record.emailLocale });
+  const idempotencyKey = emailIdempotencyKey(record, to);
   try {
     // Bounded, render and send together, so the attempt ends well inside the
     // retry claim's lease and no second sender claims the row while it is
@@ -878,11 +893,9 @@ async function attemptEmailDelivery(
  * The Resend idempotency key for one send of a delivery to `to`. The address
  * goes in as a hash: the key is stored by Resend and shown in its dashboard.
  */
-function emailIdempotencyKey(record: AttemptRecord, to: string, where: EmailLocale): string {
+function emailIdempotencyKey(record: AttemptRecord, to: string): string {
   const addressHash = createHash('sha256').update(to.trim().toLowerCase()).digest('hex');
-  // The language too: a retry after the org changed its language is a
-  // different email, which Resend would refuse under the same key.
-  return `webhook-delivery/${record.id}/${record.sendGeneration}/${addressHash.slice(0, 16)}/${where.locale}`;
+  return `webhook-delivery/${record.id}/${record.sendGeneration}/${addressHash.slice(0, 16)}`;
 }
 
 /**

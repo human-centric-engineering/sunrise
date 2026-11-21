@@ -37,15 +37,17 @@ release process.
   expiry reads "Nov 20, 2026, 10:00 AM UTC" rather than "November 20, 2026 at
   10:00 AM UTC", and the escalation subject names the priority as "High"
   rather than "high". An event email's subject names the brand instead of a
-  literal "Sunrise".
+  literal "Sunrise". An event email's language is fixed on its delivery row
+  when the row is created, in the new nullable `AiWebhookDelivery.emailLocale`
+  (migration `20261121090000_webhook_delivery_email_locale`), and read again
+  by a manual retry or DLQ replay, so an automatic retry sends the same email
+  under the same idempotency key; a row from before it goes in English.
   **Fork impact:** an email override keeps working and type-checking; it gets
   `locale` and `timeZone` too, and renders in English unless it translates
   with `emailTranslator()`. A fork that edited a template in `emails/`
   conflicts on its text, which moved to `lib/i18n/messages/en.json`: change
   wording, including a subject, with `overridePlatformMessages('en', { emails:
-  … })`. A fork test asserting an email's exact English date, or the event
-  delivery's Resend idempotency key (which now ends in the locale), needs
-  updating.
+  … })`. A fork test asserting an email's exact English date needs updating.
 
 - **The user and public screens read their text from the catalogue (§138
   t-1073).** Every page under `app/(auth)`, `app/(public)` and
