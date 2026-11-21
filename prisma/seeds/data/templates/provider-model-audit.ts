@@ -107,9 +107,45 @@ const PRICING_INSTRUCTIONS = `
 - Propose them **only from a source you can cite with a URL**: a \`web_search\` result (the provider's pricing page is best), or a \`knowledge_base\` / \`external_call\` source with a reference. Training knowledge alone is NOT enough for a price — prices change, and a wrong one mis-records every turn. If you can't cite one, leave the price out.
 - Always propose **both, together**: input and output as a pair, never one alone. If only one of them changed, still propose both — give the unchanged one its current value as the proposed value, with a reason saying it is restated as the pair of the other (e.g. "Input stays at 3; restated as the pair of the output change from 15 to 12") — or the whole proposal set is rejected.
 - Use dollars per **1M** tokens (e.g. 3 and 15), not per token or per 1K, written as JSON numbers (\`3\`, not \`"3"\`). Values must be between 0 and 10000.
-- \`costPerMillionTokens\` is a legacy single blended rate; never propose it — the split pair replaces it.
 - If the model's current input and output prices already match the source, propose no change.
 `.trim();
+
+// Leave a field out rather than "change" it to nothing (t-1076). On a
+// small default model the analysers reported every price they could not
+// find as a change to `null` with no sources — 24 such changes per attempt —
+// and the schema guard refused the whole set three times running.
+const CHANGE_RULES = `
+**Only propose a change you can make.** A change needs a new value that a source supports. If you cannot find a field's value, or its current value is already right, leave that field out of \`changes\` — never propose \`null\`, an empty value, "unknown" or "not available". A model with no changes is left out of \`models\` entirely, and an empty \`models\` array is a good result: it means the registry is already right.
+`.trim();
+
+/**
+ * The block a producer sees when a guard sent the run back to it (t-1076).
+ *
+ * It shows the guard's whole complaint — the schema guard lists every issue,
+ * by path into the three producers' combined output — and the producer's
+ * own previous output, so a path like `analyse_chat.models.2.changes.0`
+ * points at something the model can see. Before this the retry carried the
+ * first of 38 issues and nothing else, and both retries failed the same way.
+ */
+function retryPreamble(stepId: string): string {
+  return `{{#if vars.__retryContext}}**Your previous attempt was rejected** (retry {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). The checker said:
+
+\`\`\`
+{{vars.__retryContext.failureReason}}
+\`\`\`
+
+Lines starting \`${stepId}.\` are about your output; the others belong to other steps, so ignore them. A path such as \`${stepId}.models.2.changes.0.sources\` means: in your previous output below, the entry at index 2 of \`models\` (counting from 0), its first change, the \`sources\` field. Fix every problem that names you. If you cannot fix a change, leave it out — leaving a change out is always allowed.
+
+Your previous output:
+
+\`\`\`json
+{{${stepId}.output}}
+\`\`\`
+
+Now produce the corrected output, following the instructions below.
+
+{{/if}}`;
+}
 
 export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-provider-model-audit',
@@ -161,7 +197,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt:
-            'You are a data preparation assistant. Parse the following input and produce a structured JSON summary of the models to audit.\n\nInput:\n{{input}}\n\nRespond with a JSON object containing:\n- "modelIds": array of model IDs to audit\n- "modelCount": total number of models\n- "scope": "all" if auditing everything, "subset" if specific models were selected\n\nIf the input contains model data objects, extract the key fields (name, modelId, providerSlug, tierRole, capabilities, costEfficiency, reasoningDepth, latency, contextLength, toolUse, bestRole, costPerMillionTokens, inputCostPerMillionTokens, outputCostPerMillionTokens) for each model into a "models" array.\n\nRespond with ONLY the JSON object, no markdown fencing.',
+            'You are a data preparation assistant. Parse the following input and produce a structured JSON summary of the models to audit.\n\nInput:\n{{input}}\n\nRespond with a JSON object containing:\n- "modelIds": array of model IDs to audit\n- "modelCount": total number of models\n- "scope": "all" if auditing everything, "subset" if specific models were selected\n\nIf the input contains model data objects, extract the key fields (name, modelId, providerSlug, tierRole, capabilities, costEfficiency, reasoningDepth, latency, contextLength, toolUse, bestRole, inputCostPerMillionTokens, outputCostPerMillionTokens) for each model into a "models" array.\n\nRespond with ONLY the JSON object, no markdown fencing.',
           temperature: 0.1,
         },
         nextSteps: [{ targetStepId: 'search_provider_info' }],
@@ -275,9 +311,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
           'Evaluates every chat/completion model in scope and proposes field-level changes (tier role, latency, cost-efficiency, context length, tool use, deployment profiles, input/output prices) with per-claim source attribution.',
         type: 'llm_call',
         config: {
-          prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
-
-{{/if}}You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.
+          prompt: `${retryPreamble('analyse_chat')}You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.
 
 Model data:
 {{load_models.output}}
@@ -288,6 +322,8 @@ Routing context (capability type):
 ${SEARCH_RESULTS_BLOCK}
 
 ${SOURCES_INSTRUCTIONS}
+
+${CHANGE_RULES}
 
 **Two orthogonal classifications.** \`tierRole\` describes what the model is *for* (its capability tier); \`deploymentProfiles\` describes where it *runs*. These are independent — a model can be \`tierRole: 'thinking'\` AND \`deploymentProfiles: ['sovereign']\` simultaneously. Never propose a tier role change because a model "is a chat model" or "runs locally" — those are capability and deployment-locus facts, not tier signals.
 
@@ -364,9 +400,7 @@ Respond with ONLY the JSON object, no markdown fencing.`,
           'Evaluates embedding models specifically — dimensions, quality tier, deployment profiles — and flags any that have been deprecated or superseded.',
         type: 'llm_call',
         config: {
-          prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
-
-{{/if}}You are an AI model evaluation expert specialising in embedding models. Analyse the embedding model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.
+          prompt: `${retryPreamble('analyse_embedding')}You are an AI model evaluation expert specialising in embedding models. Analyse the embedding model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.
 
 **In-scope models only.** A model belongs in this analysis when its capabilities array contains \`'embedding'\`. If you find a row whose capabilities do NOT include embedding (e.g. it's a chat/reasoning LLM that the router mis-classified), emit NO changes for it — the chat analyser handles it. Do not propose tier or capability edits to argue it isn't an embedding model; just skip it.
 
@@ -379,6 +413,8 @@ Routing context (capability type):
 ${SEARCH_RESULTS_BLOCK}
 
 ${SOURCES_INSTRUCTIONS}
+
+${CHANGE_RULES}
 
 For each in-scope embedding model, evaluate:
 1. **Tier role** — Should be \`embedding\` (the dedicated tier for vector-embedding models)
@@ -450,9 +486,7 @@ Respond with ONLY the JSON object, no markdown fencing.`,
         type: 'agent_call',
         config: {
           agentSlug: 'provider-model-auditor',
-          message: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate and produce a corrected new-model proposal set. Pay particular attention to enum values — they must match the allowed lists exactly, and every proposed model MUST carry a non-empty \`sources\` array.
-
-{{/if}}You are an AI model landscape expert. Your task is to identify models missing from the registry and propose complete entries for admin review.
+          message: `${retryPreamble('discover_new_models')}You are an AI model landscape expert. Your task is to identify models missing from the registry and propose complete entries for admin review.
 
 ## Output contract
 

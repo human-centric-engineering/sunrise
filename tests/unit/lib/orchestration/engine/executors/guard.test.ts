@@ -29,7 +29,11 @@ vi.mock('@/lib/orchestration/engine/llm-runner', () => ({
 
 // ─── Imports (after mocks) ───────────────────────────────────────────────────
 
-import { executeGuard } from '@/lib/orchestration/engine/executors/guard';
+import {
+  executeGuard,
+  MAX_REASON_ISSUES,
+  schemaFailureReason,
+} from '@/lib/orchestration/engine/executors/guard';
 import { runLlmCall } from '@/lib/orchestration/engine/llm-runner';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -522,5 +526,65 @@ describe('executeGuard', () => {
       // for trace inspection.
       expect(result.nextStepIds).toEqual(['pass-step']);
     });
+  });
+});
+
+describe('schemaFailureReason (t-1076)', () => {
+  const issue = (path: PropertyKey[], message: string) => ({ path, message });
+
+  it('keeps the one-line form for a single issue', () => {
+    expect(schemaFailureReason([issue(['a', 0, 'b'], 'bad')])).toBe(
+      'Schema validation failed at a.0.b: bad'
+    );
+  });
+
+  it('names <root> for an issue with no path', () => {
+    expect(schemaFailureReason([issue([], 'expected object')])).toBe(
+      'Schema validation failed at <root>: expected object'
+    );
+  });
+
+  it('lists every issue, one per line, when there are several', () => {
+    expect(
+      schemaFailureReason([
+        issue(['x', 'sources'], 'sources must be non-empty'),
+        issue(['y'], 'bad'),
+      ])
+    ).toBe(
+      'Schema validation failed with 2 issues:\n- x.sources: sources must be non-empty\n- y: bad'
+    );
+  });
+
+  it(`stops at ${MAX_REASON_ISSUES} and counts the rest`, () => {
+    const many = Array.from({ length: MAX_REASON_ISSUES + 3 }, (_, i) => issue(['n', i], `m${i}`));
+    const lines = schemaFailureReason(many).split('\n');
+    expect(lines[0]).toBe(`Schema validation failed with ${MAX_REASON_ISSUES + 3} issues:`);
+    expect(lines).toHaveLength(1 + MAX_REASON_ISSUES + 1);
+    expect(lines[MAX_REASON_ISSUES]).toBe(
+      `- n.${MAX_REASON_ISSUES - 1}: m${MAX_REASON_ISSUES - 1}`
+    );
+    expect(lines.at(-1)).toBe('- …and 3 more');
+  });
+
+  it('falls back to a bare message when Zod reports no issues', () => {
+    expect(schemaFailureReason([])).toBe('Schema validation failed');
+  });
+});
+
+describe('executeGuard — schema mode reason names every issue (t-1076)', () => {
+  beforeEach(() => {
+    resetSchemaRegistry();
+  });
+
+  it('the reason a retry receives carries the second issue, not just the first', async () => {
+    registerSchema('two-wrong', z.object({ a: z.string(), b: z.number() }));
+    const step = makeGuardStep({ mode: 'schema', schemaName: 'two-wrong', rules: undefined });
+
+    const result = await executeGuard(step, makeCtx({ inputData: { a: 1, b: 'x' } }));
+
+    const reason = (result.output as { reason: string }).reason;
+    expect(reason).toMatch(/^Schema validation failed with 2 issues:/);
+    expect(reason).toContain('\n- a: ');
+    expect(reason).toContain('\n- b: ');
   });
 });

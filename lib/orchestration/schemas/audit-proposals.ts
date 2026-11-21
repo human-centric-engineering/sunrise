@@ -263,7 +263,37 @@ const modelProposalSchema = z
         path: ['changes'],
       });
     }
+    // A change that changes nothing (t-1076). On a small default model the
+    // embedding analyser proposed `tierRole: embedding → embedding` for every
+    // embedding model, which reached the approval queue as rows to accept.
+    // The one allowed case is a price restated unchanged because its partner
+    // moved: prices go in pairs.
+    const partnerMoves = proposal.changes.some(
+      (c) => PRICE_FIELDS.has(c.field) && !sameValue(c.currentValue, c.proposedValue)
+    );
+    proposal.changes.forEach((change, i) => {
+      if (!sameValue(change.currentValue, change.proposedValue)) return;
+      if (PRICE_FIELDS.has(change.field) && partnerMoves) return;
+      ctx.addIssue({
+        code: 'custom',
+        message: `field "${change.field}": proposedValue is the same as currentValue, so nothing changes — leave this change out`,
+        path: ['changes', i, 'proposedValue'],
+      });
+    });
   });
+
+/**
+ * Whether a proposed value is the current one. Arrays compare as sets
+ * (`["hosted","sovereign"]` is `["sovereign","hosted"]`); everything else by
+ * its JSON form, so `3` and `"3"` differ, as they do to the apply step.
+ */
+function sameValue(current: unknown, proposed: unknown): boolean {
+  const norm = (v: unknown): string =>
+    Array.isArray(v)
+      ? JSON.stringify(v.map((el) => JSON.stringify(el)).sort())
+      : JSON.stringify(v ?? null);
+  return norm(current) === norm(proposed);
+}
 
 /** An optional string where `""` means none, the same as `null`. */
 const emptyAsNull = z.preprocess(

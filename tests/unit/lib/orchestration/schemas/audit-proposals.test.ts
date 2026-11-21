@@ -894,6 +894,85 @@ describe('audit-proposals schema', () => {
   });
 });
 
+// t-1076: a change that changes nothing reached the approval queue as a row
+// to accept (gpt-4o-mini proposed `tierRole: embedding → embedding`).
+describe('audit-proposals schema — a change must change something', () => {
+  const IN = 'inputCostPerMillionTokens';
+  const OUT = 'outputCostPerMillionTokens';
+
+  function change(field: string, currentValue: unknown, proposedValue: unknown) {
+    return {
+      field,
+      currentValue,
+      proposedValue,
+      reason: `Current ${field} is ${JSON.stringify(currentValue)}`,
+      confidence: 'high',
+      sources: [SOURCE],
+    };
+  }
+
+  function withChanges(changes: unknown[]) {
+    return makeInput({
+      analyse_embedding: {
+        models: [
+          {
+            model_id: 'm1',
+            modelName: 'Demo',
+            providerSlug: 'provider',
+            changes,
+            overallConfidence: 'high',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+  }
+
+  function issuesOf(input: unknown) {
+    const result = auditProposalsSchema.safeParse(input);
+    return result.success ? [] : result.error.issues;
+  }
+
+  it('rejects a change whose proposed value is its current value, naming where and what to do', () => {
+    const issues = issuesOf(withChanges([change('tierRole', 'embedding', 'embedding')]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0].path).toEqual([
+      'analyse_embedding',
+      'models',
+      0,
+      'changes',
+      0,
+      'proposedValue',
+    ]);
+    expect(issues[0].message).toBe(
+      'field "tierRole": proposedValue is the same as currentValue, so nothing changes — leave this change out'
+    );
+  });
+
+  it('rejects an unchanged array in another order', () => {
+    const issues = issuesOf(
+      withChanges([change('deploymentProfiles', ['hosted', 'sovereign'], ['sovereign', 'hosted'])])
+    );
+    expect(issues.map((i) => i.message)).toEqual([
+      expect.stringContaining('proposedValue is the same as currentValue'),
+    ]);
+  });
+
+  it('accepts a change that changes the value', () => {
+    expect(issuesOf(withChanges([change('tierRole', 'worker', 'thinking')]))).toEqual([]);
+  });
+
+  it('accepts an unchanged price restated as the pair of one that moves', () => {
+    expect(issuesOf(withChanges([change(IN, 3, 3), change(OUT, 15, 12)]))).toEqual([]);
+  });
+
+  it('rejects a price pair where neither moves', () => {
+    const issues = issuesOf(withChanges([change(IN, 3, 3), change(OUT, 15, 15)]));
+    expect(issues.map((i) => i.path.at(-2))).toEqual([0, 1]);
+  });
+});
+
 // §136 t-1064: a deactivation proposal can carry the vendor's retirement day
 // and the successor's vendor model id.
 describe('audit-proposals schema — retirement on deactivations', () => {

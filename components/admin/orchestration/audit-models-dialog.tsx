@@ -368,8 +368,9 @@ export function AuditModelsDialog({
           dimensions: m.dimensions,
           schemaCompatible: m.schemaCompatible,
           // Current prices, so a price proposal's `currentValue` matches the
-          // row and `apply_audit_changes`' drift check can pass (t-774).
-          costPerMillionTokens: m.costPerMillionTokens ?? null,
+          // row and `apply_audit_changes`' drift check can pass (t-774). Not
+          // the legacy blended `costPerMillionTokens`: the audit cannot
+          // propose it, and a model shown it proposed it anyway (t-1076).
           inputCostPerMillionTokens: m.inputCostPerMillionTokens ?? null,
           outputCostPerMillionTokens: m.outputCostPerMillionTokens ?? null,
         })),

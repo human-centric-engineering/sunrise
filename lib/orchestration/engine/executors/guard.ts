@@ -46,6 +46,34 @@ import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { getSchema } from '@/lib/orchestration/schemas';
 import { maybeParseJson } from '@/lib/orchestration/engine/maybe-parse-json';
 
+/** Most issues a schema-mode `reason` lists before summarising the rest. */
+export const MAX_REASON_ISSUES = 50;
+
+/**
+ * The schema-mode failure `reason`, naming every issue (t-1076).
+ *
+ * The reason is what a retry back-edge hands the producer as
+ * `{{vars.__retryContext.failureReason}}`, and what a crash-resume rebuilds
+ * that from. It used to name only the first issue, so a producer with 38
+ * problems was retried twice being told about one of them, and failed the
+ * same way each time. One issue keeps the original one-line form.
+ */
+export function schemaFailureReason(
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>
+): string {
+  const line = (issue: (typeof issues)[number]) =>
+    `${issue.path.map(String).join('.') || '<root>'}: ${issue.message}`;
+  if (issues.length === 0) return 'Schema validation failed';
+  if (issues.length === 1) return `Schema validation failed at ${line(issues[0])}`;
+  const shown = issues.slice(0, MAX_REASON_ISSUES).map((issue) => `- ${line(issue)}`);
+  const rest = issues.length - shown.length;
+  return [
+    `Schema validation failed with ${issues.length} issues:`,
+    ...shown,
+    ...(rest > 0 ? [`- …and ${rest} more`] : []),
+  ].join('\n');
+}
+
 export async function executeGuard(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
@@ -155,10 +183,7 @@ export async function executeGuard(
       // point at the exact field. `.format()` is too noisy for trace
       // output; `.issues` is the flat list authors actually need.
       issues = parse.error.issues;
-      const firstIssue = parse.error.issues[0];
-      reason = firstIssue
-        ? `Schema validation failed at ${firstIssue.path.join('.') || '<root>'}: ${firstIssue.message}`
-        : 'Schema validation failed';
+      reason = schemaFailureReason(parse.error.issues);
     }
   } else {
     const rules = config.rules as string; // narrowed above

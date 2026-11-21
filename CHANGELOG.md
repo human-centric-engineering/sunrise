@@ -716,6 +716,21 @@ release process.
 
 ### Fixed
 
+- **A schema-mode guard's failure `reason` names every issue, not just the
+  first (t-1076).** The reason is what a retry back-edge hands the producer as
+  `{{vars.__retryContext.failureReason}}`. A producer with 38 problems was
+  retried being told about one, and failed the same way each time. One issue
+  keeps the old `Schema validation failed at <path>: <message>` line; several
+  give `Schema validation failed with N issues:` and one `- <path>: <message>`
+  line each, up to 50. A fork whose prompt or parser reads that reason gets
+  the longer form; `output.issues` is unchanged. The Provider Model Audit
+  template now shows each analysis step that list and its own previous output
+  on a retry, tells it to leave out a field it has no new value for, and no
+  longer receives the legacy `costPerMillionTokens` from the Audit Models
+  dialog. The `audit-proposals` schema also refuses a change whose proposed
+  value is its current value, except a price restated as the pair of one that
+  moves. Re-seed (`npm run db:seed`) to pick up the template.
+
 - **The seeded model catalogue names models its vendors serve (t-1041).**
   `prisma/seeds/009-provider-models.ts` seeded Claude Haiku 4.5 as
   `claude-haiku-4.5` (Anthropic's id is `claude-haiku-4-5`), and Claude Opus
