@@ -1677,6 +1677,21 @@ describe('email-channel delivery', () => {
       expect(await renderedLocales()).toEqual([PSEUDO]);
     });
 
+    it('is read by a manual retry from the subscription’s org, as the first send was, not the row’s', async () => {
+      orgDefault(PSEUDO);
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValueOnce({
+        ...makeDelivery({ status: 'failed', attempts: 3, orgId: 'org-dispatching' }),
+        subscription: makeEmailSub({ orgId: 'org-owner' }),
+      } as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([]);
+
+      await retryDelivery('del-1');
+
+      expect(prisma.org.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'org-owner' } })
+      );
+    });
+
     it('is cleared by a manual retry of a webhook row', async () => {
       vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValueOnce({
         ...makeDelivery({ status: 'failed', attempts: 3 }),

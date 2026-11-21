@@ -20,6 +20,8 @@ vi.mock('@/lib/db/client', () => ({
     aiOrchestrationSettings: {
       findUnique: vi.fn(),
     },
+    // The install org's default language, for the email (§138 t-1075).
+    org: { findUnique: vi.fn() },
   },
 }));
 
@@ -69,6 +71,7 @@ vi.mock('@/lib/env', () => ({
 import { notifyEscalation } from '@/lib/orchestration/capabilities/built-in/escalation-notifier';
 import { prisma } from '@/lib/db/client';
 import { sendEmail } from '@/lib/email/send';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { logger } from '@/lib/logging';
 import { sendHoldingSubjects } from '@/lib/privacy/stale-sends';
 import { SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
@@ -558,7 +561,11 @@ describe('people erased since the list was read (t-886)', () => {
 
     await notifyEscalation(makePayload());
 
-    const [subjects, takenAt] = vi.mocked(sendHoldingSubjects).mock.calls[0];
+    // The email's check: the one with the recipients on it. The webhook's,
+    // about the person alone, may come first.
+    const [subjects, takenAt] = vi
+      .mocked(sendHoldingSubjects)
+      .mock.calls.find(([s]) => 'addresses' in s) ?? [undefined, new Date(0)];
     // The recipients, and the person the escalation is about.
     expect(subjects).toEqual({
       addresses: ['ops@example.com', 'lead@example.com'],
@@ -619,6 +626,21 @@ describe('people erased since the list was read (t-886)', () => {
     });
   });
 
+  it('writes the email in the install org’s language: the on-call list is the install’s own', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+      makeSettings({ emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' }) as never
+    );
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({ settings: { locale: 'en-XA' } } as never);
+
+    await notifyEscalation(makePayload());
+
+    expect(prisma.org.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: INSTALL_ORG_ID } })
+    );
+    const { subject } = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(subject).not.toMatch(/^Escalation/);
+  });
+
   it('posts the webhook without waiting behind the email, which may wait for locks', async () => {
     vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
       makeSettings({
@@ -628,23 +650,29 @@ describe('people erased since the list was read (t-886)', () => {
       }) as never
     );
     let finishEmail!: () => void;
-    vi.mocked(sendHoldingSubjects).mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          finishEmail = resolve;
-        })
-    );
+    const original = vi.mocked(sendHoldingSubjects).getMockImplementation();
+    // Only the email's check (the one with recipients) waits.
+    vi.mocked(sendHoldingSubjects).mockImplementation(((subjects, ...rest) =>
+      'addresses' in subjects
+        ? new Promise<void>((resolve) => {
+            finishEmail = resolve;
+          })
+        : original?.(subjects, ...rest)) as typeof sendHoldingSubjects);
 
-    const notifying = notifyEscalation(makePayload());
+    try {
+      const notifying = notifyEscalation(makePayload());
 
-    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
-    // Settles only once the email has: nothing is left running.
-    let settled = false;
-    void notifying.then(() => (settled = true));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(settled).toBe(false);
-    finishEmail();
-    await notifying;
+      await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+      // Settles only once the email has: nothing is left running.
+      let settled = false;
+      void notifying.then(() => (settled = true));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false);
+      finishEmail();
+      await notifying;
+    } finally {
+      if (original) vi.mocked(sendHoldingSubjects).mockImplementation(original);
+    }
   });
 
   it('sends no email about a person erased since, whose reason and thread it carries', async () => {

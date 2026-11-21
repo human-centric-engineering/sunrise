@@ -274,7 +274,7 @@ export async function retryDelivery(
   // reset, so no attempt waits on it.
   const emailLocale =
     subscription.channel === 'email'
-      ? (await emailLocaleForOrg(delivery.orgId ?? orgIdForCall())).locale
+      ? (await emailLocaleForOrg(subscription.orgId ?? orgIdForCall())).locale
       : null;
 
   // Reset status for retry, only if the row is as it was read. An erasure that
