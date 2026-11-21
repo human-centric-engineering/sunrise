@@ -261,7 +261,7 @@ The audit can propose a chat model's `inputCostPerMillionTokens` and `outputCost
 
 **A price the audit cannot find is left out, not proposed as empty.** The analysis prompts say to leave out any field there is no new value for. On a small default model (gpt-4o-mini) and with no Brave Search key, the audit used to propose every unfound price as a change to nothing, and the guard refused the whole set three times (t-1076). Without Brave Search the right result for prices is no price changes at all.
 
-**A change must change something.** `validate_proposals` refuses a change whose proposed value is its current value (arrays compare as sets), so a "no change" row never reaches the approval screen. The one exception is a price restated unchanged because its partner price moves. On a dev run gpt-4o-mini proposed `tierRole: embedding → embedding` for both embedding models (t-1076).
+**A change must change something.** `validate_proposals` refuses a change whose proposed value is its current value, compared as `apply_audit_changes` compares (arrays as sets, `"3"` as `3` for prices and `dimensions`), so a "no change" row never reaches the approval screen. The one exception is a price restated unchanged because its partner price moves. On a dev run gpt-4o-mini proposed `tierRole: embedding → embedding` for both embedding models (t-1076).
 
 ### Two-axis model classification
 
@@ -274,7 +274,7 @@ A model like Qwen2.5-72B is `tierRole: 'thinking'` AND `deploymentProfiles: ['so
 
 The web search step (`search_provider_info`) renders Brave results as a numbered block in each producer's prompt: `[1] title — url\nsnippet`. The LLM is told to cite by `[N]` when a claim is search-backed and to fall back to `training_knowledge` (capped at `medium`/`low` confidence) when it isn't.
 
-The `validate_proposals` guard rejects any proposal whose `sources` array is missing or malformed, using the existing 2-retry budget. On a retry each producer is shown every issue the guard found (up to 50), by path into the producers' combined output, and its own previous output, so `analyse_chat.models.2.changes.0.sources` points at a change it can see. Before t-1076 the retry carried only the guard's first issue, and both retries failed the same way.
+The `validate_proposals` guard rejects any proposal whose `sources` array is missing or malformed, using the existing 2-retry budget. On a retry each producer is shown every issue the guard found (up to 50, shared across the three producers), by path into their combined output, and its own previous output, so `analyse_chat.models.2.changes.0.sources` points at a change it can see. It is told which check sent the run back, and that a complaint with no path (the rationale check quotes a change) is its own if it quotes its output. The rationale check, when it re-runs after a schema retry, is told the schema complaint has since passed. Before t-1076 the retry carried only the guard's first issue, and both retries failed the same way.
 
 The approval UI renders each source as a colour-coded pill: `web · qwenlm.github.io ●●●` (blue, high confidence), `training · ●○○` (amber, low confidence), `kb · doc.pdf ●●●` (emerald). Hover or focus pops a tooltip with the reference, snippet, and note. Admins reviewing a row of proposed changes can scan the pills and spot a stream of `training · low` claims that warrant rejection vs `web · high` claims that warrant acceptance.
 

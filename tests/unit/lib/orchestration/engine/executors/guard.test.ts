@@ -566,6 +566,23 @@ describe('schemaFailureReason (t-1076)', () => {
     expect(lines.at(-1)).toBe('- …and 3 more');
   });
 
+  it('shares the lines across first path segments, so a flood from one step cannot hide another', () => {
+    const flood = Array.from({ length: MAX_REASON_ISSUES + 10 }, (_, i) =>
+      issue(['analyse_chat', 'models', i], `chat${i}`)
+    );
+    const reason = schemaFailureReason([
+      ...flood,
+      issue(['analyse_embedding', 'models', 0], 'emb'),
+    ]);
+    const lines = reason.split('\n');
+    expect(lines[0]).toBe(`Schema validation failed with ${MAX_REASON_ISSUES + 11} issues:`);
+    expect(lines).toContain('- analyse_embedding.models.0: emb');
+    expect(lines).toHaveLength(1 + MAX_REASON_ISSUES + 1);
+    expect(lines.at(-1)).toBe('- …and 11 more');
+    // Zod's order is kept: the embedding issue comes after the chat ones.
+    expect(lines.at(-2)).toBe('- analyse_embedding.models.0: emb');
+  });
+
   it('falls back to a bare message when Zod reports no issues', () => {
     expect(schemaFailureReason([])).toBe('Schema validation failed');
   });

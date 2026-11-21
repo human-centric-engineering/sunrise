@@ -26,6 +26,7 @@ vi.mock('@/lib/orchestration/engine/llm-runner', async () => {
 import { executeGuard } from '@/lib/orchestration/engine/executors/guard';
 import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { createMockLogger } from '@/tests/types/mocks';
 import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/provider-model-audit';
 
 const steps = PROVIDER_MODEL_AUDIT_TEMPLATE.workflowDefinition.steps;
@@ -79,13 +80,7 @@ function makeCtx(stepOutputs: Record<string, unknown>): ExecutionContext {
     totalTokensUsed: 0,
     totalCostUsd: 0,
     defaultErrorStrategy: 'fail',
-    logger: {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-      withContext: vi.fn().mockReturnThis(),
-    } as any,
+    logger: createMockLogger(),
   };
 }
 
@@ -124,12 +119,15 @@ describe('provider-model-audit template — guard retry (t-1076)', () => {
     }
     expect(chat).toContain('sources must be non-empty');
     expect(chat).toContain('"model_id":"openai-gpt-4-1"'); // its previous output, so paths resolve
-    expect(chat).toContain('Lines starting `analyse_chat.` are about your output');
+    expect(chat).toContain('A problem whose path begins with `analyse_chat` is about your output');
+    expect(chat).toContain('by the `validate_proposals` check');
 
     // Each producer is pointed at its own lines and shown its own output.
     for (const id of PRODUCERS) {
       const rendered = interpolatePrompt(promptOf(id), ctx);
-      expect(rendered, id).toContain(`Lines starting \`${id}.\` are about your output`);
+      expect(rendered, id).toContain(
+        `A problem whose path begins with \`${id}\` is about your output`
+      );
       expect(rendered, id).toContain(String(stepOutputs[id]));
     }
   });
@@ -164,5 +162,57 @@ describe('provider-model-audit template — no change without a value (t-1076)',
     for (const step of steps) {
       expect(JSON.stringify(step.config), step.id).not.toMatch(blended);
     }
+  });
+});
+
+describe('provider-model-audit template — retry feedback that names no path (t-1076 review)', () => {
+  const rationaleFailure =
+    'The tierRole change on GPT-4.1 does not engage with "worker": {"field":"tierRole","currentValue":"worker"}';
+
+  function ctxAfter(fromStep: string, failureReason: string, previous: Record<string, unknown>) {
+    const ctx = makeCtx(previous);
+    ctx.variables.__retryContext = { fromStep, attempt: 1, maxRetries: 2, failureReason };
+    return ctx;
+  }
+
+  it('tells each producer that a pathless complaint is theirs when it quotes their output', () => {
+    const ctx = ctxAfter('validate_rationale', rationaleFailure, {
+      analyse_chat: FAILED_CHAT_OUTPUT,
+    });
+    for (const id of PRODUCERS) {
+      const rendered = interpolatePrompt(promptOf(id), ctx);
+      expect(rendered, id).toContain(rationaleFailure);
+      expect(rendered, id).toContain('by the `validate_rationale` check');
+      expect(rendered, id).toContain(
+        'A problem that gives no path — a check quoting a change, say — is yours if it quotes something from your previous output.'
+      );
+      // The old wording told every producer to ignore anything not starting
+      // with its own id, which a rationale complaint never does.
+      expect(rendered, id).not.toContain('so ignore them');
+    }
+  });
+
+  it('a root-level issue (output not an object) is explained as the whole output', () => {
+    const ctx = ctxAfter(
+      'validate_proposals',
+      'Schema validation failed at analyse_chat: expected object, received string',
+      { analyse_chat: 'Here is the JSON: ```json\n{}\n```' }
+    );
+    const rendered = interpolatePrompt(promptOf('analyse_chat'), ctx);
+    expect(rendered).toContain(
+      'A path that is just `analyse_chat` means your whole output was wrong'
+    );
+    // The previous output's own triple fence sits inside a four-backtick one.
+    expect(rendered).toContain('````\nHere is the JSON: ```json\n{}\n```\n````');
+  });
+
+  it('the rationale check is told to set aside a schema complaint that has since passed', () => {
+    const rules = (byId['validate_rationale'].config as { rules: string }).rules;
+    const ctx = ctxAfter('validate_proposals', 'Schema validation failed with 38 issues:', {});
+    const rendered = interpolatePrompt(rules, ctx);
+    expect(rendered).toContain('by the `validate_proposals` check');
+    expect(rendered).toContain(
+      "If that check was `validate_proposals`, it was about the proposals' structure and they have since passed it: ignore it"
+    );
   });
 });

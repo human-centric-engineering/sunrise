@@ -49,6 +49,8 @@ import { maybeParseJson } from '@/lib/orchestration/engine/maybe-parse-json';
 /** Most issues a schema-mode `reason` lists before summarising the rest. */
 export const MAX_REASON_ISSUES = 50;
 
+type ReasonIssue = { path: ReadonlyArray<PropertyKey>; message: string };
+
 /**
  * The schema-mode failure `reason`, naming every issue (t-1076).
  *
@@ -57,21 +59,47 @@ export const MAX_REASON_ISSUES = 50;
  * that from. It used to name only the first issue, so a producer with 38
  * problems was retried twice being told about one of them, and failed the
  * same way each time. One issue keeps the original one-line form.
+ *
+ * Past {@link MAX_REASON_ISSUES} the lines are shared out across the issues'
+ * first path segment — the producing step, for a guard over `inputStepIds` —
+ * so one step's flood cannot push every other step's issues into the
+ * "…and N more" line. Listed issues keep Zod's order.
  */
-export function schemaFailureReason(
-  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>
-): string {
-  const line = (issue: (typeof issues)[number]) =>
+export function schemaFailureReason(issues: ReadonlyArray<ReasonIssue>): string {
+  const line = (issue: ReasonIssue) =>
     `${issue.path.map(String).join('.') || '<root>'}: ${issue.message}`;
   if (issues.length === 0) return 'Schema validation failed';
   if (issues.length === 1) return `Schema validation failed at ${line(issues[0])}`;
-  const shown = issues.slice(0, MAX_REASON_ISSUES).map((issue) => `- ${line(issue)}`);
-  const rest = issues.length - shown.length;
+  const shown = pickFairly(issues, MAX_REASON_ISSUES);
+  const rest = issues.length - shown.size;
   return [
     `Schema validation failed with ${issues.length} issues:`,
-    ...shown,
+    ...issues.filter((issue) => shown.has(issue)).map((issue) => `- ${line(issue)}`),
     ...(rest > 0 ? [`- …and ${rest} more`] : []),
   ].join('\n');
+}
+
+/** Up to `max` issues, taken in turn from each first path segment. */
+function pickFairly(issues: ReadonlyArray<ReasonIssue>, max: number): Set<ReasonIssue> {
+  const groups = new Map<string, ReasonIssue[]>();
+  for (const issue of issues) {
+    const key = issue.path.length > 0 ? String(issue.path[0]) : '';
+    const group = groups.get(key);
+    if (group) group.push(issue);
+    else groups.set(key, [issue]);
+  }
+  const picked = new Set<ReasonIssue>();
+  for (let round = 0; picked.size < max; round++) {
+    let tookAny = false;
+    for (const group of groups.values()) {
+      if (round < group.length && picked.size < max) {
+        picked.add(group[round]);
+        tookAny = true;
+      }
+    }
+    if (!tookAny) break;
+  }
+  return picked;
 }
 
 export async function executeGuard(

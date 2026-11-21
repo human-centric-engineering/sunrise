@@ -967,6 +967,28 @@ describe('audit-proposals schema — a change must change something', () => {
     expect(issuesOf(withChanges([change(IN, 3, 3), change(OUT, 15, 12)]))).toEqual([]);
   });
 
+  it('compares as the apply step does: a number written as a string is the same number', () => {
+    const pair = issuesOf(withChanges([change(IN, '3', 3), change(OUT, '15', 15)]));
+    expect(pair.map((i) => i.path.at(-2))).toEqual([0, 1]);
+    const dims = issuesOf(withChanges([change('dimensions', 1536, '1536')]));
+    expect(dims.map((i) => i.message)).toEqual([
+      expect.stringContaining('proposedValue is the same as currentValue'),
+    ]);
+  });
+
+  it('adds no second issue to an empty price the price checks already refuse', () => {
+    const issues = issuesOf(withChanges([change(IN, null, null), change(OUT, null, null)]));
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.map((i) => i.message).join('\n')).not.toContain('same as currentValue');
+  });
+
+  it('still refuses an empty value on a free-text field, which nothing else catches', () => {
+    const issues = issuesOf(withChanges([change('bestRole', null, null)]));
+    expect(issues.map((i) => i.message)).toEqual([
+      expect.stringContaining('proposedValue is the same as currentValue'),
+    ]);
+  });
+
   it('rejects a price pair where neither moves', () => {
     const issues = issuesOf(withChanges([change(IN, 3, 3), change(OUT, 15, 15)]));
     expect(issues.map((i) => i.path.at(-2))).toEqual([0, 1]);

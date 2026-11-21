@@ -722,7 +722,7 @@ release process.
   retried being told about one, and failed the same way each time. One issue
   keeps the old `Schema validation failed at <path>: <message>` line; several
   give `Schema validation failed with N issues:` and one `- <path>: <message>`
-  line each, up to 50. A fork whose prompt or parser reads that reason gets
+  line each, up to 50, shared out across the issues' first path segment. A fork whose prompt or parser reads that reason gets
   the longer form; `output.issues` is unchanged. The Provider Model Audit
   template now shows each analysis step that list and its own previous output
   on a retry, tells it to leave out a field it has no new value for, and no

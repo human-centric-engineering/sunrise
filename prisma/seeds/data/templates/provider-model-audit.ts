@@ -128,19 +128,25 @@ const CHANGE_RULES = `
  * first of 38 issues and nothing else, and both retries failed the same way.
  */
 function retryPreamble(stepId: string): string {
-  return `{{#if vars.__retryContext}}**Your previous attempt was rejected** (retry {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). The checker said:
+  // Four-backtick fences: a small model often wraps its JSON in its own
+  // triple-backtick fence, which would close a triple-backtick one early.
+  return `{{#if vars.__retryContext}}**Your previous attempt was rejected** (retry {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}) by the \`{{vars.__retryContext.fromStep}}\` check. It said:
 
-\`\`\`
+\`\`\`\`
 {{vars.__retryContext.failureReason}}
-\`\`\`
+\`\`\`\`
 
-Lines starting \`${stepId}.\` are about your output; the others belong to other steps, so ignore them. A path such as \`${stepId}.models.2.changes.0.sources\` means: in your previous output below, the entry at index 2 of \`models\` (counting from 0), its first change, the \`sources\` field. Fix every problem that names you. If you cannot fix a change, leave it out — leaving a change out is always allowed.
+Work out which problems are yours:
+- A problem whose path begins with \`${stepId}\` is about your output; one whose path begins with another step's name (\`analyse_chat\`, \`analyse_embedding\`, \`discover_new_models\`) is not. A path such as \`${stepId}.models.2.changes.0.sources\` means: in your previous output below, the entry at index 2 of \`models\` (counting from 0), its first change, its \`sources\` field. A path that is just \`${stepId}\` means your whole output was wrong — usually not a single JSON object.
+- A problem that gives no path — a check quoting a change, say — is yours if it quotes something from your previous output.
+
+Fix every problem that is yours. If you cannot fix a change, leave it out — leaving a change out is always allowed.
 
 Your previous output:
 
-\`\`\`json
+\`\`\`\`
 {{${stepId}.output}}
-\`\`\`
+\`\`\`\`
 
 Now produce the corrected output, following the instructions below.
 
@@ -655,7 +661,8 @@ Worked examples:
 Reply with exactly PASS or FAIL on the first line, then a brief reason on the second line. If FAIL, quote the offending change object so the producer can fix it on retry.
 
 {{#if vars.__retryContext}}
-RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}. Apply the same checks; quote the offending change for the next iteration.
+RETRY CONTEXT: the run was sent back once already, by the \`{{vars.__retryContext.fromStep}}\` check, which said: {{vars.__retryContext.failureReason}}
+If that check was \`validate_proposals\`, it was about the proposals' structure and they have since passed it: ignore it and judge only the rationales above. If it was this check, see whether the same problem is back. Either way, apply the same checks and quote the offending change for the next iteration.
 {{/if}}`,
           mode: 'llm',
           failAction: 'block',

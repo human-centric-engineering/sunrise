@@ -52,7 +52,10 @@ import {
   TIER_ROLES,
   TOOL_USE,
 } from '@/lib/orchestration/model-audit/enums';
-import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+import {
+  AUDITABLE_FIELDS,
+  sameAuditValue,
+} from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -266,14 +269,20 @@ const modelProposalSchema = z
     // A change that changes nothing (t-1076). On a small default model the
     // embedding analyser proposed `tierRole: embedding → embedding` for every
     // embedding model, which reached the approval queue as rows to accept.
-    // The one allowed case is a price restated unchanged because its partner
-    // moved: prices go in pairs.
-    const partnerMoves = proposal.changes.some(
-      (c) => PRICE_FIELDS.has(c.field) && !sameValue(c.currentValue, c.proposedValue)
-    );
+    // Compared as the apply step compares (`3` is `"3"` for a price, arrays
+    // are sets), so nothing this passes is a no-op there. The one allowed
+    // case is a price restated unchanged because its partner moves: prices
+    // go in pairs.
+    const unchanged = (c: { field: string; currentValue: unknown; proposedValue: unknown }) =>
+      sameAuditValue(c.field, c.currentValue, c.proposedValue);
+    const partnerMoves = proposal.changes.some((c) => PRICE_FIELDS.has(c.field) && !unchanged(c));
     proposal.changes.forEach((change, i) => {
-      if (!sameValue(change.currentValue, change.proposedValue)) return;
+      if (!unchanged(change)) return;
       if (PRICE_FIELDS.has(change.field) && partnerMoves) return;
+      // An empty value on a price, enum or array field is already refused by
+      // the change's own checks; a second issue for it only adds noise to
+      // the retry.
+      if (change.proposedValue == null && hasTypedValue(change.field)) return;
       ctx.addIssue({
         code: 'custom',
         message: `field "${change.field}": proposedValue is the same as currentValue, so nothing changes — leave this change out`,
@@ -282,17 +291,9 @@ const modelProposalSchema = z
     });
   });
 
-/**
- * Whether a proposed value is the current one. Arrays compare as sets
- * (`["hosted","sovereign"]` is `["sovereign","hosted"]`); everything else by
- * its JSON form, so `3` and `"3"` differ, as they do to the apply step.
- */
-function sameValue(current: unknown, proposed: unknown): boolean {
-  const norm = (v: unknown): string =>
-    Array.isArray(v)
-      ? JSON.stringify(v.map((el) => JSON.stringify(el)).sort())
-      : JSON.stringify(v ?? null);
-  return norm(current) === norm(proposed);
+/** A field whose change-level checks already refuse an empty proposed value. */
+function hasTypedValue(field: string): boolean {
+  return PRICE_FIELDS.has(field) || field in PER_FIELD_ENUMS || field in ARRAY_FIELD_ENUMS;
 }
 
 /** An optional string where `""` means none, the same as `null`. */
