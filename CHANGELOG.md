@@ -734,11 +734,12 @@ release process.
   would wipe the row's value if accepted. The dialog now sends
   `description`, `deploymentProfiles` and `quality` too, so a proposal's
   current value is read from the row. `validate_proposals` now also reads the
-  web search step's output (the `audit-proposals` schema requires a
-  `search_provider_info` key) and refuses a `web_search` source whose URL is
-  not one of its results, or any `web_search` source when the search was
-  skipped: gpt-4o-mini cited an invented `web_search` source for a GPT-5
-  price change. Re-seed (`npm run db:seed`) to pick up the template.
+  web search step's output and refuses a `web_search` source whose URL is not
+  one of its results, or any `web_search` source when the search was skipped:
+  gpt-4o-mini cited an invented `web_search` source for a GPT-5 price change.
+  Re-seed (`npm run db:seed`) to pick up the template. A copy of the audit
+  workflow saved earlier keeps the old, unchecked behaviour until
+  `search_provider_info` is added to its `validate_proposals` input steps.
 
 - **The seeded model catalogue names models its vendors serve (t-1041).**
   `prisma/seeds/009-provider-models.ts` seeded Claude Haiku 4.5 as

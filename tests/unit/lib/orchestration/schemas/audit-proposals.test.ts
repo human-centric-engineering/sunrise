@@ -30,10 +30,20 @@ const VALID_ANALYSIS_BRANCH = {
   deactivateModels: [],
 };
 
-/** The search step's output: SOURCE's URL is one of its results. */
-const SEARCH_RESULTS = [
-  { title: 'Release notes', url: SOURCE.reference, description: 'What changed' },
-];
+/**
+ * The search step's output as the external_call executor stores it
+ * (`{ status, body }`); SOURCE's URL is one of its results.
+ */
+const SEARCH_RESULTS = {
+  status: 200,
+  body: [{ title: 'Release notes', url: SOURCE.reference, description: 'What changed' }],
+};
+
+/** Search output with one result at `url`. */
+const searchFound = (url: string) => ({
+  status: 200,
+  body: [{ title: 't', url, description: 'd' }],
+});
 
 function makeInput(overrides: Partial<Record<string, unknown>> = {}): unknown {
   return {
@@ -1074,24 +1084,35 @@ describe('audit-proposals schema — a web_search source must be a real search r
       ['analyse_chat', 'models', 0, 'changes', 1, 'sources', 0, 'reference'],
     ]);
     expect(issues[0].message).toBe(
-      "a web_search source must be one of this audit's web search results, and the search did not run — cite another kind of source, or leave the claim out"
+      "a web_search source must be one of this audit's web search results, and the search returned none — cite another kind of source, or leave the claim out"
     );
   });
 
   it('refuses a web_search URL the search did not return', () => {
-    const issues = issuesOf(
-      priceInput([{ title: 't', url: 'https://example.com/news', description: 'd' }], PRICING)
-    );
+    const issues = issuesOf(priceInput(searchFound('https://example.com/news'), PRICING));
     expect(issues).toHaveLength(2);
     expect(issues[0].message).toBe(
       `web_search source "${PRICING}" is not one of this audit's web search results — cite one of them by its exact URL, or leave the claim out`
     );
   });
 
-  it('accepts a web_search URL the search returned, ignoring a trailing slash', () => {
-    expect(
-      issuesOf(priceInput([{ title: 't', url: `${PRICING}/`, description: 'd' }], PRICING))
-    ).toEqual([]);
+  it.each([
+    ['https://openai.com/pricing/', 'a trailing slash'],
+    ['http://www.OpenAI.com/pricing', 'protocol, www. and host case'],
+    ['https://openai.com/pricing?utm_source=x#api', 'a query and fragment'],
+  ])('accepts a web_search URL the search returned, despite %s (%s)', (cited) => {
+    expect(issuesOf(priceInput(searchFound(PRICING), cited))).toEqual([]);
+  });
+
+  it('reads results from the executor output even when the transform failed', () => {
+    const output = { ...searchFound(PRICING), _transformError: 'partial' };
+    expect(issuesOf(priceInput(output, PRICING))).toEqual([]);
+  });
+
+  it('refuses web_search when the search ran but its body holds no results', () => {
+    const issues = issuesOf(priceInput({ status: 200, body: null }, PRICING));
+    expect(issues).toHaveLength(2);
+    expect(issues[0].message).toContain('the search returned none');
   });
 
   it('checks deactivations and new models too', () => {
@@ -1165,10 +1186,11 @@ describe('audit-proposals schema — a web_search source must be a real search r
     expect(issuesOf(input)).toEqual([]);
   });
 
-  it('fails loudly when the guard stops passing the search results', () => {
-    const input = makeInput();
-    delete (input as Record<string, unknown>).search_provider_info;
-    expect(issuesOf(input).map((i) => i.path)).toEqual([['search_provider_info']]);
+  it('leaves a guard saved before the check (no search key) unchecked rather than failing every run', () => {
+    // An admin's clone of the template keeps the three-producer inputStepIds.
+    const input = priceInput(null, PRICING) as Record<string, unknown>;
+    delete input.search_provider_info;
+    expect(issuesOf(input)).toEqual([]);
   });
 });
 

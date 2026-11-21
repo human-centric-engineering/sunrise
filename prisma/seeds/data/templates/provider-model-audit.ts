@@ -83,11 +83,12 @@ The change's own \`confidence\` field is the minimum confidence across its sourc
 If you have NO source that supports a proposed change, DO NOT emit the change. Silence is preferable to confabulation.
 `.trim();
 
-// Pre-rendered helper: take the brave search transform output (an array
-// of { title, url, description } or null) and produce a numbered block
-// the LLM can cite by \`[N]\`. Lives in the prompt template via
-// {{#each}}-style rendering — the LLM sees concrete numbered rows it can
-// reference, mirroring the chat-citations [N] pattern.
+// The search step's output as the producers see it: the external_call
+// executor's \`{ status, body }\`, where \`body\` is the Brave transform's
+// array of \`{ title, url, description }\` — or \`null\` when the step was
+// skipped (no key, host not allowed). The LLM cites a result by its URL;
+// \`validate_proposals\` checks each \`web_search\` reference against
+// \`body\` (t-1076).
 const SEARCH_RESULTS_BLOCK = `
 **Available web search results (cite each by [N] in your sources).** May be empty if the search step was skipped.
 
@@ -97,7 +98,7 @@ const SEARCH_RESULTS_BLOCK = `
 
 When citing \`[N]\` set \`reference\` to the URL of result [N] and \`snippet\` to a ≤200-char excerpt from its description.
 
-A \`web_search\` source must be one of these results, with its URL copied exactly. If the block above is empty or \`null\`, no search ran: there are no web results, so never cite \`web_search\` — use another kind of source, or leave the claim out. The validator checks every \`web_search\` reference against these results.
+A \`web_search\` source must be one of these results, with its URL copied exactly. The results are the \`body\` array above. If the block is \`null\` or empty, or \`body\` holds no results, no search ran: there are no web results, so never cite \`web_search\` — use another kind of source, or leave the claim out. The validator checks every \`web_search\` reference against these results.
 `.trim();
 
 // Chat pricing (t-774). A price lands in recorded costs and budget caps once
@@ -109,6 +110,7 @@ const PRICING_INSTRUCTIONS = `
 - Propose them **only from a source you can cite with a URL**: a \`web_search\` result (the provider's pricing page is best), or a \`knowledge_base\` / \`external_call\` source with a reference. Training knowledge alone is NOT enough for a price — prices change, and a wrong one mis-records every turn. If you can't cite one, leave the price out.
 - Always propose **both, together**: input and output as a pair, never one alone. If only one of them changed, still propose both — give the unchanged one its current value as the proposed value, with a reason saying it is restated as the pair of the other (e.g. "Input stays at 3; restated as the pair of the output change from 15 to 12") — or the whole proposal set is rejected.
 - Use dollars per **1M** tokens (e.g. 3 and 15), not per token or per 1K, written as JSON numbers (\`3\`, not \`"3"\`). Values must be between 0 and 10000.
+- \`costPerMillionTokens\` is a legacy single blended rate; never propose it — the split pair replaces it.
 - If the model's current input and output prices already match the source, propose no change.
 `.trim();
 

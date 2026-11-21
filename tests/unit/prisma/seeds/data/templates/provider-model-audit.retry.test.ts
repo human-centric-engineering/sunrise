@@ -180,13 +180,19 @@ describe('provider-model-audit template — no change without a value (t-1076)',
     }
   });
 
-  it('no step asks for or mentions the legacy blended price', () => {
+  it('no step asks for the legacy blended price; the producers only forbid it', () => {
     // `inputCostPerMillionTokens` contains `CostPerMillionTokens` (capital C);
     // the blended field is the bare lower-case name.
-    const blended = /(^|[^A-Za-z])costPerMillionTokens/;
+    const blended = /(^|[^A-Za-z])costPerMillionTokens/g;
+    const prohibition = '`costPerMillionTokens` is a legacy single blended rate; never propose it';
     for (const step of steps) {
-      expect(JSON.stringify(step.config), step.id).not.toMatch(blended);
+      const text = step.config as { prompt?: string; message?: string };
+      const body = JSON.stringify(step.config);
+      const mentions = body.match(blended)?.length ?? 0;
+      const forbids = (text.prompt ?? text.message ?? '').includes(prohibition) ? 1 : 0;
+      expect(mentions, step.id).toBe(forbids);
     }
+    expect(promptOf('analyse_chat')).toContain(prohibition);
   });
 });
 
@@ -270,6 +276,58 @@ describe('provider-model-audit template — retry feedback that names no path (t
 });
 
 describe('provider-model-audit template — web search sources (t-1076, dev run 4)', () => {
+  it('the template guard refuses an invented web_search source on the real skipped-search output', async () => {
+    // Dev run 4: no Brave key, search skipped (output null), and gpt-4o-mini
+    // cited web_search https://openai.com/pricing for GPT-5 at $3 / $12.
+    const webSource = {
+      source: 'web_search',
+      confidence: 'high',
+      reference: 'https://openai.com/pricing',
+    };
+    const price = (field: string, currentValue: number, proposedValue: number) => ({
+      field,
+      currentValue,
+      proposedValue,
+      reason: `Was ${currentValue}`,
+      confidence: 'high',
+      sources: [webSource],
+    });
+    const chat = JSON.stringify({
+      models: [
+        {
+          model_id: 'gpt-5',
+          modelName: 'GPT-5',
+          providerSlug: 'openai',
+          changes: [
+            price('inputCostPerMillionTokens', 1.25, 3),
+            price('outputCostPerMillionTokens', 10, 12),
+          ],
+          overallConfidence: 'high',
+          reasoning: 'x',
+        },
+      ],
+      deactivateModels: [],
+    });
+    const outputs = (search: unknown) => ({
+      search_provider_info: search,
+      analyse_chat: chat,
+      analyse_embedding: JSON.stringify({ models: [], deactivateModels: [] }),
+      discover_new_models: JSON.stringify({ newModels: [], reasoning: 'x' }),
+    });
+
+    const skipped = await executeGuard(byId['validate_proposals'], makeCtx(outputs(null)));
+    expect((skipped.output as { passed: boolean }).passed).toBe(false);
+    expect((skipped.output as { reason: string }).reason).toContain('the search returned none');
+
+    // The external_call executor's real output when the search ran and found the page.
+    const ran = {
+      status: 200,
+      body: [{ title: 'Pricing', url: 'https://openai.com/pricing', description: 'd' }],
+    };
+    const found = await executeGuard(byId['validate_proposals'], makeCtx(outputs(ran)));
+    expect((found.output as { passed: boolean }).passed).toBe(true);
+  });
+
   it('validate_proposals reads the search results, so a web_search source can be checked', () => {
     const config = byId['validate_proposals'].config as { inputStepIds: string[] };
     expect(config.inputStepIds).toContain('search_provider_info');
@@ -281,6 +339,7 @@ describe('provider-model-audit template — web search sources (t-1076, dev run 
       expect(promptOf(id)).toContain(
         'no search ran: there are no web results, so never cite `web_search`'
       );
+      expect(promptOf(id)).toContain('The results are the `body` array above.');
     }
   );
 });

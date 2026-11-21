@@ -416,19 +416,50 @@ const discoveryBranchSchema = z.object({
 // ─── Registration ──────────────────────────────────────────────────────────
 
 /**
- * The web search step's output: its numbered results, or `null` when the
- * step was skipped (no Brave key, host not allowed). Required, so a guard
- * that stops passing it fails loudly rather than letting every `web_search`
- * source through unchecked.
+ * The URLs the web search step returned, or `null` when its output was not
+ * passed to this schema at all.
+ *
+ * The step is an `external_call`, whose output is `{ status, body }` (plus
+ * `_transformError` when the transform failed); `body` is the Brave
+ * transform's array of `{ title, url, description }`. A skipped step's
+ * output is `null`: no search ran, so there are no URLs. A missing key is a
+ * guard saved before t-1076 (an admin's clone of the template), which still
+ * lists only the three producers: it gets the old behaviour, unchecked,
+ * rather than failing every run.
  */
-const searchResultsSchema = z.union([
-  z.null(),
-  z.array(z.object({ url: z.string().nullish() }).passthrough()),
-]);
+function searchResultUrls(input: unknown): Set<string> | null {
+  if (typeof input !== 'object' || input === null || !('search_provider_info' in input)) {
+    return null;
+  }
+  const output: unknown = input.search_provider_info;
+  const body: unknown =
+    typeof output === 'object' && output !== null && 'body' in output ? output.body : output;
+  const urls = new Set<string>();
+  if (Array.isArray(body)) {
+    const results: unknown[] = body;
+    for (const result of results) {
+      if (typeof result === 'object' && result !== null && 'url' in result) {
+        if (typeof result.url === 'string') urls.add(normaliseUrl(result.url));
+      }
+    }
+  }
+  return urls;
+}
 
-/** A URL as cited: trimmed, without a trailing slash. */
+/**
+ * A URL as compared: no protocol, lower-case host without `www.`, no query,
+ * fragment or trailing slash. A model copying a result's URL drops or adds
+ * exactly these; the page is the same page.
+ */
 function normaliseUrl(url: string): string {
-  return url.trim().replace(/\/+$/, '');
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    return `${host}${parsed.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
 }
 
 type SourceAt = { source: { source: string; reference?: string }; path: (string | number)[] };
@@ -472,24 +503,23 @@ function* allSources(value: {
 // the price rule; an admin accepting it would mis-cost every GPT-5 call.
 export const auditProposalsSchema = z
   .object({
-    search_provider_info: searchResultsSchema,
+    // Read by `searchResultUrls` below; any shape is accepted here.
+    search_provider_info: z.unknown().optional(),
     analyse_chat: analysisBranchSchema,
     analyse_embedding: analysisBranchSchema,
     discover_new_models: discoveryBranchSchema,
   })
   .superRefine((value, ctx) => {
-    const results = value.search_provider_info;
-    const urls = new Set(
-      (results ?? []).flatMap((r) => (typeof r.url === 'string' ? [normaliseUrl(r.url)] : []))
-    );
+    const urls = searchResultUrls(value);
+    if (urls === null) return;
     for (const { source, path } of allSources(value)) {
       if (source.source !== 'web_search' || typeof source.reference !== 'string') continue;
       if (urls.has(normaliseUrl(source.reference))) continue;
       ctx.addIssue({
         code: 'custom',
         message:
-          results === null
-            ? "a web_search source must be one of this audit's web search results, and the search did not run — cite another kind of source, or leave the claim out"
+          urls.size === 0
+            ? "a web_search source must be one of this audit's web search results, and the search returned none — cite another kind of source, or leave the claim out"
             : `web_search source "${source.reference}" is not one of this audit's web search results — cite one of them by its exact URL, or leave the claim out`,
         path,
       });
