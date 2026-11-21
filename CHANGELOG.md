@@ -16,6 +16,210 @@ release process.
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-11-21
+
+> **Alpha release.** Twenty-seventh tagged Sunrise release. **MINOR bump**:
+> seven new fork seams, new public API and seven migrations. The headline is
+> the **commercial platform** for multi-tenant apps:
+>
+> - **Entitlements and meters** (§135): what an org has bought, and limits on
+>   what it counts, with a platform seats limit.
+> - **Self-serve signup** (§134): at `multi`, a stranger who signs up gets an
+>   org of their own, an app's own setup runs for every new org, and a welcome
+>   step can wait for onboarding.
+> - **Orgs' own AI keys** (§137): an org can send its calls on its own vendor
+>   key, under a new sealed-secrets helper whose master key can rotate.
+> - **Model lifecycle** (§136): a catalogue model records its retirement, shows
+>   what uses it, and moves every use to its replacement in one action.
+> - **Sensitive-content routing** (§130): confidential messages are spotted,
+>   and an agent's policy warns about them, blocks them or sends them to a
+>   model it trusts.
+> - **Interface languages** (§138): the screens an org's users and visitors
+>   see, the org-settings pages and every email can be shown in another
+>   language, which an app supplies.
+>
+> Measured against `v0.19.0`: 37 PRs merged, no direct commits, 5 issues
+> closed as fixed; the suite is 1,666 files and 35,535 tests.
+>
+> ## What a fork has to do
+>
+> **Run the seven migrations** (`npm run db:migrate:deploy`), then
+> **`npm run db:seed`**:
+>
+> - `20261117120000_confidential_content_policy` and
+>   `20261117200000_confidential_model` add the confidential-content policy
+>   columns, `AiProviderConfig.trustedForConfidential` and the confidential
+>   model setting.
+> - `20261118120000_org_provider_keys` adds the `AiOrgProviderKey` table (with
+>   RLS enabled if you have run `db:tenancy:enable`) and the
+>   `orgProviderKeysEnabled` setting; `20261118200000_cost_log_own_key` adds
+>   `AiCostLog.ownKey`.
+> - `20261119120000_provider_model_lifecycle` adds
+>   `AiProviderModel.retiresAt` and `replacementId`.
+> - `20261120090000_user_locale` adds `User.locale`, and
+>   `20261121090000_webhook_delivery_email_locale` adds
+>   `AiWebhookDelivery.emailLocale`.
+> - The seed corrects Claude Haiku 4.5's id and **retires the seeded models
+>   their vendors no longer serve** (Claude Opus 4, Claude Sonnet 4, o3-mini).
+>   It leaves alone any row an admin has edited. It also refreshes the
+>   Provider Model Audit template. Afterwards, open each retired model that
+>   the config-health card names and use **Move uses**.
+>
+> **Run `npm install`.** It brings minor and patch bumps, next-intl 4 (new) and
+> next 16.4.6. **Keep, when you merge `package.json`:**
+>
+> - the new `@prisma/config` → `effect` override and its `overrideReasons`, or
+>   the effect alert comes back;
+> - `@better-auth/core` pinned to the version `better-auth` resolves to
+>   (1.7.27). If they differ, a second core is installed, and signup's
+>   request state reads the wrong one;
+> - your own `version`, in `package.json` and the lockfile, if you set one.
+>
+> **Three new optional env vars**, `SEALED_SECRET_KEYS`,
+> `SEALED_SECRET_ACTIVE_KEY` and `SEALED_SECRET_LEGACY_KEY`, hold the master
+> keys for sealed secrets. Without them nothing changes, but orgs' own AI keys
+> can't be switched on. See `.context/security/sealed-secrets.md`.
+>
+> **Seven new fork-owned scaffolds** ship empty:
+>
+> - `lib/app/entitlements.ts` and `lib/app/sealed-stores.ts`;
+> - `lib/app/signup-org.ts`, `lib/app/org-created.ts` and `lib/app/welcome.ts`
+>   (which ships `null`);
+> - `lib/app/model-pins.ts` and `lib/app/messages.ts`.
+>
+> Take them as they are. A fork that already keeps what an org bought, sets
+> up new orgs, or stores sealed credentials its own way can move that code
+> into them.
+>
+> **At `multi`, a self-serve signup now gets an org of their own.** Someone who
+> signs up with no invitation, or from the install org's own waitlist, lands
+> as `OWNER` of a new org, where before they joined the install org as a
+> `MEMBER`. To keep the old behaviour, register a resolver in
+> `lib/app/signup-org.ts` that answers `{ kind: 'install' }`. `single` installs
+> and invited signups are unchanged.
+>
+> **Conflicts to expect,** each resolved by taking Sunrise's version unless
+> said otherwise:
+>
+> - **Text on screens and emails:**
+>   - A fork that edited a screen under `app/(auth)`, `app/(public)` or
+>     `app/(protected)`, an org-settings admin page (Members, Options, AI
+>     keys, Support access, Waitlist), or a template in `emails/` conflicts on
+>     its text. The text moved to `lib/i18n/messages/en.json`.
+>   - Change wording with `overridePlatformMessages('en', …)` from
+>     `lib/app/messages.ts`, not in the component.
+> - **`lib/app/user-created.ts`:** Sunrise rewrote its header comment to point
+>   org setup at the new seams. Keep your registrations and take the new
+>   comment.
+> - **A fork page under `/admin/provider-keys` or `/admin/org-options`:** both
+>   are now core admin sections, so a fork page there is refused at init.
+>   Move it.
+>
+> **Org settings keys Sunrise now owns.** A fork storing its own value under
+> one of these keys must move it before taking this release. Otherwise the
+> value reads as unreadable, and the first save overwrites it.
+>
+> - `Org.settings.entitlements`
+> - `Org.settings.quotas.meters`
+> - `Org.settings.locale`
+> - `Org.settings.orgCreated`
+> - `Org.settings.awaitingOnboarding`
+> - `Org.settings.awaitingFounder`
+>
+> **Your type-check will flag:**
+>
+> - code that read the English the catalogue now holds: `ORG_ROLE_LABELS`,
+>   `stateSentence()`, `SAVE_BLOCKED_SENTENCE`, `READ_ONLY_SENTENCE`,
+>   `testFailureSentence()`, `SETTINGS_TAB_TITLES`, `COOKIE_CATEGORIES`' `name`
+>   and `description`, `getStatusConfig()`'s words, and `AdminSidebar`'s
+>   `orgOptionsEnabled`;
+> - a fixture that builds a whole `PrivacyPolicy`: it needs
+>   `confidentialPersonal` and `confidentialCommercial`;
+> - fixtures typed with the cost types, which need the new own-key fields:
+>   `CostSummary`, `UsageTotals`, `CostSummaryTrendPoint`,
+>   `CostSummaryModelRow`, `CostBreakdownRow` and `CostBreakdownTotals`;
+> - a full `ProviderModelUsage` or `AiProviderModel` built in a test;
+> - code typed against `Readonly<Required<EntitlementSwitch>>` in place of the
+>   new `RegisteredEntitlementSwitch`;
+> - a test double passed to `writeNewUserMemberships()`,
+>   `healSignupRecord()` or `syncInstallMembershipRole()` without
+>   `$executeRaw`.
+>
+> **Your tests will flag:**
+>
+> - `defaults.test.ts`: it gains the seven new scaffolds' rows. Pin them;
+>   don't delete them.
+> - **Mocks:**
+>   - a mock of `corePrivacyAdapters()` without `classifiers: []`;
+>   - a `@/lib/db/client` mock that fetches a provider for an org at `multi`:
+>     it needs `aiOrgProviderKey: { findUnique: async () => null }`;
+>   - a mock of `settings-resolver` or `judge-model` missing their new
+>     exports;
+>   - a test that mocks `isLocalProvider` with `mockResolvedValueOnce`:
+>     confidential routing now asks it first.
+> - **Rendering and assertions:**
+>   - a fork test rendering a catalogue screen needs `next-intl` mocked, as
+>     `tests/setup.ts` now does;
+>   - an exact English date asserted in an email: dates use the shared named
+>     formats;
+>   - an exact `org.create` `data`: a new org's `settings` holds
+>     `awaitingOnboarding`.
+> - **Guards:**
+>   - a `logCost` call outside your fork tiers without `ownKey`, caught by
+>     `cost-log-own-key.test.ts`;
+>   - a `requires` naming no registered switch, caught by the roster test.
+>
+> **Changes a build will not catch:**
+>
+> - **Model pins** (task defaults, a workflow step's `modelOverride`) are now
+>   stored as `provider::model`. Code that reads one as a model id takes
+>   `pinModelId()` first. A bare id stored earlier still resolves.
+> - **Credential resolvers:**
+>   - a resolver in `lib/app/provider-credentials.ts` is no longer asked for
+>     an org that has saved its own key while that key is in use;
+>   - at `multi`, each provider fetch now also reads whether the org holds a
+>     key, cached for 60 seconds.
+> - **Caps and spend:**
+>   - own-key spend counts towards the agent's budget only, so pass
+>     `ownKey: usesOrgOwnKey(provider)` on your own `logCost` calls;
+>   - `/costs/orgs`' `utilisation` is the platform's spend over the cap.
+> - **Seats:** with a seats limit set, an org's own admin is refused a new
+>   invitation or member past it, and `addMember()` now checks the limit
+>   itself, so a fork route calling it gets the limit too.
+> - **A surface that `requires` a switch:** a fork's own `canAdminister` must
+>   read `scope.requires`, or every org the tier admits gets in.
+> - **New orgs:** staff-created orgs start unfinished too, so once you set
+>   `appWelcomeRoute`, their owner sees the welcome step once. A new org's
+>   `settings` column is no longer `NULL`.
+> - **The embed widget** now calls `BETTER_AUTH_URL`, whatever host served it.
+> - **Text and formats:**
+>   - email dates read "Nov 20, 2026, 10:00 AM UTC";
+>   - an event email's subject names the brand, not "Sunrise";
+>   - a schema-mode guard's failure `reason` lists every issue;
+>   - the admin audit log keeps prices, token limits and dates as values.
+> - **The cleanup agent's platform-owned binding** now passes over a retiring
+>   model, so marking one retiring moves the binding at the next maintenance
+>   pass.
+>
+> Each is explained under its entry below.
+>
+> **No feature in this release was checked on a deployed build:**
+>
+> - §134's and §137's ship records say that check was not run; §134's
+>   done-when asked for it against a deployed `multi` build.
+> - §130 and §136 were checked on a local dev server.
+> - §135's and §138's records don't say.
+>
+> Check self-serve signup, entitlements and orgs' own keys on your own `multi`
+> deployment before relying on them for real customers.
+>
+> **Known gap:** sunrise#1232, the issue behind §134's self-serve signup, is
+> still open on GitHub although t-1062 shipped it. The orchestration admin
+> pages that org admins can open stay in English.
+>
+> **Dependency alerts:** none open at the cut. The `effect` alert opened since
+> 0.19.0 is cleared; see Security below.
+
 ### Added
 
 - **Every email goes out in its recipient's language (§138 t-1075).** The
@@ -12416,7 +12620,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.0...v0.17.1
