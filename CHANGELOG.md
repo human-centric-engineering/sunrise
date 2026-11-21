@@ -73,6 +73,8 @@ release process.
 > - `@better-auth/core` pinned to the version `better-auth` resolves to
 >   (1.7.27). If they differ, a second core is installed, and signup's
 >   request state reads the wrong one;
+> - the new scripts `secrets:reseal` (the key-rotation steps run it) and
+>   `smoke:model-move`;
 > - your own `version`, in `package.json` and the lockfile, if you set one.
 >
 > **Three new optional env vars**, `SEALED_SECRET_KEYS`,
@@ -129,18 +131,14 @@ release process.
 > **Your type-check will flag:**
 >
 > - code that read the English the catalogue now holds: `ORG_ROLE_LABELS`,
->   `stateSentence()`, `SAVE_BLOCKED_SENTENCE`, `READ_ONLY_SENTENCE`,
->   `testFailureSentence()`, `SETTINGS_TAB_TITLES`, `COOKIE_CATEGORIES`' `name`
->   and `description`, `getStatusConfig()`'s words, and `AdminSidebar`'s
->   `orgOptionsEnabled`;
+>   `SETTINGS_TAB_TITLES`, `COOKIE_CATEGORIES`' `name` and `description`, and
+>   `getStatusConfig()`'s words;
 > - a fixture that builds a whole `PrivacyPolicy`: it needs
 >   `confidentialPersonal` and `confidentialCommercial`;
 > - fixtures typed with the cost types, which need the new own-key fields:
 >   `CostSummary`, `UsageTotals`, `CostSummaryTrendPoint`,
 >   `CostSummaryModelRow`, `CostBreakdownRow` and `CostBreakdownTotals`;
 > - a full `ProviderModelUsage` or `AiProviderModel` built in a test;
-> - code typed against `Readonly<Required<EntitlementSwitch>>` in place of the
->   new `RegisteredEntitlementSwitch`;
 > - a test double passed to `writeNewUserMemberships()`,
 >   `healSignupRecord()` or `syncInstallMembershipRole()` without
 >   `$executeRaw`.
@@ -164,10 +162,8 @@ release process.
 >     formats;
 >   - an exact `org.create` `data`: a new org's `settings` holds
 >     `awaitingOnboarding`.
-> - **Guards:**
->   - a `logCost` call outside your fork tiers without `ownKey`, caught by
->     `cost-log-own-key.test.ts`;
->   - a `requires` naming no registered switch, caught by the roster test.
+> - **A guard:** a `logCost` call outside your fork tiers without `ownKey`,
+>   caught by `cost-log-own-key.test.ts`.
 >
 > **Changes a build will not catch:**
 >
