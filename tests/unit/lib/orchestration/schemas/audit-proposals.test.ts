@@ -1033,6 +1033,75 @@ describe('audit-proposals schema — a change must change something', () => {
   });
 });
 
+// t-1076: on a dev run gpt-4o-mini backed `quality: high → medium` with a
+// prior_step source pointing at the registry's own "high".
+describe('audit-proposals schema — the registry cannot support changing itself', () => {
+  const PRIOR = {
+    source: 'prior_step',
+    confidence: 'high',
+    stepId: 'load_models',
+    reference: 'output.models[6].quality',
+  };
+  const TRAINING = { source: 'training_knowledge', confidence: 'medium' };
+
+  function withChange(
+    field: string,
+    currentValue: unknown,
+    proposedValue: unknown,
+    sources: unknown[]
+  ) {
+    return makeInput({
+      analyse_embedding: {
+        models: [
+          {
+            model_id: 'text-embedding-3-large',
+            modelName: 'text-embedding-3-large',
+            providerSlug: 'openai',
+            changes: [
+              {
+                field,
+                currentValue,
+                proposedValue,
+                reason: `Was ${String(currentValue)}`,
+                confidence: 'high',
+                sources,
+              },
+            ],
+            overallConfidence: 'high',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+  }
+
+  function issuesOf(input: unknown) {
+    const result = auditProposalsSchema.safeParse(input);
+    return result.success ? [] : result.error.issues;
+  }
+
+  it('refuses a change whose only source is prior_step, naming where and what to do', () => {
+    const issues = issuesOf(withChange('quality', 'high', 'medium', [PRIOR]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0].path).toEqual(['analyse_embedding', 'models', 0, 'changes', 0, 'sources']);
+    expect(issues[0].message).toBe(
+      'field "quality": a prior_step source only shows the registry\'s current value, which cannot support changing it — cite a source for the new value, or leave this change out'
+    );
+  });
+
+  it('accepts prior_step beside a source for the new value', () => {
+    expect(issuesOf(withChange('quality', 'high', 'medium', [PRIOR, TRAINING]))).toEqual([]);
+  });
+
+  it('leaves an unchanged value backed by prior_step to the no-op rule, with no second issue', () => {
+    const issues = issuesOf(withChange('quality', 'medium', 'medium', [PRIOR]));
+    expect(issues.map((i) => i.message)).toEqual([
+      'field "quality": proposedValue is the same as currentValue, so nothing changes — leave this change out',
+    ]);
+  });
+});
+
 // t-1076: with no Brave key the search step was skipped, and gpt-4o-mini
 // still cited `web_search` "https://openai.com/pricing" with an invented
 // snippet for a GPT-5 price change. A URL alone passed the price rule.

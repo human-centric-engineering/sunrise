@@ -737,7 +737,8 @@ release process.
   web search step's output and refuses a `web_search` source whose URL is not
   one of its results, or any `web_search` source when the search was skipped:
   gpt-4o-mini cited an invented `web_search` source for a GPT-5 price change.
-  Re-seed (`npm run db:seed`) to pick up the template. A copy of the audit
+  It also refuses a change whose only sources are `prior_step`, which shows
+  the registry's current value and cannot back changing it. Re-seed (`npm run db:seed`) to pick up the template. A copy of the audit
   workflow saved earlier keeps the old, unchecked behaviour until
   `search_provider_info` is added to its `validate_proposals` input steps.
 

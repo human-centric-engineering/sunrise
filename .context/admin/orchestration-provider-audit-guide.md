@@ -264,7 +264,9 @@ The audit can propose a chat model's `inputCostPerMillionTokens` and `outputCost
 
 **A change must change something.** `validate_proposals` refuses a change whose proposed value is its current value, compared as `apply_audit_changes` compares (arrays as sets, `"3"` as `3` for prices and `dimensions`), so a "no change" row never reaches the approval screen. The one exception is a price restated unchanged because its partner price moves. On a dev run gpt-4o-mini proposed `tierRole: embedding → embedding` for both embedding models (t-1076).
 
-**A change must have a value.** `validate_proposals` also refuses an empty proposed value (`null` or blank) on `description`, `bestRole`, `dimensions` and `schemaCompatible`, which have no type check of their own: accepting one would wipe the row's value. The audit never clears a value; clear a wrong one on the model's page. Prices, enums and arrays already refuse an empty value. For both rules to read the real current value, the Audit Models dialog sends every field a change can be proposed to, `description`, `deploymentProfiles` and `quality` included, and `load_models` copies them through (t-1076).
+**A change must have a value.** `validate_proposals` also refuses an empty proposed value (`null` or blank) on `description`, `bestRole`, `dimensions` and `schemaCompatible`, which have no type check of their own: accepting one would wipe the row's value. The audit never clears a value; clear a wrong one on the model's page.
+
+**The registry cannot back a change to itself.** A `prior_step` source cites `load_models`, which holds the row's current value, so `validate_proposals` refuses a change whose only sources are `prior_step`. On a dev run gpt-4o-mini backed `quality: high → medium` with a `prior_step` source pointing at the "high" it was replacing (t-1076). Prices, enums and arrays already refuse an empty value. For both rules to read the real current value, the Audit Models dialog sends every field a change can be proposed to, `description`, `deploymentProfiles` and `quality` included, and `load_models` copies them through (t-1076).
 
 ### Two-axis model classification
 

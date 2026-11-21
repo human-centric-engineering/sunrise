@@ -343,3 +343,14 @@ describe('provider-model-audit template — web search sources (t-1076, dev run 
     }
   );
 });
+
+describe('provider-model-audit template — prior_step sources (t-1076, dev run 5)', () => {
+  it.each(['analyse_chat', 'analyse_embedding', 'discover_new_models'])(
+    '%s is told a prior_step source never supports a change on its own',
+    (id) => {
+      expect(promptOf(id)).toContain(
+        "It shows a field's current value only, so it never supports a change on its own"
+      );
+    }
+  );
+});

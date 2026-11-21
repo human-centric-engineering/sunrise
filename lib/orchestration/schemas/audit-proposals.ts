@@ -245,6 +245,23 @@ const changeSchema = z
         });
       }
     }
+    // A change backed only by the registry (t-1076). A `prior_step` source
+    // cites `load_models`, which holds the row's current value: it can show
+    // what a field is, never that it should change. On a dev run gpt-4o-mini
+    // backed `quality: high → medium` with `prior_step` pointing at the "high"
+    // it was replacing. An unchanged value is what it can support; whether an
+    // unchanged value belongs in `changes` at all is the no-op rule's call.
+    if (
+      change.sources.length > 0 &&
+      change.sources.every((src) => src.source === 'prior_step') &&
+      !sameAuditValue(change.field, change.currentValue, change.proposedValue)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `field "${change.field}": a prior_step source only shows the registry's current value, which cannot support changing it — cite a source for the new value, or leave this change out`,
+        path: ['sources'],
+      });
+    }
     // A change to nothing (t-1076). A price, enum or array field's own checks
     // above refuse an empty value; `description`, `bestRole`, `dimensions`
     // and `schemaCompatible` have none, and an accepted empty value would
