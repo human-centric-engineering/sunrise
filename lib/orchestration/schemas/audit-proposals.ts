@@ -415,15 +415,85 @@ const discoveryBranchSchema = z.object({
 
 // ─── Registration ──────────────────────────────────────────────────────────
 
-// Compound schema — keys match the audit template's
-// `inputStepIds: ['analyse_chat', 'analyse_embedding',
-// 'discover_new_models']`. The executor builds `{ [stepId]: output }`
-// and feeds it to this schema; mismatched keys produce a clear
-// "stepId not found" issue path.
-export const auditProposalsSchema = z.object({
-  analyse_chat: analysisBranchSchema,
-  analyse_embedding: analysisBranchSchema,
-  discover_new_models: discoveryBranchSchema,
-});
+/**
+ * The web search step's output: its numbered results, or `null` when the
+ * step was skipped (no Brave key, host not allowed). Required, so a guard
+ * that stops passing it fails loudly rather than letting every `web_search`
+ * source through unchecked.
+ */
+const searchResultsSchema = z.union([
+  z.null(),
+  z.array(z.object({ url: z.string().nullish() }).passthrough()),
+]);
+
+/** A URL as cited: trimmed, without a trailing slash. */
+function normaliseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
+type SourceAt = { source: { source: string; reference?: string }; path: (string | number)[] };
+
+/** Every source in the three producers' output, with its path. */
+function* allSources(value: {
+  analyse_chat: z.infer<typeof analysisBranchSchema>;
+  analyse_embedding: z.infer<typeof analysisBranchSchema>;
+  discover_new_models: z.infer<typeof discoveryBranchSchema>;
+}): Generator<SourceAt> {
+  for (const branch of ['analyse_chat', 'analyse_embedding'] as const) {
+    for (const [i, model] of value[branch].models.entries()) {
+      for (const [j, change] of model.changes.entries()) {
+        for (const [k, source] of change.sources.entries()) {
+          yield { source, path: [branch, 'models', i, 'changes', j, 'sources', k, 'reference'] };
+        }
+      }
+    }
+    for (const [i, deactivation] of value[branch].deactivateModels.entries()) {
+      for (const [k, source] of deactivation.sources.entries()) {
+        yield { source, path: [branch, 'deactivateModels', i, 'sources', k, 'reference'] };
+      }
+    }
+  }
+  for (const [i, model] of value.discover_new_models.newModels.entries()) {
+    for (const [k, source] of model.sources.entries()) {
+      yield { source, path: ['discover_new_models', 'newModels', i, 'sources', k, 'reference'] };
+    }
+  }
+}
+
+// Compound schema — keys match the audit template's `inputStepIds:
+// ['search_provider_info', 'analyse_chat', 'analyse_embedding',
+// 'discover_new_models']`. The executor builds `{ [stepId]: output }` and
+// feeds it to this schema; mismatched keys produce a clear issue path.
+//
+// A `web_search` source must be one of the search step's results (t-1076).
+// On a dev run with no Brave key, the search was skipped and gpt-4o-mini
+// still cited `web_search` "https://openai.com/pricing" with an invented
+// snippet for a GPT-5 price of $3/$12 (it is $1.25/$10). A URL alone passed
+// the price rule; an admin accepting it would mis-cost every GPT-5 call.
+export const auditProposalsSchema = z
+  .object({
+    search_provider_info: searchResultsSchema,
+    analyse_chat: analysisBranchSchema,
+    analyse_embedding: analysisBranchSchema,
+    discover_new_models: discoveryBranchSchema,
+  })
+  .superRefine((value, ctx) => {
+    const results = value.search_provider_info;
+    const urls = new Set(
+      (results ?? []).flatMap((r) => (typeof r.url === 'string' ? [normaliseUrl(r.url)] : []))
+    );
+    for (const { source, path } of allSources(value)) {
+      if (source.source !== 'web_search' || typeof source.reference !== 'string') continue;
+      if (urls.has(normaliseUrl(source.reference))) continue;
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          results === null
+            ? "a web_search source must be one of this audit's web search results, and the search did not run — cite another kind of source, or leave the claim out"
+            : `web_search source "${source.reference}" is not one of this audit's web search results — cite one of them by its exact URL, or leave the claim out`,
+        path,
+      });
+    }
+  });
 
 registerSchema('audit-proposals', auditProposalsSchema);

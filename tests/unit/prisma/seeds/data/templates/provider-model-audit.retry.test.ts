@@ -89,6 +89,7 @@ const PRODUCERS = ['analyse_chat', 'analyse_embedding', 'discover_new_models'] a
 describe('provider-model-audit template — guard retry (t-1076)', () => {
   it("a retry shows each producer every issue the guard found and that producer's previous output", async () => {
     const stepOutputs: Record<string, unknown> = {
+      search_provider_info: null, // skipped: no Brave key on the dev run
       analyse_chat: FAILED_CHAT_OUTPUT,
       analyse_embedding: JSON.stringify({ models: [], deactivateModels: [] }),
       discover_new_models: JSON.stringify({ newModels: [], reasoning: 'None missing.' }),
@@ -266,4 +267,20 @@ describe('provider-model-audit template — retry feedback that names no path (t
       "If that check was `validate_proposals`, it was about the proposals' structure and they have since passed it: ignore it"
     );
   });
+});
+
+describe('provider-model-audit template — web search sources (t-1076, dev run 4)', () => {
+  it('validate_proposals reads the search results, so a web_search source can be checked', () => {
+    const config = byId['validate_proposals'].config as { inputStepIds: string[] };
+    expect(config.inputStepIds).toContain('search_provider_info');
+  });
+
+  it.each(['analyse_chat', 'analyse_embedding', 'discover_new_models'])(
+    '%s is told never to cite web_search when no search ran',
+    (id) => {
+      expect(promptOf(id)).toContain(
+        'no search ran: there are no web results, so never cite `web_search`'
+      );
+    }
+  );
 });

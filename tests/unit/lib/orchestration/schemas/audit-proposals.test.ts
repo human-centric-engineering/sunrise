@@ -30,8 +30,14 @@ const VALID_ANALYSIS_BRANCH = {
   deactivateModels: [],
 };
 
+/** The search step's output: SOURCE's URL is one of its results. */
+const SEARCH_RESULTS = [
+  { title: 'Release notes', url: SOURCE.reference, description: 'What changed' },
+];
+
 function makeInput(overrides: Partial<Record<string, unknown>> = {}): unknown {
   return {
+    search_provider_info: SEARCH_RESULTS,
     analyse_chat: VALID_ANALYSIS_BRANCH,
     analyse_embedding: VALID_ANALYSIS_BRANCH,
     discover_new_models: { newModels: [], reasoning: '' },
@@ -1014,6 +1020,155 @@ describe('audit-proposals schema — a change must change something', () => {
   it('rejects a price pair where neither moves', () => {
     const issues = issuesOf(withChanges([change(IN, 3, 3), change(OUT, 15, 15)]));
     expect(issues.map((i) => i.path.at(-2))).toEqual([0, 1]);
+  });
+});
+
+// t-1076: with no Brave key the search step was skipped, and gpt-4o-mini
+// still cited `web_search` "https://openai.com/pricing" with an invented
+// snippet for a GPT-5 price change. A URL alone passed the price rule.
+describe('audit-proposals schema — a web_search source must be a real search result', () => {
+  const IN = 'inputCostPerMillionTokens';
+  const OUT = 'outputCostPerMillionTokens';
+  const PRICING = 'https://openai.com/pricing';
+
+  function webSource(reference: string) {
+    return { source: 'web_search', confidence: 'high', reference, snippet: 'GPT-5 is $3 / $12' };
+  }
+
+  function priceInput(search: unknown, reference: string) {
+    const change = (field: string, currentValue: number, proposedValue: number) => ({
+      field,
+      currentValue,
+      proposedValue,
+      reason: `Was ${currentValue}`,
+      confidence: 'high',
+      sources: [webSource(reference)],
+    });
+    return makeInput({
+      search_provider_info: search,
+      analyse_chat: {
+        models: [
+          {
+            model_id: 'gpt-5',
+            modelName: 'GPT-5',
+            providerSlug: 'openai',
+            changes: [change(IN, 1.25, 3), change(OUT, 10, 12)],
+            overallConfidence: 'high',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+  }
+
+  function issuesOf(input: unknown) {
+    const result = auditProposalsSchema.safeParse(input);
+    return result.success ? [] : result.error.issues;
+  }
+
+  it('refuses every web_search source when the search was skipped, naming each', () => {
+    const issues = issuesOf(priceInput(null, PRICING));
+    expect(issues.map((i) => i.path)).toEqual([
+      ['analyse_chat', 'models', 0, 'changes', 0, 'sources', 0, 'reference'],
+      ['analyse_chat', 'models', 0, 'changes', 1, 'sources', 0, 'reference'],
+    ]);
+    expect(issues[0].message).toBe(
+      "a web_search source must be one of this audit's web search results, and the search did not run — cite another kind of source, or leave the claim out"
+    );
+  });
+
+  it('refuses a web_search URL the search did not return', () => {
+    const issues = issuesOf(
+      priceInput([{ title: 't', url: 'https://example.com/news', description: 'd' }], PRICING)
+    );
+    expect(issues).toHaveLength(2);
+    expect(issues[0].message).toBe(
+      `web_search source "${PRICING}" is not one of this audit's web search results — cite one of them by its exact URL, or leave the claim out`
+    );
+  });
+
+  it('accepts a web_search URL the search returned, ignoring a trailing slash', () => {
+    expect(
+      issuesOf(priceInput([{ title: 't', url: `${PRICING}/`, description: 'd' }], PRICING))
+    ).toEqual([]);
+  });
+
+  it('checks deactivations and new models too', () => {
+    const issues = issuesOf(
+      makeInput({
+        search_provider_info: null,
+        analyse_embedding: {
+          models: [],
+          deactivateModels: [{ modelId: 'old', reason: 'retired', sources: [webSource(PRICING)] }],
+        },
+        discover_new_models: {
+          newModels: [
+            {
+              name: 'Demo',
+              slug: 'openai-demo',
+              providerSlug: 'openai',
+              modelId: 'demo',
+              description: 'd',
+              capabilities: ['chat'],
+              tierRole: 'worker',
+              deploymentProfiles: ['hosted'],
+              bestRole: 'Demo',
+              sources: [webSource(PRICING)],
+            },
+          ],
+          reasoning: 'x',
+        },
+      })
+    );
+    expect(issues.map((i) => i.path)).toEqual([
+      ['analyse_embedding', 'deactivateModels', 0, 'sources', 0, 'reference'],
+      ['discover_new_models', 'newModels', 0, 'sources', 0, 'reference'],
+    ]);
+  });
+
+  it('leaves other source kinds alone when the search was skipped', () => {
+    const kb = { source: 'knowledge_base', confidence: 'medium', reference: 'doc-12' };
+    const input = makeInput({
+      search_provider_info: null,
+      analyse_chat: {
+        models: [
+          {
+            model_id: 'gpt-5',
+            modelName: 'GPT-5',
+            providerSlug: 'openai',
+            changes: [
+              {
+                field: IN,
+                currentValue: 1.25,
+                proposedValue: 3,
+                reason: 'Was 1.25',
+                confidence: 'medium',
+                sources: [kb],
+              },
+              {
+                field: OUT,
+                currentValue: 10,
+                proposedValue: 12,
+                reason: 'Was 10',
+                confidence: 'medium',
+                sources: [kb],
+              },
+            ],
+            overallConfidence: 'medium',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+    expect(issuesOf(input)).toEqual([]);
+  });
+
+  it('fails loudly when the guard stops passing the search results', () => {
+    const input = makeInput();
+    delete (input as Record<string, unknown>).search_provider_info;
+    expect(issuesOf(input).map((i) => i.path)).toEqual([['search_provider_info']]);
   });
 });
 

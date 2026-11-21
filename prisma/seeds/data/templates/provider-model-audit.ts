@@ -96,6 +96,8 @@ const SEARCH_RESULTS_BLOCK = `
 \`\`\`
 
 When citing \`[N]\` set \`reference\` to the URL of result [N] and \`snippet\` to a ≤200-char excerpt from its description.
+
+A \`web_search\` source must be one of these results, with its URL copied exactly. If the block above is empty or \`null\`, no search ran: there are no web results, so never cite \`web_search\` — use another kind of source, or leave the claim out. The validator checks every \`web_search\` reference against these results.
 `.trim();
 
 // Chat pricing (t-774). A price lands in recorded costs and budget caps once
@@ -603,12 +605,19 @@ Only propose models you can attribute. A proposal with only \`training_knowledge
         id: 'validate_proposals',
         name: 'Validate proposed shape (deterministic schema)',
         description:
-          'Runs the `audit-proposals` Zod schema against the combined output of the three producer branches. Catches enum-membership / required-field / source-shape issues deterministically — no LLM call, no hallucination surface. The retry edge sends a precise Zod-issue path back to the producer (which step + which field) so the next attempt can fix the exact problem.',
+          'Runs the `audit-proposals` Zod schema against the combined output of the three producer branches, plus the web search results so every `web_search` source can be checked against them. Catches enum-membership / required-field / source-shape issues deterministically — no LLM call, no hallucination surface. The retry edge sends a precise Zod-issue path back to the producer (which step + which field) so the next attempt can fix the exact problem.',
         type: 'guard',
         config: {
           mode: 'schema',
           schemaName: 'audit-proposals',
-          inputStepIds: ['analyse_chat', 'analyse_embedding', 'discover_new_models'],
+          // The search results too: a `web_search` source must be one of
+          // them (t-1076), and `null` (search skipped) means there are none.
+          inputStepIds: [
+            'search_provider_info',
+            'analyse_chat',
+            'analyse_embedding',
+            'discover_new_models',
+          ],
           failAction: 'block',
           maxRetries: 2,
         },
