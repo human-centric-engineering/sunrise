@@ -138,7 +138,7 @@ function retryPreamble(stepId: string): string {
 
 Work out which problems are yours:
 - A problem whose path begins with \`${stepId}\` is about your output; one whose path begins with another step's name (\`analyse_chat\`, \`analyse_embedding\`, \`discover_new_models\`) is not. A path such as \`${stepId}.models.2.changes.0.sources\` means: in your previous output below, the entry at index 2 of \`models\` (counting from 0), its first change, its \`sources\` field. A path that is just \`${stepId}\` means your whole output was wrong — usually not a single JSON object.
-- A problem that gives no path — a check quoting a change, say — is yours if it quotes something from your previous output.
+- A complaint about a change's reason names the step and model it is about (for example \`analyse_chat\`, model \`gpt-4.1\`). It is yours only if it names \`${stepId}\`. Never copy a change out of a complaint into your output: if the change is not already in your previous output, the complaint is not yours.
 
 Fix every problem that is yours. If you cannot fix a change, leave it out — leaving a change out is always allowed. If none of the problems are yours, return your previous output unchanged.
 
@@ -318,6 +318,8 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt: `${retryPreamble('analyse_chat')}You are an AI model evaluation expert. Analyse the chat and completion model entries and propose corrections where the data appears inaccurate or outdated. Also identify any models that have been deprecated or discontinued by their provider.
+
+**In-scope models only.** A model belongs in this analysis unless its capabilities array contains \`'embedding'\`. Emit NO changes for an embedding model — the embedding analyser handles it.
 
 Model data:
 {{load_models.output}}
@@ -658,7 +660,7 @@ Worked examples:
 - FAIL: \`{ "field": "tierRole", "currentValue": "worker", "proposedValue": "thinking", "reason": "This is a chat model, not an embedding model." }\` (irrelevant — currentValue is "worker", not "embedding")
 - FAIL: \`{ "field": "deploymentProfiles", "currentValue": ["hosted"], "proposedValue": ["sovereign"], "reason": "This is an open-weight model." }\` (doesn't engage with why "hosted" is wrong)
 
-Reply with exactly PASS or FAIL on the first line, then a brief reason on the second line. If FAIL, quote the offending change object so the producer can fix it on retry.
+Reply with exactly PASS or FAIL on the first line, then a brief reason on the second line. If FAIL, for each offending change name the stream it is in (\`analyse_chat\` for the first stream, \`analyse_embedding\` for the second) and its \`model_id\`, then quote the change object, so the step that produced it — and only that step — fixes it on retry.
 
 {{#if vars.__retryContext}}
 RETRY CONTEXT: this is retry {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}; the run was last sent back by the \`{{vars.__retryContext.fromStep}}\` check, which said: {{vars.__retryContext.failureReason}}

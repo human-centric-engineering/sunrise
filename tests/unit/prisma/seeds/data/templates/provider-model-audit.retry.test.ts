@@ -189,7 +189,7 @@ describe('provider-model-audit template — no change without a value (t-1076)',
   });
 });
 
-describe('provider-model-audit template — retry feedback that names no path (t-1076 review)', () => {
+describe('provider-model-audit template — retry feedback that names no path (t-1076 review, dev run 3)', () => {
   const rationaleFailure =
     'The tierRole change on GPT-4.1 does not engage with "worker": {"field":"tierRole","currentValue":"worker"}';
 
@@ -199,7 +199,7 @@ describe('provider-model-audit template — retry feedback that names no path (t
     return ctx;
   }
 
-  it('tells each producer that a pathless complaint is theirs when it quotes their output', () => {
+  it('tells each producer a rationale complaint is theirs only if it names them, and never to copy a change from it', () => {
     const ctx = ctxAfter('validate_rationale', rationaleFailure, {
       analyse_chat: FAILED_CHAT_OUTPUT,
     });
@@ -207,9 +207,10 @@ describe('provider-model-audit template — retry feedback that names no path (t
       const rendered = interpolatePrompt(promptOf(id), ctx);
       expect(rendered, id).toContain(rationaleFailure);
       expect(rendered, id).toContain('by the `validate_rationale` check');
-      expect(rendered, id).toContain(
-        'A problem that gives no path — a check quoting a change, say — is yours if it quotes something from your previous output.'
-      );
+      expect(rendered, id).toContain(`It is yours only if it names \`${id}\`.`);
+      // On a dev run (t-1076) the chat analyser copied an embedding change
+      // out of the rationale check's complaint into its own output.
+      expect(rendered, id).toContain('Never copy a change out of a complaint into your output');
       // The old wording told every producer to ignore anything not starting
       // with its own id, which a rationale complaint never does.
       expect(rendered, id).not.toContain('so ignore them');
@@ -228,6 +229,17 @@ describe('provider-model-audit template — retry feedback that names no path (t
     );
     // The previous output's own triple fence sits inside a four-backtick one.
     expect(rendered).toContain('````\nHere is the JSON: ```json\n{}\n```\n````');
+  });
+
+  it('the rationale check names the stream and model of each change it fails, so only that step acts', () => {
+    const rules = (byId['validate_rationale'].config as { rules: string }).rules;
+    expect(rules).toContain(
+      'name the stream it is in (`analyse_chat` for the first stream, `analyse_embedding` for the second) and its `model_id`'
+    );
+  });
+
+  it('the chat analyser leaves embedding models to the embedding analyser', () => {
+    expect(promptOf('analyse_chat')).toContain('Emit NO changes for an embedding model');
   });
 
   it('a producer none of the problems name is told to return its previous output unchanged', () => {
