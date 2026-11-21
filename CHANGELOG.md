@@ -26,7 +26,9 @@ release process.
   zone), `emailLocaleForOrg(orgId, { locale })` (a tag the site holds, such as
   a waitlist entry's, then the org's default) and
   `emailLocaleForAddress(email, orgId)` (an invitee's account, if they have
-  one). `lib/email/translate.ts` has `emailTranslator(where, namespace)`,
+  one). `deliverInvitation()` takes an optional `locale` (a language the
+  invitee chose before, such as a waitlist entry's), and an empty
+  `inviterName` now gets the catalogue's `fallbackInviter`. `lib/email/translate.ts` has `emailTranslator(where, namespace)`,
   `emailDateTime()`, `emailDate()`, `EmailLocale` and `DEFAULT_EMAIL_LOCALE`.
   `resolveEmailTemplate(kind, props, where?)` takes the locale as an optional
   third argument and passes `locale` and `timeZone` to the template

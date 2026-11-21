@@ -163,10 +163,13 @@ export async function inviteWaitlistEntry(input: {
       // The email greets them only by something that looks like a first name
       // (the waitlist's rule, `firstNameOf()`): a URL typed as a name must not
       // arrive as a link from the real sender.
-      name: firstNameOf(row.name) ?? 'there',
+      // No first name ⇒ the email says "Hello," in their language.
+      name: firstNameOf(row.name) ?? '',
       metadata,
       isResend: false,
-      inviterName: inviter.name || 'The team',
+      inviterName: inviter.name ?? '',
+      // The language they joined the list in, as their confirmation was.
+      locale: row.locale,
       log,
     });
   } catch (error) {

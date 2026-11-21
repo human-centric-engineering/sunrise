@@ -1572,7 +1572,8 @@
       "dashboard": "Access your personalized dashboard",
       "collaborate": "Start collaborating with your team",
       "notExpecting": "If you weren't expecting this invitation or don't want to join, you can safely ignore this email.",
-      "questions": "Questions? Contact {inviter} or our support team for assistance."
+      "questions": "Questions? Contact {inviter} or our support team for assistance.",
+      "fallbackInviter": "Administrator"
     },
     "changeEmailApproval": {
       "subject": "Approve the email change on your account",

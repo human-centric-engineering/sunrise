@@ -36,7 +36,12 @@ const metadata = {
 
 function run(
   isResend: boolean,
-  extra: { orgName?: string; hasAccount?: boolean } = {},
+  extra: {
+    orgName?: string;
+    hasAccount?: boolean;
+    inviterName?: string;
+    locale?: string | null;
+  } = {},
   email = 'jane+x@example.com'
 ) {
   return deliverInvitation({
@@ -189,14 +194,33 @@ describe('deliverInvitation', () => {
         log: log as unknown as Logger,
       });
 
-      expect(emailLocaleForOrg).toHaveBeenCalledWith('org-acme');
+      expect(emailLocaleForOrg).toHaveBeenCalledWith('org-acme', { locale: undefined });
       expect(emailLocaleForAddress).not.toHaveBeenCalled();
       expect(vi.mocked(resolveEmailTemplate).mock.calls[0][2]).toEqual(french);
     });
 
     it('uses the install org’s default when the invitation names no org', async () => {
       await run(false);
-      expect(emailLocaleForOrg).toHaveBeenCalledWith('install');
+      expect(emailLocaleForOrg).toHaveBeenCalledWith('install', { locale: undefined });
+    });
+
+    it('reads a language the invitee chose before (a waitlist entry’s) ahead of the org’s', async () => {
+      await run(false, { locale: 'fr' });
+      expect(emailLocaleForOrg).toHaveBeenCalledWith('install', { locale: 'fr' });
+    });
+
+    it('names a fallback inviter from the catalogue when the inviter has no name', async () => {
+      await run(false, { inviterName: '' });
+      expect(vi.mocked(resolveEmailTemplate).mock.calls[0][1]).toEqual(
+        expect.objectContaining({ inviterName: 'Administrator' })
+      );
+    });
+
+    it('passes the inviter’s own name when there is one', async () => {
+      await run(false);
+      expect(vi.mocked(resolveEmailTemplate).mock.calls[0][1]).toEqual(
+        expect.objectContaining({ inviterName: 'Admin' })
+      );
     });
 
     it('asks after the account’s own choice when the address already has one', async () => {

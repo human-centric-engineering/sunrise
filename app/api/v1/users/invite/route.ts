@@ -380,7 +380,7 @@ export const POST = withAdminAuth(async (request, session) => {
     // Replaces the pending invitation in the target org only; the address's
     // invitations into other orgs stay (#1199).
     isResend: !!existingInvitation,
-    inviterName: session.user.name || 'Administrator',
+    inviterName: session.user.name,
     ...(orgName !== undefined ? { orgName } : {}),
     // Only an org invitation reaches here with an account (6b). The answer
     // below is the same either way; only the email differs.

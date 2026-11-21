@@ -32,6 +32,7 @@ export interface DeliverInvitationInput {
   metadata: InvitationMetadata;
   /** A pending invitation exists for this email and is being re-sent. */
   isResend: boolean;
+  /** Who sent it. Empty ⇒ the catalogue's `fallbackInviter`, in the invitee's language. */
   inviterName: string;
   /** The org the invitation joins, named in the email. Absent ⇒ the email names the app. */
   orgName?: string;
@@ -41,6 +42,12 @@ export interface DeliverInvitationInput {
    * inviter must not depend on this.
    */
   hasAccount?: boolean;
+  /**
+   * A language the invitee already chose, such as the one a waitlist entry
+   * was joined in. Read ahead of the inviting org's default when the address
+   * has no account.
+   */
+  locale?: string | null;
   log: Logger;
 }
 
@@ -59,6 +66,7 @@ export async function deliverInvitation({
   inviterName,
   orgName,
   hasAccount = false,
+  locale,
   log,
 }: DeliverInvitationInput): Promise<DeliveredInvitation> {
   // A resend deletes the old token (that org's only) and creates a new one.
@@ -74,20 +82,20 @@ export async function deliverInvitation({
   expiresAt.setDate(expiresAt.getDate() + 7);
 
   // In the invitee's language (§138 t-1075): an account's own choice when the
-  // address already has one, else the default of the org inviting them.
+  // address already has one, else a language they chose before (a waitlist
+  // entry's), else the default of the org inviting them.
   const invitingOrg = invitedOrgId(metadata);
   const where = hasAccount
     ? await emailLocaleForAddress(email, invitingOrg)
-    : await emailLocaleForOrg(invitingOrg);
+    : await emailLocaleForOrg(invitingOrg, { locale });
+  const t = emailTranslator(where, 'emails.invitation');
   const emailResult = await sendEmail({
     to: email,
-    subject: emailTranslator(where, 'emails.invitation')('subject', {
-      org: orgName ?? BRAND.name,
-    }),
+    subject: t('subject', { org: orgName ?? BRAND.name }),
     react: resolveEmailTemplate(
       'invitation',
       {
-        inviterName,
+        inviterName: inviterName || t('fallbackInviter'),
         inviteeName: name,
         inviteeEmail: email,
         invitationUrl: link,

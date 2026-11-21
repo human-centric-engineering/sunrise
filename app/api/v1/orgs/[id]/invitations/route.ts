@@ -190,7 +190,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
       ...(orgRole ? { orgRole } : {}),
     },
     isResend: !!existingInvitation,
-    inviterName: session.user.name || 'Administrator',
+    inviterName: session.user.name,
     orgName: org.name,
     hasAccount: !!existingUser,
     log,

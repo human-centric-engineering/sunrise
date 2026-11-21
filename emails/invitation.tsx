@@ -55,7 +55,9 @@ export default function InvitationEmail({
         <Container style={container}>
           <Heading style={h1}>{t('heading')}</Heading>
 
-          <Text style={text}>{common('greeting', { name: inviteeName })}</Text>
+          <Text style={text}>
+            {inviteeName ? common('greeting', { name: inviteeName }) : common('hello')}
+          </Text>
 
           <Text style={text}>
             {orgName
