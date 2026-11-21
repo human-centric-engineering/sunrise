@@ -270,9 +270,13 @@ describe('isStaleSave', () => {
   });
 });
 
-/** What react-hook-form hands `onInvalid` for `values`, from its real Zod resolver. */
-// Not generic over the schema: @hookform/resolvers 7.0.8 types the values as the schema's input,
-// and these cases pass values the schema rejects (`type: 'c'`), as a form does at runtime.
+/**
+ * What react-hook-form hands `onInvalid` for `values`, from its real Zod resolver.
+ *
+ * Not generic over the schema: @hookform/resolvers 7.0.8 types the values as the
+ * schema's input, and these cases pass values the schema rejects (`type: 'c'`), as
+ * a form does at runtime.
+ */
 async function resolverErrors(schema: z.ZodType<FieldValues, FieldValues>, values: FieldValues) {
   const result = await zodResolver(schema)(values, undefined, {
     fields: {},
