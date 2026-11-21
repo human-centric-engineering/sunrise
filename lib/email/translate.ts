@@ -54,7 +54,7 @@ export function emailTranslator<N extends EmailNamespace>(
 
 /**
  * A moment as an email states it: the named `dateTime` format in the
- * recipient's zone, with the zone named (`20 Nov 2026, 14:05 UTC`), since a
+ * recipient's zone, with the zone named (`Nov 20, 2026, 2:05 PM UTC` in `en`), since a
  * reader may not be where the sender assumed.
  */
 export function emailDateTime(where: EmailLocale, value: Date | string): string {
@@ -64,7 +64,7 @@ export function emailDateTime(where: EmailLocale, value: Date | string): string 
   });
 }
 
-/** A date alone, as an email states it: the named `long` format (`20 November 2026`). */
+/** A date alone, as an email states it: the named `long` format (`November 20, 2026` in `en`). */
 export function emailDate(where: EmailLocale, value: Date | string): string {
   return formatterFor(where.locale, where.timeZone).dateTime(new Date(value), 'long');
 }

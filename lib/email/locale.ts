@@ -73,17 +73,15 @@ export async function emailLocaleForUser(
         timezone: true,
         signupOrgId: true,
         orgMemberships: {
-          select: { orgId: true, org: { select: { status: true, settings: true } } },
+          select: { orgId: true, org: { select: { status: true } } },
           orderBy: { createdAt: 'desc' },
         },
       },
     });
     if (!user) return DEFAULT_EMAIL_LOCALE;
     const orgId = options.orgId ?? sessionOrgOf(user.orgMemberships) ?? user.signupOrgId;
-    const member = user.orgMemberships.find((m) => m.orgId === orgId);
-    const orgLocale = member
-      ? readOrgLocale(member.org.settings, { orgId })
-      : await orgLocaleOf(orgId);
+    // Only the chosen org's settings: a user in many orgs needs one of them.
+    const orgLocale = await orgLocaleOf(orgId);
     return emailLocaleFrom({ userLocale: user.locale, orgLocale, timeZone: user.timezone });
   } catch (error) {
     logger.warn('Email: could not read the recipient’s language; writing in English', {

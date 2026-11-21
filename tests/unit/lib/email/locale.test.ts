@@ -50,20 +50,28 @@ function userRow(overrides: Record<string, unknown> = {}) {
     locale: null,
     timezone: 'Europe/London',
     signupOrgId: null,
-    orgMemberships: [] as Array<{ orgId: string; org: { status: string; settings: unknown } }>,
+    orgMemberships: [] as Array<{ orgId: string; org: { status: string } }>,
     ...overrides,
   };
 }
 
+/** Each org's default, as `org.findUnique` answers it; filled by {@link member}. */
+const orgLocales = new Map<string, string | null>();
+
+/** A membership row, and its org's default for `org.findUnique` to answer. */
 function member(orgId: string, locale: string | null, status = 'ACTIVE') {
-  return { orgId, org: { status, ...orgWith(locale) } };
+  orgLocales.set(orgId, locale);
+  return { orgId, org: { status } };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   appInit.run = () => {};
   __resetAppMessagesForTests();
-  mockPrisma.org.findUnique.mockResolvedValue(null);
+  orgLocales.clear();
+  mockPrisma.org.findUnique.mockImplementation(({ where }: { where: { id: string } }) =>
+    Promise.resolve(orgLocales.has(where.id) ? orgWith(orgLocales.get(where.id) ?? null) : null)
+  );
 });
 
 describe('emailLocaleFrom', () => {
@@ -104,8 +112,20 @@ describe('emailLocaleForUser', () => {
     );
 
     expect((await emailLocaleForUser('u1')).locale).toBe(PSEUDO);
-    // Read from the membership row: no second query for the org.
-    expect(mockPrisma.org.findUnique).not.toHaveBeenCalled();
+    // The memberships carry no settings: only the chosen org's are read.
+    expect(mockPrisma.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          orgMemberships: expect.objectContaining({
+            select: { orgId: true, org: { select: { status: true } } },
+          }),
+        }),
+      })
+    );
+    expect(mockPrisma.org.findUnique).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.org.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'org-a' } })
+    );
   });
 
   it('reads the org a sign-in would start them in: an active one over a suspended one', async () => {
