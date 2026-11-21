@@ -180,6 +180,10 @@ export interface ModelRow {
   configuredActive: boolean;
   dimensions?: number | null;
   schemaCompatible?: boolean | null;
+  /** Where it runs; the list route returns it (full row). Sent to the audit (t-1076). */
+  deploymentProfiles?: string[];
+  /** Embedding quality tier; the list route returns it. Sent to the audit (t-1076). */
+  quality?: string | null;
   costPerMillionTokens?: number | null;
   inputCostPerMillionTokens?: number | null;
   outputCostPerMillionTokens?: number | null;

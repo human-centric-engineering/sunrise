@@ -749,6 +749,32 @@ release process.
 
 ### Fixed
 
+- **A schema-mode guard's failure `reason` names every issue, not just the
+  first (t-1076).** The reason is what a retry back-edge hands the producer as
+  `{{vars.__retryContext.failureReason}}`. A producer with 38 problems was
+  retried being told about one, and failed the same way each time. One issue
+  keeps the old `Schema validation failed at <path>: <message>` line; several
+  give `Schema validation failed with N issues:` and one `- <path>: <message>`
+  line each, up to 50, shared out across the issues' first path segment. A fork whose prompt or parser reads that reason gets
+  the longer form; `output.issues` is unchanged. The Provider Model Audit
+  template now shows each analysis step that list and its own previous output
+  on a retry, tells it to leave out a field it has no new value for, and no
+  longer receives the legacy `costPerMillionTokens` from the Audit Models
+  dialog. The `audit-proposals` schema also refuses a change whose proposed
+  value is its current value, except a price restated as the pair of one that
+  moves, and an empty proposed value on a field with no type check of its
+  own (`description`, `bestRole`, `dimensions`, `schemaCompatible`), which
+  would wipe the row's value if accepted. The dialog now sends
+  `description`, `deploymentProfiles` and `quality` too, so a proposal's
+  current value is read from the row. `validate_proposals` now also reads the
+  web search step's output and refuses a `web_search` source whose URL is not
+  one of its results, or any `web_search` source when the search was skipped:
+  gpt-4o-mini cited an invented `web_search` source for a GPT-5 price change.
+  It also refuses a change whose only sources are `prior_step`, which shows
+  the registry's current value and cannot back changing it. Re-seed (`npm run db:seed`) to pick up the template. A copy of the audit
+  workflow saved earlier keeps the old, unchecked behaviour until
+  `search_provider_info` is added to its `validate_proposals` input steps.
+
 - **The seeded model catalogue names models its vendors serve (t-1041).**
   `prisma/seeds/009-provider-models.ts` seeded Claude Haiku 4.5 as
   `claude-haiku-4.5` (Anthropic's id is `claude-haiku-4-5`), and Claude Opus

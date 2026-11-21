@@ -347,7 +347,7 @@ Schema mode is the deterministic alternative to LLM-mode for structural checks w
 
 On schema parse failure the guard's output carries:
 
-- `passed: false`, `verdict: 'fail'`, `reason: 'Schema validation failed at <path>: <message>'`
+- `passed: false`, `verdict: 'fail'`, and a `reason` naming every issue: `'Schema validation failed at <path>: <message>'` for one, or `'Schema validation failed with N issues:'` followed by one `- <path>: <message>` line per issue for several (50 at most, shared out across the issues' first path segment — the producing step, under `inputStepIds` — so one step's flood cannot hide another's; then `- …and K more`). The reason is what a retry back-edge hands the producer as `{{vars.__retryContext.failureReason}}`, and what a crash-resume rebuilds it from, so it carries the whole list; until t-1076 it named only the first issue.
 - `issues`: the full Zod `ZodIssue[]` array — interpolate `{{guard.output.issues}}` into a downstream retry's prompt for precise field-level feedback
 
 Typed `ExecutorError` codes:

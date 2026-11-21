@@ -92,6 +92,16 @@ function valuesEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/**
+ * Whether two values of an auditable field are the same value, as this
+ * capability reads them: numeric fields by the number they spell, arrays as
+ * sets. The `audit-proposals` schema uses it to refuse a change that changes
+ * nothing (t-1076), so that check and the apply step cannot disagree.
+ */
+export function sameAuditValue(field: string, a: unknown, b: unknown): boolean {
+  return valuesEqual(coerceNumeric(field, a), coerceNumeric(field, b));
+}
+
 /** A single field change the LLM proposed and the admin accepted */
 const auditChangeSchema = z.object({
   field: z.enum(AUDITABLE_FIELDS),

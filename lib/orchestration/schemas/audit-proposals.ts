@@ -52,7 +52,10 @@ import {
   TIER_ROLES,
   TOOL_USE,
 } from '@/lib/orchestration/model-audit/enums';
-import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+import {
+  AUDITABLE_FIELDS,
+  sameAuditValue,
+} from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -242,7 +245,40 @@ const changeSchema = z
         });
       }
     }
+    // A change backed only by the registry (t-1076). A `prior_step` source
+    // cites `load_models`, which holds the row's current value: it can show
+    // what a field is, never that it should change. On a dev run gpt-4o-mini
+    // backed `quality: high → medium` with `prior_step` pointing at the "high"
+    // it was replacing. An unchanged value is what it can support; whether an
+    // unchanged value belongs in `changes` at all is the no-op rule's call.
+    if (
+      change.sources.length > 0 &&
+      change.sources.every((src) => src.source === 'prior_step') &&
+      !sameAuditValue(change.field, change.currentValue, change.proposedValue)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `field "${change.field}": a prior_step source only shows the registry's current value, which cannot support changing it — cite a source for the new value, or leave this change out`,
+        path: ['sources'],
+      });
+    }
+    // A change to nothing (t-1076). A price, enum or array field's own checks
+    // above refuse an empty value; `description`, `bestRole`, `dimensions`
+    // and `schemaCompatible` have none, and an accepted empty value would
+    // wipe the row's.
+    if (isEmptyValue(change.proposedValue) && !hasTypedValue(change.field)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `field "${change.field}": proposedValue is empty — a change needs a new value, so leave this change out`,
+        path: ['proposedValue'],
+      });
+    }
   });
+
+/** `null`, missing, or a blank string. */
+function isEmptyValue(value: unknown): boolean {
+  return value == null || (typeof value === 'string' && value.trim() === '');
+}
 
 const modelProposalSchema = z
   .object({
@@ -263,7 +299,37 @@ const modelProposalSchema = z
         path: ['changes'],
       });
     }
+    // A change that changes nothing (t-1076). On a small default model the
+    // embedding analyser proposed `tierRole: embedding → embedding` for every
+    // embedding model, which reached the approval queue as rows to accept.
+    // Compared as the apply step compares (`3` is `"3"` for a price, arrays
+    // are sets), so nothing this passes is a no-op there. The one allowed
+    // case is a price restated unchanged because its partner moves: prices
+    // go in pairs.
+    const unchanged = (c: { field: string; currentValue: unknown; proposedValue: unknown }) =>
+      sameAuditValue(c.field, c.currentValue, c.proposedValue);
+    const partnerMoves = proposal.changes.some((c) => PRICE_FIELDS.has(c.field) && !unchanged(c));
+    proposal.changes.forEach((change, i) => {
+      if (!unchanged(change)) return;
+      if (PRICE_FIELDS.has(change.field) && partnerMoves) return;
+      // An empty value is already refused by the change's own checks; a
+      // second issue for it only adds noise to the retry. (Zod skips this
+      // model-level refinement when a change fails a non-continuable check,
+      // such as a field not in the enum, so a no-op beside one surfaces on
+      // the next attempt instead.)
+      if (isEmptyValue(change.proposedValue)) return;
+      ctx.addIssue({
+        code: 'custom',
+        message: `field "${change.field}": proposedValue is the same as currentValue, so nothing changes — leave this change out`,
+        path: ['changes', i, 'proposedValue'],
+      });
+    });
   });
+
+/** A field whose change-level checks already refuse an empty proposed value. */
+function hasTypedValue(field: string): boolean {
+  return PRICE_FIELDS.has(field) || field in PER_FIELD_ENUMS || field in ARRAY_FIELD_ENUMS;
+}
 
 /** An optional string where `""` means none, the same as `null`. */
 const emptyAsNull = z.preprocess(
@@ -366,15 +432,115 @@ const discoveryBranchSchema = z.object({
 
 // ─── Registration ──────────────────────────────────────────────────────────
 
-// Compound schema — keys match the audit template's
-// `inputStepIds: ['analyse_chat', 'analyse_embedding',
-// 'discover_new_models']`. The executor builds `{ [stepId]: output }`
-// and feeds it to this schema; mismatched keys produce a clear
-// "stepId not found" issue path.
-export const auditProposalsSchema = z.object({
-  analyse_chat: analysisBranchSchema,
-  analyse_embedding: analysisBranchSchema,
-  discover_new_models: discoveryBranchSchema,
-});
+/**
+ * The URLs the web search step returned, or `null` when its output was not
+ * passed to this schema at all.
+ *
+ * The step is an `external_call`, whose output is `{ status, body }` (plus
+ * `_transformError` when the transform failed); `body` is the Brave
+ * transform's array of `{ title, url, description }`. A skipped step's
+ * output is `null`: no search ran, so there are no URLs. A missing key is a
+ * guard saved before t-1076 (an admin's clone of the template), which still
+ * lists only the three producers: it gets the old behaviour, unchecked,
+ * rather than failing every run.
+ */
+function searchResultUrls(input: unknown): Set<string> | null {
+  if (typeof input !== 'object' || input === null || !('search_provider_info' in input)) {
+    return null;
+  }
+  const output: unknown = input.search_provider_info;
+  const body: unknown =
+    typeof output === 'object' && output !== null && 'body' in output ? output.body : output;
+  const urls = new Set<string>();
+  if (Array.isArray(body)) {
+    const results: unknown[] = body;
+    for (const result of results) {
+      if (typeof result === 'object' && result !== null && 'url' in result) {
+        if (typeof result.url === 'string') urls.add(normaliseUrl(result.url));
+      }
+    }
+  }
+  return urls;
+}
+
+/**
+ * A URL as compared: no protocol, lower-case host without `www.`, no query,
+ * fragment or trailing slash. A model copying a result's URL drops or adds
+ * exactly these; the page is the same page.
+ */
+function normaliseUrl(url: string): string {
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    return `${host}${parsed.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
+}
+
+type SourceAt = { source: { source: string; reference?: string }; path: (string | number)[] };
+
+/** Every source in the three producers' output, with its path. */
+function* allSources(value: {
+  analyse_chat: z.infer<typeof analysisBranchSchema>;
+  analyse_embedding: z.infer<typeof analysisBranchSchema>;
+  discover_new_models: z.infer<typeof discoveryBranchSchema>;
+}): Generator<SourceAt> {
+  for (const branch of ['analyse_chat', 'analyse_embedding'] as const) {
+    for (const [i, model] of value[branch].models.entries()) {
+      for (const [j, change] of model.changes.entries()) {
+        for (const [k, source] of change.sources.entries()) {
+          yield { source, path: [branch, 'models', i, 'changes', j, 'sources', k, 'reference'] };
+        }
+      }
+    }
+    for (const [i, deactivation] of value[branch].deactivateModels.entries()) {
+      for (const [k, source] of deactivation.sources.entries()) {
+        yield { source, path: [branch, 'deactivateModels', i, 'sources', k, 'reference'] };
+      }
+    }
+  }
+  for (const [i, model] of value.discover_new_models.newModels.entries()) {
+    for (const [k, source] of model.sources.entries()) {
+      yield { source, path: ['discover_new_models', 'newModels', i, 'sources', k, 'reference'] };
+    }
+  }
+}
+
+// Compound schema — keys match the audit template's `inputStepIds:
+// ['search_provider_info', 'analyse_chat', 'analyse_embedding',
+// 'discover_new_models']`. The executor builds `{ [stepId]: output }` and
+// feeds it to this schema; mismatched keys produce a clear issue path.
+//
+// A `web_search` source must be one of the search step's results (t-1076).
+// On a dev run with no Brave key, the search was skipped and gpt-4o-mini
+// still cited `web_search` "https://openai.com/pricing" with an invented
+// snippet for a GPT-5 price of $3/$12 (it is $1.25/$10). A URL alone passed
+// the price rule; an admin accepting it would mis-cost every GPT-5 call.
+export const auditProposalsSchema = z
+  .object({
+    // Read by `searchResultUrls` below; any shape is accepted here.
+    search_provider_info: z.unknown().optional(),
+    analyse_chat: analysisBranchSchema,
+    analyse_embedding: analysisBranchSchema,
+    discover_new_models: discoveryBranchSchema,
+  })
+  .superRefine((value, ctx) => {
+    const urls = searchResultUrls(value);
+    if (urls === null) return;
+    for (const { source, path } of allSources(value)) {
+      if (source.source !== 'web_search' || typeof source.reference !== 'string') continue;
+      if (urls.has(normaliseUrl(source.reference))) continue;
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          urls.size === 0
+            ? "a web_search source must be one of this audit's web search results, and the search returned none — cite another kind of source, or leave the claim out"
+            : `web_search source "${source.reference}" is not one of this audit's web search results — cite one of them by its exact URL, or leave the claim out`,
+        path,
+      });
+    }
+  });
 
 registerSchema('audit-proposals', auditProposalsSchema);

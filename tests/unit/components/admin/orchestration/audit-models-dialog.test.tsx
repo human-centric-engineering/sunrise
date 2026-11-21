@@ -866,7 +866,7 @@ describe('AuditModelsDialog', () => {
       expect(body.inputData.modelIds).not.toContain(MODEL_ANTHROPIC.id);
     });
 
-    it("sends each selected row's current prices, null when a row has none (t-774)", async () => {
+    it("sends each selected row's current split prices, null when a row has none, and never the blended rate (t-774, t-1076)", async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValue([
         { id: 'wf-prices', slug: 'tpl-provider-model-audit' },
@@ -874,6 +874,9 @@ describe('AuditModelsDialog', () => {
       const priced = makeModel({
         id: 'model-priced',
         name: 'Priced',
+        description: 'A priced model',
+        deploymentProfiles: ['hosted', 'sovereign'],
+        quality: 'high',
         costPerMillionTokens: 9,
         inputCostPerMillionTokens: 3,
         outputCostPerMillionTokens: 15,
@@ -895,15 +898,26 @@ describe('AuditModelsDialog', () => {
       };
       const sent = (id: string) => body.inputData.models.find((m) => m.id === id);
       expect(sent('model-priced')).toMatchObject({
-        costPerMillionTokens: 9,
         inputCostPerMillionTokens: 3,
         outputCostPerMillionTokens: 15,
       });
       expect(sent('model-unpriced')).toMatchObject({
-        costPerMillionTokens: null,
         inputCostPerMillionTokens: null,
         outputCostPerMillionTokens: null,
       });
+      // The audit cannot propose the legacy blended rate; a model shown it
+      // proposed it anyway, and the guard refused every attempt (t-1076).
+      // The priced row carries one (9), so this is not absence by default.
+      expect(sent('model-priced')).not.toHaveProperty('costPerMillionTokens');
+      // Every auditable field the row has goes in, so a proposal's
+      // currentValue comes from the row, not a guess (t-1076).
+      expect(sent('model-priced')).toMatchObject({
+        description: 'A priced model',
+        deploymentProfiles: ['hosted', 'sovereign'],
+        quality: 'high',
+      });
+      expect(sent('model-unpriced')).toMatchObject({ deploymentProfiles: null, quality: null });
+      expect(sent('model-unpriced')).not.toHaveProperty('costPerMillionTokens');
     });
   });
 

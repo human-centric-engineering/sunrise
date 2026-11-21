@@ -357,6 +357,12 @@ export function AuditModelsDialog({
           name: m.name,
           modelId: m.modelId,
           providerSlug: m.providerSlug,
+          // Every field the audit may propose a change to, so its
+          // `currentValue` is read from the row rather than guessed: the
+          // schema refuses a change equal to its current value (t-1076).
+          description: m.description,
+          deploymentProfiles: m.deploymentProfiles ?? null,
+          quality: m.quality ?? null,
           capabilities: m.capabilities,
           tierRole: m.tierRole,
           reasoningDepth: m.reasoningDepth,
@@ -368,8 +374,9 @@ export function AuditModelsDialog({
           dimensions: m.dimensions,
           schemaCompatible: m.schemaCompatible,
           // Current prices, so a price proposal's `currentValue` matches the
-          // row and `apply_audit_changes`' drift check can pass (t-774).
-          costPerMillionTokens: m.costPerMillionTokens ?? null,
+          // row and `apply_audit_changes`' drift check can pass (t-774). Not
+          // the legacy blended `costPerMillionTokens`: the audit cannot
+          // propose it, and a model shown it proposed it anyway (t-1076).
           inputCostPerMillionTokens: m.inputCostPerMillionTokens ?? null,
           outputCostPerMillionTokens: m.outputCostPerMillionTokens ?? null,
         })),

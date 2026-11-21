@@ -30,8 +30,24 @@ const VALID_ANALYSIS_BRANCH = {
   deactivateModels: [],
 };
 
+/**
+ * The search step's output as the external_call executor stores it
+ * (`{ status, body }`); SOURCE's URL is one of its results.
+ */
+const SEARCH_RESULTS = {
+  status: 200,
+  body: [{ title: 'Release notes', url: SOURCE.reference, description: 'What changed' }],
+};
+
+/** Search output with one result at `url`. */
+const searchFound = (url: string) => ({
+  status: 200,
+  body: [{ title: 't', url, description: 'd' }],
+});
+
 function makeInput(overrides: Partial<Record<string, unknown>> = {}): unknown {
   return {
+    search_provider_info: SEARCH_RESULTS,
     analyse_chat: VALID_ANALYSIS_BRANCH,
     analyse_embedding: VALID_ANALYSIS_BRANCH,
     discover_new_models: { newModels: [], reasoning: '' },
@@ -891,6 +907,359 @@ describe('audit-proposals schema', () => {
       );
       expect(result.success).toBe(false);
     });
+  });
+});
+
+// t-1076: a change that changes nothing reached the approval queue as a row
+// to accept (gpt-4o-mini proposed `tierRole: embedding → embedding`).
+describe('audit-proposals schema — a change must change something', () => {
+  const IN = 'inputCostPerMillionTokens';
+  const OUT = 'outputCostPerMillionTokens';
+
+  function change(field: string, currentValue: unknown, proposedValue: unknown) {
+    return {
+      field,
+      currentValue,
+      proposedValue,
+      reason: `Current ${field} is ${JSON.stringify(currentValue)}`,
+      confidence: 'high',
+      sources: [SOURCE],
+    };
+  }
+
+  function withChanges(changes: unknown[]) {
+    return makeInput({
+      analyse_embedding: {
+        models: [
+          {
+            model_id: 'm1',
+            modelName: 'Demo',
+            providerSlug: 'provider',
+            changes,
+            overallConfidence: 'high',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+  }
+
+  function issuesOf(input: unknown) {
+    const result = auditProposalsSchema.safeParse(input);
+    return result.success ? [] : result.error.issues;
+  }
+
+  it('rejects a change whose proposed value is its current value, naming where and what to do', () => {
+    const issues = issuesOf(withChanges([change('tierRole', 'embedding', 'embedding')]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0].path).toEqual([
+      'analyse_embedding',
+      'models',
+      0,
+      'changes',
+      0,
+      'proposedValue',
+    ]);
+    expect(issues[0].message).toBe(
+      'field "tierRole": proposedValue is the same as currentValue, so nothing changes — leave this change out'
+    );
+  });
+
+  it('rejects an unchanged array in another order', () => {
+    const issues = issuesOf(
+      withChanges([change('deploymentProfiles', ['hosted', 'sovereign'], ['sovereign', 'hosted'])])
+    );
+    expect(issues.map((i) => i.message)).toEqual([
+      expect.stringContaining('proposedValue is the same as currentValue'),
+    ]);
+  });
+
+  it('accepts a change that changes the value', () => {
+    expect(issuesOf(withChanges([change('tierRole', 'worker', 'thinking')]))).toEqual([]);
+  });
+
+  it('accepts an unchanged price restated as the pair of one that moves', () => {
+    expect(issuesOf(withChanges([change(IN, 3, 3), change(OUT, 15, 12)]))).toEqual([]);
+  });
+
+  it('compares as the apply step does: a number written as a string is the same number', () => {
+    const pair = issuesOf(withChanges([change(IN, '3', 3), change(OUT, '15', 15)]));
+    expect(pair.map((i) => i.path.at(-2))).toEqual([0, 1]);
+    const dims = issuesOf(withChanges([change('dimensions', 1536, '1536')]));
+    expect(dims.map((i) => i.message)).toEqual([
+      expect.stringContaining('proposedValue is the same as currentValue'),
+    ]);
+  });
+
+  it('adds no second issue to an empty price the price checks already refuse', () => {
+    const issues = issuesOf(withChanges([change(IN, null, null), change(OUT, null, null)]));
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.map((i) => i.message).join('\n')).not.toContain('same as currentValue');
+  });
+
+  it.each([
+    ['dimensions', 1536, null],
+    ['schemaCompatible', true, null],
+    ['description', 'A fast model', '  '],
+    ['bestRole', null, null],
+  ])(
+    'refuses an empty %s, which no other check catches and which would wipe the row',
+    (field, current, proposed) => {
+      const issues = issuesOf(withChanges([change(field, current, proposed)]));
+      expect(issues).toHaveLength(1);
+      expect(issues[0].path).toEqual([
+        'analyse_embedding',
+        'models',
+        0,
+        'changes',
+        0,
+        'proposedValue',
+      ]);
+      expect(issues[0].message).toBe(
+        `field "${field}": proposedValue is empty — a change needs a new value, so leave this change out`
+      );
+    }
+  );
+
+  it('accepts a real value on those fields', () => {
+    expect(issuesOf(withChanges([change('dimensions', 1536, 3072)]))).toEqual([]);
+    expect(issuesOf(withChanges([change('schemaCompatible', true, false)]))).toEqual([]);
+  });
+
+  it('rejects a price pair where neither moves', () => {
+    const issues = issuesOf(withChanges([change(IN, 3, 3), change(OUT, 15, 15)]));
+    expect(issues.map((i) => i.path.at(-2))).toEqual([0, 1]);
+  });
+});
+
+// t-1076: on a dev run gpt-4o-mini backed `quality: high → medium` with a
+// prior_step source pointing at the registry's own "high".
+describe('audit-proposals schema — the registry cannot support changing itself', () => {
+  const PRIOR = {
+    source: 'prior_step',
+    confidence: 'high',
+    stepId: 'load_models',
+    reference: 'output.models[6].quality',
+  };
+  const TRAINING = { source: 'training_knowledge', confidence: 'medium' };
+
+  function withChange(
+    field: string,
+    currentValue: unknown,
+    proposedValue: unknown,
+    sources: unknown[]
+  ) {
+    return makeInput({
+      analyse_embedding: {
+        models: [
+          {
+            model_id: 'text-embedding-3-large',
+            modelName: 'text-embedding-3-large',
+            providerSlug: 'openai',
+            changes: [
+              {
+                field,
+                currentValue,
+                proposedValue,
+                reason: `Was ${String(currentValue)}`,
+                confidence: 'high',
+                sources,
+              },
+            ],
+            overallConfidence: 'high',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+  }
+
+  function issuesOf(input: unknown) {
+    const result = auditProposalsSchema.safeParse(input);
+    return result.success ? [] : result.error.issues;
+  }
+
+  it('refuses a change whose only source is prior_step, naming where and what to do', () => {
+    const issues = issuesOf(withChange('quality', 'high', 'medium', [PRIOR]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0].path).toEqual(['analyse_embedding', 'models', 0, 'changes', 0, 'sources']);
+    expect(issues[0].message).toBe(
+      'field "quality": a prior_step source only shows the registry\'s current value, which cannot support changing it — cite a source for the new value, or leave this change out'
+    );
+  });
+
+  it('accepts prior_step beside a source for the new value', () => {
+    expect(issuesOf(withChange('quality', 'high', 'medium', [PRIOR, TRAINING]))).toEqual([]);
+  });
+
+  it('leaves an unchanged value backed by prior_step to the no-op rule, with no second issue', () => {
+    const issues = issuesOf(withChange('quality', 'medium', 'medium', [PRIOR]));
+    expect(issues.map((i) => i.message)).toEqual([
+      'field "quality": proposedValue is the same as currentValue, so nothing changes — leave this change out',
+    ]);
+  });
+});
+
+// t-1076: with no Brave key the search step was skipped, and gpt-4o-mini
+// still cited `web_search` "https://openai.com/pricing" with an invented
+// snippet for a GPT-5 price change. A URL alone passed the price rule.
+describe('audit-proposals schema — a web_search source must be a real search result', () => {
+  const IN = 'inputCostPerMillionTokens';
+  const OUT = 'outputCostPerMillionTokens';
+  const PRICING = 'https://openai.com/pricing';
+
+  function webSource(reference: string) {
+    return { source: 'web_search', confidence: 'high', reference, snippet: 'GPT-5 is $3 / $12' };
+  }
+
+  function priceInput(search: unknown, reference: string) {
+    const change = (field: string, currentValue: number, proposedValue: number) => ({
+      field,
+      currentValue,
+      proposedValue,
+      reason: `Was ${currentValue}`,
+      confidence: 'high',
+      sources: [webSource(reference)],
+    });
+    return makeInput({
+      search_provider_info: search,
+      analyse_chat: {
+        models: [
+          {
+            model_id: 'gpt-5',
+            modelName: 'GPT-5',
+            providerSlug: 'openai',
+            changes: [change(IN, 1.25, 3), change(OUT, 10, 12)],
+            overallConfidence: 'high',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+  }
+
+  function issuesOf(input: unknown) {
+    const result = auditProposalsSchema.safeParse(input);
+    return result.success ? [] : result.error.issues;
+  }
+
+  it('refuses every web_search source when the search was skipped, naming each', () => {
+    const issues = issuesOf(priceInput(null, PRICING));
+    expect(issues.map((i) => i.path)).toEqual([
+      ['analyse_chat', 'models', 0, 'changes', 0, 'sources', 0, 'reference'],
+      ['analyse_chat', 'models', 0, 'changes', 1, 'sources', 0, 'reference'],
+    ]);
+    expect(issues[0].message).toBe(
+      "a web_search source must be one of this audit's web search results, and the search returned none — cite another kind of source, or leave the claim out"
+    );
+  });
+
+  it('refuses a web_search URL the search did not return', () => {
+    const issues = issuesOf(priceInput(searchFound('https://example.com/news'), PRICING));
+    expect(issues).toHaveLength(2);
+    expect(issues[0].message).toBe(
+      `web_search source "${PRICING}" is not one of this audit's web search results — cite one of them by its exact URL, or leave the claim out`
+    );
+  });
+
+  it.each([
+    ['https://openai.com/pricing/', 'a trailing slash'],
+    ['http://www.OpenAI.com/pricing', 'protocol, www. and host case'],
+    ['https://openai.com/pricing?utm_source=x#api', 'a query and fragment'],
+  ])('accepts a web_search URL the search returned, despite %s (%s)', (cited) => {
+    expect(issuesOf(priceInput(searchFound(PRICING), cited))).toEqual([]);
+  });
+
+  it('reads results from the executor output even when the transform failed', () => {
+    const output = { ...searchFound(PRICING), _transformError: 'partial' };
+    expect(issuesOf(priceInput(output, PRICING))).toEqual([]);
+  });
+
+  it('refuses web_search when the search ran but its body holds no results', () => {
+    const issues = issuesOf(priceInput({ status: 200, body: null }, PRICING));
+    expect(issues).toHaveLength(2);
+    expect(issues[0].message).toContain('the search returned none');
+  });
+
+  it('checks deactivations and new models too', () => {
+    const issues = issuesOf(
+      makeInput({
+        search_provider_info: null,
+        analyse_embedding: {
+          models: [],
+          deactivateModels: [{ modelId: 'old', reason: 'retired', sources: [webSource(PRICING)] }],
+        },
+        discover_new_models: {
+          newModels: [
+            {
+              name: 'Demo',
+              slug: 'openai-demo',
+              providerSlug: 'openai',
+              modelId: 'demo',
+              description: 'd',
+              capabilities: ['chat'],
+              tierRole: 'worker',
+              deploymentProfiles: ['hosted'],
+              bestRole: 'Demo',
+              sources: [webSource(PRICING)],
+            },
+          ],
+          reasoning: 'x',
+        },
+      })
+    );
+    expect(issues.map((i) => i.path)).toEqual([
+      ['analyse_embedding', 'deactivateModels', 0, 'sources', 0, 'reference'],
+      ['discover_new_models', 'newModels', 0, 'sources', 0, 'reference'],
+    ]);
+  });
+
+  it('leaves other source kinds alone when the search was skipped', () => {
+    const kb = { source: 'knowledge_base', confidence: 'medium', reference: 'doc-12' };
+    const input = makeInput({
+      search_provider_info: null,
+      analyse_chat: {
+        models: [
+          {
+            model_id: 'gpt-5',
+            modelName: 'GPT-5',
+            providerSlug: 'openai',
+            changes: [
+              {
+                field: IN,
+                currentValue: 1.25,
+                proposedValue: 3,
+                reason: 'Was 1.25',
+                confidence: 'medium',
+                sources: [kb],
+              },
+              {
+                field: OUT,
+                currentValue: 10,
+                proposedValue: 12,
+                reason: 'Was 10',
+                confidence: 'medium',
+                sources: [kb],
+              },
+            ],
+            overallConfidence: 'medium',
+            reasoning: 'x',
+          },
+        ],
+        deactivateModels: [],
+      },
+    });
+    expect(issuesOf(input)).toEqual([]);
+  });
+
+  it('leaves a guard saved before the check (no search key) unchecked rather than failing every run', () => {
+    // An admin's clone of the template keeps the three-producer inputStepIds.
+    const input = priceInput(null, PRICING) as Record<string, unknown>;
+    delete input.search_provider_info;
+    expect(issuesOf(input)).toEqual([]);
   });
 });
 
