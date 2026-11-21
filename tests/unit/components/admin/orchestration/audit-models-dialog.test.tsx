@@ -874,6 +874,9 @@ describe('AuditModelsDialog', () => {
       const priced = makeModel({
         id: 'model-priced',
         name: 'Priced',
+        description: 'A priced model',
+        deploymentProfiles: ['hosted', 'sovereign'],
+        quality: 'high',
         costPerMillionTokens: 9,
         inputCostPerMillionTokens: 3,
         outputCostPerMillionTokens: 15,
@@ -906,6 +909,14 @@ describe('AuditModelsDialog', () => {
       // proposed it anyway, and the guard refused every attempt (t-1076).
       // The priced row carries one (9), so this is not absence by default.
       expect(sent('model-priced')).not.toHaveProperty('costPerMillionTokens');
+      // Every auditable field the row has goes in, so a proposal's
+      // currentValue comes from the row, not a guess (t-1076).
+      expect(sent('model-priced')).toMatchObject({
+        description: 'A priced model',
+        deploymentProfiles: ['hosted', 'sovereign'],
+        quality: 'high',
+      });
+      expect(sent('model-unpriced')).toMatchObject({ deploymentProfiles: null, quality: null });
       expect(sent('model-unpriced')).not.toHaveProperty('costPerMillionTokens');
     });
   });

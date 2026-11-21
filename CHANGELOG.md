@@ -729,7 +729,12 @@ release process.
   longer receives the legacy `costPerMillionTokens` from the Audit Models
   dialog. The `audit-proposals` schema also refuses a change whose proposed
   value is its current value, except a price restated as the pair of one that
-  moves. Re-seed (`npm run db:seed`) to pick up the template.
+  moves, and an empty proposed value on a field with no type check of its
+  own (`description`, `bestRole`, `dimensions`, `schemaCompatible`), which
+  would wipe the row's value if accepted. The dialog now sends
+  `description`, `deploymentProfiles` and `quality` too, so a proposal's
+  current value is read from the row. Re-seed (`npm run db:seed`) to pick up
+  the template.
 
 - **The seeded model catalogue names models its vendors serve (t-1041).**
   `prisma/seeds/009-provider-models.ts` seeded Claude Haiku 4.5 as

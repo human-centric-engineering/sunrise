@@ -982,11 +982,33 @@ describe('audit-proposals schema — a change must change something', () => {
     expect(issues.map((i) => i.message).join('\n')).not.toContain('same as currentValue');
   });
 
-  it('still refuses an empty value on a free-text field, which nothing else catches', () => {
-    const issues = issuesOf(withChanges([change('bestRole', null, null)]));
-    expect(issues.map((i) => i.message)).toEqual([
-      expect.stringContaining('proposedValue is the same as currentValue'),
-    ]);
+  it.each([
+    ['dimensions', 1536, null],
+    ['schemaCompatible', true, null],
+    ['description', 'A fast model', '  '],
+    ['bestRole', null, null],
+  ])(
+    'refuses an empty %s, which no other check catches and which would wipe the row',
+    (field, current, proposed) => {
+      const issues = issuesOf(withChanges([change(field, current, proposed)]));
+      expect(issues).toHaveLength(1);
+      expect(issues[0].path).toEqual([
+        'analyse_embedding',
+        'models',
+        0,
+        'changes',
+        0,
+        'proposedValue',
+      ]);
+      expect(issues[0].message).toBe(
+        `field "${field}": proposedValue is empty — a change needs a new value, so leave this change out`
+      );
+    }
+  );
+
+  it('accepts a real value on those fields', () => {
+    expect(issuesOf(withChanges([change('dimensions', 1536, 3072)]))).toEqual([]);
+    expect(issuesOf(withChanges([change('schemaCompatible', true, false)]))).toEqual([]);
   });
 
   it('rejects a price pair where neither moves', () => {

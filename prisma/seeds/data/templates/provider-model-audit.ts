@@ -115,7 +115,7 @@ const PRICING_INSTRUCTIONS = `
 // find as a change to `null` with no sources — 24 such changes per attempt —
 // and the schema guard refused the whole set three times running.
 const CHANGE_RULES = `
-**Only propose a change you can make.** A change needs a new value that a source supports. If you cannot find a field's value, or its current value is already right, leave that field out of \`changes\` — never propose \`null\`, an empty value, "unknown" or "not available". A model with no changes is left out of \`models\` entirely, and an empty \`models\` array is a good result: it means the registry is already right.
+**Only propose a change you can make.** A change needs a new value that a source supports. If you cannot find a field's value, or its current value is already right, leave that field out of \`changes\` — never propose \`null\`, an empty value, "unknown" or "not available". The one exception is a price: when one of the pair changes, the pricing rules below say to restate the other at its current value, and that restatement belongs in \`changes\`. A model with no changes is left out of \`models\` entirely, and an empty \`models\` array is a good result: it means the registry is already right.
 `.trim();
 
 /**
@@ -140,7 +140,7 @@ Work out which problems are yours:
 - A problem whose path begins with \`${stepId}\` is about your output; one whose path begins with another step's name (\`analyse_chat\`, \`analyse_embedding\`, \`discover_new_models\`) is not. A path such as \`${stepId}.models.2.changes.0.sources\` means: in your previous output below, the entry at index 2 of \`models\` (counting from 0), its first change, its \`sources\` field. A path that is just \`${stepId}\` means your whole output was wrong — usually not a single JSON object.
 - A problem that gives no path — a check quoting a change, say — is yours if it quotes something from your previous output.
 
-Fix every problem that is yours. If you cannot fix a change, leave it out — leaving a change out is always allowed.
+Fix every problem that is yours. If you cannot fix a change, leave it out — leaving a change out is always allowed. If none of the problems are yours, return your previous output unchanged.
 
 Your previous output:
 
@@ -203,7 +203,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt:
-            'You are a data preparation assistant. Parse the following input and produce a structured JSON summary of the models to audit.\n\nInput:\n{{input}}\n\nRespond with a JSON object containing:\n- "modelIds": array of model IDs to audit\n- "modelCount": total number of models\n- "scope": "all" if auditing everything, "subset" if specific models were selected\n\nIf the input contains model data objects, extract the key fields (name, modelId, providerSlug, tierRole, capabilities, costEfficiency, reasoningDepth, latency, contextLength, toolUse, bestRole, inputCostPerMillionTokens, outputCostPerMillionTokens) for each model into a "models" array.\n\nRespond with ONLY the JSON object, no markdown fencing.',
+            'You are a data preparation assistant. Parse the following input and produce a structured JSON summary of the models to audit.\n\nInput:\n{{input}}\n\nRespond with a JSON object containing:\n- "modelIds": array of model IDs to audit\n- "modelCount": total number of models\n- "scope": "all" if auditing everything, "subset" if specific models were selected\n\nIf the input contains model data objects, extract the key fields (name, modelId, providerSlug, description, tierRole, deploymentProfiles, capabilities, costEfficiency, reasoningDepth, latency, contextLength, toolUse, bestRole, dimensions, quality, schemaCompatible, inputCostPerMillionTokens, outputCostPerMillionTokens), copying each value exactly as given for each model into a "models" array.\n\nRespond with ONLY the JSON object, no markdown fencing.',
           temperature: 0.1,
         },
         nextSteps: [{ targetStepId: 'search_provider_info' }],
@@ -661,7 +661,7 @@ Worked examples:
 Reply with exactly PASS or FAIL on the first line, then a brief reason on the second line. If FAIL, quote the offending change object so the producer can fix it on retry.
 
 {{#if vars.__retryContext}}
-RETRY CONTEXT: the run was sent back once already, by the \`{{vars.__retryContext.fromStep}}\` check, which said: {{vars.__retryContext.failureReason}}
+RETRY CONTEXT: this is retry {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}; the run was last sent back by the \`{{vars.__retryContext.fromStep}}\` check, which said: {{vars.__retryContext.failureReason}}
 If that check was \`validate_proposals\`, it was about the proposals' structure and they have since passed it: ignore it and judge only the rationales above. If it was this check, see whether the same problem is back. Either way, apply the same checks and quote the offending change for the next iteration.
 {{/if}}`,
           mode: 'llm',

@@ -263,6 +263,8 @@ The audit can propose a chat model's `inputCostPerMillionTokens` and `outputCost
 
 **A change must change something.** `validate_proposals` refuses a change whose proposed value is its current value, compared as `apply_audit_changes` compares (arrays as sets, `"3"` as `3` for prices and `dimensions`), so a "no change" row never reaches the approval screen. The one exception is a price restated unchanged because its partner price moves. On a dev run gpt-4o-mini proposed `tierRole: embedding → embedding` for both embedding models (t-1076).
 
+**A change must have a value.** `validate_proposals` also refuses an empty proposed value (`null` or blank) on `description`, `bestRole`, `dimensions` and `schemaCompatible`, which have no type check of their own: accepting one would wipe the row's value. Prices, enums and arrays already refuse an empty value. For both rules to read the real current value, the Audit Models dialog sends every field a change can be proposed to, `description`, `deploymentProfiles` and `quality` included, and `load_models` copies them through (t-1076).
+
 ### Two-axis model classification
 
 Provider models carry two orthogonal classifications. The audit workflow evaluates them as separate questions and the prompts spell out the orthogonality so the LLM can't conflate them:

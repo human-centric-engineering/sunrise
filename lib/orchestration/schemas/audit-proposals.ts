@@ -245,7 +245,23 @@ const changeSchema = z
         });
       }
     }
+    // A change to nothing (t-1076). A price, enum or array field's own checks
+    // above refuse an empty value; `description`, `bestRole`, `dimensions`
+    // and `schemaCompatible` have none, and an accepted empty value would
+    // wipe the row's.
+    if (isEmptyValue(change.proposedValue) && !hasTypedValue(change.field)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `field "${change.field}": proposedValue is empty — a change needs a new value, so leave this change out`,
+        path: ['proposedValue'],
+      });
+    }
   });
+
+/** `null`, missing, or a blank string. */
+function isEmptyValue(value: unknown): boolean {
+  return value == null || (typeof value === 'string' && value.trim() === '');
+}
 
 const modelProposalSchema = z
   .object({
@@ -279,10 +295,12 @@ const modelProposalSchema = z
     proposal.changes.forEach((change, i) => {
       if (!unchanged(change)) return;
       if (PRICE_FIELDS.has(change.field) && partnerMoves) return;
-      // An empty value on a price, enum or array field is already refused by
-      // the change's own checks; a second issue for it only adds noise to
-      // the retry.
-      if (change.proposedValue == null && hasTypedValue(change.field)) return;
+      // An empty value is already refused by the change's own checks; a
+      // second issue for it only adds noise to the retry. (Zod skips this
+      // model-level refinement when a change fails a non-continuable check,
+      // such as a field not in the enum, so a no-op beside one surfaces on
+      // the next attempt instead.)
+      if (isEmptyValue(change.proposedValue)) return;
       ctx.addIssue({
         code: 'custom',
         message: `field "${change.field}": proposedValue is the same as currentValue, so nothing changes — leave this change out`,

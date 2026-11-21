@@ -155,6 +155,30 @@ describe('provider-model-audit template — no change without a value (t-1076)',
     }
   );
 
+  it.each(['analyse_chat', 'analyse_embedding'])(
+    '%s keeps the price-pair restatement as the one exception to leaving a field out',
+    (id) => {
+      expect(promptOf(id)).toContain(
+        'The one exception is a price: when one of the pair changes, the pricing rules below say to restate the other at its current value'
+      );
+    }
+  );
+
+  it('load_models copies every field a change can be proposed to, so currentValue is read not guessed', () => {
+    const prompt = promptOf('load_models');
+    for (const field of [
+      'description',
+      'deploymentProfiles',
+      'dimensions',
+      'quality',
+      'schemaCompatible',
+      'tierRole',
+      'bestRole',
+    ]) {
+      expect(prompt, field).toContain(field);
+    }
+  });
+
   it('no step asks for or mentions the legacy blended price', () => {
     // `inputCostPerMillionTokens` contains `CostPerMillionTokens` (capital C);
     // the blended field is the bare lower-case name.
@@ -206,10 +230,25 @@ describe('provider-model-audit template — retry feedback that names no path (t
     expect(rendered).toContain('````\nHere is the JSON: ```json\n{}\n```\n````');
   });
 
+  it('a producer none of the problems name is told to return its previous output unchanged', () => {
+    const ctx = ctxAfter(
+      'validate_proposals',
+      'Schema validation failed at discover_new_models: x',
+      {}
+    );
+    for (const id of PRODUCERS) {
+      expect(interpolatePrompt(promptOf(id), ctx), id).toContain(
+        'If none of the problems are yours, return your previous output unchanged.'
+      );
+    }
+  });
+
   it('the rationale check is told to set aside a schema complaint that has since passed', () => {
     const rules = (byId['validate_rationale'].config as { rules: string }).rules;
     const ctx = ctxAfter('validate_proposals', 'Schema validation failed with 38 issues:', {});
+    (ctx.variables.__retryContext as { attempt: number }).attempt = 2;
     const rendered = interpolatePrompt(rules, ctx);
+    expect(rendered).toContain('this is retry 2 of 2');
     expect(rendered).toContain('by the `validate_proposals` check');
     expect(rendered).toContain(
       "If that check was `validate_proposals`, it was about the proposals' structure and they have since passed it: ignore it"
