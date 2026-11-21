@@ -1583,6 +1583,28 @@ describe('email-channel delivery', () => {
       expect(prisma.org.findUnique).toHaveBeenCalledOnce();
     });
 
+    it('is each subscription’s own org’s, read once per org, when a fan-out reaches several', async () => {
+      const defaults: Record<string, string> = { 'org-a': PSEUDO, 'org-b': 'en' };
+      vi.mocked(prisma.org.findUnique).mockImplementation((async (args: {
+        where: { id: string };
+      }) => ({ settings: { locale: defaults[args.where.id] } })) as never);
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([
+        makeEmailSub({ id: 'sub-a1', orgId: 'org-a' }),
+        makeEmailSub({ id: 'sub-a2', orgId: 'org-a' }),
+        makeEmailSub({ id: 'sub-b', orgId: 'org-b' }),
+      ] as never);
+
+      await dispatchWebhookEvent('workflow_failed', { error: 'step exploded' });
+
+      const locales = Object.fromEntries(
+        vi
+          .mocked(prisma.aiWebhookDelivery.create)
+          .mock.calls.map((c) => [c[0].data.subscriptionId, c[0].data.emailLocale])
+      );
+      expect(locales).toEqual({ 'sub-a1': PSEUDO, 'sub-a2': PSEUDO, 'sub-b': 'en' });
+      expect(prisma.org.findUnique).toHaveBeenCalledTimes(2);
+    });
+
     it('reads nothing when no subscription emails', async () => {
       vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
 

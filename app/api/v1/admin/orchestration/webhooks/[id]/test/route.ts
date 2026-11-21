@@ -69,7 +69,7 @@ export const POST = withAdminAuth<{ id: string }>(
       const start = Date.now();
       try {
         // In the language of the org the webhook belongs to (§138 t-1075).
-        const where = await emailLocaleForOrg(orgIdForCall());
+        const where = await emailLocaleForOrg(webhook.orgId ?? orgIdForCall());
         const eventT = emailTranslator(where, 'emails.eventNotification');
         const resend = getResendClient();
         if (!resend) throw new Error('Resend client unavailable');

@@ -201,11 +201,19 @@ export async function deliverToSubscribers(
     'Webhook'
   );
 
-  // An email's language, read once for the fan-out and fixed on each row
-  // (§138 t-1075); only when some subscription emails.
-  const emailLocale = matched.some((sub) => sub.channel === 'email')
-    ? (await emailLocaleForOrg(orgIdForCall())).locale
-    : null;
+  // An email's language is its subscription's org's default, fixed on the row
+  // (§138 t-1075): a fan-out can reach several orgs, or run with no org in
+  // context. Read once per org, and only for email subscriptions.
+  const localeByOrg = new Map<string | null, Promise<string>>();
+  const emailLocaleOf = (orgId: string | null): Promise<string> => {
+    const key = orgId ?? orgIdForCall();
+    let locale = localeByOrg.get(key);
+    if (!locale) {
+      locale = emailLocaleForOrg(key).then((where) => where.locale);
+      localeByOrg.set(key, locale);
+    }
+    return locale;
+  };
 
   await Promise.allSettled(
     matched.map(async (sub) => {
@@ -216,7 +224,7 @@ export async function deliverToSubscribers(
           eventType,
           payload: stored as unknown as Prisma.InputJsonValue,
           status: 'pending',
-          ...(sub.channel === 'email' ? { emailLocale } : {}),
+          ...(sub.channel === 'email' ? { emailLocale: await emailLocaleOf(sub.orgId) } : {}),
           ...subscriptionDestination(sub),
         },
       });

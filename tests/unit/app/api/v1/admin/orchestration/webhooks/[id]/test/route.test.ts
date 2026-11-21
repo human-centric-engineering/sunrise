@@ -39,6 +39,8 @@ vi.mock('@/lib/db/client', () => ({
     aiWebhookSubscription: {
       findFirst: vi.fn(),
     },
+    // The subscription's org's default language (§138 t-1075).
+    org: { findUnique: vi.fn() },
   },
 }));
 
@@ -612,6 +614,24 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
           html: expect.stringContaining('rendered'),
         })
       );
+    });
+
+    it('writes the test in the language of the org that owns the subscription, not the caller’s', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+        makeEmailWebhook({ orgId: 'org-owner' }) as never
+      );
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({
+        settings: { locale: 'en-XA' },
+      } as never);
+
+      await POST(makeRequest(), makeParams());
+
+      expect(prisma.org.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'org-owner' } })
+      );
+      const { subject } = mockResendSend.mock.calls[0][0] as { subject: string };
+      // The pseudo-locale, not the English subject.
+      expect(subject).not.toBe('[Aurora Labs] Test event');
     });
 
     it('returns success:false with destination-missing message when emailAddress is null', async () => {
