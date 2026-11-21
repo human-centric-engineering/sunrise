@@ -13,11 +13,16 @@ vi.mock('@/lib/utils/invitation-token', () => ({
 }));
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn() }));
 vi.mock('@/lib/email/registry', () => ({ resolveEmailTemplate: vi.fn(() => null) }));
+vi.mock('@/lib/email/locale', () => ({
+  emailLocaleForOrg: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+  emailLocaleForAddress: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+}));
 
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { generateInvitationToken, updateInvitationToken } from '@/lib/utils/invitation-token';
 import { sendEmail } from '@/lib/email/send';
 import { resolveEmailTemplate } from '@/lib/email/registry';
+import { emailLocaleForAddress, emailLocaleForOrg } from '@/lib/email/locale';
 import { BRAND } from '@/lib/brand';
 import type { Logger } from '@/lib/logging';
 
@@ -31,7 +36,12 @@ const metadata = {
 
 function run(
   isResend: boolean,
-  extra: { orgName?: string; hasAccount?: boolean } = {},
+  extra: {
+    orgName?: string;
+    hasAccount?: boolean;
+    inviterName?: string;
+    locale?: string | null;
+  } = {},
   email = 'jane+x@example.com'
 ) {
   return deliverInvitation({
@@ -79,7 +89,8 @@ describe('deliverInvitation', () => {
     );
     expect(resolveEmailTemplate).toHaveBeenCalledWith(
       'invitation',
-      expect.objectContaining({ orgName: 'Acme' })
+      expect.objectContaining({ orgName: 'Acme' }),
+      { locale: 'en', timeZone: 'UTC' }
     );
   });
 
@@ -117,7 +128,8 @@ describe('deliverInvitation', () => {
         invitationUrl: res.link,
         inviterName: 'Admin',
         inviteeName: 'Jane',
-      })
+      }),
+      { locale: 'en', timeZone: 'UTC' }
     );
     const days = (res.expiresAt.getTime() - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(6.9);
@@ -164,5 +176,68 @@ describe('deliverInvitation', () => {
     await run(false);
     expect(log.warn).not.toHaveBeenCalled();
     expect(log.info).toHaveBeenCalled();
+  });
+
+  describe('the language it is written in (§138 t-1075)', () => {
+    const french = { locale: 'fr', timeZone: 'UTC' };
+
+    it('uses the inviting org’s default for an address with no account', async () => {
+      vi.mocked(emailLocaleForOrg).mockResolvedValueOnce(french);
+
+      await deliverInvitation({
+        email: 'jane@example.com',
+        name: 'Jane',
+        metadata: { ...metadata, orgId: 'org-acme' },
+        isResend: false,
+        inviterName: 'Admin',
+        orgName: 'Acme',
+        log: log as unknown as Logger,
+      });
+
+      expect(emailLocaleForOrg).toHaveBeenCalledWith('org-acme', { locale: undefined });
+      expect(emailLocaleForAddress).not.toHaveBeenCalled();
+      expect(vi.mocked(resolveEmailTemplate).mock.calls[0][2]).toEqual(french);
+    });
+
+    it('uses the install org’s default when the invitation names no org', async () => {
+      await run(false);
+      expect(emailLocaleForOrg).toHaveBeenCalledWith('install', { locale: undefined });
+    });
+
+    it('reads a language the invitee chose before (a waitlist entry’s) ahead of the org’s', async () => {
+      await run(false, { locale: 'fr' });
+      expect(emailLocaleForOrg).toHaveBeenCalledWith('install', { locale: 'fr' });
+    });
+
+    it('names a fallback inviter from the catalogue when the inviter has no name', async () => {
+      await run(false, { inviterName: '' });
+      expect(vi.mocked(resolveEmailTemplate).mock.calls[0][1]).toEqual(
+        expect.objectContaining({ inviterName: 'Administrator' })
+      );
+    });
+
+    it('passes the inviter’s own name when there is one', async () => {
+      await run(false);
+      expect(vi.mocked(resolveEmailTemplate).mock.calls[0][1]).toEqual(
+        expect.objectContaining({ inviterName: 'Admin' })
+      );
+    });
+
+    it('asks after the account’s own choice when the address already has one', async () => {
+      vi.mocked(emailLocaleForAddress).mockResolvedValueOnce(french);
+
+      await deliverInvitation({
+        email: 'jane@example.com',
+        name: 'Jane',
+        metadata: { ...metadata, orgId: 'org-acme' },
+        isResend: false,
+        inviterName: 'Admin',
+        hasAccount: true,
+        log: log as unknown as Logger,
+      });
+
+      expect(emailLocaleForAddress).toHaveBeenCalledWith('jane@example.com', 'org-acme');
+      expect(vi.mocked(resolveEmailTemplate).mock.calls[0][2]).toEqual(french);
+    });
   });
 });

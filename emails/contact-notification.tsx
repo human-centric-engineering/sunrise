@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Html, Head, Preview, Body, Container, Section, Text, Hr } from '@react-email/components';
+import { DEFAULT_EMAIL_LOCALE, emailDateTime, emailTranslator } from '@/lib/email/translate';
 
 interface ContactNotificationEmailProps {
   name: string;
@@ -7,6 +8,9 @@ interface ContactNotificationEmailProps {
   subject: string;
   message: string;
   submittedAt: Date;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export default function ContactNotificationEmail({
@@ -15,44 +19,37 @@ export default function ContactNotificationEmail({
   subject,
   message,
   submittedAt,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: ContactNotificationEmailProps): React.ReactElement {
-  const formattedDate = submittedAt.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const where = { locale, timeZone };
+  const t = emailTranslator(where, 'emails.contactNotification');
+  const formattedDate = emailDateTime(where, submittedAt);
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>New contact form submission from {name}</Preview>
+      <Preview>{t('preview', { name })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>New Contact Form Submission</Text>
-            <Text style={text}>
-              You have received a new message from your website contact form.
-            </Text>
+            <Text style={heading}>{t('heading')}</Text>
+            <Text style={text}>{t('intro')}</Text>
 
             <Hr style={divider} />
 
-            <Text style={label}>From</Text>
-            <Text style={value}>
-              {name} ({email})
-            </Text>
+            <Text style={label}>{t('from')}</Text>
+            <Text style={value}>{t('fromValue', { name, email })}</Text>
 
-            <Text style={label}>Subject</Text>
+            <Text style={label}>{t('subjectLabel')}</Text>
             <Text style={value}>{subject}</Text>
 
-            <Text style={label}>Message</Text>
+            <Text style={label}>{t('message')}</Text>
             <Text style={messageStyle}>{message}</Text>
 
             <Hr style={divider} />
 
-            <Text style={footerSmall}>Submitted on {formattedDate}</Text>
+            <Text style={footerSmall}>{t('submitted', { date: formattedDate })}</Text>
           </Section>
         </Container>
       </Body>

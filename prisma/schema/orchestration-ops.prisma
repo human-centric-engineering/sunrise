@@ -81,6 +81,11 @@ model AiWebhookDelivery {
   // timeout that Resend in fact accepted is deduplicated, while an admin's
   // resend is a new send.
   sendGeneration   Int       @default(0)
+  // An email delivery's language (§138 t-1075), fixed when the row is created
+  // and re-read by each manual retry or DLQ replay, so every automatic retry
+  // renders the same email under the same idempotency key. Null on webhook
+  // rows, and on email rows that predate it: those go in English.
+  emailLocale      String?   @db.VarChar(35)
 
   // Where the latest attempt was sent: the URL's origin only (no path, query,
   // userinfo or fragment), or the email address, trimmed and lower-cased. Null

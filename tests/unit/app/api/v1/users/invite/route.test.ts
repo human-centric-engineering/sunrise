@@ -45,6 +45,14 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(async () => ({ success: true, status: 'sent', id: 'email-1' })),
 }));
 
+// The email's language is worked out from the recipient (§138 t-1075), tested
+// in tests/unit/lib/email/locale.test.ts; here it is English, with no reads
+// of its own, so the assertions below see only this module's reads.
+vi.mock('@/lib/email/locale', () => ({
+  emailLocaleForUser: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+  emailLocaleForOrg: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+  emailLocaleForAddress: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+}));
 vi.mock('@/lib/email/registry', () => ({
   resolveEmailTemplate: vi.fn(() => null),
 }));
@@ -757,7 +765,8 @@ describe('POST /api/v1/users/invite — an address that already has an account (
     const { resolveEmailTemplate } = await import('@/lib/email/registry');
     expect(vi.mocked(resolveEmailTemplate)).toHaveBeenCalledWith(
       'invitation',
-      expect.objectContaining({ hasAccount: true, orgName: 'Other Org' })
+      expect.objectContaining({ hasAccount: true, orgName: 'Other Org' }),
+      { locale: 'en', timeZone: 'UTC' }
     );
     // The membership looked up is the target org's, not any org's.
     expect(prisma.user.findUnique).toHaveBeenCalledWith(

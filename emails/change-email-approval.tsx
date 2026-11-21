@@ -10,6 +10,7 @@ import {
   Button,
 } from '@react-email/components';
 import { BRAND } from '@/lib/brand';
+import { DEFAULT_EMAIL_LOCALE, emailDateTime, emailTranslator } from '@/lib/email/translate';
 
 interface ChangeEmailApprovalProps {
   userName: string;
@@ -19,6 +20,9 @@ interface ChangeEmailApprovalProps {
   newEmail: string;
   approvalUrl: string;
   expiresAt: Date;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 /**
@@ -37,50 +41,43 @@ export default function ChangeEmailApproval({
   newEmail,
   approvalUrl,
   expiresAt,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: ChangeEmailApprovalProps): React.ReactElement {
-  const expirationTime = new Date(expiresAt).toLocaleString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
+  const where = { locale, timeZone };
+  const t = emailTranslator(where, 'emails.changeEmailApproval');
+  const common = emailTranslator(where, 'emails.common');
+  const brand = BRAND.name;
+  const expirationTime = emailDateTime(where, expiresAt);
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>Approve the email change on your {BRAND.name} account</Preview>
+      <Preview>{t('preview', { brand })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>Approve Your Email Change</Text>
-            <Text style={text}>Hi {userName},</Text>
+            <Text style={heading}>{t('heading')}</Text>
+            <Text style={text}>{common('greeting', { name: userName })}</Text>
             <Text style={text}>
-              Someone asked to change the email address on your {BRAND.name} account from{' '}
-              <strong>{currentEmail}</strong> to <strong>{newEmail}</strong>.
+              {t.rich('request', {
+                brand,
+                current: currentEmail,
+                next: newEmail,
+                strong: (chunks) => <strong>{chunks}</strong>,
+              })}
             </Text>
-            <Text style={text}>
-              Your address has not changed yet. Click the button below to approve it. We will then
-              send a verification email to {newEmail} to finish the change.
-            </Text>
+            <Text style={text}>{t('notYet', { next: newEmail })}</Text>
             <Button href={approvalUrl} style={button}>
-              Approve Email Change
+              {t('button')}
             </Button>
-            <Text style={expiryNotice}>This approval link will expire on {expirationTime}</Text>
+            <Text style={expiryNotice}>{t('expiry', { time: expirationTime })}</Text>
             <Section style={warningSection}>
-              <Text style={warningHeading}>If you didn&apos;t request this</Text>
-              <Text style={warningText}>
-                Do not click the button. Someone else may have access to your account.
-              </Text>
-              <Text style={warningText}>
-                Sign in and change your password now. That signs out every other device. If you
-                cannot sign in, contact support.
-              </Text>
+              <Text style={warningHeading}>{t('warningHeading')}</Text>
+              <Text style={warningText}>{t('warningDontClick')}</Text>
+              <Text style={warningText}>{t('warningSignIn')}</Text>
             </Section>
-            <Text style={footerSmall}>
-              If the button doesn&apos;t work, copy and paste this link into your browser:
-            </Text>
+            <Text style={footerSmall}>{common('buttonFallback')}</Text>
             <Text style={link}>{approvalUrl}</Text>
           </Section>
         </Container>

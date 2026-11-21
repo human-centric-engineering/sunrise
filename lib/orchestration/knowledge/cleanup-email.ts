@@ -3,6 +3,8 @@ import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
 import { sendEmail } from '@/lib/email/send';
 import { CleanupReady } from '@/emails/cleanup-ready';
+import { emailLocaleForUser } from '@/lib/email/locale';
+import { emailTranslator } from '@/lib/email/translate';
 import type { DocumentSizeClass } from '@/lib/orchestration/knowledge/size-report';
 
 interface SendCleanupReadyEmailOpts {
@@ -26,14 +28,18 @@ export async function sendCleanupReadyEmail(opts: SendCleanupReadyEmailOpts): Pr
     });
     if (!user?.email) return;
     const cleanupUrl = `${env.BETTER_AUTH_URL}/admin/orchestration/knowledge/${opts.documentId}/cleanup`;
+    const where = await emailLocaleForUser(opts.userId);
     await sendEmail({
       to: user.email,
-      subject: `Document cleanup ready: ${opts.documentName}`,
+      subject: emailTranslator(where, 'emails.cleanupReady')('subject', {
+        name: opts.documentName,
+      }),
       react: CleanupReady({
         documentName: opts.documentName,
         cleanupUrl,
         sizeClass: opts.sizeClass,
         sizeTokens: opts.sizeTokens,
+        ...where,
       }),
     });
   } catch (err) {

@@ -69,6 +69,24 @@ describe('resolveEmailTemplate', () => {
     expect(resolveEmailTemplate('verifyEmail', verifyProps)).toEqual(VerifyEmail(verifyProps));
   });
 
+  it('hands an override the recipient’s language and time zone (§138 t-1075)', async () => {
+    vi.resetModules();
+    const seen: Array<Record<string, unknown>> = [];
+    const OverrideWelcome = (props: Record<string, unknown>): React.ReactElement => {
+      seen.push(props);
+      return React.createElement('div');
+    };
+    vi.doMock('@/lib/app/emails', () => ({ emailOverrides: { welcome: OverrideWelcome } }));
+
+    const { resolveEmailTemplate } = await import('@/lib/email/registry');
+    resolveEmailTemplate('welcome', welcomeProps, { locale: 'en-XA', timeZone: 'Asia/Tokyo' });
+    resolveEmailTemplate('welcome', welcomeProps);
+
+    expect(seen[0]).toEqual({ ...welcomeProps, locale: 'en-XA', timeZone: 'Asia/Tokyo' });
+    // No locale given: English, in UTC.
+    expect(seen[1]).toEqual({ ...welcomeProps, locale: 'en', timeZone: 'UTC' });
+  });
+
   it('lets a fork override changeEmailApproval (#489)', async () => {
     // Named out separately from the generic "welcome" case above because this
     // kind is the actual takeover control (#489) — a fork overriding it must

@@ -37,6 +37,8 @@ import { logger } from '@/lib/logging';
 import { withTimeout } from '@/lib/utils/with-timeout';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { WorkflowNotification } from '@/emails/workflow-notification';
+import { emailLocaleForOrg } from '@/lib/email/locale';
+import { orgIdForCall } from '@/lib/tenancy/context';
 import { notificationToSchema } from '@/lib/validations/orchestration';
 import { prisma } from '@/lib/db/client';
 import { runAcrossOwners } from '@/lib/auth/subject-context';
@@ -382,6 +384,9 @@ async function executeNotification(
     // non-retriable ExecutorError if a resolved address isn't a valid email.
     const resolved = resolveRecipients(config.to, ctx, step.id);
     const subject = interpolatePrompt(config.subject, ctx, step.id);
+    // The subject and body are the workflow author's; the email's own copy
+    // is in the language of the org the run belongs to (§138 t-1075).
+    const where = await emailLocaleForOrg(orgIdForCall());
     try {
       const { result, to, leftOut } = await sendToLiveRecipients(
         resolved,
@@ -389,7 +394,7 @@ async function executeNotification(
           sendEmail({
             to: sendTo,
             subject,
-            react: WorkflowNotification({ body, workflowName }),
+            react: WorkflowNotification({ body, workflowName, ...where }),
             signal,
             idempotencyKey,
           }),

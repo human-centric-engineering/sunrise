@@ -38,6 +38,8 @@
 
 import type * as React from 'react';
 import { prisma } from '@/lib/db/client';
+import { emailLocaleForOrg } from '@/lib/email/locale';
+import { emailTranslator } from '@/lib/email/translate';
 import { resolveEmailTemplate } from '@/lib/email/registry';
 import { sendEmail } from '@/lib/email/send';
 import { BRAND } from '@/lib/brand';
@@ -212,9 +214,13 @@ export async function sendWaitlistJoinMail(
     slot = claim;
     const entry = await prisma.waitlistEntry.findUnique({
       where: { id: entryId },
-      select: { email: true, name: true },
+      select: { email: true, name: true, locale: true, orgId: true },
     });
     if (!entry) return 'none';
+
+    // In the language the entry was joined in, else the org's default (§138
+    // t-1075). Nobody on a list has a time zone, so dates are in UTC.
+    const where = await emailLocaleForOrg(entry.orgId, { locale: entry.locale });
 
     const firstName = firstNameOf(entry.name);
     const leave = leaveUrl(entryId);
@@ -224,16 +230,17 @@ export async function sendWaitlistJoinMail(
       const issued = await issueConfirmToken(entryId, now);
       tokenId = issued.id;
       const { token, expiresAt } = issued;
-      subject = `Confirm your place on the ${BRAND.name} waitlist`;
-      react = resolveEmailTemplate('waitlistConfirm', {
-        firstName,
-        confirmUrl: confirmUrl(entryId, token),
-        leaveUrl: leave,
-        expiresAt,
-      });
+      subject = emailTranslator(where, 'emails.waitlistConfirm')('subject', { brand: BRAND.name });
+      react = resolveEmailTemplate(
+        'waitlistConfirm',
+        { firstName, confirmUrl: confirmUrl(entryId, token), leaveUrl: leave, expiresAt },
+        where
+      );
     } else {
-      subject = `You're already on the ${BRAND.name} waitlist`;
-      react = resolveEmailTemplate('waitlistAlreadyOnList', { firstName, leaveUrl: leave });
+      subject = emailTranslator(where, 'emails.waitlistAlreadyOnList')('subject', {
+        brand: BRAND.name,
+      });
+      react = resolveEmailTemplate('waitlistAlreadyOnList', { firstName, leaveUrl: leave }, where);
     }
 
     const result = await sendEmail({ to: entry.email, subject, react });

@@ -31,7 +31,7 @@ describe('WaitlistConfirmEmail', () => {
 
     expect(html).toContain(`href="${CONFIRM}"`);
     expect(html).toContain(`href="${LEAVE}"`);
-    expect(html).toContain('11 November 2026 (UTC)');
+    expect(html).toContain('November 11, 2026 (UTC)');
     expect(html).toContain('Hi Ada,');
   });
 
@@ -46,7 +46,7 @@ describe('WaitlistConfirmEmail', () => {
           <WaitlistConfirmEmail {...props} expiresAt={new Date('2026-11-11T23:30:00Z')} />
         )
       );
-      expect(html).toContain('11 November 2026 (UTC)');
+      expect(html).toContain('November 11, 2026 (UTC)');
     } finally {
       process.env.TZ = original;
     }

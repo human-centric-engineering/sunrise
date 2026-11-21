@@ -22,6 +22,7 @@ import ChangeEmailApprovalEmail from '@/emails/change-email-approval';
 import WaitlistConfirmEmail from '@/emails/waitlist-confirm';
 import WaitlistAlreadyOnListEmail from '@/emails/waitlist-already-on-list';
 import { emailOverrides } from '@/lib/app/emails';
+import { DEFAULT_EMAIL_LOCALE, type EmailLocale } from '@/lib/email/translate';
 
 /**
  * The typed props contract per email kind. Keys are the {@link EmailKind}
@@ -116,8 +117,25 @@ export interface EmailPropsMap {
 /** The set of overridable platform emails (auth, and the waitlist's two). */
 export type EmailKind = keyof EmailPropsMap;
 
+/**
+ * What every template is given besides its kind's props: the language and
+ * time zone to write in (§138 t-1075), worked out by the send site from who
+ * receives it (`lib/email/locale.ts`). Translate with
+ * `emailTranslator({ locale, timeZone }, 'emails.<kind>')`, or your own
+ * `app.` namespace; format dates with `formatterFor(locale, timeZone)`.
+ *
+ * An override written before these existed, taking only its kind's props,
+ * still type-checks and still renders, in English.
+ */
+export interface EmailLocaleProps {
+  locale: string;
+  timeZone: string;
+}
+
 /** A template for a given kind: takes that kind's props, returns an element. */
-export type EmailTemplate<K extends EmailKind> = (props: EmailPropsMap[K]) => ReactElement;
+export type EmailTemplate<K extends EmailKind> = (
+  props: EmailPropsMap[K] & EmailLocaleProps
+) => ReactElement;
 
 /**
  * Per-kind override map. A fork populates this (in `lib/app/emails.ts`); unset
@@ -148,10 +166,16 @@ const defaultTemplates: { [K in EmailKind]?: EmailTemplate<K> } = {
 /**
  * Render an email template for `kind`: the fork override if one is registered,
  * else the platform default. Returns the rendered element ready for `sendEmail`.
+ *
+ * `where` is the recipient's language and time zone (`lib/email/locale.ts`);
+ * absent, the email is written in English, in UTC. The subject is the send
+ * site's, from the same catalogue (`emails.<kind>.subject`), so an app
+ * changes a platform subject with `overridePlatformMessages()`.
  */
 export function resolveEmailTemplate<K extends EmailKind>(
   kind: K,
-  props: EmailPropsMap[K]
+  props: EmailPropsMap[K],
+  where: EmailLocale = DEFAULT_EMAIL_LOCALE
 ): ReactElement {
   const override = emailOverrides[kind];
   const template = override ?? defaultTemplates[kind];
@@ -165,5 +189,5 @@ export function resolveEmailTemplate<K extends EmailKind>(
       `No email template for kind "${String(kind)}". Register it in emailOverrides (lib/app/emails.ts).`
     );
   }
-  return template(props);
+  return template({ ...props, locale: where.locale, timeZone: where.timeZone });
 }

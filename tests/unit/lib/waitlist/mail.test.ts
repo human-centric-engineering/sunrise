@@ -17,6 +17,7 @@ const { mockPrisma, mockSendEmail, mockLogger } = vi.hoisted(() => ({
   mockPrisma: {
     waitlistEntry: { updateMany: vi.fn(), findUnique: vi.fn() },
     waitlistConfirmToken: { deleteMany: vi.fn() },
+    org: { findUnique: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         waitlistConfirmToken: {
@@ -74,6 +75,7 @@ beforeEach(() => {
   mockPrisma.waitlistEntry.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.waitlistEntry.findUnique.mockResolvedValue(entryRow());
   mockPrisma.waitlistConfirmToken.deleteMany.mockResolvedValue({ count: 1 });
+  mockPrisma.org.findUnique.mockResolvedValue({ settings: {} });
   mockSendEmail.mockResolvedValue({ success: true, status: 'sent' });
 });
 
@@ -362,5 +364,48 @@ describe('sendWaitlistJoinMail', () => {
     ]);
     expect(logged).toContain('entry-1');
     expect(logged).not.toContain(ADDRESS);
+  });
+
+  describe('the language it is written in (§138 t-1075)', () => {
+    // The pseudo-locale stands in for a language other than English: every
+    // catalogue string in it is accented and bracketed.
+    const PSEUDO_HEADING = '[Çöñƒîŕɱ ýöûŕ éɱåîļ åððŕéšš]';
+
+    it('uses the language the entry was joined in', async () => {
+      mockPrisma.waitlistEntry.findUnique.mockResolvedValue(
+        entryRow({ locale: 'en-XA', orgId: 'org-a' })
+      );
+
+      await sendWaitlistJoinMail('entry-1', 'created', NOW);
+
+      expect(sent().subject).toMatch(/^\[Çöñƒîŕɱ/);
+      const html = await render(sent().react);
+      expect(html).toContain('lang="en-XA"');
+      expect(html).toContain(PSEUDO_HEADING);
+    });
+
+    it('falls back to the default of the entry’s org', async () => {
+      mockPrisma.waitlistEntry.findUnique.mockResolvedValue(
+        entryRow({ locale: null, orgId: 'org-a' })
+      );
+      mockPrisma.org.findUnique.mockResolvedValue({ settings: { locale: 'en-XA' } });
+
+      await sendWaitlistJoinMail('entry-1', 'unchanged', NOW);
+
+      expect(mockPrisma.org.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'org-a' } })
+      );
+      expect(sent().subject).toMatch(/^\[Ýöû'ŕé/);
+    });
+
+    it('writes in English when neither names a language it has', async () => {
+      mockPrisma.waitlistEntry.findUnique.mockResolvedValue(
+        entryRow({ locale: 'xx', orgId: 'org-a' })
+      );
+
+      await sendWaitlistJoinMail('entry-1', 'created', NOW);
+
+      expect(sent().subject).toMatch(/^Confirm your place/);
+    });
   });
 });

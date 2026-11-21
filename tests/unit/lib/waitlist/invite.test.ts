@@ -278,10 +278,11 @@ describe('inviteWaitlistEntry — the invitation', () => {
       metadata: { name: string };
     };
     expect(arg.metadata.name).toBe('ada');
-    expect(arg.name).toBe('there');
+    // No greeting name: the template says "Hello," in the invitee's language.
+    expect(arg.name).toBe('');
   });
 
-  it('greets by first name only, and an impersonal "there" for a URL-like name', async () => {
+  it('greets by first name only, and by no name for a URL-like one', async () => {
     await invite();
     expect((mockDeliver.mock.calls[0][0] as { name: string }).name).toBe('Ada');
 
@@ -289,12 +290,12 @@ describe('inviteWaitlistEntry — the invitation', () => {
     mockPrisma.waitlistEntry.findUnique.mockResolvedValue(row({ name: 'https://evil.example' }));
     await invite();
     const arg = mockDeliver.mock.calls[0][0] as { name: string; metadata: { name: string } };
-    expect(arg.name).toBe('there');
+    expect(arg.name).toBe('');
     // The account name is not the greeting: it is the name they gave.
     expect(arg.metadata.name).toBe('https://evil.example');
   });
 
-  it('uses "The team" when the inviter has no name', async () => {
+  it('passes no inviter name when the inviter has none, for the email to supply in its language', async () => {
     await inviteWaitlistEntry({
       entryId: 'entry-1',
       inviter: { id: 'admin-1', name: null },
@@ -302,7 +303,15 @@ describe('inviteWaitlistEntry — the invitation', () => {
       now: NOW,
     });
 
-    expect((mockDeliver.mock.calls[0][0] as { inviterName: string }).inviterName).toBe('The team');
+    expect((mockDeliver.mock.calls[0][0] as { inviterName: string }).inviterName).toBe('');
+  });
+
+  it('passes the language the entry was joined in, so the invitation reads as the confirmation did', async () => {
+    mockPrisma.waitlistEntry.findUnique.mockResolvedValue(row({ locale: 'en-XA' }));
+
+    await invite();
+
+    expect((mockDeliver.mock.calls[0][0] as { locale?: string | null }).locale).toBe('en-XA');
   });
 
   it('re-sends, with a fresh invitedAt, when the pending invitation carries this entry', async () => {

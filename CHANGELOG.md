@@ -18,6 +18,39 @@ release process.
 
 ### Added
 
+- **Every email goes out in its recipient's language (§138 t-1075).** The
+  templates in `emails/` and their subjects read from the catalogue's new
+  `emails` namespace. Each send site works out the language from who
+  receives it, in the new `lib/email/locale.ts`: `emailLocaleForUser(userId)`
+  (the user's own choice, then their org's default, then `en`, in their time
+  zone), `emailLocaleForOrg(orgId, { locale })` (a tag the site holds, such as
+  a waitlist entry's, then the org's default) and
+  `emailLocaleForAddress(email, orgId)` (an invitee's account, if they have
+  one). `deliverInvitation()` takes an optional `locale` (a language the
+  invitee chose before, such as a waitlist entry's), and an empty
+  `inviterName` now gets the catalogue's `fallbackInviter`. `lib/email/translate.ts` has `emailTranslator(where, namespace)`,
+  `emailDateTime()`, `emailDate()`, `EmailLocale` and `DEFAULT_EMAIL_LOCALE`.
+  `resolveEmailTemplate(kind, props, where?)` takes the locale as an optional
+  third argument and passes `locale` and `timeZone` to the template
+  (`EmailLocaleProps`); `EmailTemplate<K>` takes `EmailPropsMap[K] &
+  EmailLocaleProps`. `sessionOrgOf()` (`lib/tenancy/membership.ts`) is the org
+  a sign-in starts a user in, without the self-heal. `sendEmail()` is
+  unchanged. Dates in emails now use the shared named formats, so an English
+  expiry reads "Nov 20, 2026, 10:00 AM UTC" rather than "November 20, 2026 at
+  10:00 AM UTC", and the escalation subject names the priority as "High"
+  rather than "high". An event email's subject names the brand instead of a
+  literal "Sunrise". An event email's language is fixed on its delivery row
+  when the row is created, in the new nullable `AiWebhookDelivery.emailLocale`
+  (migration `20261121090000_webhook_delivery_email_locale`), and read again
+  by a manual retry or DLQ replay, so an automatic retry sends the same email
+  under the same idempotency key; a row from before it goes in English.
+  **Fork impact:** an email override keeps working and type-checking; it gets
+  `locale` and `timeZone` too, and renders in English unless it translates
+  with `emailTranslator()`. A fork that edited a template in `emails/`
+  conflicts on its text, which moved to `lib/i18n/messages/en.json`: change
+  wording, including a subject, with `overridePlatformMessages('en', { emails:
+  … })`. A fork test asserting an email's exact English date needs updating.
+
 - **The user and public screens read their text from the catalogue (§138
   t-1073).** Every page under `app/(auth)`, `app/(public)` and
   `app/(protected)`, and the components they render, now shows the viewer's

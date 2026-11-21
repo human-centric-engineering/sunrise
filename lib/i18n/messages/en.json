@@ -1518,5 +1518,167 @@
         "eraseFailed": "Could not erase the entry. Try again."
       }
     }
+  },
+  "emails": {
+    "common": {
+      "greeting": "Hi {name},",
+      "hello": "Hello,",
+      "fallbackName": "User",
+      "buttonFallback": "If the button doesn't work, copy and paste this link into your browser:"
+    },
+    "welcome": {
+      "subject": "Welcome to {brand}",
+      "preview": "Welcome to {brand} - Let's get started",
+      "heading": "Welcome to {brand}!",
+      "intro": "We're excited to have you on board! {brand} is your production-ready Next.js starter template designed for rapid application development.",
+      "ready": "You're all set up and ready to go. Click the button below to access your dashboard and start exploring.",
+      "button": "Get Started",
+      "help": "If you have any questions, feel free to reach out. We're here to help!",
+      "reason": "You're receiving this email because you signed up at {email}"
+    },
+    "verifyEmail": {
+      "subject": "Verify your email address",
+      "preview": "Verify your email address",
+      "heading": "Verify Your Email Address",
+      "body": "Thanks for signing up! To complete your registration and start using {brand}, please verify your email address by clicking the button below.",
+      "button": "Verify Email",
+      "expiry": "This verification link will expire on {time}",
+      "securityHeading": "Security Note",
+      "securityOnce": "For your security, this link can only be used once and will expire after the time shown above.",
+      "securityIgnore": "If you didn't request this verification email, you can safely ignore it. Your account will not be created without clicking the verification link."
+    },
+    "resetPassword": {
+      "subject": "Reset your password",
+      "preview": "Reset your password",
+      "heading": "Reset Your Password",
+      "body": "We received a request to reset the password for your account. Click the button below to create a new password:",
+      "button": "Reset Password",
+      "expiry": "This link will expire on {time}. If you didn't request a password reset, you can safely ignore this email.",
+      "security": "<strong>Security Notice:</strong> Never share this link with anyone. If you didn't request this reset, your account may be at risk. Please contact support immediately."
+    },
+    "invitation": {
+      "subject": "You've been invited to join {org}",
+      "preview": "You've been invited to join {org}",
+      "heading": "You've Been Invited!",
+      "invitedToOrg": "<strong>{inviter}</strong> has invited you to join <strong>{org}</strong> on <strong>{brand}</strong>. We're excited to have you on board!",
+      "invitedToApp": "<strong>{inviter}</strong> has invited you to join <strong>{brand}</strong>. We're excited to have you on board!",
+      "accountLabel": "Your Account:",
+      "hasAccount": "You already have a {brand} account with this address. Click the button below, sign in as {email}, and accept the invitation:",
+      "newAccount": "Click the button below to accept your invitation and set up your password:",
+      "button": "Accept Invitation",
+      "expiry": "This invitation will expire on {time}. After accepting, you'll be able to:",
+      "switchTo": "Switch to {org} from your account",
+      "setPassword": "Set your own secure password",
+      "dashboard": "Access your personalized dashboard",
+      "collaborate": "Start collaborating with your team",
+      "notExpecting": "If you weren't expecting this invitation or don't want to join, you can safely ignore this email.",
+      "questions": "Questions? Contact {inviter} or our support team for assistance.",
+      "fallbackInviter": "Administrator"
+    },
+    "changeEmailApproval": {
+      "subject": "Approve the email change on your account",
+      "preview": "Approve the email change on your {brand} account",
+      "heading": "Approve Your Email Change",
+      "request": "Someone asked to change the email address on your {brand} account from <strong>{current}</strong> to <strong>{next}</strong>.",
+      "notYet": "Your address has not changed yet. Click the button below to approve it. We will then send a verification email to {next} to finish the change.",
+      "button": "Approve Email Change",
+      "expiry": "This approval link will expire on {time}",
+      "warningHeading": "If you didn't request this",
+      "warningDontClick": "Do not click the button. Someone else may have access to your account.",
+      "warningSignIn": "Sign in and change your password now. That signs out every other device. If you cannot sign in, contact support."
+    },
+    "waitlistConfirm": {
+      "subject": "Confirm your place on the {brand} waitlist",
+      "preview": "Confirm your place on the {brand} waitlist",
+      "heading": "Confirm your email address",
+      "body": "Someone added this address to the {brand} waitlist. If it was you, confirm it below and we'll keep your place.",
+      "button": "Confirm my address",
+      "expiry": "This link works once and expires on {date} (UTC). If you don't confirm, we delete the entry.",
+      "leave": "If you didn't join, ignore this email, or <link>remove this address from the list</link> now.",
+      "buttonFallback": "If the button doesn't work, paste this link into your browser:"
+    },
+    "waitlistAlreadyOnList": {
+      "subject": "You're already on the {brand} waitlist",
+      "preview": "You're already on the {brand} waitlist",
+      "heading": "You're already on the list",
+      "body": "This address was just submitted to the {brand} waitlist again. It's already confirmed, so there's nothing you need to do. We'll be in touch when there's a place for you.",
+      "leave": "If you want to come off the list, <link>remove this address</link>."
+    },
+    "contactNotification": {
+      "subject": "[{brand} Contact] {subject}",
+      "preview": "New contact form submission from {name}",
+      "heading": "New Contact Form Submission",
+      "intro": "You have received a new message from your website contact form.",
+      "from": "From",
+      "fromValue": "{name} ({email})",
+      "subjectLabel": "Subject",
+      "message": "Message",
+      "submitted": "Submitted on {date}"
+    },
+    "cleanupReady": {
+      "subject": "Document cleanup ready: {name}",
+      "preview": "Document Clean Up session ready: {name}",
+      "heading": "Document Clean Up",
+      "body": "You opened a Document Clean Up session. The cleanup chat is ready whenever you are — your session is saved, so you can come back to it at any time.",
+      "tooLarge": "This document is too large for whole-document LLM rewrites — deterministic strips and per-section rewrites still work.",
+      "size": "Size class: {sizeClass, select, small {small} medium {medium} large {large} other {{sizeClass}}} (~{tokens, number} tokens).",
+      "button": "Open cleanup chat",
+      "fineprint": "Until you click <strong>Mark cleaned</strong> or <strong>Use original</strong>, the document stays in the <em>Cleaning</em> tab of your knowledge base and won't be searchable by your agents."
+    },
+    "escalationNotification": {
+      "subject": "Escalation ({priority}): {reason}",
+      "preview": "Escalation ({priority}): {reason}",
+      "priority": "{priority, select, low {Low} medium {Medium} high {High} other {{priority}}}",
+      "heading": "Human Escalation Required",
+      "meta": "Agent: <strong>{agent}</strong> · Priority: <strong>{priority}</strong>",
+      "view": "View conversation",
+      "unknownAgent": "Unknown Agent"
+    },
+    "workflowNotification": {
+      "preview": "Notification from workflow: {workflow}",
+      "heading": "Workflow Notification",
+      "from": "From: {workflow}"
+    },
+    "eventNotification": {
+      "subject": "[{brand}] {title}",
+      "subjectNamed": "[{brand}] {title} · {name}",
+      "testSubject": "[{brand}] Test event",
+      "titles": {
+        "budget_exceeded": "Budget exceeded",
+        "workflow_failed": "Workflow failed",
+        "approval_required": "Approval required",
+        "circuit_breaker_opened": "Provider circuit breaker opened",
+        "agent_updated": "Agent updated",
+        "execution_crashed": "Workflow execution crashed",
+        "other": "{brand} event: {event}"
+      },
+      "summary": {
+        "budgetExceeded": "An agent reached its monthly budget.",
+        "budgetExceededNamed": "Agent “{agent}” reached its monthly budget.",
+        "workflowFailed": "A workflow failed.",
+        "workflowFailedError": "A workflow failed: {error}",
+        "workflowFailedNamed": "Workflow “{workflow}” failed.",
+        "workflowFailedNamedError": "Workflow “{workflow}” failed: {error}",
+        "approvalRequired": "A workflow is paused and needs approval.",
+        "approvalRequiredNamed": "Workflow “{workflow}” is paused and needs approval.",
+        "circuitBreakerOpened": "A provider circuit breaker has tripped open.",
+        "circuitBreakerOpenedNamed": "The circuit breaker for provider “{provider}” has tripped open. Requests to that provider are blocked until the cooldown elapses.",
+        "agentUpdated": "An agent was updated.",
+        "agentUpdatedBy": "An agent was updated by {actor}.",
+        "agentUpdatedNamed": "Agent “{agent}” was updated.",
+        "agentUpdatedNamedBy": "Agent “{agent}” was updated by {actor}.",
+        "executionCrashed": "A workflow execution crashed.",
+        "executionCrashedError": "A workflow execution crashed: {error}",
+        "executionCrashedNamed": "Workflow “{workflow}” crashed mid-execution.",
+        "executionCrashedNamedError": "Workflow “{workflow}” crashed mid-execution: {error}",
+        "other": "Event “{event}” fired."
+      },
+      "stamp": "{brand} · {when}",
+      "approve": "Approve",
+      "reject": "Reject",
+      "details": "Details",
+      "changes": "Changes",
+      "footer": "You're receiving this because you subscribed to <code>{event}</code> via <link>{brand} event subscriptions</link>."
+    }
   }
 }

@@ -12,6 +12,12 @@ import {
   Link,
 } from '@react-email/components';
 import { BRAND } from '@/lib/brand';
+import {
+  DEFAULT_EMAIL_LOCALE,
+  emailDateTime,
+  emailTranslator,
+  type EmailLocale,
+} from '@/lib/email/translate';
 
 /**
  * Generic event-notification email template.
@@ -28,6 +34,11 @@ import { BRAND } from '@/lib/brand';
  *   - `changes` block (rendered as field: from → to) when present
  *   - Action buttons for approval events (approveUrl / rejectUrl)
  *   - Sunrise footer
+ *
+ * The copy is the catalogue's (`emails.eventNotification`), in the language
+ * of the org the subscription belongs to. The payload's own field names and
+ * values are shown as they are: they are the event's data, the same a
+ * webhook receiver gets, not the email's copy.
  */
 
 export interface EventNotificationProps {
@@ -37,6 +48,9 @@ export interface EventNotificationProps {
   timestamp: string;
   /** Same payload shape the webhook receiver would have seen. */
   data: Record<string, unknown>;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 interface ChangeEntry {
@@ -46,50 +60,93 @@ interface ChangeEntry {
 
 // ─── Event metadata ─────────────────────────────────────────────────────────
 
-const EVENT_TITLES: Record<string, string> = {
-  budget_exceeded: 'Budget exceeded',
-  workflow_failed: 'Workflow failed',
-  approval_required: 'Approval required',
-  circuit_breaker_opened: 'Provider circuit breaker opened',
-  agent_updated: 'Agent updated',
-  execution_crashed: 'Workflow execution crashed',
-};
+type EventT = ReturnType<typeof eventTranslator>;
 
-function summaryFor(event: string, data: Record<string, unknown>): string {
-  const agentName = stringOrUndef(data.agentName);
-  const workflowName = stringOrUndef(data.workflowName) ?? stringOrUndef(data.workflowSlug);
+function eventTranslator(where: EmailLocale) {
+  return emailTranslator(where, 'emails.eventNotification');
+}
+
+/** The events with a title of their own; any other is named by its wire name. */
+const TITLED_EVENTS = [
+  'budget_exceeded',
+  'workflow_failed',
+  'approval_required',
+  'circuit_breaker_opened',
+  'agent_updated',
+  'execution_crashed',
+] as const;
+type TitledEvent = (typeof TITLED_EVENTS)[number];
+
+function isTitledEvent(event: string): event is TitledEvent {
+  return (TITLED_EVENTS as readonly string[]).includes(event);
+}
+
+function titleFor(t: EventT, event: string): string | null {
+  return isTitledEvent(event) ? t(`titles.${event}`) : null;
+}
+
+function summaryFor(t: EventT, event: string, data: Record<string, unknown>): string {
+  const agent = stringOrUndef(data.agentName);
+  const workflow = stringOrUndef(data.workflowName) ?? stringOrUndef(data.workflowSlug);
   const actor = stringOrUndef(data.actorUserName) ?? stringOrUndef(data.actorUserId);
-  const providerSlug = stringOrUndef(data.providerSlug);
-  const errorMsg = stringOrUndef(data.error);
+  const provider = stringOrUndef(data.providerSlug);
+  const error = stringOrUndef(data.error);
 
   switch (event) {
     case 'budget_exceeded':
-      return agentName
-        ? `Agent “${agentName}” reached its monthly budget.`
-        : 'An agent reached its monthly budget.';
+      return agent ? t('summary.budgetExceededNamed', { agent }) : t('summary.budgetExceeded');
     case 'workflow_failed':
-      return workflowName
-        ? `Workflow “${workflowName}” failed${errorMsg ? `: ${errorMsg}` : '.'}`
-        : `A workflow failed${errorMsg ? `: ${errorMsg}` : '.'}`;
+      if (workflow) {
+        return error
+          ? t('summary.workflowFailedNamedError', { workflow, error })
+          : t('summary.workflowFailedNamed', { workflow });
+      }
+      return error ? t('summary.workflowFailedError', { error }) : t('summary.workflowFailed');
     case 'approval_required':
-      return workflowName
-        ? `Workflow “${workflowName}” is paused and needs approval.`
-        : 'A workflow is paused and needs approval.';
+      return workflow
+        ? t('summary.approvalRequiredNamed', { workflow })
+        : t('summary.approvalRequired');
     case 'circuit_breaker_opened':
-      return providerSlug
-        ? `The circuit breaker for provider “${providerSlug}” has tripped open. Requests to that provider are blocked until the cooldown elapses.`
-        : 'A provider circuit breaker has tripped open.';
+      return provider
+        ? t('summary.circuitBreakerOpenedNamed', { provider })
+        : t('summary.circuitBreakerOpened');
     case 'agent_updated':
-      return agentName
-        ? `Agent “${agentName}” was updated${actor ? ` by ${actor}` : ''}.`
-        : `An agent was updated${actor ? ` by ${actor}` : ''}.`;
+      if (agent) {
+        return actor
+          ? t('summary.agentUpdatedNamedBy', { agent, actor })
+          : t('summary.agentUpdatedNamed', { agent });
+      }
+      return actor ? t('summary.agentUpdatedBy', { actor }) : t('summary.agentUpdated');
     case 'execution_crashed':
-      return workflowName
-        ? `Workflow “${workflowName}” crashed mid-execution${errorMsg ? `: ${errorMsg}` : '.'}`
-        : `A workflow execution crashed${errorMsg ? `: ${errorMsg}` : '.'}`;
+      if (workflow) {
+        return error
+          ? t('summary.executionCrashedNamedError', { workflow, error })
+          : t('summary.executionCrashedNamed', { workflow });
+      }
+      return error ? t('summary.executionCrashedError', { error }) : t('summary.executionCrashed');
     default:
-      return `Event “${event}” fired.`;
+      return t('summary.other', { event });
   }
+}
+
+/**
+ * The subject line for an event email: the event's title, and the agent,
+ * workflow or provider it names when it names one, so an inbox shows
+ * something actionable. In the recipient's language.
+ */
+export function eventNotificationSubject(
+  event: string,
+  data: Record<string, unknown>,
+  where: EmailLocale = DEFAULT_EMAIL_LOCALE
+): string {
+  const t = eventTranslator(where);
+  const brand = BRAND.name;
+  const title = titleFor(t, event) ?? t('titles.other', { brand, event });
+  const name =
+    stringOrUndef(data.agentName) ??
+    stringOrUndef(data.workflowName) ??
+    stringOrUndef(data.providerSlug);
+  return name ? t('subjectNamed', { brand, title, name }) : t('subject', { brand, title });
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -144,10 +201,15 @@ export function EventNotification({
   event,
   timestamp,
   data,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: EventNotificationProps): React.ReactElement {
-  const title = EVENT_TITLES[event] ?? humaniseEventName(event);
-  const summary = summaryFor(event, data);
-  const formattedWhen = formatTimestamp(timestamp);
+  const where = { locale, timeZone };
+  const t = eventTranslator(where);
+  const brand = BRAND.name;
+  const title = titleFor(t, event) ?? humaniseEventName(event);
+  const summary = summaryFor(t, event, data);
+  const formattedWhen = formatTimestamp(where, timestamp);
 
   const changes = data.changes;
   const renderChanges = isChangesShape(changes) ? changes : null;
@@ -164,16 +226,14 @@ export function EventNotification({
   });
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
       <Preview>{summary}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
             <Text style={heading}>{title}</Text>
-            <Text style={timestampLine}>
-              {BRAND.name} · {formattedWhen}
-            </Text>
+            <Text style={timestampLine}>{t('stamp', { brand, when: formattedWhen })}</Text>
 
             <Text style={summaryText}>{summary}</Text>
 
@@ -181,12 +241,12 @@ export function EventNotification({
               <Section style={actionRow}>
                 {approveUrl && (
                   <Button href={approveUrl} style={primaryButton}>
-                    Approve
+                    {t('approve')}
                   </Button>
                 )}
                 {rejectUrl && (
                   <Button href={rejectUrl} style={secondaryButton}>
-                    Reject
+                    {t('reject')}
                   </Button>
                 )}
               </Section>
@@ -194,7 +254,7 @@ export function EventNotification({
 
             <Hr style={divider} />
 
-            <Text style={subhead}>Details</Text>
+            <Text style={subhead}>{t('details')}</Text>
             <table style={kvTable} cellPadding={0} cellSpacing={0}>
               <tbody>
                 {tableEntries.map(([key, value]) => {
@@ -216,7 +276,7 @@ export function EventNotification({
             {renderChanges && Object.keys(renderChanges).length > 0 && (
               <>
                 <Hr style={divider} />
-                <Text style={subhead}>Changes</Text>
+                <Text style={subhead}>{t('changes')}</Text>
                 <table style={kvTable} cellPadding={0} cellSpacing={0}>
                   <tbody>
                     {Object.entries(renderChanges).map(([field, { from, to }]) => (
@@ -236,11 +296,16 @@ export function EventNotification({
           </Section>
 
           <Text style={footer}>
-            You&apos;re receiving this because you subscribed to <code>{event}</code> via{' '}
-            <Link href="" style={footerLink}>
-              {BRAND.name} event subscriptions
-            </Link>
-            .
+            {t.rich('footer', {
+              event,
+              brand,
+              code: (chunks) => <code>{chunks}</code>,
+              link: (chunks) => (
+                <Link href="" style={footerLink}>
+                  {chunks}
+                </Link>
+              ),
+            })}
           </Text>
         </Container>
       </Body>
@@ -266,13 +331,10 @@ function humaniseFieldKey(key: string): string {
   return spaced ? spaced[0].toUpperCase() + spaced.slice(1) : key;
 }
 
-function formatTimestamp(iso: string): string {
-  // Render in UTC so renderers don't disagree on locale formatting.
-  try {
-    return new Date(iso).toUTCString();
-  } catch {
-    return iso;
-  }
+function formatTimestamp(where: EmailLocale, iso: string): string {
+  // A timestamp that does not parse is shown as it came, rather than as
+  // "Invalid Date" or a throw.
+  return Number.isNaN(Date.parse(iso)) ? iso : emailDateTime(where, iso);
 }
 
 // ─── Styles ─────────────────────────────────────────────────────────────────

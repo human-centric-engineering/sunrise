@@ -17,6 +17,9 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { sendEmail } from '@/lib/email/send';
 import { EscalationNotification } from '@/emails/escalation-notification';
+import { emailLocaleForOrg } from '@/lib/email/locale';
+import { emailTranslator } from '@/lib/email/translate';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { env } from '@/lib/env';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { loggableUrl } from '@/lib/logging/redact-path';
@@ -144,6 +147,42 @@ export function notifyEscalation(payload: EscalationPayload): Promise<void> {
   return notifying;
 }
 
+/**
+ * The escalation emails, in the install org's language (§138 t-1075): the
+ * addresses are the install's own on-call list, set once for every org, as
+ * the contact form's recipients are. Never rejects.
+ */
+async function sendEscalationEmails(
+  addresses: string[],
+  payload: EscalationPayload,
+  takenAt: Date,
+  appUrl: string | undefined
+): Promise<void> {
+  try {
+    const where = await emailLocaleForOrg(INSTALL_ORG_ID);
+    const t = emailTranslator(where, 'emails.escalationNotification');
+    await emailLiveRecipients(addresses, payload.userId, takenAt, {
+      subject: t('subject', {
+        priority: t('priority', { priority: payload.priority }),
+        reason: payload.reason.slice(0, 80),
+      }),
+      react: EscalationNotification({
+        agentName: payload.agentName ?? t('unknownAgent'),
+        reason: payload.reason,
+        priority: payload.priority,
+        conversationId: payload.conversationId,
+        appUrl,
+        ...where,
+      }),
+    });
+  } catch (err) {
+    logger.error('Escalation email failed', {
+      error: err instanceof Error ? err.message : String(err),
+      agentId: payload.agentId,
+    });
+  }
+}
+
 async function notify(payload: EscalationPayload): Promise<void> {
   try {
     // Before the read: the list is the copy the email is sent from (t-886).
@@ -158,24 +197,15 @@ async function notify(payload: EscalationPayload): Promise<void> {
 
     if (!meetsPriorityThreshold(payload.priority, config.notifyOnPriority)) return;
 
-    const agentName = payload.agentName ?? 'Unknown Agent';
     const appUrl = env.BETTER_AUTH_URL ?? env.NEXT_PUBLIC_APP_URL;
 
     // Send emails. Not awaited before the webhook: the email may wait up to
     // SENDER_LOCK_WAIT_MS for an erasure's locks (t-886), and the on-call
-    // webhook must not wait behind it. Never rejects.
+    // webhook must not wait behind it, nor behind the language read. Never
+    // rejects.
     const emailed =
       config.emailAddresses.length > 0
-        ? emailLiveRecipients(config.emailAddresses, payload.userId, takenAt, {
-            subject: `Escalation (${payload.priority}): ${payload.reason.slice(0, 80)}`,
-            react: EscalationNotification({
-              agentName,
-              reason: payload.reason,
-              priority: payload.priority,
-              conversationId: payload.conversationId,
-              appUrl: appUrl || undefined,
-            }),
-          })
+        ? sendEscalationEmails(config.emailAddresses, payload, takenAt, appUrl || undefined)
         : Promise.resolve();
     try {
       // The webhook carries their reason and metadata too: not posted about a
@@ -189,7 +219,7 @@ async function notify(payload: EscalationPayload): Promise<void> {
       if (subjectErased) {
         logger.warn('Escalation webhook not posted: the person it is about was erased');
       } else {
-        await postEscalationWebhook(config, payload, agentName);
+        await postEscalationWebhook(config, payload, payload.agentName ?? 'Unknown Agent');
       }
     } finally {
       await emailed;

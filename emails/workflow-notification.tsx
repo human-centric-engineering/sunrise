@@ -1,24 +1,31 @@
 import * as React from 'react';
 import { Html, Head, Preview, Body, Container, Section, Text, Hr } from '@react-email/components';
+import { DEFAULT_EMAIL_LOCALE, emailTranslator } from '@/lib/email/translate';
 
 interface WorkflowNotificationProps {
   body: string;
   workflowName: string;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export function WorkflowNotification({
   body,
   workflowName,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: WorkflowNotificationProps): React.ReactElement {
+  const t = emailTranslator({ locale, timeZone }, 'emails.workflowNotification');
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>Notification from workflow: {workflowName}</Preview>
+      <Preview>{t('preview', { workflow: workflowName })}</Preview>
       <Body style={main}>
         <Container style={container}>
           <Section style={section}>
-            <Text style={heading}>Workflow Notification</Text>
-            <Text style={label}>From: {workflowName}</Text>
+            <Text style={heading}>{t('heading')}</Text>
+            <Text style={label}>{t('from', { workflow: workflowName })}</Text>
             <Hr style={divider} />
             <Text style={text}>{body}</Text>
           </Section>

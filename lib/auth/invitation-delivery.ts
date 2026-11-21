@@ -16,12 +16,15 @@ import { BRAND } from '@/lib/brand';
 import { env } from '@/lib/env';
 import { sendEmail, type EmailStatus } from '@/lib/email/send';
 import { resolveEmailTemplate } from '@/lib/email/registry';
+import { emailLocaleForAddress, emailLocaleForOrg } from '@/lib/email/locale';
+import { emailTranslator } from '@/lib/email/translate';
 import {
   generateInvitationToken,
   updateInvitationToken,
   type InvitationMetadata,
 } from '@/lib/utils/invitation-token';
 import type { Logger } from '@/lib/logging';
+import { invitedOrgId } from '@/lib/tenancy/membership';
 
 export interface DeliverInvitationInput {
   email: string;
@@ -29,6 +32,7 @@ export interface DeliverInvitationInput {
   metadata: InvitationMetadata;
   /** A pending invitation exists for this email and is being re-sent. */
   isResend: boolean;
+  /** Who sent it. Empty ⇒ the catalogue's `fallbackInviter`, in the invitee's language. */
   inviterName: string;
   /** The org the invitation joins, named in the email. Absent ⇒ the email names the app. */
   orgName?: string;
@@ -38,6 +42,12 @@ export interface DeliverInvitationInput {
    * inviter must not depend on this.
    */
   hasAccount?: boolean;
+  /**
+   * A language the invitee already chose, such as the one a waitlist entry
+   * was joined in. Read ahead of the inviting org's default when the address
+   * has no account.
+   */
+  locale?: string | null;
   log: Logger;
 }
 
@@ -56,6 +66,7 @@ export async function deliverInvitation({
   inviterName,
   orgName,
   hasAccount = false,
+  locale,
   log,
 }: DeliverInvitationInput): Promise<DeliveredInvitation> {
   // A resend deletes the old token (that org's only) and creates a new one.
@@ -70,18 +81,30 @@ export async function deliverInvitation({
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 7);
 
+  // In the invitee's language (§138 t-1075): an account's own choice when the
+  // address already has one, else a language they chose before (a waitlist
+  // entry's), else the default of the org inviting them.
+  const invitingOrg = invitedOrgId(metadata);
+  const where = hasAccount
+    ? await emailLocaleForAddress(email, invitingOrg)
+    : await emailLocaleForOrg(invitingOrg, { locale });
+  const t = emailTranslator(where, 'emails.invitation');
   const emailResult = await sendEmail({
     to: email,
-    subject: `You've been invited to join ${orgName ?? BRAND.name}`,
-    react: resolveEmailTemplate('invitation', {
-      inviterName,
-      inviteeName: name,
-      inviteeEmail: email,
-      invitationUrl: link,
-      expiresAt,
-      ...(orgName !== undefined ? { orgName } : {}),
-      ...(hasAccount ? { hasAccount } : {}),
-    }),
+    subject: t('subject', { org: orgName ?? BRAND.name }),
+    react: resolveEmailTemplate(
+      'invitation',
+      {
+        inviterName: inviterName || t('fallbackInviter'),
+        inviteeName: name,
+        inviteeEmail: email,
+        invitationUrl: link,
+        expiresAt,
+        ...(orgName !== undefined ? { orgName } : {}),
+        ...(hasAccount ? { hasAccount } : {}),
+      },
+      where
+    ),
   });
 
   // Email sending failure should NOT fail the request (just log warning)

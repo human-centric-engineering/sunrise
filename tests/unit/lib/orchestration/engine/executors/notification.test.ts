@@ -42,6 +42,10 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// The recipients' language: English, without a database read (§138 t-1075).
+vi.mock('@/lib/email/locale', () => ({
+  emailLocaleForOrg: vi.fn(async () => ({ locale: 'en', timeZone: 'UTC' })),
+}));
 vi.mock('@/emails/workflow-notification', () => ({
   WorkflowNotification: vi.fn(() => null),
 }));

@@ -33,7 +33,9 @@ import {
   withOutboundDispatcher,
 } from '@/lib/security/safe-dispatcher';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
-import EventNotification from '@/emails/event-notification';
+import EventNotification, { eventNotificationSubject } from '@/emails/event-notification';
+import { emailLocaleForOrg, emailLocaleFrom } from '@/lib/email/locale';
+import { orgIdForCall } from '@/lib/tenancy/context';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import {
@@ -106,32 +108,6 @@ function resolveRetryPolicy(sub: {
         ? sub.retryBackoffMs
         : DEFAULT_RETRY_BACKOFF_MS,
   };
-}
-
-/**
- * Best-effort subject line for an email notification. Uses the friendly
- * event title plus any human-readable identifier in the payload so the
- * recipient's inbox shows something actionable.
- */
-function buildEmailSubject(eventType: string, data: Record<string, unknown>): string {
-  const titles: Record<string, string> = {
-    budget_exceeded: 'Budget exceeded',
-    workflow_failed: 'Workflow failed',
-    approval_required: 'Approval required',
-    circuit_breaker_opened: 'Provider circuit breaker opened',
-    agent_updated: 'Agent updated',
-    execution_crashed: 'Workflow execution crashed',
-  };
-  const base = titles[eventType] ?? `Sunrise event: ${eventType}`;
-  const subject =
-    typeof data.agentName === 'string'
-      ? `${base} · ${data.agentName}`
-      : typeof data.workflowName === 'string'
-        ? `${base} · ${data.workflowName}`
-        : typeof data.providerSlug === 'string'
-          ? `${base} · ${data.providerSlug}`
-          : base;
-  return `[Sunrise] ${subject}`;
 }
 
 /**
@@ -225,6 +201,20 @@ export async function deliverToSubscribers(
     'Webhook'
   );
 
+  // An email's language is its subscription's org's default, fixed on the row
+  // (§138 t-1075): a fan-out can reach several orgs, or run with no org in
+  // context. Read once per org, and only for email subscriptions.
+  const localeByOrg = new Map<string | null, Promise<string>>();
+  const emailLocaleOf = (orgId: string | null): Promise<string> => {
+    const key = orgId ?? orgIdForCall();
+    let locale = localeByOrg.get(key);
+    if (!locale) {
+      locale = emailLocaleForOrg(key).then((where) => where.locale);
+      localeByOrg.set(key, locale);
+    }
+    return locale;
+  };
+
   await Promise.allSettled(
     matched.map(async (sub) => {
       // Create delivery record
@@ -234,6 +224,7 @@ export async function deliverToSubscribers(
           eventType,
           payload: stored as unknown as Prisma.InputJsonValue,
           status: 'pending',
+          ...(sub.channel === 'email' ? { emailLocale: await emailLocaleOf(sub.orgId) } : {}),
           ...subscriptionDestination(sub),
         },
       });
@@ -279,6 +270,12 @@ export async function retryDelivery(
   // Stopped by an erasure: what it would send is about the erased person, or
   // goes to their address (t-793). Refused, and left as the record.
   if (delivery.stoppedByErasure) return false;
+  // A new send, so in the org's language now (§138 t-1075). Read before the
+  // reset, so no attempt waits on it.
+  const emailLocale =
+    subscription.channel === 'email'
+      ? (await emailLocaleForOrg(subscription.orgId ?? orgIdForCall())).locale
+      : null;
 
   // Reset status for retry, only if the row is as it was read. An erasure that
   // committed in between has redacted it or stopped it, and is not undone; a
@@ -298,6 +295,7 @@ export async function retryDelivery(
       attempts: 0,
       // A new send, so its email gets a new idempotency key (t-822).
       sendGeneration: { increment: 1 },
+      emailLocale,
       lastError: null,
       nextRetryAt: null,
       lastAttemptAt: null,
@@ -467,6 +465,7 @@ type AttemptRecord = DeliveryLike & {
   eventType: string;
   payload: Prisma.JsonValue;
   lastError: string | null;
+  emailLocale: string | null;
 };
 
 /**
@@ -869,6 +868,9 @@ async function attemptEmailDelivery(
   }
 
   const to = sub.emailAddress;
+  // In the language fixed on the row (§138 t-1075), so a retry is the same
+  // request under the same key. A row from before it was English.
+  const where = emailLocaleFrom({ userLocale: record.emailLocale });
   const idempotencyKey = emailIdempotencyKey(record, to);
   try {
     // Bounded, render and send together, so the attempt ends well inside the
@@ -877,8 +879,8 @@ async function attemptEmailDelivery(
     // attempt even if something ignores it. Expiry is retriable, like any
     // other failed send.
     const result = await withTimeout(DISPATCH_TIMEOUT_MS.email, 'Email send', async (signal) => {
-      const html = await render(EventNotification({ event, timestamp, data }));
-      const subject = buildEmailSubject(event, data);
+      const html = await render(EventNotification({ event, timestamp, data, ...where }));
+      const subject = eventNotificationSubject(event, data, where);
       return resend.emails.send(
         { from: getDefaultSender(), to, subject, html },
         { signal, idempotencyKey }

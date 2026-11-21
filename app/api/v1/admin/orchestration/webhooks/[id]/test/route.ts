@@ -23,6 +23,9 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 import { cuidSchema } from '@/lib/validations/common';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification from '@/emails/event-notification';
+import { emailLocaleForOrg } from '@/lib/email/locale';
+import { emailTranslator } from '@/lib/email/translate';
+import { orgIdForCall } from '@/lib/tenancy/context';
 import { render } from '@react-email/render';
 import crypto from 'crypto';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
@@ -40,6 +43,7 @@ export const POST = withAdminAuth<{ id: string }>(
     });
     if (!webhook) throw new NotFoundError('Webhook not found');
 
+    // The payload is data, the same on both channels, so not translated.
     const pingData = { message: 'Test event from Sunrise webhook configuration.' };
     const pingTimestamp = new Date().toISOString();
 
@@ -64,15 +68,18 @@ export const POST = withAdminAuth<{ id: string }>(
 
       const start = Date.now();
       try {
+        // In the language of the org the webhook belongs to (§138 t-1075).
+        const where = await emailLocaleForOrg(webhook.orgId ?? orgIdForCall());
+        const eventT = emailTranslator(where, 'emails.eventNotification');
         const resend = getResendClient();
         if (!resend) throw new Error('Resend client unavailable');
         const html = await render(
-          EventNotification({ event: 'ping', timestamp: pingTimestamp, data: pingData })
+          EventNotification({ event: 'ping', timestamp: pingTimestamp, data: pingData, ...where })
         );
         const result = await resend.emails.send({
           from: getDefaultSender(),
           to: webhook.emailAddress,
-          subject: `[${BRAND.name}] Test event`,
+          subject: eventT('testSubject', { brand: BRAND.name }),
           html,
         });
         const durationMs = Date.now() - start;

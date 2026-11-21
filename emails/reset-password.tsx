@@ -11,65 +11,57 @@ import {
   Hr,
   Heading,
 } from '@react-email/components';
+import { DEFAULT_EMAIL_LOCALE, emailDateTime, emailTranslator } from '@/lib/email/translate';
 
 interface ResetPasswordEmailProps {
   userName: string;
   resetUrl: string;
   expiresAt: Date;
+  /** The recipient's language and time zone (`lib/email/locale.ts`). Absent ⇒ English, UTC. */
+  locale?: string;
+  timeZone?: string;
 }
 
 export default function ResetPasswordEmail({
   userName,
   resetUrl,
   expiresAt,
+  locale = DEFAULT_EMAIL_LOCALE.locale,
+  timeZone = DEFAULT_EMAIL_LOCALE.timeZone,
 }: ResetPasswordEmailProps): React.ReactElement {
-  const previewText = 'Reset your password';
-
-  // Format expiration time
-  const expirationTime = new Date(expiresAt).toLocaleString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  });
+  const where = { locale, timeZone };
+  const t = emailTranslator(where, 'emails.resetPassword');
+  const common = emailTranslator(where, 'emails.common');
+  const expirationTime = emailDateTime(where, expiresAt);
 
   return (
-    <Html lang="en">
+    <Html lang={locale}>
       <Head />
-      <Preview>{previewText}</Preview>
+      <Preview>{t('preview')}</Preview>
       <Body style={main}>
         <Container style={container}>
-          <Heading style={h1}>Reset Your Password</Heading>
+          <Heading style={h1}>{t('heading')}</Heading>
 
-          <Text style={text}>Hi {userName},</Text>
+          <Text style={text}>{common('greeting', { name: userName })}</Text>
 
-          <Text style={text}>
-            We received a request to reset the password for your account. Click the button below to
-            create a new password:
-          </Text>
+          <Text style={text}>{t('body')}</Text>
 
           <Section style={buttonContainer}>
             <Button href={resetUrl} style={button}>
-              Reset Password
+              {t('button')}
             </Button>
           </Section>
 
-          <Text style={text}>
-            This link will expire on {expirationTime}. If you didn&apos;t request a password reset,
-            you can safely ignore this email.
-          </Text>
+          <Text style={text}>{t('expiry', { time: expirationTime })}</Text>
 
           <Hr style={hr} />
 
           <Text style={footer}>
-            <strong>Security Notice:</strong> Never share this link with anyone. If you didn&apos;t
-            request this reset, your account may be at risk. Please contact support immediately.
+            {t.rich('security', { strong: (chunks) => <strong>{chunks}</strong> })}
           </Text>
 
           <Text style={footer}>
-            If the button doesn&apos;t work, copy and paste this link into your browser:
+            {common('buttonFallback')}
             <br />
             <a href={resetUrl} style={link}>
               {resetUrl}
