@@ -1118,7 +1118,8 @@ export class OrchestrationEngine {
               lastError.cause,
               false,
               accumulatedTokens,
-              accumulatedCost
+              accumulatedCost,
+              lastError.failWorkflow
             );
           }
           if (attempt < lastAttempt) {
@@ -1147,7 +1148,8 @@ export class OrchestrationEngine {
             lastError.cause,
             lastError.retriable,
             accumulatedTokens,
-            accumulatedCost
+            accumulatedCost,
+            lastError.failWorkflow
           )
         : new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
     }
@@ -1185,6 +1187,10 @@ export class OrchestrationEngine {
           skipped: true,
           skipError: skipReason,
           ...(errorConfig.expectedSkip ? { expectedSkip: true } : {}),
+          // A step that ends its branch as a failed run still does when its
+          // own work failed and was skipped (t-1078): the trace keeps the
+          // error, the run ends with the step's reason.
+          ...(execErr.failWorkflow ? { failWorkflow: execErr.failWorkflow } : {}),
         };
       }
 
@@ -2104,7 +2110,8 @@ export class OrchestrationEngine {
               lastError.cause,
               false,
               accumulatedTokens,
-              accumulatedCost
+              accumulatedCost,
+              lastError.failWorkflow
             );
           }
           if (attempt < retryCount) {
@@ -2120,7 +2127,8 @@ export class OrchestrationEngine {
             lastError.cause,
             lastError.retriable,
             accumulatedTokens,
-            accumulatedCost
+            accumulatedCost,
+            lastError.failWorkflow
           )
         : new ExecutorError(step.id, 'retry_exhausted', 'Retry exhausted');
     }
@@ -2151,6 +2159,7 @@ export class OrchestrationEngine {
           skipped: true,
           skipError: sanitizeError(execErr),
           ...(errorConfig.expectedSkip ? { expectedSkip: true } : {}),
+          ...(execErr.failWorkflow ? { failWorkflow: execErr.failWorkflow } : {}),
         };
       }
 

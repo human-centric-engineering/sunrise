@@ -1175,5 +1175,91 @@ describe('executeNotification', () => {
 
       expect(result.failWorkflow).toBeUndefined();
     });
+
+    // t-1078: the step ends its branch as a failed run whether or not the
+    // notice goes out. A failed send carries the step's reason on its error,
+    // so a `skip` strategy still fails the run with it (the engine side is in
+    // conditional-fan-in.test.ts).
+    describe('when the send fails', () => {
+      it('carries the reason on an email the provider refused, keeping the delivery error', async () => {
+        vi.mocked(sendEmail).mockResolvedValueOnce({
+          status: 'failed',
+          success: false,
+          error: 'Invalid `to` field: testing email address',
+        });
+
+        const err = await executor(
+          makeEmailStep({ bodyTemplate: 'Halted at a validation gate', terminalStatus: 'failed' }),
+          makeCtx()
+        ).catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ExecutorError);
+        expect(err).toMatchObject({
+          code: 'EMAIL_SEND_FAILED',
+          message: 'Email send failed: Invalid `to` field: testing email address',
+          retriable: true,
+          failWorkflow: 'Halted at a validation gate',
+        });
+      });
+
+      it('carries the reason when the recipient does not resolve to an email', async () => {
+        const err = await executor(
+          makeEmailStep({ to: '{{input.who}}', terminalStatus: 'failed' }),
+          makeCtx({ inputData: { who: 'not-an-email' } })
+        ).catch((e: unknown) => e);
+
+        expect(err).toMatchObject({
+          code: 'INVALID_RECIPIENT',
+          failWorkflow: 'The workflow finished.',
+        });
+        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      });
+
+      it('carries the reason on a webhook the receiver refused', async () => {
+        vi.mocked(executeHttpRequest).mockRejectedValueOnce(
+          new HttpError('http_error', 'HTTP 404: not found', false, undefined, 404)
+        );
+
+        const err = await executor(
+          makeWebhookStep({ bodyTemplate: 'pipeline aborted', terminalStatus: 'failed' }),
+          makeCtx()
+        ).catch((e: unknown) => e);
+
+        expect(err).toMatchObject({
+          code: 'WEBHOOK_DISPATCH_ERROR',
+          retriable: false,
+          failWorkflow: 'pipeline aborted',
+        });
+      });
+
+      it('carries no reason when terminalStatus is unset', async () => {
+        vi.mocked(sendEmail).mockResolvedValueOnce({
+          status: 'failed',
+          success: false,
+          error: 'provider down',
+        });
+
+        const err = await executor(makeEmailStep(), makeCtx()).catch((e: unknown) => e);
+
+        expect(err).toMatchObject({ code: 'EMAIL_SEND_FAILED' });
+        expect((err as ExecutorError).failWorkflow).toBeUndefined();
+      });
+
+      it('carries no reason when the run was cancelled, so it ends as cancelled', async () => {
+        const controller = new AbortController();
+        vi.mocked(sendEmail).mockImplementationOnce(async () => {
+          controller.abort();
+          return { status: 'failed', success: false, error: 'aborted' };
+        });
+
+        const err = await executor(
+          makeEmailStep({ terminalStatus: 'failed' }),
+          makeCtx({ signal: controller.signal })
+        ).catch((e: unknown) => e);
+
+        expect(err).toMatchObject({ code: 'EXECUTION_ABORTED' });
+        expect((err as ExecutorError).failWorkflow).toBeUndefined();
+      });
+    });
   });
 });
