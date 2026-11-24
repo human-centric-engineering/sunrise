@@ -102,9 +102,18 @@ export async function resolveTargetOrg(
 /**
  * Run `fn` in `orgId`: as it is when that is the org the call stack already
  * runs in, inside `runAsOrg(orgId)` when it is another.
+ *
+ * In another org the caller's source is kept (a session, an admin API key), so
+ * what reads the context sees an admin's request, not a background job. The
+ * role is not: it is the caller's role in the org they entered, and they hold
+ * none in the target. An unbound admin key runs in no org and has no source
+ * worth keeping, so it takes `runAsOrg`'s default.
  */
 export function runInTargetOrg<T>(orgId: string, fn: () => Promise<T>): Promise<T> {
-  const active = getTenantContext()?.orgId ?? null;
+  const ctx = getTenantContext();
+  const active = ctx?.orgId ?? null;
   if (!isMultiTenant() || orgId === active) return fn();
-  return runAsOrg(orgId, fn);
+  const source =
+    ctx && ctx.source !== 'system' && ctx.source !== 'implicit' ? ctx.source : undefined;
+  return runAsOrg(orgId, fn, source ? { source } : {});
 }

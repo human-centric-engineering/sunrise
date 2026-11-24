@@ -26,7 +26,12 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { resolveTargetOrg, runInTargetOrg, targetOrgQuerySchema } from '@/lib/tenancy/target-org';
+import {
+  resolveTargetOrg,
+  runInTargetOrg,
+  targetOrgQuerySchema,
+  type ResolveTargetOrgOptions,
+} from '@/lib/tenancy/target-org';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -34,7 +39,7 @@ import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 
 const ADMIN: AuthorizationPrincipal = { userId: 'user-1', role: 'ADMIN', credential: 'session' };
 const CUSTOMER_ORG = 'cmorg00000000000000000orga';
-const OPTIONS = { noOrgMessage: 'name one' };
+const OPTIONS: ResolveTargetOrgOptions = { noOrgMessage: 'name one' };
 
 /** Resolve as a caller whose guard entered `orgId`. */
 function resolveIn(orgId: string, named: string | undefined, options = OPTIONS) {
@@ -121,11 +126,28 @@ describe('resolveTargetOrg at multi', () => {
 describe('runInTargetOrg', () => {
   const orgSeen = () => Promise.resolve(getTenantContext());
 
-  it('enters the named org when it is not the one the caller is in', async () => {
+  it('enters the named org as the caller’s source, without their entered-org role', async () => {
     const seen = await runAsOrg(INSTALL_ORG_ID, () => runInTargetOrg(CUSTOMER_ORG, orgSeen), {
       source: 'session',
+      role: 'ADMIN',
     });
     expect(seen?.orgId).toBe(CUSTOMER_ORG);
+    // An admin's request, not a background job; and no role, which was the
+    // caller's role in the install org and says nothing about the target.
+    expect(seen?.source).toBe('session');
+    expect(seen?.role ?? null).toBeNull();
+  });
+
+  it('keeps an admin API key’s source in the named org', async () => {
+    const seen = await runAsOrg(INSTALL_ORG_ID, () => runInTargetOrg(CUSTOMER_ORG, orgSeen), {
+      source: 'api-key',
+    });
+    expect(seen).toMatchObject({ orgId: CUSTOMER_ORG, source: 'api-key' });
+  });
+
+  it('falls back to a job source when the caller entered no org', async () => {
+    const seen = await runInTargetOrg(CUSTOMER_ORG, orgSeen);
+    expect(seen).toMatchObject({ orgId: CUSTOMER_ORG, source: 'job' });
   });
 
   it('keeps the caller’s own context when the target is the entered org', async () => {
