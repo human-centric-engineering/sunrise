@@ -73,10 +73,24 @@ const atDefaults = () =>
     switches: view().switches.map((s) => ({ ...s, on: s.whenNothingSet, atDefault: true })),
   });
 
-function renderForm(initial: OrgEntitlementsView = view()) {
+function renderForm(
+  initial: OrgEntitlementsView = view(),
+  onSaved?: (stored: OrgEntitlementsView) => void
+) {
   const user = userEvent.setup();
-  render(<OrgEntitlementsForm orgId={ORG} entitlements={initial} />);
+  render(<OrgEntitlementsForm orgId={ORG} entitlements={initial} onSaved={onSaved} />);
   return user;
+}
+
+/** Confirm the clear dialog's own "Clear to defaults", not the one that opened it. */
+async function confirmClear(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Clear to defaults' }));
+  const dialog = await screen.findByRole('alertdialog');
+  await user.click(
+    Array.from(dialog.querySelectorAll('button')).find(
+      (b) => b.textContent === 'Clear to defaults'
+    )!
+  );
 }
 
 describe('OrgEntitlementsForm', () => {
@@ -365,5 +379,65 @@ describe('OrgEntitlementsForm', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('No switch has the key x');
     expect(screen.getByRole('checkbox', { name: /Lead generation/ })).toBeChecked();
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+  });
+
+  describe('onSaved (#1325)', () => {
+    it('hands the host what the server stored once a save lands', async () => {
+      // Different from what was ticked, so the host is shown to get the
+      // server's answer and not the form's own guess.
+      const stored = view({
+        switches: view().switches.map((s) => ({ ...s, on: true, atDefault: false })),
+      });
+      vi.mocked(apiClient.patch).mockResolvedValue(stored);
+      const onSaved = vi.fn();
+      const user = renderForm(view(), onSaved);
+
+      await user.click(screen.getByRole('checkbox', { name: /Lead generation/ }));
+      await user.click(screen.getByRole('button', { name: 'Save switches' }));
+
+      expect(await screen.findByText('Saved', { selector: 'span' })).toBeInTheDocument();
+      expect(onSaved).toHaveBeenCalledTimes(1);
+      expect(onSaved).toHaveBeenCalledWith(stored);
+    });
+
+    it('hands the host the defaults once a clear lands', async () => {
+      const cleared = atDefaults();
+      vi.mocked(apiClient.delete).mockResolvedValue(cleared);
+      const onSaved = vi.fn();
+      const user = renderForm(view(), onSaved);
+
+      await confirmClear(user);
+
+      expect(
+        await screen.findByText('Cleared to defaults', { selector: 'span' })
+      ).toBeInTheDocument();
+      expect(onSaved).toHaveBeenCalledTimes(1);
+      expect(onSaved).toHaveBeenCalledWith(cleared);
+    });
+
+    it('is not called when a save fails', async () => {
+      const { APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockRejectedValue(new APIClientError('Try again later'));
+      const onSaved = vi.fn();
+      const user = renderForm(view(), onSaved);
+
+      await user.click(screen.getByRole('checkbox', { name: /Reports/ }));
+      await user.click(screen.getByRole('button', { name: 'Save switches' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Try again later');
+      expect(onSaved).not.toHaveBeenCalled();
+    });
+
+    it('is not called when a clear fails', async () => {
+      const { APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(new APIClientError('Something went wrong'));
+      const onSaved = vi.fn();
+      const user = renderForm(view(), onSaved);
+
+      await confirmClear(user);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
+      expect(onSaved).not.toHaveBeenCalled();
+    });
   });
 });

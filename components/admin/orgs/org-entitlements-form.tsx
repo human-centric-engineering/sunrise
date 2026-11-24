@@ -25,6 +25,9 @@
  *    are shown but can only be changed from the install organisation.
  *  - **Registration failed**: the app's switches could not be registered, so
  *    every organisation has none of them.
+ *
+ * A host that shows the switches elsewhere takes what each write stored from
+ * `onSaved`, rather than reading them again.
  */
 
 import { useState } from 'react';
@@ -75,6 +78,14 @@ export interface OrgEntitlementsView {
 export interface OrgEntitlementsFormProps {
   orgId: string;
   entitlements: OrgEntitlementsView;
+  /**
+   * Called with what the server stored, each time a save or a clear lands
+   * (#1325). Not called when a write fails. For a host that shows the
+   * switches somewhere else too, such as a row in a list: re-reading them
+   * when the form closes can reach the server before a write still in flight
+   * has committed, and show the switches as they were.
+   */
+  onSaved?: (view: OrgEntitlementsView) => void;
 }
 
 /** Why the switches are read-only from a customer's org, for the shared notice. */
@@ -85,7 +96,11 @@ function onKeys(view: OrgEntitlementsView): Set<string> {
   return new Set(view.switches.filter((s) => s.on).map((s) => s.key));
 }
 
-export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitlementsFormProps) {
+export function OrgEntitlementsForm({
+  orgId,
+  entitlements: initial,
+  onSaved,
+}: OrgEntitlementsFormProps) {
   const [view, setView] = useState(initial);
   const [ticked, setTicked] = useState(() => onKeys(initial));
   const [saving, setSaving] = useState(false);
@@ -151,6 +166,7 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       saveFailure.clear();
       clearFailure.clear();
       setDone(said);
+      onSaved?.(updated);
       return true;
     } catch (err) {
       failure.report(err);
