@@ -145,6 +145,16 @@ describe('runInTargetOrg', () => {
     expect(seen).toMatchObject({ orgId: CUSTOMER_ORG, source: 'api-key' });
   });
 
+  it('does not carry a support source or its stamp, which is consent for the entered org only', async () => {
+    const support = { grantId: 'grant-1', level: 'ADMIN' as const, expiresAt: new Date() };
+    const seen = await runAsOrg(INSTALL_ORG_ID, () => runInTargetOrg(CUSTOMER_ORG, orgSeen), {
+      source: 'support',
+      support,
+    });
+    expect(seen).toMatchObject({ orgId: CUSTOMER_ORG, source: 'job' });
+    expect(seen?.support).toBeUndefined();
+  });
+
   it('falls back to a job source when the caller entered no org', async () => {
     const seen = await runInTargetOrg(CUSTOMER_ORG, orgSeen);
     expect(seen).toMatchObject({ orgId: CUSTOMER_ORG, source: 'job' });

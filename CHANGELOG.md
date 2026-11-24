@@ -52,12 +52,23 @@ release process.
   `orgId`, so a platform admin in the install org can unstick a customer org's
   run or clear its conversations at `multi`. The named org is checked against
   the authorization policy and must exist; the work runs inside it, its hooks
-  go to its webhooks, and the audit row is written under it. Left out, the
+  go to its webhooks, and the audit row is written under it. Force-fail's
+  ownership rule is unchanged: the run must be system-owned (a scheduled or
+  triggered run) or the caller's own, so a run a customer's user started is
+  still 404. Left out, the
   routes act on the org the caller is in, as before. Both stay platform-tier,
   so a platform admin inside a customer org is still refused. The rule is
   `resolveTargetOrg()` / `runInTargetOrg()` in `lib/tenancy/target-org.ts`,
   which backup export and import now share (`resolveBackupScope()` is
   unchanged in behaviour).
+
+- **`runAsFounderRelease(userId, fn)` in `lib/tenancy/context.ts` (t-1084).**
+  A debug-logged null-org system scope for releasing the signup orgs a founder
+  can now act in, which at `multi` runs on every sign-in, beside
+  `runAsCredentialLookup` and `runAsLivenessProbe`. It is confined to
+  `lib/tenancy/lifecycle.ts` by an always-run site test
+  (`tests/unit/lib/tenancy/founder-release-sites.test.ts`); a fork that needs a
+  system scope elsewhere uses `runAsSystem`.
 
 - **A banner with the way back to the install org (t-1032).** A platform admin
   acting in a customer org as a member sees `MemberPlatformAdminBanner`

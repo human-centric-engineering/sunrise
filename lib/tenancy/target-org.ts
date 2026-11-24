@@ -29,8 +29,25 @@ import { prisma } from '@/lib/db/client';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { canAdminister, type AuthorizationPrincipal } from '@/lib/auth/authorization';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { getTenantContext, isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
+import {
+  getTenantContext,
+  isMultiTenant,
+  runAsOrg,
+  type TenantContextSource,
+} from '@/lib/tenancy/context';
 import { orgIdSchema } from '@/lib/validations/tenancy';
+
+/** A source {@link runInTargetOrg} may carry into another org. */
+type CarriedSource = Exclude<TenantContextSource, 'system' | 'implicit' | 'support'>;
+
+/**
+ * Whether {@link runInTargetOrg} carries `source` into another org. Not the
+ * system and implicit scopes (no org was entered), nor `support`, whose stamp
+ * is consent for the entered org only.
+ */
+function isCarried(source: TenantContextSource): source is CarriedSource {
+  return source !== 'system' && source !== 'implicit' && source !== 'support';
+}
 
 /** The query a route that takes a target org accepts. */
 export const targetOrgQuerySchema = z.object({
@@ -106,14 +123,15 @@ export async function resolveTargetOrg(
  * In another org the caller's source is kept (a session, an admin API key), so
  * what reads the context sees an admin's request, not a background job. The
  * role is not: it is the caller's role in the org they entered, and they hold
- * none in the target. An unbound admin key runs in no org and has no source
- * worth keeping, so it takes `runAsOrg`'s default.
+ * none in the target. Nor is a support entry, which is consent for the org the
+ * caller entered, so a `support` source is not carried either. An unbound
+ * admin key runs in no org and has no source worth keeping. Those take
+ * `runAsOrg`'s default.
  */
 export function runInTargetOrg<T>(orgId: string, fn: () => Promise<T>): Promise<T> {
   const ctx = getTenantContext();
   const active = ctx?.orgId ?? null;
   if (!isMultiTenant() || orgId === active) return fn();
-  const source =
-    ctx && ctx.source !== 'system' && ctx.source !== 'implicit' ? ctx.source : undefined;
+  const source = ctx && isCarried(ctx.source) ? ctx.source : undefined;
   return runAsOrg(orgId, fn, source ? { source } : {});
 }

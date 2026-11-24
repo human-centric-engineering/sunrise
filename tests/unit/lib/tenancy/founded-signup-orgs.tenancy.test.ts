@@ -204,6 +204,17 @@ describe('completeFoundedSignupOrgs at multi, on a stack that entered no org', (
     expect(scopeOf((sql) => sql.includes('WITH founded AS'))).toBe('system');
   });
 
+  it('logs the bypass at debug, not as an info-level runAsSystem, since it runs on every sign-in', async () => {
+    await completeFoundedSignupOrgs(OWNER, { signingIn: true });
+
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Entering system tenant scope to release a founder’s signup orgs',
+      { userId: OWNER }
+    );
+    const infos = mockLogger.info.mock.calls.map((c) => String(c[0]));
+    expect(infos).not.toContain('Entering system tenant scope');
+  });
+
   it('sets the released org up inside that org: the hooks’ lease, and each hook', async () => {
     await completeFoundedSignupOrgs(OWNER, { signingIn: true });
 

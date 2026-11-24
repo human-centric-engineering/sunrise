@@ -58,7 +58,7 @@ import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { isMultiTenant, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsFounderRelease, runAsOrg } from '@/lib/tenancy/context';
 import {
   countNonStaffMembers,
   hasOwnerStanding,
@@ -356,14 +356,16 @@ export async function createSignupOrg(
  * whatever fails is caught up by the `orgCreatedHooks` and `platformAgents`
  * maintenance jobs.
  *
- * Every caller is an auth hook, whose stack entered no org, so it enters the
- * new org itself (t-1084), as the `orgCreatedHooks` job does for each org it
- * retries: at `multi` the hooks' lease is raw SQL, which the data layer
- * refuses outside a context.
+ * Every caller is an auth hook, whose stack entered no org, so at `multi` it
+ * enters the new org itself (t-1084), as the `orgCreatedHooks` job does for
+ * each org it retries: there the hooks' lease is raw SQL, which the data layer
+ * refuses outside a context. Signup orgs are only made at `multi`; at `single`
+ * nothing is entered, as before.
  */
 export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {
   logger.info('Signup org founded', { orgId, ownerUserId });
-  await runAsOrg(orgId, () => setUpCreatedOrg(orgId, ownerUserId), { source: 'job' });
+  const setUp = () => setUpCreatedOrg(orgId, ownerUserId);
+  await (isMultiTenant() ? runAsOrg(orgId, setUp, { source: 'job' }) : setUp());
 }
 
 /**
@@ -384,10 +386,9 @@ export async function completeFoundedSignupOrgs(
   try {
     // The release reads and writes across orgs by design, and runs on an auth
     // hook's stack, which entered none: at `multi` its raw SQL needs the
-    // system scope or the data layer refuses it (t-1084).
-    founded = isMultiTenant()
-      ? await runAsSystem('release the signup orgs a founder can now act in', release)
-      : await release();
+    // system scope or the data layer refuses it (t-1084). Its own scope, logged
+    // at debug, because it runs on every sign-in.
+    founded = isMultiTenant() ? await runAsFounderRelease(userId, release) : await release();
   } catch (error) {
     logger.error('Failed to release a verified founder’s signup org', error, { userId });
     return;

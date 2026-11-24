@@ -34,7 +34,9 @@
  * exist (`resolveTargetOrg`); the run is read, failed and its hooks emitted
  * inside that org (`runAsOrg`), and the audit row is written under it. Left
  * out, the run is looked up in the org the caller is in, as before. A
- * suspended org may be named: its runs can still be stuck.
+ * suspended org may be named: its runs can still be stuck. Naming an org does
+ * not widen the ownership rule above: a run a customer's user started is
+ * still 404.
  *
  * **Not identical to the cancel route, despite the shared shape.** `cancel`
  * additionally admits an admin the run's trace names in `approverUserIds` while
