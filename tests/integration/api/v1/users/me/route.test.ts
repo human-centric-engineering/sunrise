@@ -308,8 +308,9 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
 
   describe('Last-admin guard', () => {
     it('returns 400 LAST_ADMIN with full envelope when admin count is 1, and does not call $transaction', async () => {
-      // Arrange — ADMIN session; count resolves 1 (last admin)
+      // Arrange — ADMIN session and stored role; count resolves 1 (last admin)
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ role: 'ADMIN' } as never);
       vi.mocked(prisma.user.count).mockResolvedValue(1);
       const request = makeDeleteRequest({ confirmation: 'DELETE' });
 
@@ -339,12 +340,35 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     });
   });
 
+  describe('Last-admin guard reads the stored role (t-1032)', () => {
+    it('refuses the last admin whose session presents a plain user role, as it does inside a customer org', async () => {
+      // Outside the install org the guard presents a platform admin who is a
+      // member there as their org role. Whether this is the last operator is
+      // a fact about the account, so the stored role decides.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ role: 'ADMIN' } as never);
+      vi.mocked(prisma.user.count).mockResolvedValue(1);
+
+      const response = await DELETE(makeDeleteRequest({ confirmation: 'DELETE' }));
+
+      expect(response.status).toBe(400);
+      const body = await parseJSON<ApiBody>(response);
+      expect((body as ErrorBody).error.code).toBe('LAST_ADMIN');
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: SESSION_USER_ID },
+        select: { role: true },
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called
+    });
+  });
+
   // ── Case 3: 200 happy path — real eraseUser chain ─────────────────────────
 
   describe('Happy path: non-last admin self-delete', () => {
     it('returns 200 { deleted:true } and the real eraseUser runs its full $transaction chain', async () => {
       // Arrange — ADMIN session with 2 admins (not the last)
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ role: 'ADMIN' } as never);
       vi.mocked(prisma.user.count).mockResolvedValue(2);
 
       const request = makeDeleteRequest({ confirmation: 'DELETE' });

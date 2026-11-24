@@ -131,6 +131,15 @@ arms answer as for the org's own ADMIN, and a handler's
 `isPlatformAdmin(session.user)` is false too. `tests/unit/lib/auth/guards-support.test.ts`
 pins the fork-policy case. The stored `User.role` is never changed.
 
+**A member platform admin presents the same way (t-1032).** At `multi`, a
+platform admin who is a member of any org but the install org is presented
+with the default user role there too, and their membership's role as
+`orgRole`. `withholdsPlatformRole(entry)` is the one statement of when the
+platform role is replaced: a support entry, or at `multi` an entry to an org
+that is not the install org. So inside a customer's org vendor staff are the
+role the customer gave them, for every policy; platform work is done from the
+install org. See [support-access.md](../tenancy/support-access.md#a-platform-admin-who-is-a-member-t-1032).
+
 A policy that wants to know it is talking to support reads
 `getTenantContext()?.source === 'support'` (and `.support` for the grant) —
 the principal does not carry it, deliberately.

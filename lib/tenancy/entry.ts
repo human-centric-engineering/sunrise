@@ -40,6 +40,13 @@
  * (`lib/auth/support-principal.ts`), so no policy, core's or a fork's, hands a
  * support actor anything beyond the org tier.
  *
+ * **A platform admin who is a member (t-1032).** Enters as that member,
+ * source `'session'` or `'resolver'`, with their membership's role — and,
+ * in any org but the install org, the guards present them exactly as they
+ * present a support actor: the default user role in place of the platform
+ * role. So inside a customer's org they can do what their org role allows
+ * there and no more; platform work is done from the install org.
+ *
  * **Credentials with no user behind them** — an embed token, an MCP key
  * whose creator may be gone — enter through {@link resolveCredentialOrg}:
  * the same null rule, and the org's own status in place of a membership
@@ -157,7 +164,8 @@ export async function verifiedSupportGrant(
  *
  * Only `not-a-member` falls through to the grant. A member of a suspended
  * org stays refused as suspended; a platform admin who IS a member enters as
- * that member, never as support.
+ * that member, never as support — and outside the install org is presented
+ * as that member's role alone (`lib/auth/support-principal.ts`, t-1032).
  */
 async function memberOrSupportEntry(
   user: NewUserShape & { id: string },

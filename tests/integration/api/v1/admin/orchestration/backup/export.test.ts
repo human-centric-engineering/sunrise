@@ -58,6 +58,8 @@ import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
+import { registerForkAdmittingOrgOwners } from '@/tests/helpers/fork-admits-org-owners';
 import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
 import { BACKUP_SHARED_REFUSAL } from '@/lib/orchestration/backup/scope';
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
@@ -81,6 +83,26 @@ function adminIn(orgId: string) {
     role: ORG_OWNER_ROLE,
     org: { status: 'ACTIVE' },
   } as never);
+}
+
+/**
+ * An OWNER of `orgId` who is not a platform admin, on an install whose fork
+ * policy admits org owners to this platform route. Since t-1032 that is how a
+ * caller acting in a customer org reaches it at all: a platform admin there is
+ * presented as their org role, and the default policy refuses them. The
+ * route's own refusals below are for whoever a policy admits.
+ */
+function forkAdmitsOwnerIn(orgId: string) {
+  const owner = mockAuthenticatedUser();
+  vi.mocked(auth.api.getSession).mockResolvedValue({
+    ...owner,
+    session: { ...owner.session, activeOrgId: orgId },
+  });
+  vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+    role: ORG_OWNER_ROLE,
+    org: { status: 'ACTIVE' },
+  } as never);
+  registerForkAdmittingOrgOwners();
 }
 
 const originalMode = env.TENANCY_MODE;
@@ -116,6 +138,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 
 describe('POST /api/v1/admin/orchestration/backup/export', () => {
   beforeEach(() => {
+    __resetAuthorizationPolicyForTests();
     vi.clearAllMocks();
     env.TENANCY_MODE = 'single';
     vi.mocked(exportOrchestrationConfig).mockResolvedValue(makeBackupPayload() as never);
@@ -227,6 +250,17 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
   });
 
   describe('Scope (§109 t-738)', () => {
+    it('at multi, refuses a platform admin acting in a customer org: they export it from the install org with ?orgId (t-1032)', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+
+      const response = await POST(makePostRequest());
+
+      expect(response.status).toBe(403);
+      expect(vi.mocked(exportOrchestrationConfig)).not.toHaveBeenCalled();
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    });
+
     it('at single, resolves to the install org with the shared part included when nothing is asked', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
@@ -271,7 +305,7 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
 
     it('at multi, a customer org gets its own part only: the shared part is left out by default', async () => {
       env.TENANCY_MODE = 'multi';
-      adminIn(CUSTOMER);
+      forkAdmitsOwnerIn(CUSTOMER);
 
       const response = await POST(makePostRequest());
 
@@ -284,7 +318,7 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
 
     it('at multi, refuses shared=true from a customer org with the install-org reason and does not export', async () => {
       env.TENANCY_MODE = 'multi';
-      adminIn(CUSTOMER);
+      forkAdmitsOwnerIn(CUSTOMER);
 
       const response = await POST(makePostRequest('?shared=true'));
 
@@ -332,7 +366,7 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
     it('at multi, refuses shared=true from a customer org naming the install org as the target', async () => {
       // The shared part follows the CALLER's org, not the one named in ?orgId=.
       env.TENANCY_MODE = 'multi';
-      adminIn(CUSTOMER);
+      forkAdmitsOwnerIn(CUSTOMER);
       vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
 
       const response = await POST(makePostRequest(`?orgId=${INSTALL_ORG_ID}&shared=true`));
@@ -403,7 +437,7 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
 
     it('records the customer org at multi, as both the entity and the metadata org', async () => {
       env.TENANCY_MODE = 'multi';
-      adminIn(CUSTOMER);
+      forkAdmitsOwnerIn(CUSTOMER);
 
       await POST(makePostRequest());
 

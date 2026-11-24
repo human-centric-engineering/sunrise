@@ -555,6 +555,21 @@ describe('API Key Endpoints', () => {
       mockEnv.TENANCY_MODE = 'multi';
     });
 
+    it('tells a platform admin acting in a customer org where to mint it, not that they lack the role (t-1032)', async () => {
+      // Inside a customer org the guard presents them as their org role, so
+      // the org axis must answer first.
+      vi.mocked(auth.api.getSession).mockResolvedValue(sessionIn(OTHER, 'ADMIN'));
+
+      const res = await POST(makePostRequest({ name: 'Oops', scopes: ['admin'] }));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(400);
+      expect(json.error.message).toBe(
+        'Admin keys are platform credentials; mint one from the default organisation'
+      );
+      expect(prisma.aiApiKey.create).not.toHaveBeenCalled();
+    });
+
     it('mints an admin key under the system scope, and an org key in the org', async () => {
       // The policy refuses a NULL-org row from inside an org, so the mint
       // has to be written outside it.

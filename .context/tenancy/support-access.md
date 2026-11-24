@@ -27,6 +27,7 @@ audit row made inside names the grant, for the vendor and for the org (t-825).
 | Enter under a grant      | **Enter as support** on `/admin/orgs` → `POST /api/v1/orgs/switch`                                |
 | Does a grant admit now?  | `verifiedSupportGrant(orgId)` in `lib/tenancy/entry.ts`                                           |
 | What support presents as | `lib/auth/support-principal.ts`                                                                   |
+| A member platform admin  | presented as their org role outside the install org: `withholdsPlatformRole()` (t-1032)           |
 | Entering outside guards  | `presentSessionEntry(session, entry, method)` after `enterSessionOrg()`                           |
 | The banner               | `components/admin/support-banner.tsx`, fed by `requestSupportSession()`                           |
 | An audit row's grant     | `AiAdminAuditLog.supportGrantId` / `supportOrgId`, stamped by `logAdminAction()`                  |
@@ -101,8 +102,10 @@ reads as open in the history until it expires.
 
 - **One rule, both paths.** `enterSessionOrg` falls through to the grant only
   on `not-a-member`, for the resolver header and `activeOrgId` alike. A
-  platform admin who is a member enters as that member. A member of a
-  suspended org stays refused as suspended. API keys never take this path.
+  platform admin who is a member enters as that member, and is presented as
+  that member's role ([below](#a-platform-admin-who-is-a-member-t-1032)). A
+  member of a suspended org stays refused as suspended. API keys never take
+  this path.
 - **The entry.** Source `'support'`, role `ADMIN`, and `support: { grantId,
 level, expiresAt }`. The tenant context carries the same `support` field,
   which is what the audit log reads (see [Audit rows](#audit-rows-t-825)).
@@ -137,30 +140,68 @@ level, expiresAt }`. The tenant context carries the same `support` field,
   customer org under a grant. Those are checked against the org's status when
   used, not against the grant, so one minted under a grant would outlive it.
 - **Maintenance.** The maintenance bypass asks the policy about the platform
-  admin's own role, with no org facts, inside a support session. Otherwise the
-  presented plain-user role would put them on the maintenance page,
-  the banner's way back included.
+  admin's own role, with no org facts, whenever `sessionPrincipal` reports
+  `platformRoleWithheld` (a support session, or a member outside the install
+  org). Otherwise the presented plain-user role would put them on the
+  maintenance page, the banner's way back included.
 - **The ended state** shows only to a platform admin who entered that org as
   support (a `support.enter` row for one of its grants). An admin who was a
   member and was removed is not told a support session ended.
 - **The Organisations list** offers **Enter as support** only for a grant
   entry would admit (the granter still an OWNER of the org).
 - **Account deletion.** `DELETE /api/v1/users/me` refuses inside a support
-  session: the presented role would otherwise skip its last-admin check.
+  session. Its last-admin check reads the stored role, not the presented one,
+  so a member platform admin in a customer org is still counted (t-1032).
+
+## A platform admin who is a member (t-1032)
+
+At `multi`, a platform admin who is a **member** of any org but the install
+org is presented there exactly as a support actor is: the default user role
+in place of the platform role, on the principal the policy is asked about and
+on the session the handler gets. Their org role is their membership's. So a
+vendor's staff who join a customer's org as ADMIN can do what an org ADMIN
+can do there and no more (#1177): platform-tier routes and pages refuse them,
+a fork policy written as `isPlatformAdmin(viewer)` admits nothing, the
+members routes give them owner standing only as an OWNER of the org, and an
+entitlement switch the org lacks limits them as it limits the org's own
+admins.
+
+- **No setting.** The rule is the org, not a switch: in the install org the
+  platform role is presented, in every other org it is not. The customer's
+  guarantee must not depend on anyone having set something.
+- **Platform work is done from the install org.** The switch route reads the
+  session's own role and does not enter the current org, so the way back
+  always works.
+- **The way back is on screen.** `MemberPlatformAdminBanner`, fed by
+  `requestMemberPlatformAdmin()`, shows in the admin console and the account
+  area (an org MEMBER is not admitted to the console). It names the org, the
+  role and the install org, and offers **Switch to …**. Through a fork's
+  resolver address it says to open the install org at its own address
+  instead, as the support banner does.
+- **What reads the stored role instead.** A fact about the account, not about
+  what it may do in this org: the last-admin check on deleting an account,
+  and whether an invitation's accepter is platform staff for the first-owner
+  bootstrap (#1178). Each reads `User.role` from the row. The bootstrap's
+  test of an invitation's **issuer** (`hasOwnerStandingIn`) still counts
+  platform standing: it can only make the org's first non-staff member its
+  OWNER, never staff, and it is how a platform admin working from the install
+  org sets up a customer's first owner.
+- **At `single`** nothing changes: there are no customer orgs.
 
 ## Entering an org outside the guards
 
 `withAuth` / `withAdminAuth` apply both support rules for every route they
 wrap. A route that enters an org itself, with `getServerSession()` and
 `enterSessionOrg()` (one that also serves a cookie-less caller, say), gets the
-raw entry: source `'support'`, role ADMIN, and a session whose user is still a
-platform `ADMIN`. Nothing refuses its writes under a READ_ONLY grant, and
+raw entry: source `'support'` (or a member's), role ADMIN, and a session whose
+user is still a platform `ADMIN`. Nothing refuses its writes under a READ_ONLY grant, and
 nothing scopes the work to the org. Three things are then the caller's duty:
 
 ```typescript
 const entry = await enterSessionOrg(user, activeOrgId, headerOrgId);
 if (isOrgRefusal(entry)) throw new ForbiddenError('Access denied');
-// 403 (logged) for a write under a READ_ONLY grant; the default user role inside support.
+// 403 (logged) for a write under a READ_ONLY grant; the default user role inside
+// support, and for a member in any org but the install org (t-1032).
 const session = presentSessionEntry(rawSession, entry, request.method, { path });
 // Run the work in the org's tenant context, as the guards do: row isolation
 // reads it, and so does the support stamp on audit rows.
@@ -176,7 +217,8 @@ row carries no `supportGrantId` and the action is missing from the org's view
 of what support did ([Audit rows](#audit-rows-t-825)).
 
 Use the presented `session` for every check after entry. A check on the raw
-session's `isPlatformAdmin(session.user)` is true for a support actor, so an
+session's `isPlatformAdmin(session.user)` is true for a support actor (and for
+a member platform admin in a customer org), so an
 "admin, or a member of this row's org" rule would admit them at both levels.
 Before 0.15.0 the same caller was refused `not-a-member`, so a route written
 then may need this added. `isSupportEntry(entry)` is there for a route that

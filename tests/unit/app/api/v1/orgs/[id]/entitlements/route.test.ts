@@ -11,6 +11,7 @@
  * than written over, so an org's save never closes what it bought.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import type { NextRequest } from 'next/server';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
@@ -261,7 +262,9 @@ describe('PATCH (t-1054)', () => {
 
 describe('the remaining refusals and answers (t-1054)', () => {
   it('refuses a platform admin for an org they are not acting in: they use the platform route', async () => {
-    const admin = session(ORG);
+    // From the install org, where the policy admits them to every org; in a
+    // customer org they are that org's role, and the policy refuses (t-1032).
+    const admin = session(INSTALL_ORG_ID);
     mockGetSession.mockResolvedValue({ ...admin, user: { ...admin.user, role: 'ADMIN' } });
     mockPrisma.org.findUnique.mockResolvedValue({ id: OTHER, settings: {} });
     const res = await get(OTHER);

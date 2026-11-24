@@ -16,6 +16,42 @@ release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **A platform admin acts in a customer org as their org role there (t-1032,
+  #1177).** At `multi`, a platform admin who is a member of any org but the
+  install org is now presented there as a support actor already was: the
+  default user role in place of the platform role, on the principal the policy
+  is asked about and on the session the handler gets, with their membership's
+  role as `orgRole`. So in a customer's org they can do what that org role
+  allows and no more: platform-tier routes and pages refuse them, a fork policy
+  written as `isPlatformAdmin(viewer)` admits nothing, the members routes give
+  them owner standing only as an OWNER of the org, and the org's entitlement
+  switches limit them. Platform work is done from the install org: per-org
+  backup (`?orgId=`), caps, switches and meters already work from there.
+  Force-failing a customer org's run and bulk-clearing its conversations do
+  not yet, and are no longer possible from inside it. There is no
+  setting: in the install org the platform role is presented, in every other
+  org it is not. Nothing changes at `single`. **What a fork checks:** a handler
+  that needs the account's own platform role (a fact about the account, not
+  about what it may do in this org) now reads `User.role` from the row, as
+  `DELETE /api/v1/users/me`'s last-admin check and
+  `POST /api/v1/invitations/accept` now do. `presentedRole()`,
+  `presentedSession()` and `presentSessionEntry()` (`lib/auth/support-principal.ts`)
+  take the entry's `orgId` into account; new beside them is
+  `withholdsPlatformRole(entry)`, the one statement of when the role is
+  replaced. `sessionPrincipal()` reports `platformRoleWithheld: true` when it
+  replaced it, and the maintenance bypass reads that. See
+  [support-access.md](./.context/tenancy/support-access.md#a-platform-admin-who-is-a-member-t-1032).
+
+### Added
+
+- **A banner with the way back to the install org (t-1032).** A platform admin
+  acting in a customer org as a member sees `MemberPlatformAdminBanner`
+  (`components/layouts/member-platform-admin-banner.tsx`) in the admin console
+  and the account area: the org, their role in it, and **Switch to** the install
+  org. It is fed by `requestMemberPlatformAdmin()` (`lib/auth/admin-page-viewer.ts`).
+
 ## [0.20.0] — 2026-11-21
 
 > **Alpha release.** Twenty-seventh tagged Sunrise release. **MINOR bump**:

@@ -22,6 +22,7 @@ vi.mock('next/headers', () => ({ headers: vi.fn(() => Promise.resolve(new Header
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     org: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn() },
     orgMembership: { findUnique: vi.fn(), findMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
   },
@@ -75,6 +76,7 @@ describe('POST /api/v1/invitations/accept', () => {
       user: { ...base.user, email: 'pat@example.com', emailVerified: true },
     });
     vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ role: 'USER' } as never);
     vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
       role: 'MEMBER',
       org: { status: 'ACTIVE' },
@@ -102,6 +104,49 @@ describe('POST /api/v1/invitations/accept', () => {
       'pat@example.com',
       'tok'
     );
+  });
+
+  it('hands over the stored platform role, not the one presented in a customer org (t-1032, #1178)', async () => {
+    // At multi, a platform admin acting in a customer org they are a member
+    // of is presented as their org role, so the session the handler sees
+    // says USER. Staff must still not take the first-owner bootstrap.
+    mockEnv.TENANCY_MODE = 'multi';
+    try {
+      const base = createMockAuthSession();
+      mockGetSession.mockResolvedValue({
+        session: { ...base.session, activeOrgId: ORG },
+        user: { ...base.user, role: 'ADMIN', email: 'pat@example.com', emailVerified: true },
+      });
+      vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+        role: 'ADMIN',
+        org: { status: 'ACTIVE' },
+      } as never);
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({ role: 'ADMIN' } as never);
+
+      const res = await post({ token: 'tok', email: 'pat@example.com' });
+
+      expect(res.status).toBe(200);
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        select: { role: true },
+      });
+      expect(mockAccept).toHaveBeenCalledWith(
+        expect.objectContaining({ id: USER_ID, role: 'ADMIN' }),
+        'pat@example.com',
+        'tok'
+      );
+    } finally {
+      mockEnv.TENANCY_MODE = 'single';
+    }
+  });
+
+  it('refuses, and accepts nothing, when the account’s row cannot be read', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+    const res = await post({ token: 'tok', email: 'pat@example.com' });
+
+    expect(res.status).toBe(401);
+    expect(mockAccept).not.toHaveBeenCalled();
   });
 
   it('passes a refusal through with its status and code', async () => {

@@ -292,3 +292,56 @@ export const requestSupportSession = cache(async (): Promise<SupportSessionView 
   if (!entered) return null;
   return { state: 'ended', orgId, orgName: org.name };
 });
+
+/**
+ * A platform admin acting in a customer org as a member there (t-1032), for
+ * the banner that offers the way back: `null` for everyone else, a support
+ * session included (it has its own banner).
+ *
+ * Outside the install org the guards present a member platform admin as
+ * their org role alone (`lib/auth/support-principal.ts`), so every
+ * platform-only page and route refuses them there, and an org MEMBER is not
+ * admitted to the console at all. That refusal is correct; this is its
+ * remedy (`HB10`): say where they are, as what, and switch them back to the
+ * install org, where the platform role is theirs again. Read for both
+ * shells, the console's and the account area's.
+ */
+export interface MemberPlatformAdminView {
+  /** `null` only if the row went between entry and this read; the banner words it. */
+  orgName: string | null;
+  /** Their role in the org they are acting in. */
+  orgRole: string;
+  /** The install org's name: where platform administration is done. */
+  installOrgName: string | null;
+  /**
+   * Entered through a fork's resolver header (the org of this address). A
+   * switch cannot leave it, because the header wins over `activeOrgId`.
+   */
+  viaResolver: boolean;
+}
+
+export const requestMemberPlatformAdmin = cache(
+  async (): Promise<MemberPlatformAdminView | null> => {
+    if (!isMultiTenant()) return null;
+    const entry = await requestPrincipal();
+    if (!entry?.platformRoleWithheld || entry.support) return null;
+    const { orgId, orgRole } = entry.principal;
+    if (!orgId || !orgRole) return null;
+    // The principal's role is the presented one; whether they are staff is
+    // the session's own.
+    const session = await getServerSession();
+    if (!isPlatformAdmin(session?.user)) return null;
+
+    const [org, installOrg, requestHeaders] = await Promise.all([
+      prisma.org.findUnique({ where: { id: orgId }, select: { name: true } }),
+      prisma.org.findUnique({ where: { id: INSTALL_ORG_ID }, select: { name: true } }),
+      headers(),
+    ]);
+    return {
+      orgName: org?.name ?? null,
+      orgRole,
+      installOrgName: installOrg?.name ?? null,
+      viaResolver: Boolean(requestHeaders.get(TENANT_HEADER_NAME)),
+    };
+  }
+);

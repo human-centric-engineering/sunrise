@@ -21,6 +21,7 @@
  */
 import { enterSessionOrg, isOrgRefusal, type OrgRefusal } from '@/lib/tenancy/entry';
 import { presentedRole } from '@/lib/auth/support-principal';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import type { SupportEntry } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import type { AuthorizationPrincipal, AuthorizationScope } from '@/lib/auth/authorization';
@@ -38,6 +39,14 @@ export interface SessionPrincipal {
   refused?: OrgRefusal['refused'];
   /** The grant a support session entered under (§121 t-824). */
   support?: SupportEntry;
+  /**
+   * The principal's role is not the session's own: the default user role
+   * replaced it, because the entry is support or the org entered is not the
+   * install org (t-1032). Set only when the two differ — a platform admin
+   * inside a customer org. For a question about the vendor's own state
+   * rather than the org's (maintenance), ask about the session's role.
+   */
+  platformRoleWithheld?: true;
 }
 
 /**
@@ -61,17 +70,22 @@ export async function sessionPrincipal(
       headerOrgId
     );
     if (isOrgRefusal(entry)) return { principal: base, scope: {}, refused: entry.refused };
+    const role = presentedRole(base.role, entry);
     return {
-      // A support session presents the default user role, as the guards
-      // present it (§121 t-824), so the layout's answer matches the routes'.
+      // A support session, and any entry to an org but the install org,
+      // presents the default user role, as the guards present it (§121
+      // t-824, t-1032), so the layout's answer matches the routes'.
       principal: {
         ...base,
-        role: presentedRole(base.role, entry),
+        role,
         orgId: entry.orgId,
         orgRole: entry.role,
       },
       scope: { org: entry.orgId },
       ...(entry.support ? { support: entry.support } : {}),
+      // Against the role the session would present anyway: a session with no
+      // stored role had no platform role to withhold.
+      ...(role !== (base.role ?? DEFAULT_USER_ROLE) ? { platformRoleWithheld: true as const } : {}),
     };
   } catch (error) {
     // No org facts is the closed answer: nothing org-scoped is admitted, and

@@ -307,10 +307,8 @@ export const DELETE = withAuth(
     const log = await getRouteLogger(request);
 
     try {
-      // Inside a support session the guard presents a platform admin as a
-      // plain user (§121 t-824), so the last-admin check below would not see
-      // them. Deleting a vendor account from inside a customer's org is not a
-      // support act anyway: end the session first.
+      // Deleting a vendor account from inside a customer's org is not a
+      // support act (§121 t-824): end the session first.
       if (getTenantContext()?.source === 'support') {
         return errorResponse('End your support session before deleting your account.', {
           status: 403,
@@ -338,7 +336,16 @@ export const DELETE = withAuth(
       // caller always is, so a caller whose own deletion is already pending
       // (a cached session repeating the request) is not told they are the
       // last admin when another remains.
-      if (isPlatformAdmin(session.user)) {
+      //
+      // Asked of the stored role, not the session's: outside the install org
+      // the guard presents a platform admin who is a member there as their
+      // org role (t-1032), and whether this account is the last operator is
+      // a fact about the account, not about what it may do in that org.
+      const stored = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { role: true },
+      });
+      if (isPlatformAdmin(stored)) {
         const adminCount = await prisma.user.count({
           where: {
             ...humanAdminWhere,

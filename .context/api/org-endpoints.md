@@ -607,7 +607,8 @@ registers are kept by both. Each write that changes something writes an
 `org.entitlements.update` audit row with what it replaced. At `multi` the
 writes, like a caps write, come
 only from the install org or an unbound admin API key: a platform admin
-switched into a customer's org may read the switches but not change them.
+acting in a customer's org (as a member, or under a support grant) may read
+the switches as an org admin there but not change them.
 
 All three return `{ orgId, nothingSet, unreadable, mayChange,
 registrationFailed, switches, unregistered }`, where each switch is `{ key,

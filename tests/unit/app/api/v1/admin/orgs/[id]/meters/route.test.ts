@@ -63,6 +63,8 @@ import { GET, PATCH } from '@/app/api/v1/admin/orgs/[id]/meters/route';
 import { initAppEntitlements } from '@/lib/app/entitlements';
 import { __resetEntitlementRegistryForTests, registerMeter } from '@/lib/tenancy/entitlements';
 import { createMockAuthSession } from '@/tests/helpers/auth';
+import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
+import { registerForkAdmittingOrgOwners } from '@/tests/helpers/fork-admits-org-owners';
 
 const OTHER = 'cmorg000000000000000other';
 
@@ -73,6 +75,16 @@ function session(role: 'USER' | 'ADMIN', activeOrgId: string | null = INSTALL_OR
     session: { ...base.session, activeOrgId },
     user: { ...base.user, role },
   };
+}
+
+/**
+ * An OWNER of `orgId` who is not a platform admin, admitted to this platform
+ * route by a fork's policy. Since t-1032 that is who reaches it from a
+ * customer org: a platform admin there is presented as their org role.
+ */
+function forkOwnerIn(orgId: string) {
+  registerForkAdmittingOrgOwners();
+  mockGetSession.mockResolvedValue(session('USER', orgId));
 }
 
 const URL_FOR = (id: string) => `http://localhost/api/v1/admin/orgs/${id}/meters`;
@@ -117,6 +129,7 @@ function storedSettings() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetAuthorizationPolicyForTests();
   mockEnv.TENANCY_MODE = 'multi';
   __resetEntitlementRegistryForTests();
   vi.mocked(initAppEntitlements).mockImplementation(() => {});
@@ -205,8 +218,8 @@ describe('GET /api/v1/admin/orgs/[id]/meters', () => {
     expect((await get()).status).toBe(403);
   });
 
-  it('lets a platform admin in a customer org read them, saying they cannot be changed from there', async () => {
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+  it('lets a customer-org caller a fork admits read them, saying they cannot be changed from there', async () => {
+    forkOwnerIn(OTHER);
 
     const res = await get();
 
@@ -435,8 +448,8 @@ describe('PATCH /api/v1/admin/orgs/[id]/meters', () => {
 });
 
 describe('the limits at multi are changed only from the install org, as the caps are', () => {
-  it('refuses a platform admin in a customer org with the shared reason, writing nothing', async () => {
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+  it('refuses a customer-org caller a fork admits with the shared reason, writing nothing', async () => {
+    forkOwnerIn(OTHER);
 
     const res = await patch({ limits: { seats: 5 } });
     const body = await json(res);
@@ -454,7 +467,7 @@ describe('the limits at multi are changed only from the install org, as the caps
   });
 
   it('refuses before reading the body, so a bad one is not what the caller is told to fix', async () => {
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+    forkOwnerIn(OTHER);
 
     // Would be a 400 (and an unregistered key) from the install org.
     const res = await patch({ limits: { 'Bad-Key': -1 } });
@@ -493,9 +506,9 @@ describe('the limits at multi are changed only from the install org, as the caps
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
-  it('lets a platform admin in a customer org set them at single, where there is only one org', async () => {
+  it('lets a customer-org caller a fork admits set them at single, where there is only one org', async () => {
     mockEnv.TENANCY_MODE = 'single';
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+    forkOwnerIn(OTHER);
 
     const res = await patch({ limits: { seats: 5 } });
 

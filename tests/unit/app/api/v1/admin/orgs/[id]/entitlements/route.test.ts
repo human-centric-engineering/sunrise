@@ -65,6 +65,8 @@ import {
   registerEntitlementSwitch,
 } from '@/lib/tenancy/entitlements';
 import { createMockAuthSession } from '@/tests/helpers/auth';
+import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
+import { registerForkAdmittingOrgOwners } from '@/tests/helpers/fork-admits-org-owners';
 
 const OTHER = 'cmorg000000000000000other';
 
@@ -75,6 +77,16 @@ function session(role: 'USER' | 'ADMIN', activeOrgId: string | null = INSTALL_OR
     session: { ...base.session, activeOrgId },
     user: { ...base.user, role },
   };
+}
+
+/**
+ * An OWNER of `orgId` who is not a platform admin, admitted to this platform
+ * route by a fork's policy. Since t-1032 that is who reaches it from a
+ * customer org: a platform admin there is presented as their org role.
+ */
+function forkOwnerIn(orgId: string) {
+  registerForkAdmittingOrgOwners();
+  mockGetSession.mockResolvedValue(session('USER', orgId));
 }
 
 const URL_FOR = (id: string) => `http://localhost/api/v1/admin/orgs/${id}/entitlements`;
@@ -121,6 +133,7 @@ function storedSettings() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetAuthorizationPolicyForTests();
   mockEnv.TENANCY_MODE = 'multi';
   __resetEntitlementRegistryForTests();
   vi.mocked(initAppEntitlements).mockImplementation(() => {});
@@ -510,8 +523,8 @@ describe('DELETE /api/v1/admin/orgs/[id]/entitlements', () => {
 });
 
 describe('the switches at multi are changed only from the install org, as the caps are', () => {
-  it('refuses a platform admin switched into a customer org, before saying which switches exist', async () => {
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+  it('refuses a customer-org caller a fork admits, before saying which switches exist', async () => {
+    forkOwnerIn(OTHER);
 
     // From the install org an unregistered key is a 400 naming it. The
     // refusal comes first, so it says nothing about what is registered.
@@ -531,7 +544,7 @@ describe('the switches at multi are changed only from the install org, as the ca
   });
 
   it('refuses a customer org before reading the body, so a bad one is not what it is told to fix', async () => {
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+    forkOwnerIn(OTHER);
 
     const res = await patch({ on: ['Bad-Key'] });
 
@@ -540,14 +553,14 @@ describe('the switches at multi are changed only from the install org, as the ca
   });
 
   it('refuses clearing them from a customer org too', async () => {
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+    forkOwnerIn(OTHER);
 
     expect((await reset()).status).toBe(403);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
-  it('still lets a platform admin in a customer org read them, saying they cannot be changed from there', async () => {
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+  it('still lets a customer-org caller a fork admits read them, saying they cannot be changed from there', async () => {
+    forkOwnerIn(OTHER);
 
     const res = await get();
 
@@ -590,9 +603,9 @@ describe('the switches at multi are changed only from the install org, as the ca
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
-  it('lets a platform admin in a customer org set them at single, where there is only one org', async () => {
+  it('lets a customer-org caller a fork admits set them at single, where there is only one org', async () => {
     mockEnv.TENANCY_MODE = 'single';
-    mockGetSession.mockResolvedValue(session('ADMIN', OTHER));
+    forkOwnerIn(OTHER);
 
     const res = await patch({ on: ['reports'], off: [] });
 

@@ -85,7 +85,50 @@ describe('sessionPrincipal', () => {
       },
       scope: { org: ORG },
       support: { grantId: 'grant-1', level: 'READ_ONLY', expiresAt },
+      platformRoleWithheld: true,
     });
+  });
+
+  it('a platform admin who is a member of a customer org presents as that role (t-1032)', async () => {
+    findUnique.mockResolvedValue({ role: 'ADMIN', org: { status: 'ACTIVE' } });
+    await expect(sessionPrincipal(session(ORG, 'ADMIN'), null)).resolves.toEqual({
+      principal: {
+        userId: 'user-1',
+        role: 'USER',
+        credential: 'session',
+        orgId: ORG,
+        orgRole: 'ADMIN',
+      },
+      scope: { org: ORG },
+      platformRoleWithheld: true,
+    });
+    // Never treated as support: no grant is read for a member.
+    expect(findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a member never falls through to the grant;
+  });
+
+  it('flags nothing for a session with no stored role: there was no platform role to withhold', async () => {
+    findUnique.mockResolvedValue({ role: 'OWNER', org: { status: 'ACTIVE' } });
+    const result = await sessionPrincipal(
+      { user: { id: 'user-1' }, session: { activeOrgId: ORG } },
+      null
+    );
+    expect(result.principal).toMatchObject({ role: 'USER', orgRole: 'OWNER' });
+    expect(result.platformRoleWithheld).toBeUndefined();
+  });
+
+  it('a platform admin in the install org keeps their role (t-1032)', async () => {
+    findUnique.mockResolvedValue({ role: 'OWNER', org: { status: 'ACTIVE' } });
+    const result = await sessionPrincipal(session(INSTALL_ORG_ID, 'ADMIN'), null);
+    expect(result.principal).toMatchObject({ role: 'ADMIN', orgId: INSTALL_ORG_ID });
+    expect(result.platformRoleWithheld).toBeUndefined();
+  });
+
+  it('a platform admin in another org at single keeps their role (t-1032)', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    findUnique.mockResolvedValue({ role: 'ADMIN', org: { status: 'ACTIVE' } });
+    const result = await sessionPrincipal(session(ORG, 'ADMIN'), null);
+    expect(result.principal).toMatchObject({ role: 'ADMIN', orgId: ORG, orgRole: 'ADMIN' });
+    expect(result.platformRoleWithheld).toBeUndefined();
   });
 
   it('a platform admin whose grant has ended keeps their role and no org facts', async () => {

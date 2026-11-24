@@ -492,8 +492,9 @@ function principalOf(
 ): AuthorizationPrincipal {
   return {
     userId: session.user.id,
-    // A support session presents the default user role, never the platform
-    // one (§121 t-824, `lib/auth/support-principal.ts`).
+    // A support session, and any entry to an org but the install org,
+    // presents the default user role, never the platform one (§121 t-824,
+    // t-1032, `lib/auth/support-principal.ts`).
     role: presentedRole(session.user.role, entry),
     credential,
     scopes,

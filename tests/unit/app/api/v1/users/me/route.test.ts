@@ -257,6 +257,8 @@ describe('DELETE /api/v1/users/me', () => {
     // Arrange — ADMIN role, count returns 1 (last admin)
     const session = mockAdminUser();
     vi.mocked(prisma.user.count).mockResolvedValue(1);
+    // The last-admin check reads the stored role (t-1032).
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ role: 'ADMIN' } as never);
 
     const request = createMockRequest({
       method: 'DELETE',
@@ -299,6 +301,8 @@ describe('DELETE /api/v1/users/me', () => {
     // The mock returns whatever count() resolves; we assert the QUERY excludes
     // the SERVICE account, which is what makes a 2-row (system+human) DB report 1.
     vi.mocked(prisma.user.count).mockResolvedValue(1);
+    // The last-admin check reads the stored role (t-1032).
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ role: 'ADMIN' } as never);
 
     const request = createMockRequest({
       method: 'DELETE',
@@ -329,6 +333,8 @@ describe('DELETE /api/v1/users/me', () => {
     const userId = session.user.id;
 
     vi.mocked(prisma.user.count).mockResolvedValue(2);
+    // The last-admin check reads the stored role (t-1032).
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ role: 'ADMIN' } as never);
     vi.mocked(requestUserErasure).mockResolvedValue({
       status: 'erased',
       receiptId: 'receipt-1',
@@ -613,6 +619,8 @@ describe('DELETE /api/v1/users/me', () => {
     // Arrange
     const session = mockAdminUser();
     vi.mocked(prisma.user.count).mockResolvedValue(1);
+    // The last-admin check reads the stored role (t-1032).
+    vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ role: 'ADMIN' } as never);
 
     const request = createMockRequest({
       method: 'DELETE',

@@ -68,22 +68,6 @@ export const POST = withAuth(
 
     const body = await validateRequestBody(request, createApiKeySchema);
 
-    // PLATFORM standing, deliberately NOT the authorization policy.
-    //
-    // An `admin`-scoped key satisfies every scope and bypasses the role check in
-    // `withAdminAuth` entirely — the scope IS the capability there. That makes it
-    // cross-tenant by construction, which is why the design record pins it as
-    // platform-only (Q6, `.context/architecture/multi-tenancy-design.md`).
-    //
-    // So this asks `isPlatformAdmin` rather than `canAdminister`. A fork whose
-    // policy lets an org admin administer their own org must not thereby let them
-    // mint a credential that reaches every org's admin routes — routing this
-    // through the seam would do exactly that, quietly, the day the fork widened
-    // its policy for an unrelated reason.
-    if (body.scopes.includes('admin') && !isPlatformAdmin(session.user)) {
-      throw new ForbiddenError('Admin scope requires admin role');
-    }
-
     // The org axis (§106, t-673). An `admin` key is a platform credential and
     // binds no org — the guards enter none for it — so "an org-bound key can
     // never hold `admin`" is enforced here at mint, and `withAdminAuth` refuses
@@ -102,6 +86,27 @@ export const POST = withAuth(
         }
       );
     }
+
+    // PLATFORM standing, deliberately NOT the authorization policy. Asked
+    // after the org axis, so it only ever runs in the install org, where the
+    // session's role is the stored one: outside it a platform admin is
+    // presented as their org role (t-1032), and would be told they lack a
+    // role they hold rather than where to mint the key.
+    //
+    // An `admin`-scoped key satisfies every scope and bypasses the role check in
+    // `withAdminAuth` entirely — the scope IS the capability there. That makes it
+    // cross-tenant by construction, which is why the design record pins it as
+    // platform-only (Q6, `.context/architecture/multi-tenancy-design.md`).
+    //
+    // So this asks `isPlatformAdmin` rather than `canAdminister`. A fork whose
+    // policy lets an org admin administer their own org must not thereby let them
+    // mint a credential that reaches every org's admin routes — routing this
+    // through the seam would do exactly that, quietly, the day the fork widened
+    // its policy for an unrelated reason.
+    if (body.scopes.includes('admin') && !isPlatformAdmin(session.user)) {
+      throw new ForbiddenError('Admin scope requires admin role');
+    }
+
     const orgId = platformKey ? null : mintOrgId;
 
     const rawKey = generateApiKey();

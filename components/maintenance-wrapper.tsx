@@ -37,19 +37,19 @@ interface MaintenanceWrapperProps {
  * May this session see the site during maintenance? The policy's platform
  * question, about the principal the guards build.
  *
- * One exception: a support session (§121 t-824) presents as a plain user
- * inside the customer's org, which would leave a platform admin on the
- * maintenance page everywhere, including the console whose banner is their
- * only way back. Maintenance is the vendor's own state, not the org's, so the
- * question is asked about who they are outside the org: their stored role,
- * with no org facts.
+ * One exception: a platform admin inside a customer's org — a support
+ * session (§121 t-824), or as a member there (t-1032) — presents as a plain
+ * user, which would leave them on the maintenance page everywhere, including
+ * the console whose banner is their only way back. Maintenance is the
+ * vendor's own state, not the org's, so the question is asked about who they
+ * are outside the org: their stored role, with no org facts.
  */
 async function bypassesMaintenance(
   session: SessionLike,
   headerOrgId: string | null
 ): Promise<boolean> {
-  const { principal, scope, support } = await sessionPrincipal(session, headerOrgId);
-  if (support) {
+  const { principal, scope, platformRoleWithheld } = await sessionPrincipal(session, headerOrgId);
+  if (platformRoleWithheld) {
     return canAdminister(
       { userId: session.user.id, role: session.user.role, credential: 'session' },
       null,
