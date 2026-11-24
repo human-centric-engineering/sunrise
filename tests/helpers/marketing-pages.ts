@@ -28,6 +28,12 @@
  * and a page that is missing or re-exported fails rather than being skipped.
  * A fork that shims a page the §6 way already declares `components/app`, since
  * `reserved-fork-tiers.test.ts` fails a fork that fills it without saying so.
+ *
+ * FORK NOTE: this reads your real `lib/app/reserved-tiers.ts`, unmocked, on
+ * purpose: declaring a tier there is what tells it this checkout is a fork.
+ * Expect the static-pages test to skip each marketing page you have shimmed
+ * or deleted once you declare one, and to check the rest as Sunrise's. There
+ * is nothing to pin.
  */
 
 import { existsSync, readFileSync } from 'node:fs';

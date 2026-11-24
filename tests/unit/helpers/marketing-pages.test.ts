@@ -48,7 +48,7 @@ describe('isForkShim', () => {
   // `export *` never re-exports `default`, so the file still has its own page.
   it('leaves a page with its own default and an `export *` from a fork tier alone', () => {
     const src = [
-      "export * from '@/lib/app/about-extras';",
+      "export * from '@/components/app/about-extras';",
       'export default async function AboutPage() { return null; }',
     ].join('\n');
     expect(isForkShim(src)).toBe(false);
