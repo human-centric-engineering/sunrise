@@ -103,7 +103,9 @@ What that allows and what it keeps:
 | A `parallel` step's branches meeting at a join                    | The join waits for every branch, including a longer one: all of them were taken.                  |
 | A join with an edge from a step that has been reached but not run | It waits for that step. Reached is never untaken.                                                 |
 
-A bounded retry clears what the earlier attempt left untaken downstream of the retry target, with the rest of the cascade-clear, so the next attempt can take another way. A resume rebuilds the set from every step that has already run: a crash-resume from the saved walk position (`walkState`, including one saved before `untaken` existed), and a cursor resume (after an approval) from the trace. So a join behind a branch not taken before the pause still runs.
+A bounded retry clears what the earlier attempt left untaken downstream of the retry target, with the rest of the cascade-clear, so the next attempt can take another way. A crash-resume rebuilds the set from every step the saved walk position (`walkState`) says has run, including a position saved before `untaken` existed: that position also holds every step reached and not yet run, so none of those is mistaken for untaken. An approval resume takes `untaken` from the position the paused step's iteration saved as it began, and only when that position's `inFlight` holds the paused step. It is not rebuilt from the trace, which does not say which edges a step chose: a step that a paused batch's sibling chose but had not run would look untaken, and the join would run without it. A cursor resume with no usable position starts with the set empty, so a join behind an untaken branch there still deadlocks rather than running short.
+
+A branch that stops because a bounded retry spent its budget with no exhaustion edge (the legacy silent halt) can no longer run, so what it would have handed on to is untaken, and a join it fed runs on its other inputs. Give the guard an exhaustion edge (a sibling edge with the same condition and no `maxRetries`) to end the run another way.
 
 The `stragglerStrategy: 'wait-all'` config on parallel nodes is the implemented mode. `first-success` is not yet supported.
 
@@ -138,7 +140,7 @@ Edges in `ConditionalEdge` can carry `maxRetries?: number` (1–10, schema-enfor
 
 **Safety:** each retry iteration counts against `MAX_STEPS_PER_RUN = 1000`. Combined with the per-edge `maxRetries` cap of 10, runaway loops are doubly bounded.
 
-**Cascade-clear:** when a retry target is re-queued, all steps reachable from that target are also cleared from `visited` (and from `untaken`, see [Joins and untaken steps](#joins-and-untaken-steps)). This ensures downstream steps re-execute with the retry target's fresh output rather than stale results from the previous attempt.
+**Cascade-clear:** when a retry target is re-queued, all steps reachable from that target, through its edges and any step's `fallbackStepId`, are also cleared from `visited` (and from `untaken`, see [Joins and untaken steps](#joins-and-untaken-steps)). This ensures downstream steps re-execute with the retry target's fresh output rather than stale results from the previous attempt.
 
 ## `ExecutionEvent` (SSE payloads)
 

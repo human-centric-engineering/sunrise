@@ -128,8 +128,9 @@ function endsRunFailed(
   stepId: string
 ): unknown {
   if (terminalStatus !== 'failed' || ctx.signal?.aborted) return err;
+  const reason = deriveFailureReason(body);
   if (err instanceof ExecutorError) {
-    return new ExecutorError(
+    const withReason = new ExecutorError(
       err.stepId,
       err.code,
       err.message,
@@ -137,20 +138,25 @@ function endsRunFailed(
       err.retriable,
       err.tokensUsed,
       err.costUsd,
-      deriveFailureReason(body)
+      reason
     );
+    // The same error with the reason added: logs point where it was thrown.
+    withReason.stack = err.stack;
+    return withReason;
   }
   // Anything else thrown before the send (the org's email locale lookup, say)
-  // still carries the reason, rather than reaching the engine without it.
+  // still carries the reason, rather than reaching the engine without it. It
+  // is wrapped the way the engine wraps a raw throw, `executor_threw`, so its
+  // text (a database error, say) is never shown to the client or the trace.
   return new ExecutorError(
     stepId,
-    'NOTIFICATION_ERROR',
-    `Notification failed: ${err instanceof Error ? err.message : String(err)}`,
+    'executor_threw',
+    err instanceof Error ? err.message : 'Executor threw an unknown error',
     err,
     true,
     0,
     0,
-    deriveFailureReason(body)
+    reason
   );
 }
 

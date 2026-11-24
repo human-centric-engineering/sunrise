@@ -59,8 +59,9 @@ export const walkPositionSchema = z.object({
   visited: z.array(z.string()),
   /**
    * Steps the walk will not reach, which a join counts as settled (t-1077).
-   * Absent from a position saved before it existed; a resume rebuilds it
-   * from `visited` either way.
+   * Absent from a position saved before it existed; a crash-resume rebuilds
+   * it from `visited` either way. An approval resume reads it as it stood
+   * when the paused step's iteration began.
    */
   untaken: z.array(z.string()).optional(),
   /** Bounded-retry edge counts, keyed `source→target`. */

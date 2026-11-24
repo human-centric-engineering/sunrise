@@ -312,8 +312,16 @@ export class OrchestrationEngine {
     // --------------------------------------------------------------
     // 1. Row creation / resume
     // --------------------------------------------------------------
-    const { executionId, trace, budgetLimitUsd, ctx, resumeAfterStepId, resumePosition, lease } =
-      await this.initRun(workflow, inputData, options, baseLogger);
+    const {
+      executionId,
+      trace,
+      budgetLimitUsd,
+      ctx,
+      resumeAfterStepId,
+      resumePosition,
+      resumeUntaken,
+      lease,
+    } = await this.initRun(workflow, inputData, options, baseLogger);
 
     yield workflowStarted(executionId, workflow.id);
     emitHookEvent('workflow.started', {
@@ -365,7 +373,8 @@ export class OrchestrationEngine {
               resumeAfterStepId,
               baseLogger,
               options,
-              resumePosition ?? null
+              resumePosition ?? null,
+              resumeUntaken ?? []
             ),
           { manualStatus: true }
         )
@@ -393,7 +402,9 @@ export class OrchestrationEngine {
     resumeAfterStepId: string | undefined,
     baseLogger: Logger,
     options: ExecuteOptions,
-    resumePosition: WalkPosition | null = null
+    resumePosition: WalkPosition | null = null,
+    /** What an approval resume knows was untaken at the pause (t-1077). */
+    resumeUntaken: string[] = []
   ): AsyncGenerator<ExecutionEvent, void, unknown> {
     const { executionId } = lease;
     let workflowSpanError: unknown = undefined;
@@ -608,8 +619,14 @@ export class OrchestrationEngine {
             const current = clearQueue.shift()!;
             const currentStep = byId.get(current);
             if (!currentStep) continue;
-            for (const edge of currentStep.nextSteps) {
-              const target = edge.targetStepId;
+            // Its fallback step too: what the earlier attempt left untaken
+            // through one is open again.
+            const fallback = stepErrorConfigSchema.safeParse(currentStep.config);
+            const targets = currentStep.nextSteps.map((edge) => edge.targetStepId);
+            if (fallback.success && fallback.data.fallbackStepId) {
+              targets.push(fallback.data.fallbackStepId);
+            }
+            for (const target of targets) {
               if ((visited.has(target) || untaken.has(target)) && !toClear.has(target)) {
                 toClear.add(target);
                 clearQueue.push(target);
@@ -677,11 +694,14 @@ export class OrchestrationEngine {
         }
       };
 
-      // A cursor resume (after an approval, or a crash with no saved
-      // position) knows only what ran, from the trace: settle what those steps
-      // left behind, so a join behind a branch not taken before the pause
-      // still runs (t-1077).
-      if (resumeAfterStepId && !resumePosition) settleUntaken([...visited]);
+      // An approval resume restores what the live walk had marked untaken
+      // when the paused step's iteration began (t-1077), so a join behind a
+      // branch not taken before the pause still runs. It is not rebuilt from
+      // the trace: the trace does not say which edges a step chose, so a step
+      // a paused batch's sibling chose but had not run would look untaken.
+      if (resumeAfterStepId && !resumePosition) {
+        for (const id of resumeUntaken) if (!visited.has(id)) untaken.add(id);
+      }
 
       if (resumePosition) {
         // Restore the saved walk, re-queue the in-flight steps that had not
@@ -2283,6 +2303,8 @@ export class OrchestrationEngine {
     resumeAfterStepId?: string;
     /** The walk position a crash-resume continues from (t-966). */
     resumePosition?: WalkPosition | null;
+    /** What an approval resume knows was untaken at the pause (t-1077). */
+    resumeUntaken?: string[];
     lease: LeaseHandle;
   }> {
     if (options.resumeFromExecutionId) {
@@ -2407,6 +2429,16 @@ export class OrchestrationEngine {
       // is cleared below: should this run crash before saving its own, the
       // orphan resume then takes the cursor path, which is right for them.
       const resumePosition = reason === 'orphan-resume' ? parseWalkPosition(row.walkState) : null;
+      // An approval pause leaves the position its step's iteration saved as it
+      // began. Its `untaken` is what the live walk had settled by then, so the
+      // resume can use it (t-1077); the rest of it is stale. Only a position
+      // that is the paused step's own, so never one from an earlier pause.
+      const pausePosition =
+        row.status === WorkflowStatus.PAUSED_FOR_APPROVAL ? parseWalkPosition(row.walkState) : null;
+      const resumeUntaken =
+        pausePosition && row.currentStep && pausePosition.inFlight.includes(row.currentStep)
+          ? (pausePosition.untaken ?? [])
+          : [];
       // Continue an attempt — replay its turns, keep its number and id — only
       // for a step the saved position says was running alone and had not
       // finished. A row that outlived its step (its delete failed) is a
@@ -2458,6 +2490,7 @@ export class OrchestrationEngine {
         ctx,
         resumeAfterStepId: row.currentStep ?? undefined,
         resumePosition,
+        resumeUntaken,
         lease: { executionId: row.id, token: leaseToken },
       };
     }
@@ -3207,8 +3240,8 @@ function failReasonAfterError(
   err: ExecutorError,
   ctx: Readonly<ExecutionContext>
 ): string | undefined {
-  if (err.failWorkflow) return err.failWorkflow;
   if (ctx.signal?.aborted) return undefined;
+  if (err.failWorkflow) return err.failWorkflow;
   const endsRunFailed =
     step.type === 'send_notification' &&
     isRecord(step.config) &&

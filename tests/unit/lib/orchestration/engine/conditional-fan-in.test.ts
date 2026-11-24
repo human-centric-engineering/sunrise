@@ -111,6 +111,7 @@ import {
   type StepExecutor,
 } from '@/lib/orchestration/engine/executor-registry';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
+import { isRecord } from '@/lib/utils';
 import { claimLease } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { sendEmail } from '@/lib/email/send';
@@ -513,17 +514,81 @@ describe('a join behind a branch not taken, across a resume or a fallback (t-107
     ],
   });
 
-  it('runs the join after an approval resume, which knows only the trace', async () => {
+  /** The position the paused step's iteration saved as it began. */
+  const pausedAt = (inFlight: string[], visited: string[], untaken?: string[]) => ({
+    v: 1,
+    inFlight,
+    batch: inFlight.length > 1,
+    done: {},
+    pending: [],
+    visited,
+    ...(untaken ? { untaken } : {}),
+    retryCounts: {},
+    stepCount: visited.length,
+    budgetWarned: false,
+  });
+
+  it('runs the join after an approval resume, from what was untaken at the pause', async () => {
     const definition = routeThenJoin();
     const [pick, a, hold] = definition.steps;
 
     const events = await resume(definition, [pick, a, hold], {
       status: 'paused_for_approval',
       currentStep: 'hold',
+      walkState: pausedAt(['hold'], ['pick', 'a', 'hold'], ['b']),
     });
 
     expect(started(events)).toEqual(['join']);
     expect(terminal(events).type).toBe('workflow_completed');
+  });
+
+  it("ignores a saved position that is not the paused step's own", async () => {
+    const definition = routeThenJoin();
+    const [pick, a, hold] = definition.steps;
+
+    const events = await resume(definition, [pick, a, hold], {
+      status: 'paused_for_approval',
+      currentStep: 'hold',
+      walkState: pausedAt(['a'], ['pick', 'a'], ['b']),
+    });
+
+    // Nothing is known untaken, so the join waits on b as it did before.
+    expect(started(events)).toEqual([]);
+    expect(terminal(events)).toMatchObject({ type: 'workflow_failed' });
+    expect(String(finalised().errorMessage)).toContain('deadlocked');
+  });
+
+  it('never treats a step a paused batch sibling chose as untaken', async () => {
+    // fan → a → hold → join, b → c → d → join. hold and c ran as a batch and
+    // hold paused after c had chosen d. The trace alone would make d look
+    // untaken and run the join without it; the run must not complete
+    // having skipped d.
+    registerStepType('parallel', ok);
+    const definition: WorkflowDefinition = {
+      entryStepId: 'fan',
+      errorStrategy: 'fail',
+      steps: [
+        step('fan', 'parallel', [{ targetStepId: 'a' }, { targetStepId: 'b' }], {
+          branches: ['a', 'b'],
+        }),
+        step('a', 'llm_call', [{ targetStepId: 'hold' }]),
+        step('b', 'llm_call', [{ targetStepId: 'c' }]),
+        step('hold', 'llm_call', [{ targetStepId: 'join' }]),
+        step('c', 'llm_call', [{ targetStepId: 'd' }]),
+        step('d', 'llm_call', [{ targetStepId: 'join' }]),
+        step('join', 'llm_call'),
+      ],
+    };
+    const ran = definition.steps.filter((s) => ['fan', 'a', 'b', 'hold', 'c'].includes(s.id));
+
+    const events = await resume(definition, ran, {
+      status: 'paused_for_approval',
+      currentStep: 'hold',
+      walkState: pausedAt(['hold', 'c'], ['fan', 'a', 'b', 'hold', 'c'], []),
+    });
+
+    expect(started(events)).not.toContain('join');
+    expect(terminal(events).type).toBe('workflow_failed');
   });
 
   it('runs the join after a crash-resume from a position saved before `untaken` existed', async () => {
@@ -588,6 +653,48 @@ describe('a join behind a branch not taken, across a resume or a fallback (t-107
     expect(order.indexOf('join')).toBeGreaterThan(order.indexOf('spare'));
     expect(order.filter((id) => id === 'join')).toHaveLength(1);
     expect(terminal(events).type).toBe('workflow_completed');
+  });
+
+  it('reopens what a retry left untaken through a fallback step', async () => {
+    // a → b → check; b falls back to spare; check retries a once. Attempt 1:
+    // b works, so spare is untaken. The retry reopens b, so spare is open
+    // again for attempt 2, where b may fall back to it.
+    let checkCalls = 0;
+    registerStepType('guard', guardStub({ check: () => (++checkCalls === 1 ? 'fail' : 'pass') }));
+
+    const events = await run({
+      entryStepId: 'a',
+      errorStrategy: 'fail',
+      steps: [
+        step('a', 'llm_call', [{ targetStepId: 'b' }]),
+        step('b', 'llm_call', [{ targetStepId: 'check' }], {
+          errorStrategy: 'fallback',
+          fallbackStepId: 'spare',
+        }),
+        step('check', 'guard', [
+          { targetStepId: 'a', condition: 'fail', maxRetries: 1 },
+          { targetStepId: 'done', condition: 'pass' },
+        ]),
+        step('spare', 'llm_call'),
+        step('done', 'llm_call'),
+      ],
+    });
+
+    expect(terminal(events).type).toBe('workflow_completed');
+    // The walk positions saved as each iteration began, in order.
+    const positions = vi
+      .mocked(prisma.aiWorkflowExecution.updateMany)
+      .mock.calls.map((c) => (c[0]?.data as Record<string, unknown> | undefined)?.walkState)
+      .filter((w): w is { inFlight: string[]; untaken?: string[] } => isRecord(w));
+    // Each iteration's position is written as it begins and again by its
+    // checkpoint: the same object, so dedupe by identity.
+    const starts = [
+      ...new Set(positions.filter((w) => w.inFlight.length === 1 && w.inFlight[0] === 'a')),
+    ];
+    expect(starts).toHaveLength(2);
+    // Attempt 1's check saw spare untaken; attempt 2 starts with it open.
+    expect(positions.some((w) => w.untaken?.includes('spare'))).toBe(true);
+    expect(starts[1].untaken).not.toContain('spare');
   });
 
   it('runs the join once the step that could fall back has run without falling back', async () => {

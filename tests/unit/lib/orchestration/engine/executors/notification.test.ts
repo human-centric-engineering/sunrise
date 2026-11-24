@@ -1242,9 +1242,11 @@ describe('executeNotification', () => {
         ).catch((e: unknown) => e);
 
         expect(err).toBeInstanceOf(ExecutorError);
+        // Wrapped as the engine wraps a raw throw, so its text stays out of
+        // the client's view and the trace.
         expect(err).toMatchObject({
-          code: 'NOTIFICATION_ERROR',
-          message: 'Notification failed: connection refused',
+          code: 'executor_threw',
+          message: 'connection refused',
           failWorkflow: 'Halted at a validation gate',
         });
         expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
