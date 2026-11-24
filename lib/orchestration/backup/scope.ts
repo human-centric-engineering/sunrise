@@ -12,10 +12,11 @@
  *
  * **Target org.** Export and import run in an explicitly resolved org, not
  * whichever org the admin's session happens to be in: `?orgId=`, defaulting to
- * the active org. An unbound admin API key enters no org, so at `multi` it
- * must name one. Naming an org other than the active one asks the
- * authorization policy again, about THAT org — the route's own check only
- * asked whether the caller may use the admin surface at all.
+ * the active org (`resolveTargetOrg`, `lib/tenancy/target-org.ts`, the rule
+ * the other routes that take an org share). An unbound admin API key enters
+ * no org, so at `multi` it must name one. Naming an org other than the active
+ * one asks the authorization policy again, about THAT org — the route's own
+ * check only asked whether the caller may use the admin surface at all.
  *
  * **Shared part** (owner ruling 2026-10-08, extending t-751's rule to export
  * as well as import). At `multi` it moves only when the caller asks for it
@@ -37,29 +38,18 @@
  */
 
 import { z } from 'zod';
-import { prisma } from '@/lib/db/client';
-import {
-  APIError,
-  ConflictError,
-  ErrorCodes,
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
-} from '@/lib/api/errors';
-import { canAdminister, type AuthorizationPrincipal } from '@/lib/auth/authorization';
+import { APIError, ErrorCodes } from '@/lib/api/errors';
+import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 import { logger } from '@/lib/logging';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+import { resolveTargetOrg, targetOrgQuerySchema } from '@/lib/tenancy/target-org';
 import {
   canChangeSharedSettings,
   SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
-import { orgIdSchema } from '@/lib/validations/tenancy';
 
 /** The query parameters both backup routes accept. */
-export const backupScopeQuerySchema = z.object({
-  /** The org to back up or restore into. Defaults to the active org. */
-  orgId: orgIdSchema.optional(),
+export const backupScopeQuerySchema = targetOrgQuerySchema.extend({
   /** Whether to carry the shared part. Defaults to yes at `single`, no at `multi`. */
   shared: z.enum(['true', 'false']).optional(),
 });
@@ -110,41 +100,14 @@ export async function resolveBackupScope(
   // the credential alone says this caller entered no org.
   const unboundKey = principal.credential === 'api-key';
 
-  let orgId: string;
-  if (!multi) {
-    if (query.orgId !== undefined && query.orgId !== INSTALL_ORG_ID) {
-      throw new ValidationError(
-        'This install has one organisation; orgId must name it or be left out.'
-      );
-    }
-    orgId = INSTALL_ORG_ID;
-  } else {
-    const named = query.orgId ?? active;
-    if (named === null) {
-      throw new ValidationError(
-        'An admin API key enters no organisation: name the organisation to back up with ?orgId=.'
-      );
-    }
-    orgId = named;
-    if (orgId !== active) {
-      // The policy first: answering "no such org" or "suspended" before it
-      // would tell a caller who may not administer the org whether it exists,
-      // which the guard's own org entry refuses to do (`refuseOrgEntry`).
-      const resource = { kind: 'org', id: orgId, orgId };
-      if (!(await canAdminister(principal, resource, active ? { org: active } : {}))) {
-        throw new ForbiddenError('You cannot administer that organisation');
-      }
-      // Org is a system model, so this read needs no tenant context.
-      const org = await prisma.org.findUnique({ where: { id: orgId }, select: { status: true } });
-      if (!org) throw new NotFoundError('Organisation not found');
-      // A session can only be in an active org, so only a named one is checked.
-      if (purpose === 'import' && org.status !== 'ACTIVE') {
-        throw new ConflictError(
-          'That organisation is suspended; a backup cannot be imported into it.'
-        );
-      }
-    }
-  }
+  const orgId = await resolveTargetOrg(query.orgId, principal, {
+    noOrgMessage:
+      'An admin API key enters no organisation: name the organisation to back up with ?orgId=.',
+    // A suspended org's backup may still be exported.
+    ...(purpose === 'import'
+      ? { suspendedMessage: 'That organisation is suspended; a backup cannot be imported into it.' }
+      : {}),
+  });
 
   // t-751's rule, asked of the org this call stack entered. It refuses an
   // empty context, which is what an unbound admin key has — the guard admits

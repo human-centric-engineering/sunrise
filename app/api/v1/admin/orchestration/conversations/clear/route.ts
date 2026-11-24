@@ -32,6 +32,16 @@
  * route log and on the `conversation.bulk_clear` audit row
  * (`metadata.ownerlessExcluded`); the response shape is unchanged.
  *
+ * **Target org (t-1083).** `?orgId=` names the org whose conversations to
+ * clear, so a platform admin in the install org can clear a customer org's
+ * without entering it (#1177 removed doing so with platform standing). The
+ * route is platform-tier, so the same request from inside a customer org is
+ * refused by the guard. A named org is checked against the authorization
+ * policy and must exist (`resolveTargetOrg`); the delete runs inside that org
+ * (`runAsOrg`), so the scopes above mean that org's conversations, and the
+ * audit row is written under it. Left out, it is the org the caller is in, as
+ * before.
+ *
  * All deletions (including self-scoped) are recorded in the admin audit
  * log so there's an immutable trail. `AiMessage` rows cascade via the
  * foreign-key relation.
@@ -43,17 +53,23 @@ import type { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { validateRequestBody } from '@/lib/api/validation';
+import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { clearConversationsBodySchema } from '@/lib/validations/orchestration';
+import { resolveTargetOrg, runInTargetOrg, targetOrgQuerySchema } from '@/lib/tenancy/target-org';
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);
 
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, clearConversationsBodySchema);
+  const query = validateQueryParams(new URL(request.url).searchParams, targetOrgQuerySchema);
+  const orgId = await resolveTargetOrg(query.orgId, session.principal, {
+    noOrgMessage:
+      'An admin API key enters no organisation: name the organisation whose conversations to clear with ?orgId=.',
+  });
 
   const scope: 'self' | 'user' | 'all' = body.allUsers ? 'all' : body.userId ? 'user' : 'self';
 
@@ -69,10 +85,11 @@ export const POST = withAdminAuth(async (request, session) => {
   if (body.agentId) where.agentId = body.agentId;
   if (body.olderThan) where.createdAt = { lt: new Date(body.olderThan) };
 
-  const result = await prisma.aiConversation.deleteMany({ where });
+  const result = await runInTargetOrg(orgId, () => prisma.aiConversation.deleteMany({ where }));
 
   log.info('Conversations cleared', {
     scope,
+    orgId,
     callerId: session.user.id,
     targetUserId: scope === 'user' ? body.userId : undefined,
     deletedCount: result.count,
@@ -87,6 +104,8 @@ export const POST = withAdminAuth(async (request, session) => {
     userId: session.user.id,
     action: 'conversation.bulk_clear',
     entityType: 'conversation',
+    // The org whose conversations were cleared, which need not be the one the admin is in.
+    actingOrgId: orgId,
     metadata: {
       scope,
       targetUserId: scope === 'user' ? body.userId : null,

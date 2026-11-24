@@ -26,6 +26,16 @@
  * unattributed read; any other admin's own run returns 404 (not 403) so admins
  * cannot probe for each other's rows.
  *
+ * **Target org (t-1083).** `?orgId=` names the org whose run this is, so a
+ * platform admin in the install org can unstick a customer org's run without
+ * entering it (#1177 removed doing so with platform standing). The route is
+ * platform-tier, so the same request from inside a customer org is refused by
+ * the guard. A named org is checked against the authorization policy and must
+ * exist (`resolveTargetOrg`); the run is read, failed and its hooks emitted
+ * inside that org (`runAsOrg`), and the audit row is written under it. Left
+ * out, the run is looked up in the org the caller is in, as before. A
+ * suspended org may be named: its runs can still be stuck.
+ *
  * **Not identical to the cancel route, despite the shared shape.** `cancel`
  * additionally admits an admin the run's trace names in `approverUserIds` while
  * it is `paused_for_approval`; this route never does. Under a narrowing policy a
@@ -39,13 +49,14 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
-import { validateRequestBody } from '@/lib/api/validation';
+import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminCanViewExecution } from '@/lib/orchestration/access/execution-access';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { recordForceFailEvent } from '@/lib/orchestration/engine/lease';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
+import { resolveTargetOrg, runInTargetOrg, targetOrgQuerySchema } from '@/lib/tenancy/target-org';
 import { WorkflowStatus } from '@/types/orchestration';
 
 const FORCE_FAILABLE_STATUSES = [
@@ -70,124 +81,134 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const id = parsedId.data;
 
   const { reason } = await validateRequestBody(request, ForceFailBodySchema);
-
-  const existing = await prisma.aiWorkflowExecution.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      userId: true,
-      workflowId: true,
-      status: true,
-      leaseToken: true,
-      // Pulled through for the audit log's `entityName` (human-readable
-      // at time of action). Falling back to the workflow id keeps the
-      // audit row useful even if the workflow has been deleted between
-      // the execution starting and the admin acting.
-      workflow: { select: { name: true } },
-    },
+  const query = validateQueryParams(new URL(request.url).searchParams, targetOrgQuerySchema);
+  const orgId = await resolveTargetOrg(query.orgId, session.principal, {
+    noOrgMessage:
+      'An admin API key enters no organisation: name the organisation whose run this is with ?orgId=.',
   });
-  if (!existing) {
-    throw new NotFoundError(`Execution ${id} not found`);
-  }
-  if (!adminCanViewExecution(existing, session)) {
-    // Same scoping as the cancel route — don't leak existence of rows the
-    // caller can't see. Admin role gates the endpoint; row visibility gates
-    // the action. System-owned runs (`userId = null`) are visible to every
-    // admin: a stuck scheduled run is precisely what this route is for.
-    throw new NotFoundError(`Execution ${id} not found`);
-  }
 
-  const errorMessage = reason ? `Force-failed by admin: ${reason}` : 'Force-failed by admin';
-  const priorToken = existing.leaseToken;
-
-  // Status flip + running-step sweep in one transaction. The
-  // conditional WHERE on status guarantees that a natural completion
-  // racing this call wins — the updateMany sees count=0 and we return
-  // 409 with the current status (read fresh after the tx).
-  const result = await prisma.$transaction(async (tx) => {
-    const updated = await tx.aiWorkflowExecution.updateMany({
-      where: { id, status: { in: [...FORCE_FAILABLE_STATUSES] } },
-      data: {
-        status: WorkflowStatus.FAILED,
-        completedAt: new Date(),
-        errorMessage,
-        leaseToken: null,
-        leaseExpiresAt: null,
+  return runInTargetOrg(orgId, async () => {
+    const existing = await prisma.aiWorkflowExecution.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        userId: true,
+        workflowId: true,
+        status: true,
+        leaseToken: true,
+        // Pulled through for the audit log's `entityName` (human-readable
+        // at time of action). Falling back to the workflow id keeps the
+        // audit row useful even if the workflow has been deleted between
+        // the execution starting and the admin acting.
+        workflow: { select: { name: true } },
       },
     });
-    if (updated.count > 0) {
-      await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId: id } });
+    if (!existing) {
+      throw new NotFoundError(`Execution ${id} not found`);
     }
-    return updated;
-  });
+    if (!adminCanViewExecution(existing, session)) {
+      // Same scoping as the cancel route — don't leak existence of rows the
+      // caller can't see. Admin role gates the endpoint; row visibility gates
+      // the action. System-owned runs (`userId = null`) are visible to every
+      // admin: a stuck scheduled run is precisely what this route is for.
+      throw new NotFoundError(`Execution ${id} not found`);
+    }
 
-  if (result.count === 0) {
-    const current = await prisma.aiWorkflowExecution.findUnique({
-      where: { id },
-      select: { status: true },
+    const errorMessage = reason ? `Force-failed by admin: ${reason}` : 'Force-failed by admin';
+    const priorToken = existing.leaseToken;
+
+    // Status flip + running-step sweep in one transaction. The
+    // conditional WHERE on status guarantees that a natural completion
+    // racing this call wins — the updateMany sees count=0 and we return
+    // 409 with the current status (read fresh after the tx).
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.aiWorkflowExecution.updateMany({
+        where: { id, status: { in: [...FORCE_FAILABLE_STATUSES] } },
+        data: {
+          status: WorkflowStatus.FAILED,
+          completedAt: new Date(),
+          errorMessage,
+          leaseToken: null,
+          leaseExpiresAt: null,
+        },
+      });
+      if (updated.count > 0) {
+        await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId: id } });
+      }
+      return updated;
     });
-    throw new ConflictError(
-      `Execution is in a terminal state (${current?.status ?? 'unknown'}) and cannot be force-failed`
-    );
-  }
 
-  // Lease event (inspector visibility) — fire-and-forget; failures
-  // logged inside the helper, never block the response.
-  void recordForceFailEvent(id, priorToken, 'admin-force-fail', {
-    actorUserId: session.user.id,
-    previousStatus: existing.status,
-  });
+    if (result.count === 0) {
+      const current = await prisma.aiWorkflowExecution.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      throw new ConflictError(
+        `Execution is in a terminal state (${current?.status ?? 'unknown'}) and cannot be force-failed`
+      );
+    }
 
-  // Audit log. `logAdminAction` is fire-and-forget by contract — does
-  // not throw to caller. Reason captured in `metadata` (sanitised).
-  logAdminAction({
-    userId: session.user.id,
-    action: 'execution.force_failed',
-    entityType: 'execution',
-    entityId: id,
-    entityName: existing.workflow?.name ?? existing.workflowId,
-    metadata: {
+    // Lease event (inspector visibility) — fire-and-forget; failures
+    // logged inside the helper, never block the response.
+    void recordForceFailEvent(id, priorToken, 'admin-force-fail', {
+      actorUserId: session.user.id,
       previousStatus: existing.status,
+    });
+
+    // Audit log. `logAdminAction` is fire-and-forget by contract — does
+    // not throw to caller. Reason captured in `metadata` (sanitised).
+    logAdminAction({
+      userId: session.user.id,
+      action: 'execution.force_failed',
+      entityType: 'execution',
+      entityId: id,
+      entityName: existing.workflow?.name ?? existing.workflowId,
+      // The org whose run it was, which need not be the one the admin is in.
+      actingOrgId: orgId,
+      metadata: {
+        previousStatus: existing.status,
+        reason: reason ?? null,
+      },
+      clientIp: clientIP,
+    });
+
+    // Hook events. Order doesn't matter (both are dispatched async by
+    // `emitHookEvent`). `workflow.failed` keeps existing integrations
+    // firing; `execution.force_failed` lets consumers distinguish admin
+    // termination from natural failure. Both go through the standard
+    // dispatcher (HMAC, retry, audit row) — see `lib/orchestration/hooks/registry.ts`.
+    // Both name the run's owner as `userId`, as the engine's `workflow.failed`
+    // does, so erasure and subject access still find the delivery once the run
+    // is gone (t-792). `actorUserId` stays the admin who force-failed it.
+    emitHookEvent('workflow.failed', {
+      executionId: id,
+      workflowId: existing.workflowId,
+      userId: existing.userId,
+      source: 'admin-force-fail',
+      errorMessage,
+    });
+    emitHookEvent('execution.force_failed', {
+      executionId: id,
+      workflowId: existing.workflowId,
+      userId: existing.userId,
+      actorUserId: session.user.id,
       reason: reason ?? null,
-    },
-    clientIp: clientIP,
-  });
+      previousStatus: existing.status,
+    });
 
-  // Hook events. Order doesn't matter (both are dispatched async by
-  // `emitHookEvent`). `workflow.failed` keeps existing integrations
-  // firing; `execution.force_failed` lets consumers distinguish admin
-  // termination from natural failure. Both go through the standard
-  // dispatcher (HMAC, retry, audit row) — see `lib/orchestration/hooks/registry.ts`.
-  // Both name the run's owner as `userId`, as the engine's `workflow.failed`
-  // does, so erasure and subject access still find the delivery once the run
-  // is gone (t-792). `actorUserId` stays the admin who force-failed it.
-  emitHookEvent('workflow.failed', {
-    executionId: id,
-    workflowId: existing.workflowId,
-    userId: existing.userId,
-    source: 'admin-force-fail',
-    errorMessage,
-  });
-  emitHookEvent('execution.force_failed', {
-    executionId: id,
-    workflowId: existing.workflowId,
-    userId: existing.userId,
-    actorUserId: session.user.id,
-    reason: reason ?? null,
-    previousStatus: existing.status,
-  });
+    log.info('Execution force-failed', {
+      executionId: id,
+      orgId,
+      workflowId: existing.workflowId,
+      actorUserId: session.user.id,
+      previousStatus: existing.status,
+    });
 
-  log.info('Execution force-failed', {
-    executionId: id,
-    workflowId: existing.workflowId,
-    actorUserId: session.user.id,
-    previousStatus: existing.status,
-  });
-
-  return successResponse({
-    success: true,
-    executionId: id,
-    previousStatus: existing.status,
-    status: WorkflowStatus.FAILED,
+    return successResponse({
+      success: true,
+      executionId: id,
+      previousStatus: existing.status,
+      status: WorkflowStatus.FAILED,
+    });
   });
 });
