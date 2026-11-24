@@ -416,24 +416,39 @@ describe('OrgEntitlementsForm', () => {
     });
 
     // A host bug is the host's, not a failed save: the write landed. The
-    // host's error is left to surface as an unhandled rejection, its own; the
-    // listener keeps it from failing this run.
+    // host's error surfaces as an unhandled rejection, where its own error
+    // reporting sees it; the listener catches it so this run can assert it.
+    const surfaced = () => {
+      const seen = vi.fn();
+      process.on('unhandledRejection', seen);
+      return {
+        seen,
+        stop: () => process.off('unhandledRejection', seen),
+      };
+    };
+    const hostBug = expect.objectContaining({ message: 'host bug' });
+
     it('still shows the save landed when the host callback throws', async () => {
       vi.mocked(apiClient.patch).mockResolvedValue(view());
       const onSaved = vi.fn(() => {
         throw new Error('host bug');
       });
-      const unhandled = vi.fn();
-      process.on('unhandledRejection', unhandled);
-      const user = renderForm(view(), onSaved);
+      const rejection = surfaced();
+      try {
+        const user = renderForm(view(), onSaved);
 
-      await user.click(screen.getByRole('checkbox', { name: /Reports/ }));
-      await user.click(screen.getByRole('button', { name: 'Save switches' }));
+        await user.click(screen.getByRole('checkbox', { name: /Reports/ }));
+        await user.click(screen.getByRole('button', { name: 'Save switches' }));
 
-      expect(await screen.findByText('Saved', { selector: 'span' })).toBeInTheDocument();
-      expect(onSaved).toHaveBeenCalledTimes(1);
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-      process.off('unhandledRejection', unhandled);
+        expect(await screen.findByText('Saved', { selector: 'span' })).toBeInTheDocument();
+        expect(onSaved).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        await waitFor(() =>
+          expect(rejection.seen).toHaveBeenCalledWith(hostBug, expect.anything())
+        );
+      } finally {
+        rejection.stop();
+      }
     });
 
     it('closes the clear dialog even when the host callback throws', async () => {
@@ -441,19 +456,24 @@ describe('OrgEntitlementsForm', () => {
       const onSaved = vi.fn(() => {
         throw new Error('host bug');
       });
-      const unhandled = vi.fn();
-      process.on('unhandledRejection', unhandled);
-      const user = renderForm(view(), onSaved);
+      const rejection = surfaced();
+      try {
+        const user = renderForm(view(), onSaved);
 
-      await confirmClear(user);
+        await confirmClear(user);
 
-      expect(
-        await screen.findByText('Cleared to defaults', { selector: 'span' })
-      ).toBeInTheDocument();
-      expect(onSaved).toHaveBeenCalledTimes(1);
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
-      process.off('unhandledRejection', unhandled);
+        expect(
+          await screen.findByText('Cleared to defaults', { selector: 'span' })
+        ).toBeInTheDocument();
+        expect(onSaved).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+        await waitFor(() =>
+          expect(rejection.seen).toHaveBeenCalledWith(hostBug, expect.anything())
+        );
+      } finally {
+        rejection.stop();
+      }
     });
 
     it('is not called when a save fails', async () => {

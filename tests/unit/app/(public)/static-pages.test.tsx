@@ -8,11 +8,14 @@
  * placeholder copy says, and fail if a page stops reading a key.
  *
  * FORK NOTE (#1317): a page you have taken over with the CUSTOMIZATION.md §6
- * thin shim, or deleted, is skipped here, because its copy is yours. That
- * holds once `lib/app/reserved-tiers.ts` declares the tier you fill, which a
- * §6 shim's `components/app` already requires. Each page is imported only
- * once it is known to be the platform's, so a shim's different exports cannot
- * fail type-check or the import. You should not need to edit this file; see
+ * thin shim, or deleted, is skipped here, because its copy is yours. The shim
+ * must re-export `default` from `@/components/app`, `@/components/framework`,
+ * `@/lib/app` or `@/lib/framework`, and `lib/app/reserved-tiers.ts` must
+ * declare at least one tier. A §6 shim's `components/app` already has to be
+ * declared; content under `lib/app` alone does not turn the skip on, since
+ * that tier cannot be declared. Each page is imported only once it is known
+ * to be the platform's, so a shim's different exports cannot fail type-check
+ * or the import. You should not need to edit this file; see
  * `tests/helpers/marketing-pages.ts`.
  */
 

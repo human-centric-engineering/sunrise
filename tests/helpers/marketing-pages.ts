@@ -44,19 +44,27 @@ export type MarketingPage = (typeof MARKETING_PAGES)[number];
 
 /**
  * Where a route file re-exports its page from a fork tier:
- * `export { …default… } from '@/<components|lib>/<app|framework>/…'`.
+ * `export { default, … } from '@/<components|lib>/<app|framework>…'`, from a
+ * module under the tier or from the tier's own index.
  *
- * Keyed on `default` being re-exported, not on the tier appearing anywhere in
- * the file: a platform page that merely imports a fork component is still the
- * platform's page. `export * from …` does not count, because it never
- * re-exports `default`, so a file that has it still has its own page.
+ * Keyed on `default` being re-exported as the file's `default`, not on the
+ * tier appearing anywhere in the file: a platform page that merely imports a
+ * fork component is still the platform's page, and so is one that re-exports
+ * a fork module's default under another name (`default as Hero`). `export *`
+ * does not count, because it never re-exports `default`. Comments are
+ * stripped first, so a commented-out shim line is not one.
  */
 const FORK_TIER_RE_EXPORT =
-  /export\s*\{[^}]*\bdefault\b[^}]*\}\s*from\s*['"]@\/(?:components|lib)\/(?:app|framework)\//;
+  /export\s*\{[^}]*\bdefault\b(?!\s+as\b)[^}]*\}\s*from\s*['"]@\/(?:components|lib)\/(?:app|framework)(?:\/|['"])/;
+
+/** `source` without its comments: enough for the export lines matched here. */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
 
 /** Whether a route file's source re-exports its page from a fork tier, as a §6 shim does. */
 export function isForkShim(source: string): boolean {
-  return FORK_TIER_RE_EXPORT.test(source);
+  return FORK_TIER_RE_EXPORT.test(withoutComments(source));
 }
 
 /** The route file of a marketing page, absolute. */

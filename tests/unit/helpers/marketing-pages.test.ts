@@ -30,6 +30,7 @@ describe('isForkShim', () => {
     ['export { default } from "@/components/framework/marketing/privacy";'],
     ["export { default, generateMetadata } from '@/lib/app/pages/about';"],
     ["export {\n  default,\n  generateMetadata,\n} from '@/components/app/about-page';"],
+    ["export { default, metadata } from '@/components/app';"],
   ])('recognises a re-export of the page from a fork tier without the marker: %s', (src) => {
     expect(isForkShim(src)).toBe(true);
   });
@@ -64,6 +65,25 @@ describe('isForkShim', () => {
 
   it('leaves a re-export of something other than the page alone', () => {
     expect(isForkShim("export { metadata } from '@/components/app/marketing/seo';")).toBe(false);
+  });
+
+  it('leaves a fork default re-exported under another name alone', () => {
+    const src = [
+      "export { default as AboutHero } from '@/components/app/about-hero';",
+      'export default async function AboutPage() { return null; }',
+    ].join('\n');
+    expect(isForkShim(src)).toBe(false);
+  });
+
+  it.each([
+    ["// export { default, metadata } from '@/components/app/marketing/about';"],
+    ["/* export { default, metadata } from '@/components/app/marketing/about'; */"],
+  ])('leaves a commented-out shim line alone: %s', (src) => {
+    expect(isForkShim(src)).toBe(false);
+  });
+
+  it('leaves a re-export from a tier-like platform path alone', () => {
+    expect(isForkShim("export { default } from '@/components/appendix/about';")).toBe(false);
   });
 
   it('leaves a re-export from a platform path alone', () => {
