@@ -155,6 +155,12 @@ export interface MembershipActor {
  * their role in the org the request entered. Every org route that hands the
  * lifecycle an actor builds it here, so they cannot disagree about who has
  * owner standing.
+ *
+ * `session` is the one the guard handed the handler, so its role is the
+ * presented one: inside any org but the install org a platform admin is not
+ * one here (t-1032, `lib/auth/support-principal.ts`), and owner standing
+ * comes from their membership's role alone — an ADMIN member cannot make
+ * themselves OWNER.
  */
 export function membershipActorOf(session: {
   user: { role?: string | null };

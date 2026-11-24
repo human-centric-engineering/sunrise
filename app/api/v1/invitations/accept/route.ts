@@ -22,6 +22,7 @@
 
 import { withAuth } from '@/lib/auth/guards';
 import { isApiKeySession } from '@/lib/auth/api-keys';
+import { prisma } from '@/lib/db/client';
 import { ForbiddenError } from '@/lib/api/errors';
 import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
@@ -49,12 +50,21 @@ export const POST = withAuth(
 
     const { token, email } = await validateRequestBody(request, invitationLinkSchema);
 
+    // The account's stored platform role, not the session's: outside the
+    // install org the guard presents a platform admin who is a member there
+    // as their org role (t-1032), and staff must not take the first-owner
+    // bootstrap because of which org they happened to be acting in (#1178).
+    const stored = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { role: true },
+    });
+
     const membership = await acceptInvitationAsExistingUser(
       {
         id: session.user.id,
         email: session.user.email,
         emailVerified: session.user.emailVerified,
-        role: session.user.role,
+        role: stored?.role ?? session.user.role,
       },
       email,
       token

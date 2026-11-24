@@ -14,9 +14,11 @@ import {
   requestActingOrg,
   requestAdminReach,
   requestLockedSwitches,
+  requestMemberPlatformAdmin,
   requestSupportSession,
 } from '@/lib/auth/admin-page-viewer';
 import { SupportBanner } from '@/components/admin/support-banner';
+import { MemberPlatformAdminBanner } from '@/components/layouts/member-platform-admin-banner';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
@@ -145,10 +147,20 @@ export default async function AdminLayout({
         return null;
       })
     : Promise.resolve(null);
-  const [sharedSettings, actingOrg, supportSession] = await Promise.all([
+  // A platform admin acting in a customer org as a member there (t-1032) is
+  // presented as that role alone, so the platform pages are closed to them
+  // here; the banner says so and offers the switch back.
+  const memberAdminRead = multiTenant
+    ? requestMemberPlatformAdmin().catch((error: unknown) => {
+        logger.error('admin layout: could not read the member platform admin view', error);
+        return null;
+      })
+    : Promise.resolve(null);
+  const [sharedSettings, actingOrg, supportSession, memberAdmin] = await Promise.all([
     sharedSettingsRead,
     actingOrgRead,
     supportRead,
+    memberAdminRead,
   ]);
 
   return (
@@ -165,6 +177,7 @@ export default async function AdminLayout({
         />
         <div className="flex flex-1 flex-col overflow-hidden">
           {supportSession && <SupportBanner view={supportSession} />}
+          {memberAdmin && <MemberPlatformAdminBanner view={memberAdmin} />}
           {/* Every page of one org's rows, closed sections included: a platform
               admin there is still looking at the entered org's. */}
           <AdminHeader orgName={actingOrg?.name} orgTierPages={orgScopedAdminPages()} />

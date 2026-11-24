@@ -40,6 +40,13 @@ const supportView = {
   },
   scope: { org: ORG },
   support: SUPPORT,
+  platformRoleWithheld: true as const,
+};
+/** What sessionPrincipal answers for a platform admin who is a member there (t-1032). */
+const memberView = {
+  principal: { ...supportView.principal },
+  scope: { org: ORG },
+  platformRoleWithheld: true as const,
 };
 
 function signedIn(role: 'ADMIN' | 'USER') {
@@ -61,6 +68,16 @@ describe('MaintenanceWrapper in a support session', () => {
   it('lets a platform admin through, though the session presents as a plain user', async () => {
     signedIn('ADMIN');
     vi.mocked(sessionPrincipal).mockResolvedValue(supportView);
+
+    render(await MaintenanceWrapper({ children: <span>console</span> }));
+
+    expect(screen.getByText('console')).toBeInTheDocument();
+    expect(screen.queryByTestId('maintenance-page')).not.toBeInTheDocument();
+  });
+
+  it('lets a platform admin who is a member of the org through, as a support actor is (t-1032)', async () => {
+    signedIn('ADMIN');
+    vi.mocked(sessionPrincipal).mockResolvedValue(memberView);
 
     render(await MaintenanceWrapper({ children: <span>console</span> }));
 

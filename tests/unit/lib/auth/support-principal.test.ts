@@ -6,6 +6,9 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
 vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -20,7 +23,9 @@ import {
   presentedSession,
   READ_ONLY_SUPPORT_MESSAGE,
   refuseReadOnlySupportWrite,
+  withholdsPlatformRole,
 } from '@/lib/auth/support-principal';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const support = (level: 'ADMIN' | 'READ_ONLY') => ({ source: 'support', support: { level } });
 const member = { source: 'session' };
@@ -34,6 +39,46 @@ describe('presentedRole', () => {
     expect(presentedRole('ADMIN', member)).toBe('ADMIN');
     expect(presentedRole('ADMIN', null)).toBe('ADMIN');
     expect(presentedRole(undefined, member)).toBeUndefined();
+  });
+});
+
+describe('withholdsPlatformRole (t-1032)', () => {
+  const CUSTOMER = 'cmorg00000000000customer1';
+
+  beforeEach(() => {
+    mockEnv.TENANCY_MODE = 'multi';
+  });
+
+  it.each(['session', 'resolver', 'api-key'])(
+    'withholds it for a %s entry to a customer org at multi',
+    (source) => {
+      expect(withholdsPlatformRole({ source, orgId: CUSTOMER })).toBe(true);
+      expect(presentedRole('ADMIN', { source, orgId: CUSTOMER })).toBe('USER');
+    }
+  );
+
+  it('keeps it in the install org at multi', () => {
+    expect(withholdsPlatformRole({ source: 'session', orgId: INSTALL_ORG_ID })).toBe(false);
+    expect(presentedRole('ADMIN', { source: 'session', orgId: INSTALL_ORG_ID })).toBe('ADMIN');
+  });
+
+  it('keeps it in any org at single, where there are no customer orgs', () => {
+    mockEnv.TENANCY_MODE = 'single';
+    expect(withholdsPlatformRole({ source: 'session', orgId: CUSTOMER })).toBe(false);
+  });
+
+  it('withholds it for support whatever the mode, and not with no entry', () => {
+    mockEnv.TENANCY_MODE = 'single';
+    expect(withholdsPlatformRole(support('ADMIN'))).toBe(true);
+    expect(withholdsPlatformRole(null)).toBe(false);
+    expect(withholdsPlatformRole(undefined)).toBe(false);
+  });
+
+  it('hands a handler a copy with the role replaced in a customer org', () => {
+    const session = { user: { id: 'u1', role: 'ADMIN' } };
+    const presented = presentedSession(session, { source: 'session', orgId: CUSTOMER });
+    expect(presented.user.role).toBe('USER');
+    expect(session.user.role).toBe('ADMIN');
   });
 });
 
