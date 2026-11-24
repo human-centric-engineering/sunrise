@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import {
@@ -413,6 +413,47 @@ describe('OrgEntitlementsForm', () => {
       ).toBeInTheDocument();
       expect(onSaved).toHaveBeenCalledTimes(1);
       expect(onSaved).toHaveBeenCalledWith(cleared);
+    });
+
+    // A host bug is the host's, not a failed save: the write landed. The
+    // host's error is left to surface as an unhandled rejection, its own; the
+    // listener keeps it from failing this run.
+    it('still shows the save landed when the host callback throws', async () => {
+      vi.mocked(apiClient.patch).mockResolvedValue(view());
+      const onSaved = vi.fn(() => {
+        throw new Error('host bug');
+      });
+      const unhandled = vi.fn();
+      process.on('unhandledRejection', unhandled);
+      const user = renderForm(view(), onSaved);
+
+      await user.click(screen.getByRole('checkbox', { name: /Reports/ }));
+      await user.click(screen.getByRole('button', { name: 'Save switches' }));
+
+      expect(await screen.findByText('Saved', { selector: 'span' })).toBeInTheDocument();
+      expect(onSaved).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      process.off('unhandledRejection', unhandled);
+    });
+
+    it('closes the clear dialog even when the host callback throws', async () => {
+      vi.mocked(apiClient.delete).mockResolvedValue(atDefaults());
+      const onSaved = vi.fn(() => {
+        throw new Error('host bug');
+      });
+      const unhandled = vi.fn();
+      process.on('unhandledRejection', unhandled);
+      const user = renderForm(view(), onSaved);
+
+      await confirmClear(user);
+
+      expect(
+        await screen.findByText('Cleared to defaults', { selector: 'span' })
+      ).toBeInTheDocument();
+      expect(onSaved).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      process.off('unhandledRejection', unhandled);
     });
 
     it('is not called when a save fails', async () => {

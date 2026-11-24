@@ -148,12 +148,16 @@ export function OrgEntitlementsForm({
     });
   };
 
-  /** Whether the write landed; a failure is shown by `failure`. */
+  /**
+   * What the write stored, or null when it failed; a failure is shown by
+   * `failure`. The caller hands the stored view to `onSaved`, outside this
+   * try, so an error in the host's callback is never shown as a failed save.
+   */
   const write = async (
     send: () => Promise<OrgEntitlementsView>,
     failure: typeof saveFailure,
     said: NonNullable<typeof done>
-  ): Promise<boolean> => {
+  ): Promise<OrgEntitlementsView | null> => {
     failure.clear();
     setSaving(true);
     setDone(null);
@@ -166,11 +170,10 @@ export function OrgEntitlementsForm({
       saveFailure.clear();
       clearFailure.clear();
       setDone(said);
-      onSaved?.(updated);
-      return true;
+      return updated;
     } catch (err) {
       failure.report(err);
-      return false;
+      return null;
     } finally {
       setSaving(false);
     }
@@ -188,8 +191,8 @@ export function OrgEntitlementsForm({
   };
   const anyChange = changed.on.length + changed.off.length > 0;
 
-  const save = () =>
-    write(
+  const save = async () => {
+    const stored = await write(
       () =>
         apiClient.patch<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId), {
           body: changed,
@@ -197,14 +200,20 @@ export function OrgEntitlementsForm({
       saveFailure,
       'Saved'
     );
+    if (stored) onSaved?.(stored);
+  };
 
   const clearToDefaults = async () => {
-    const cleared = await write(
+    const stored = await write(
       () => apiClient.delete<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId)),
       clearFailure,
       'Cleared to defaults'
     );
-    if (cleared) setConfirmingClear(false);
+    if (!stored) return;
+    // Closed before the host hears, so a host error cannot hold the dialog
+    // open over a clear that has already happened.
+    setConfirmingClear(false);
+    onSaved?.(stored);
   };
 
   if (view.registrationFailed) {
