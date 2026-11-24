@@ -409,7 +409,8 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * ("seams ship empty", which must be able to fail in a fork),
  * `stale-writers.test.ts` (reads the fork's `registerStaleWriter()` calls) and
  * `admin-tier-roster.test.ts` (judges the fork's org-tier pages and the
- * switches they require). A test that needs a seam filled mocks it itself, as
+ * switches they require). A fourth, `setup-seam-pins.test.ts`, reads each
+ * real init with `vi.importActual` only to check the pin replaces it. A test that needs a seam filled mocks it itself, as
  * `org-tier-admin-pages.test.ts`, `user-created-hooks.test.ts`,
  * `erasure-hooks-seam.test.ts`, `org-created-hooks.test.ts`,
  * `signup-org.test.ts` and `app-pins.test.ts` do.

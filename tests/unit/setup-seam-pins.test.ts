@@ -16,8 +16,9 @@
  * It compares which function the suite sees with the real one, never what
  * your init registers, so it passes with your seams filled. It fails only if
  * a pin is removed from tests/setup.ts, which would let your registrations run
- * inside core tests: keep the pins, and add a row here if you pin a seam of
- * your own the same way.
+ * inside core tests: keep the pins. If you pin a seam of your own the same
+ * way, assert that pin in your own test file rather than adding a row here,
+ * so this list keeps merging cleanly.
  */
 
 import { describe, expect, it, vi } from 'vitest';
