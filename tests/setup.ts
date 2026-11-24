@@ -408,17 +408,22 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * `vi.mock(…, (importOriginal) => importOriginal())`: `defaults.test.ts`
  * ("seams ship empty", which must be able to fail in a fork),
  * `stale-writers.test.ts` (reads the fork's `registerStaleWriter()` calls) and
- * `admin-tier-roster.test.ts` (judges the fork's org-tier pages). A test that
- * needs a seam filled mocks it itself, as `org-tier-admin-pages.test.ts`,
- * `user-created-hooks.test.ts`, `erasure-hooks-seam.test.ts`,
- * `org-created-hooks.test.ts`, `signup-org.test.ts` and `app-pins.test.ts` do.
+ * `admin-tier-roster.test.ts` (judges the fork's org-tier pages and the
+ * switches they require). A fourth, `setup-seam-pins.test.ts`, reads each
+ * real init with `vi.importActual` only to check the pin replaces it. A test that needs a seam filled mocks it itself, as
+ * `org-tier-admin-pages.test.ts`, `user-created-hooks.test.ts`,
+ * `erasure-hooks-seam.test.ts`, `org-created-hooks.test.ts`,
+ * `signup-org.test.ts` and `app-pins.test.ts` do.
  * A fork tests its own filled seam in `tests/unit/lib/app/<seam>.test.ts`,
  * which may read the real seam too. `defaults.test.ts` fails any other file
  * that reads a pinned seam past its pin, or unmocks one.
  *
- * Nine seams are pinned, not every lazy init in `lib/app/`: six a measured
- * fill failed, and the org-created, signup-org and model-pins seams (below).
- * The rest are #636's sweep.
+ * Eleven seams are pinned in this file, not every lazy init in `lib/app/`:
+ * the four above (llm-providers, brand, emails, waitlist-config) and the seven
+ * inits below (admin-tier, user-created, erasure, org-created, signup-org,
+ * model-pins, entitlements). The rest are #636's sweep.
+ * `tests/unit/setup-seam-pins.test.ts` fails if one of the seven inits stops
+ * being replaced.
  */
 // Each keeps the module's other exports, as the brand pin derives its keys: a
 // fork may export more from these files, and a mock that dropped it would fail
@@ -466,6 +471,16 @@ vi.mock('@/lib/app/model-pins', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   initAppModelPins: () => {
     // Registers no reporter and no check: Sunrise's shipped default.
+  },
+}));
+// From a fork's fill (#1324): ConQuest registers its packages as switches,
+// one keyed `lead_gen`. The registry runs the app's init on its first read, so
+// that switch landed over the `lead_gen` fixture `admin/layout.test.tsx` and
+// `admin-page-viewer-locked.test.ts` register, and both failed in the fork.
+vi.mock('@/lib/app/entitlements', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  initAppEntitlements: () => {
+    // Registers no switch and no meter: Sunrise's shipped default.
   },
 }));
 

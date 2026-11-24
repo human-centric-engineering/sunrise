@@ -25,6 +25,9 @@
  *    are shown but can only be changed from the install organisation.
  *  - **Registration failed**: the app's switches could not be registered, so
  *    every organisation has none of them.
+ *
+ * A host that shows the switches elsewhere takes what each write stored from
+ * `onSaved`, rather than reading them again.
  */
 
 import { useState } from 'react';
@@ -75,6 +78,14 @@ export interface OrgEntitlementsView {
 export interface OrgEntitlementsFormProps {
   orgId: string;
   entitlements: OrgEntitlementsView;
+  /**
+   * Called with what the server stored, each time a save or a clear lands
+   * (#1325). Not called when a write fails. For a host that shows the
+   * switches somewhere else too, such as a row in a list: re-reading them
+   * when the form closes can reach the server before a write still in flight
+   * has committed, and show the switches as they were.
+   */
+  onSaved?: (view: OrgEntitlementsView) => void;
 }
 
 /** Why the switches are read-only from a customer's org, for the shared notice. */
@@ -85,7 +96,11 @@ function onKeys(view: OrgEntitlementsView): Set<string> {
   return new Set(view.switches.filter((s) => s.on).map((s) => s.key));
 }
 
-export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitlementsFormProps) {
+export function OrgEntitlementsForm({
+  orgId,
+  entitlements: initial,
+  onSaved,
+}: OrgEntitlementsFormProps) {
   const [view, setView] = useState(initial);
   const [ticked, setTicked] = useState(() => onKeys(initial));
   const [saving, setSaving] = useState(false);
@@ -133,12 +148,16 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
     });
   };
 
-  /** Whether the write landed; a failure is shown by `failure`. */
+  /**
+   * What the write stored, or null when it failed; a failure is shown by
+   * `failure`. The caller hands the stored view to `onSaved`, outside this
+   * try, so an error in the host's callback is never shown as a failed save.
+   */
   const write = async (
     send: () => Promise<OrgEntitlementsView>,
     failure: typeof saveFailure,
     said: NonNullable<typeof done>
-  ): Promise<boolean> => {
+  ): Promise<OrgEntitlementsView | null> => {
     failure.clear();
     setSaving(true);
     setDone(null);
@@ -151,10 +170,10 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       saveFailure.clear();
       clearFailure.clear();
       setDone(said);
-      return true;
+      return updated;
     } catch (err) {
       failure.report(err);
-      return false;
+      return null;
     } finally {
       setSaving(false);
     }
@@ -172,8 +191,8 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
   };
   const anyChange = changed.on.length + changed.off.length > 0;
 
-  const save = () =>
-    write(
+  const save = async () => {
+    const stored = await write(
       () =>
         apiClient.patch<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId), {
           body: changed,
@@ -181,14 +200,20 @@ export function OrgEntitlementsForm({ orgId, entitlements: initial }: OrgEntitle
       saveFailure,
       'Saved'
     );
+    if (stored) onSaved?.(stored);
+  };
 
   const clearToDefaults = async () => {
-    const cleared = await write(
+    const stored = await write(
       () => apiClient.delete<OrgEntitlementsView>(API.ADMIN.orgEntitlements(orgId)),
       clearFailure,
       'Cleared to defaults'
     );
-    if (cleared) setConfirmingClear(false);
+    if (!stored) return;
+    // Closed before the host hears, so a host error cannot hold the dialog
+    // open over a clear that has already happened.
+    setConfirmingClear(false);
+    onSaved?.(stored);
   };
 
   if (view.registrationFailed) {

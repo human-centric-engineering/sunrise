@@ -6,16 +6,72 @@
  * Each page reads its text and its metadata from the catalogue. The
  * expectations are taken from `en.json` itself, so they hold whatever the
  * placeholder copy says, and fail if a page stops reading a key.
+ *
+ * FORK NOTE (#1317): a page you have taken over with the CUSTOMIZATION.md §6
+ * thin shim, or deleted, is skipped here, because its copy is yours. The shim
+ * must re-export `default` from `@/components/app`, `@/components/framework`,
+ * `@/lib/app` or `@/lib/framework`, and `lib/app/reserved-tiers.ts` must
+ * declare at least one tier. A §6 shim's `components/app` already has to be
+ * declared; content under `lib/app` alone does not turn the skip on, since
+ * that tier cannot be declared. Each page is imported only once it is known
+ * to be the platform's, so a shim's different exports cannot fail type-check
+ * or the import. You should not need to edit this file; see
+ * `tests/helpers/marketing-pages.ts`.
  */
 
+import { existsSync } from 'node:fs';
+import type { Metadata } from 'next';
+import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import en from '@/lib/i18n/messages/en.json';
 import { BRAND } from '@/lib/brand';
-import AboutPage, { generateMetadata as aboutMetadata } from '@/app/(public)/about/page';
-import ContactPage, { generateMetadata as contactMetadata } from '@/app/(public)/contact/page';
-import PrivacyPage, { generateMetadata as privacyMetadata } from '@/app/(public)/privacy/page';
-import TermsPage, { generateMetadata as termsMetadata } from '@/app/(public)/terms/page';
+import {
+  isPlatformMarketingPage,
+  marketingPageFile,
+  type MarketingPage,
+} from '@/tests/helpers/marketing-pages';
+
+interface PageModule {
+  default: () => Promise<ReactElement>;
+  generateMetadata: () => Promise<Metadata>;
+}
+
+function isPageModule(mod: unknown): mod is PageModule {
+  if (typeof mod !== 'object' || mod === null) return false;
+  return (
+    'default' in mod &&
+    typeof mod.default === 'function' &&
+    'generateMetadata' in mod &&
+    typeof mod.generateMetadata === 'function'
+  );
+}
+
+/**
+ * Import a platform marketing page by route segment. The specifier is built at
+ * runtime on purpose: a literal one is resolved by type-check, which is what
+ * broke on a fork's shim (TS2614) or deleted page (TS2307).
+ */
+async function loadPage(page: MarketingPage): Promise<PageModule> {
+  const file = `app/(public)/${page}/page.tsx`;
+  if (!existsSync(marketingPageFile(page))) {
+    throw new Error(
+      `${file} is missing. Sunrise ships it, so upstream this is a defect. A fork that ` +
+        'has deleted it declares its fork tier in lib/app/reserved-tiers.ts ' +
+        '(see tests/helpers/marketing-pages.ts).'
+    );
+  }
+  const mod: unknown = await import(`@/app/(public)/${page}/page.tsx`);
+  if (!isPageModule(mod)) {
+    throw new Error(
+      `${file} must export a default page component and an async generateMetadata ` +
+        '(not a static `metadata`), which is what this test renders and calls.'
+    );
+  }
+  return mod;
+}
+
+const takenOver = (page: MarketingPage) => !isPlatformMarketingPage(page);
 
 // The form has its own tests; here it only has to be on the page.
 vi.mock('@/components/forms/contact-form', () => ({
@@ -24,8 +80,9 @@ vi.mock('@/components/forms/contact-form', () => ({
 
 const brand = (s: string) => s.replace('{brand}', BRAND.name);
 
-describe('privacy page', () => {
+describe.skipIf(takenOver('privacy'))('privacy page', () => {
   it('renders every section from the catalogue', async () => {
+    const { default: PrivacyPage } = await loadPage('privacy');
     render(await PrivacyPage());
 
     expect(
@@ -38,12 +95,14 @@ describe('privacy page', () => {
   });
 
   it('dates the policy with the named long format, in UTC', async () => {
+    const { default: PrivacyPage } = await loadPage('privacy');
     render(await PrivacyPage());
 
     expect(screen.getByText('Last updated: January 19, 2026')).toBeInTheDocument();
   });
 
   it('links the contact address inside the translated sentence', async () => {
+    const { default: PrivacyPage } = await loadPage('privacy');
     render(await PrivacyPage());
 
     const link = screen.getByRole('link', { name: 'privacy@example.com' });
@@ -52,7 +111,7 @@ describe('privacy page', () => {
   });
 
   it('builds its metadata from the catalogue', async () => {
-    const meta = await privacyMetadata();
+    const meta = await (await loadPage('privacy')).generateMetadata();
 
     expect(meta.title).toBe(en.legal.privacy.meta.title);
     expect(meta.description).toBe(brand(en.legal.privacy.meta.description));
@@ -60,8 +119,9 @@ describe('privacy page', () => {
   });
 });
 
-describe('terms page', () => {
+describe.skipIf(takenOver('terms'))('terms page', () => {
   it('renders every section from the catalogue', async () => {
+    const { default: TermsPage } = await loadPage('terms');
     render(await TermsPage());
 
     expect(
@@ -73,15 +133,16 @@ describe('terms page', () => {
   });
 
   it('builds its metadata from the catalogue', async () => {
-    const meta = await termsMetadata();
+    const meta = await (await loadPage('terms')).generateMetadata();
 
     expect(meta.title).toBe(en.legal.terms.meta.title);
     expect(meta.description).toBe(brand(en.legal.terms.meta.description));
   });
 });
 
-describe('about page', () => {
+describe.skipIf(takenOver('about'))('about page', () => {
   it('renders its headings from the catalogue', async () => {
+    const { default: AboutPage } = await loadPage('about');
     render(await AboutPage());
 
     expect(
@@ -90,14 +151,15 @@ describe('about page', () => {
   });
 
   it('builds its metadata from the catalogue', async () => {
-    const meta = await aboutMetadata();
+    const meta = await (await loadPage('about')).generateMetadata();
 
     expect(meta.title).toBe(en.marketing.about.meta.title);
   });
 });
 
-describe('contact page', () => {
+describe.skipIf(takenOver('contact'))('contact page', () => {
   it('renders its heading and the form', async () => {
+    const { default: ContactPage } = await loadPage('contact');
     render(await ContactPage());
 
     expect(
@@ -107,7 +169,7 @@ describe('contact page', () => {
   });
 
   it('builds its metadata from the catalogue', async () => {
-    const meta = await contactMetadata();
+    const meta = await (await loadPage('contact')).generateMetadata();
 
     expect(meta.title).toBe(en.marketing.contact.meta.title);
   });

@@ -329,6 +329,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'documented empty default. A new seam file changes the answer.',
   },
   {
+    path: 'tests/unit/setup-seam-pins.test.ts',
+    reason:
+      'asserts `tests/setup.ts` still replaces each pinned `lib/app/*` init. ' +
+      'The edit that drops a pin is to the setup file, which no test imports, ' +
+      'and Sunrise cannot see the loss any other way: it fails only in a fork.',
+  },
+  {
     path: 'tests/unit/auth-role-literals.test.ts',
     reason:
       'greps every tracked source file for a bare `User.role` literal against ' +

@@ -61,6 +61,10 @@ import {
 // tests/setup.ts pins the org-tier admin seam to empty for every file (#1125);
 // this one judges the fork's real pages, as the FORK NOTE above promises.
 vi.mock('@/lib/app/admin-tier', (importOriginal) => importOriginal());
+// Pinned the same way (#1324). The roster checks every `requires` against the
+// fork's real switches, which the pin would hide: each key would then name no
+// switch, and the roster would fail in the fork for a reason it cannot fix.
+vi.mock('@/lib/app/entitlements', (importOriginal) => importOriginal());
 
 function tracked(dir: string): string[] {
   return execSync(`git ls-files --cached --others --exclude-standard -- ${dir}`, {
