@@ -92,7 +92,7 @@ When a `parallel` node completes, its `nextSteps` targets are all pushed to the 
 
 A step can have edges in from steps that will not all run: two guards whose `fail` edges share one failure step, or two branches of a `route` that meet again. Waiting for every predecessor to be visited deadlocked those shapes, and the run ended with `Workflow deadlocked: steps [...] have unmet dependencies` (t-1077: the provider model audit's `report_validation_failure` when its first guard gave up).
 
-So the walk also keeps an `untaken` set: steps it will not reach. After a step runs and hands on, each forward successor it did not choose is **untaken** when nothing has reached it (it is not queued, pending or visited) and every one of its own predecessors has run or is untaken. Being untaken spreads down the graph the same way. A join counts an untaken predecessor as settled.
+So the walk also keeps an `untaken` set: steps it will not reach. After a step runs and hands on, each forward successor it did not choose is **untaken** when nothing has reached it (it is not queued, pending or visited) and every one of its own predecessors has run or is untaken. A step named as some step's `fallbackStepId` is not untaken while that step can still fall back to it, that is while it has neither run nor been untaken itself. Being untaken spreads down the graph the same way. A join counts an untaken predecessor as settled.
 
 What that allows and what it keeps:
 
@@ -103,7 +103,7 @@ What that allows and what it keeps:
 | A `parallel` step's branches meeting at a join                    | The join waits for every branch, including a longer one: all of them were taken.                  |
 | A join with an edge from a step that has been reached but not run | It waits for that step. Reached is never untaken.                                                 |
 
-A bounded retry clears what the earlier attempt left untaken downstream of the retry target, with the rest of the cascade-clear, so the next attempt can take another way. A crash-resume restores the set from the saved walk position (`untaken` on `walkState`). A resume from a cursor (an approval) starts with it empty, as before t-1077: a join that waits on a branch the run took before the pause can still wait forever there.
+A bounded retry clears what the earlier attempt left untaken downstream of the retry target, with the rest of the cascade-clear, so the next attempt can take another way. A resume rebuilds the set from every step that has already run: a crash-resume from the saved walk position (`walkState`, including one saved before `untaken` existed), and a cursor resume (after an approval) from the trace. So a join behind a branch not taken before the pause still runs.
 
 The `stragglerStrategy: 'wait-all'` config on parallel nodes is the implemented mode. `first-success` is not yet supported.
 

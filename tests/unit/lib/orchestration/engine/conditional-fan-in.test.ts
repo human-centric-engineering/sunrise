@@ -137,6 +137,54 @@ async function run(definition: WorkflowDefinition): Promise<ExecutionEvent[]> {
   return events;
 }
 
+/** Resume a run whose trace records `ran`, from the row `extra` describes. */
+async function resume(
+  definition: WorkflowDefinition,
+  ran: WorkflowStep[],
+  extra: { status: string; currentStep: string; walkState?: unknown }
+): Promise<ExecutionEvent[]> {
+  const now = new Date().toISOString();
+  vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+    id: 'exec_test',
+    workflowId: 'wf_test',
+    userId: 'user_test',
+    inputData: {},
+    executionTrace: ran.map((s) => ({
+      stepId: s.id,
+      stepType: s.type,
+      label: s.name,
+      status: 'completed',
+      output: `out:${s.id}`,
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: now,
+      completedAt: now,
+      durationMs: 1,
+    })),
+    totalTokensUsed: 0,
+    totalCostUsd: 0,
+    budgetLimitUsd: null,
+    startedAt: new Date(),
+    completedAt: null,
+    outputData: null,
+    errorMessage: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    walkState: null,
+    ...extra,
+  } as never);
+  const events: ExecutionEvent[] = [];
+  const engine = new OrchestrationEngine();
+  for await (const e of engine.execute(
+    { id: 'wf_test', definition },
+    {},
+    { userId: 'user_test', resumeFromExecutionId: 'exec_test' }
+  )) {
+    events.push(e);
+  }
+  return events;
+}
+
 const started = (events: ExecutionEvent[]): string[] =>
   events.flatMap((e) => (e.type === 'step_started' ? [e.stepId] : []));
 
@@ -443,6 +491,117 @@ describe('joins still wait for every branch that was taken (t-1077)', () => {
   });
 });
 
+describe('a join behind a branch not taken, across a resume or a fallback (t-1077)', () => {
+  beforeEach(() => {
+    registerStepType('llm_call', ok);
+    registerStepType('route', routeTo('a'));
+  });
+
+  /** route → a → hold → join | b → join. Only a is taken. */
+  const routeThenJoin = (): WorkflowDefinition => ({
+    entryStepId: 'pick',
+    errorStrategy: 'fail',
+    steps: [
+      step('pick', 'route', [
+        { targetStepId: 'a', condition: 'a' },
+        { targetStepId: 'b', condition: 'b' },
+      ]),
+      step('a', 'llm_call', [{ targetStepId: 'hold' }]),
+      step('hold', 'llm_call', [{ targetStepId: 'join' }]),
+      step('b', 'llm_call', [{ targetStepId: 'join' }]),
+      step('join', 'llm_call'),
+    ],
+  });
+
+  it('runs the join after an approval resume, which knows only the trace', async () => {
+    const definition = routeThenJoin();
+    const [pick, a, hold] = definition.steps;
+
+    const events = await resume(definition, [pick, a, hold], {
+      status: 'paused_for_approval',
+      currentStep: 'hold',
+    });
+
+    expect(started(events)).toEqual(['join']);
+    expect(terminal(events).type).toBe('workflow_completed');
+  });
+
+  it('runs the join after a crash-resume from a position saved before `untaken` existed', async () => {
+    const definition = routeThenJoin();
+    const [pick, a] = definition.steps;
+
+    const events = await resume(definition, [pick, a], {
+      status: 'running',
+      currentStep: 'hold',
+      walkState: {
+        v: 1,
+        inFlight: ['hold'],
+        batch: false,
+        done: {},
+        pending: [],
+        visited: ['pick', 'a', 'hold'],
+        retryCounts: {},
+        stepCount: 3,
+        budgetWarned: false,
+      },
+    });
+
+    expect(started(events)).toEqual(['hold', 'join']);
+    expect(terminal(events).type).toBe('workflow_completed');
+  });
+
+  /**
+   * fan → (pick → keep | spare), (s1 → late); keep → join, spare → join.
+   * `late` falls back to `spare`, so `spare` is not untaken while `late` has
+   * yet to run, even though `pick` chose `keep`.
+   */
+  const fallbackIntoUntaken = (): WorkflowDefinition => ({
+    entryStepId: 'fan',
+    errorStrategy: 'fail',
+    steps: [
+      step('fan', 'parallel', [{ targetStepId: 'pick' }, { targetStepId: 's1' }], {
+        branches: ['pick', 's1'],
+      }),
+      step('pick', 'route', [
+        { targetStepId: 'keep', condition: 'a' },
+        { targetStepId: 'spare', condition: 'b' },
+      ]),
+      step('s1', 'llm_call', [{ targetStepId: 'late' }]),
+      step('late', 'llm_call', [], { errorStrategy: 'fallback', fallbackStepId: 'spare' }),
+      step('keep', 'llm_call', [{ targetStepId: 'join' }]),
+      step('spare', 'llm_call', [{ targetStepId: 'join' }]),
+      step('join', 'llm_call'),
+    ],
+  });
+
+  it('waits for a step another step can still fall back to', async () => {
+    registerStepType('parallel', ok);
+    registerStepType('llm_call', async (s) => {
+      if (s.id === 'late') throw new ExecutorError(s.id, 'boom', 'late failed');
+      return { output: `out:${s.id}`, tokensUsed: 0, costUsd: 0 };
+    });
+
+    const events = await run(fallbackIntoUntaken());
+
+    const order = started(events);
+    expect(order).toContain('spare');
+    expect(order.indexOf('join')).toBeGreaterThan(order.indexOf('spare'));
+    expect(order.filter((id) => id === 'join')).toHaveLength(1);
+    expect(terminal(events).type).toBe('workflow_completed');
+  });
+
+  it('runs the join once the step that could fall back has run without falling back', async () => {
+    registerStepType('parallel', ok);
+
+    const events = await run(fallbackIntoUntaken());
+
+    const order = started(events);
+    expect(order).not.toContain('spare');
+    expect(order.at(-1)).toBe('join');
+    expect(terminal(events).type).toBe('workflow_completed');
+  });
+});
+
 // ─── t-1078: a failure step whose notice can't be sent ──────────────────────
 
 describe('a step that ends the run failed, whether or not its work succeeds (t-1078)', () => {
@@ -553,6 +712,100 @@ describe('a step that ends the run failed, whether or not its work succeeds (t-1
     expect(events.find((e) => e.type === 'workflow_failed')).toMatchObject({ error: 'halted' });
     expect(events.map((e) => e.type)).not.toContain('workflow_completed');
     expect(finalised()).toMatchObject({ status: 'failed', errorMessage: 'halted' });
+  });
+});
+
+describe('a failed notification that is not the send failing (t-1078)', () => {
+  const notify = (config: Record<string, unknown>): WorkflowDefinition => ({
+    entryStepId: 'notify',
+    errorStrategy: 'fail',
+    steps: [
+      step('notify', 'send_notification', [{ targetStepId: 'after' }], {
+        terminalStatus: 'failed',
+        ...config,
+      }),
+      step('after', 'llm_call'),
+    ],
+  });
+
+  beforeEach(() => {
+    registerStepType('llm_call', ok);
+  });
+
+  it('ends the run failed when the step times out and is skipped', async () => {
+    registerStepType('send_notification', () => new Promise(() => {}));
+
+    const events = await run(notify({ errorStrategy: 'skip', timeoutMs: 20 }));
+
+    expect(terminal(events).type).toBe('workflow_failed');
+    expect(started(events)).not.toContain('after');
+    const { status, trace } = finalised();
+    expect(status).toBe('failed');
+    expect(trace.find((e) => e.stepId === 'notify')?.status).toBe('skipped');
+  });
+
+  it('ends the run failed when the step falls back with no fallback step', async () => {
+    registerStepType('send_notification', async (s) => {
+      throw new ExecutorError(
+        s.id,
+        'EMAIL_SEND_FAILED',
+        'refused',
+        undefined,
+        true,
+        0,
+        0,
+        'halted'
+      );
+    });
+
+    const events = await run(notify({ errorStrategy: 'fallback' }));
+
+    expect(terminal(events)).toMatchObject({ type: 'workflow_failed', error: 'halted' });
+    expect(started(events)).not.toContain('after');
+    expect(finalised()).toMatchObject({ status: 'failed', errorMessage: 'halted' });
+  });
+
+  it('hands on to its fallback step when it has one, and the run carries on', async () => {
+    registerStepType('send_notification', async (s) => {
+      throw new ExecutorError(
+        s.id,
+        'EMAIL_SEND_FAILED',
+        'refused',
+        undefined,
+        true,
+        0,
+        0,
+        'halted'
+      );
+    });
+
+    const events = await run({
+      entryStepId: 'notify',
+      errorStrategy: 'fail',
+      steps: [
+        step('notify', 'send_notification', [], {
+          terminalStatus: 'failed',
+          errorStrategy: 'fallback',
+          fallbackStepId: 'backup',
+        }),
+        step('backup', 'llm_call'),
+      ],
+    });
+
+    expect(started(events)).toEqual(['notify', 'backup']);
+    expect(terminal(events).type).toBe('workflow_completed');
+  });
+
+  it('still completes the run when the step is not marked failed', async () => {
+    registerStepType('send_notification', () => new Promise(() => {}));
+
+    const events = await run({
+      entryStepId: 'notify',
+      errorStrategy: 'fail',
+      steps: [step('notify', 'send_notification', [], { errorStrategy: 'skip', timeoutMs: 20 })],
+    });
+
+    expect(terminal(events).type).toBe('workflow_completed');
   });
 });
 

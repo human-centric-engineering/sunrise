@@ -450,6 +450,19 @@ export class OrchestrationEngine {
       // waits for every branch: each one was taken.
       const untaken = new Set<string>();
 
+      // The steps that can send the walk to each step through
+      // `errorConfig.fallbackStepId`. That is not a forward edge, so it is not
+      // in `inDegree`, but a step is not untaken while one of these can still
+      // fall back to it.
+      const fallbackSources = new Map<string, Set<string>>();
+      for (const step of workflow.definition.steps) {
+        const parsed = stepErrorConfigSchema.safeParse(step.config);
+        const target = parsed.success ? parsed.data.fallbackStepId : undefined;
+        if (!target) continue;
+        if (!fallbackSources.has(target)) fallbackSources.set(target, new Set());
+        fallbackSources.get(target)!.add(step.id);
+      }
+
       const isReady = (stepId: string): boolean => {
         const preds = inDegree.get(stepId);
         if (!preds || preds.size === 0) return true;
@@ -462,25 +475,35 @@ export class OrchestrationEngine {
       // Steps waiting for predecessors to complete before they can run.
       const pending = new Set<string>();
 
+      // A step's forward successors and its fallback step: what it could
+      // send the walk to.
+      const reachableFrom = (id: string): string[] => {
+        const step = byId.get(id);
+        if (!step) return [];
+        const fallback = stepErrorConfigSchema.safeParse(step.config);
+        const fallbackId = fallback.success ? fallback.data.fallbackStepId : undefined;
+        return fallbackId ? [...forwardTargets(step), fallbackId] : forwardTargets(step);
+      };
+
       // After `fromIds` ran and handed on, mark what they left behind: each
-      // forward successor that nothing reached and that no predecessor can
-      // still reach, and in turn its own successors. A step is reached once
-      // queued, pending or visited.
+      // step they could reach that nothing reached and that no predecessor
+      // (or step that falls back to it) can still reach, and in turn what it
+      // could reach. A step is reached once queued, pending or visited.
       const settleUntaken = (fromIds: Iterable<string>): void => {
         const stack: string[] = [];
-        for (const id of fromIds) {
-          const from = byId.get(id);
-          if (from) stack.push(...forwardTargets(from));
-        }
+        for (const id of fromIds) stack.push(...reachableFrom(id));
         while (stack.length > 0) {
           const id = stack.pop()!;
           if (untaken.has(id) || visited.has(id) || pending.has(id) || queue.includes(id)) {
             continue;
           }
           if (!isReady(id)) continue;
+          const sources = fallbackSources.get(id);
+          if (sources && [...sources].some((src) => !visited.has(src) && !untaken.has(src))) {
+            continue;
+          }
           untaken.add(id);
-          const step = byId.get(id);
-          if (step) stack.push(...forwardTargets(step));
+          stack.push(...reachableFrom(id));
         }
       };
 
@@ -654,6 +677,12 @@ export class OrchestrationEngine {
         }
       };
 
+      // A cursor resume (after an approval, or a crash with no saved
+      // position) knows only what ran, from the trace: settle what those steps
+      // left behind, so a join behind a branch not taken before the pause
+      // still runs (t-1077).
+      if (resumeAfterStepId && !resumePosition) settleUntaken([...visited]);
+
       if (resumePosition) {
         // Restore the saved walk, re-queue the in-flight steps that had not
         // finished, and replay what runs after the ones that had.
@@ -695,9 +724,9 @@ export class OrchestrationEngine {
           }
         }
         // Once every finished step has handed on, as the live walk would.
-        settleUntaken(
-          resumePosition.inFlight.filter((id) => resumePosition.done[id] !== undefined)
-        );
+        // Settled from every step that has run, not just the in-flight ones,
+        // so a position saved before `untaken` existed is rebuilt too.
+        settleUntaken([...visited]);
 
         // A step ended the run before the host died: finalise it the way the
         // live run was about to, rather than re-running the step (and paying
@@ -1215,6 +1244,11 @@ export class OrchestrationEngine {
       const partialTokens = execErr.tokensUsed;
       const partialCost = execErr.costUsd;
 
+      // A step that ends its branch as a failed run still does when its own
+      // work failed and was skipped (t-1078): the trace keeps the error, the
+      // run ends with the step's reason.
+      const failWorkflow = failReasonAfterError(step, execErr, ctx);
+
       if (strategy === 'skip') {
         // Sanitised once so the SSE event and the trace entry's `error`
         // field carry the same text. Without skipError on the result, the
@@ -1228,10 +1262,7 @@ export class OrchestrationEngine {
           skipped: true,
           skipError: skipReason,
           ...(errorConfig.expectedSkip ? { expectedSkip: true } : {}),
-          // A step that ends its branch as a failed run still does when its
-          // own work failed and was skipped (t-1078): the trace keeps the
-          // error, the run ends with the step's reason.
-          ...(execErr.failWorkflow ? { failWorkflow: execErr.failWorkflow } : {}),
+          ...(failWorkflow ? { failWorkflow } : {}),
         };
       }
 
@@ -1245,7 +1276,14 @@ export class OrchestrationEngine {
             nextStepIds: [errorConfig.fallbackStepId],
           };
         }
-        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
+        // With no fallback step, fallback behaves as skip, and so does a
+        // step that ends the run failed.
+        return {
+          output: null,
+          tokensUsed: partialTokens,
+          costUsd: partialCost,
+          ...(failWorkflow ? { failWorkflow } : {}),
+        };
       }
 
       // strategy === 'fail' — propagate.
@@ -2192,6 +2230,8 @@ export class OrchestrationEngine {
       const partialTokens = execErr.tokensUsed;
       const partialCost = execErr.costUsd;
 
+      const failWorkflow = failReasonAfterError(step, execErr, ctx);
+
       if (strategy === 'skip') {
         return {
           output: null,
@@ -2200,7 +2240,7 @@ export class OrchestrationEngine {
           skipped: true,
           skipError: sanitizeError(execErr),
           ...(errorConfig.expectedSkip ? { expectedSkip: true } : {}),
-          ...(execErr.failWorkflow ? { failWorkflow: execErr.failWorkflow } : {}),
+          ...(failWorkflow ? { failWorkflow } : {}),
         };
       }
 
@@ -2213,7 +2253,12 @@ export class OrchestrationEngine {
             nextStepIds: [errorConfig.fallbackStepId],
           };
         }
-        return { output: null, tokensUsed: partialTokens, costUsd: partialCost };
+        return {
+          output: null,
+          tokensUsed: partialTokens,
+          costUsd: partialCost,
+          ...(failWorkflow ? { failWorkflow } : {}),
+        };
       }
 
       // strategy === 'fail'
@@ -3135,7 +3180,6 @@ function attachRetryToTrace(
   return undefined;
 }
 
-/** The steps a finished step hands on to: the ones it chose, else every outgoing edge. */
 /**
  * A bounded retry back-edge: it sends the walk back to a step already run, so
  * it is not a dependency of its target.
@@ -3149,6 +3193,30 @@ function forwardTargets(step: WorkflowStep): string[] {
   return step.nextSteps.filter((edge) => !isBoundedRetryEdge(edge)).map((e) => e.targetStepId);
 }
 
+/**
+ * The reason a step whose own work failed still fails the run with, when its
+ * error strategy skips it (or falls back with no fallback step): a
+ * `send_notification` marked `terminalStatus: 'failed'` ends its branch as a
+ * failed run whatever happens to its send (t-1078). The executor's own reason
+ * (from the notice body) when it gave one; otherwise the error itself, which
+ * covers a step timeout and anything thrown before the executor could add it.
+ * A cancelled run's abort is left alone, so the run still ends as cancelled.
+ */
+function failReasonAfterError(
+  step: WorkflowStep,
+  err: ExecutorError,
+  ctx: Readonly<ExecutionContext>
+): string | undefined {
+  if (err.failWorkflow) return err.failWorkflow;
+  if (ctx.signal?.aborted) return undefined;
+  const endsRunFailed =
+    step.type === 'send_notification' &&
+    isRecord(step.config) &&
+    step.config.terminalStatus === 'failed';
+  return endsRunFailed ? sanitizeError(err) : undefined;
+}
+
+/** The steps a finished step hands on to: the ones it chose, else every outgoing edge. */
 function chosenNextIds(step: WorkflowStep, result: StepResult): string[] {
   return result.nextStepIds && result.nextStepIds.length > 0
     ? result.nextStepIds

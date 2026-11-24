@@ -83,6 +83,7 @@ vi.mock('@/lib/db/client', () => ({
 import '@/lib/orchestration/engine/executors/notification'; // triggers registerStepType
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { sendEmail } from '@/lib/email/send';
+import { emailLocaleForOrg } from '@/lib/email/locale';
 import { executeHttpRequest, HttpError } from '@/lib/orchestration/http';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 // The REAL interpolator (this module is NOT mocked — the mock above is on
@@ -1230,6 +1231,23 @@ describe('executeNotification', () => {
           retriable: false,
           failWorkflow: 'pipeline aborted',
         });
+      });
+
+      it('carries the reason when something other than the send throws, such as the locale lookup', async () => {
+        vi.mocked(emailLocaleForOrg).mockRejectedValueOnce(new Error('connection refused'));
+
+        const err = await executor(
+          makeEmailStep({ bodyTemplate: 'Halted at a validation gate', terminalStatus: 'failed' }),
+          makeCtx()
+        ).catch((e: unknown) => e);
+
+        expect(err).toBeInstanceOf(ExecutorError);
+        expect(err).toMatchObject({
+          code: 'NOTIFICATION_ERROR',
+          message: 'Notification failed: connection refused',
+          failWorkflow: 'Halted at a validation gate',
+        });
+        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
       });
 
       it('carries no reason when terminalStatus is unset', async () => {

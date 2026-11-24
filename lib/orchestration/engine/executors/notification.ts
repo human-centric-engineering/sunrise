@@ -124,19 +124,32 @@ function endsRunFailed(
   err: unknown,
   terminalStatus: 'completed' | 'failed' | undefined,
   body: string,
-  ctx: Readonly<ExecutionContext>
+  ctx: Readonly<ExecutionContext>,
+  stepId: string
 ): unknown {
-  if (terminalStatus !== 'failed' || !(err instanceof ExecutorError) || ctx.signal?.aborted) {
-    return err;
+  if (terminalStatus !== 'failed' || ctx.signal?.aborted) return err;
+  if (err instanceof ExecutorError) {
+    return new ExecutorError(
+      err.stepId,
+      err.code,
+      err.message,
+      err.cause,
+      err.retriable,
+      err.tokensUsed,
+      err.costUsd,
+      deriveFailureReason(body)
+    );
   }
+  // Anything else thrown before the send (the org's email locale lookup, say)
+  // still carries the reason, rather than reaching the engine without it.
   return new ExecutorError(
-    err.stepId,
-    err.code,
-    err.message,
-    err.cause,
-    err.retriable,
-    err.tokensUsed,
-    err.costUsd,
+    stepId,
+    'NOTIFICATION_ERROR',
+    `Notification failed: ${err instanceof Error ? err.message : String(err)}`,
+    err,
+    true,
+    0,
+    0,
     deriveFailureReason(body)
   );
 }
@@ -560,7 +573,7 @@ async function executeNotification(
       }
     }
   } catch (err) {
-    throw endsRunFailed(err, config.terminalStatus, body, ctx);
+    throw endsRunFailed(err, config.terminalStatus, body, ctx, step.id);
   }
 
   // Opt-in: terminal-with-failure. When the workflow author marked this
