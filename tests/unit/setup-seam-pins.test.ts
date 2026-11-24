@@ -11,6 +11,13 @@
  *
  * Reads past the pins with `vi.importActual`, so it is listed as a reader of
  * each seam in `tests/unit/lib/app/defaults.test.ts`.
+ *
+ * FORK NOTE: filling any of these seams does not change what this measures.
+ * It compares which function the suite sees with the real one, never what
+ * your init registers, so it passes with your seams filled. It fails only if
+ * a pin is removed from tests/setup.ts, which would let your registrations run
+ * inside core tests: keep the pins, and add a row here if you pin a seam of
+ * your own the same way.
  */
 
 import { describe, expect, it, vi } from 'vitest';
