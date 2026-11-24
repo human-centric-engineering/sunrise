@@ -65,7 +65,7 @@ Everything under `lib/orchestration/engine/` uses `@/…` imports and reads `pri
 
 1. `execute()` is called with a validated `WorkflowDefinition`, `inputData`, and `{ userId, budgetLimitUsd?, signal?, resumeFromExecutionId? }`.
 2. The engine creates (or loads, on resume) an `AiWorkflowExecution` row with `status: 'running'` and yields `workflow_started`.
-3. Starting from `entryStepId`, the engine walks the DAG, executing steps sequentially except when a `parallel` fan-out produces multiple ready branches, which are executed concurrently via `Promise.allSettled`. Convergence points (steps with multiple incoming edges) wait for all predecessors to complete before executing.
+3. Starting from `entryStepId`, the engine walks the DAG, executing steps sequentially except when a `parallel` fan-out produces multiple ready branches, which are executed concurrently via `Promise.allSettled`. Convergence points (steps with multiple incoming edges) wait until every predecessor has either run or can no longer run — see [Joins and untaken steps](#joins-and-untaken-steps).
    - Emit `step_started`.
    - Fetch the executor from the registry, wrap it in the step's `errorStrategy`.
    - Merge the result into `ExecutionContext`, append a structured `ExecutionTraceEntry`, **checkpoint** by updating the row's `executionTrace`, `totalTokensUsed`, `totalCostUsd`, and `currentStep`.
@@ -81,12 +81,29 @@ If the process dies mid-run, the row reflects the **last completed checkpoint**,
 
 When a `parallel` node completes, its `nextSteps` targets are all pushed to the ready queue. The engine detects multiple ready steps (those whose predecessors have all been visited) and runs them concurrently:
 
-1. **In-degree map** — built at DAG walk start from `step.nextSteps` edges. Maps each step to its set of predecessor step IDs.
-2. **Readiness check** — a step is "ready" when all its predecessors are in the `visited` set.
+1. **In-degree map** — built at DAG walk start from `step.nextSteps` edges, bounded retry back-edges left out. Maps each step to its set of predecessor step IDs.
+2. **Readiness check** — a step is "ready" when each of its predecessors is in the `visited` set or the `untaken` set.
 3. **Batch detection** — if multiple steps are ready simultaneously, they form a parallel batch.
 4. **Concurrent execution** — batch steps run via `Promise.allSettled`, each receiving a frozen snapshot of the current context.
 5. **Sequential merge** — after all settle, results are merged into context one-by-one to avoid race conditions on `totalCostUsd` and `totalTokensUsed`.
 6. **Convergence** — a join step (with in-degree > 1) stays in the `pending` set until all its predecessors complete, then becomes ready on the next iteration.
+
+### Joins and untaken steps
+
+A step can have edges in from steps that will not all run: two guards whose `fail` edges share one failure step, or two branches of a `route` that meet again. Waiting for every predecessor to be visited deadlocked those shapes, and the run ended with `Workflow deadlocked: steps [...] have unmet dependencies` (t-1077: the provider model audit's `report_validation_failure` when its first guard gave up).
+
+So the walk also keeps an `untaken` set: steps it will not reach. After a step runs and hands on, each forward successor it did not choose is **untaken** when nothing has reached it (it is not queued, pending or visited) and every one of its own predecessors has run or is untaken. Being untaken spreads down the graph the same way. A join counts an untaken predecessor as settled.
+
+What that allows and what it keeps:
+
+| Shape                                                             | Behaviour                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Two guards with a `fail` edge each into one failure step          | The failure step runs when either guard sends the walk there; the other guard is untaken or done. |
+| A `route` whose branches meet at one join                         | The join runs after the branch taken; the others are untaken.                                     |
+| A `parallel` step's branches meeting at a join                    | The join waits for every branch, including a longer one: all of them were taken.                  |
+| A join with an edge from a step that has been reached but not run | It waits for that step. Reached is never untaken.                                                 |
+
+A bounded retry clears what the earlier attempt left untaken downstream of the retry target, with the rest of the cascade-clear, so the next attempt can take another way. A crash-resume restores the set from the saved walk position (`untaken` on `walkState`). A resume from a cursor (an approval) starts with it empty, as before t-1077: a join that waits on a branch the run took before the pause can still wait forever there.
 
 The `stragglerStrategy: 'wait-all'` config on parallel nodes is the implemented mode. `first-success` is not yet supported.
 
@@ -121,7 +138,7 @@ Edges in `ConditionalEdge` can carry `maxRetries?: number` (1–10, schema-enfor
 
 **Safety:** each retry iteration counts against `MAX_STEPS_PER_RUN = 1000`. Combined with the per-edge `maxRetries` cap of 10, runaway loops are doubly bounded.
 
-**Cascade-clear:** when a retry target is re-queued, all steps reachable from that target are also cleared from `visited`. This ensures downstream steps re-execute with the retry target's fresh output rather than stale results from the previous attempt.
+**Cascade-clear:** when a retry target is re-queued, all steps reachable from that target are also cleared from `visited` (and from `untaken`, see [Joins and untaken steps](#joins-and-untaken-steps)). This ensures downstream steps re-execute with the retry target's fresh output rather than stale results from the previous attempt.
 
 ## `ExecutionEvent` (SSE payloads)
 

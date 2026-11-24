@@ -46,6 +46,13 @@ describe('parseWalkPosition', () => {
     expect(parseWalkPosition(structuredClone(position))).toEqual(position);
   });
 
+  it('reads the steps the walk left untaken, and a position saved before it recorded them (t-1077)', () => {
+    const withUntaken = { ...position, untaken: ['y'] };
+    expect(parseWalkPosition(structuredClone(withUntaken))).toEqual(withUntaken);
+    expect(parseWalkPosition(structuredClone(position))?.untaken).toBeUndefined();
+    expect(parseWalkPosition({ ...position, untaken: 'y' })).toBeNull();
+  });
+
   it('answers null for a row with no position, so the resume takes the cursor path', () => {
     expect(parseWalkPosition(null)).toBeNull();
     expect(parseWalkPosition(undefined)).toBeNull();
