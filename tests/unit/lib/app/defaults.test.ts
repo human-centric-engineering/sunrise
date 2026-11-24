@@ -816,7 +816,7 @@ describe('lib/app/ seams ship empty', () => {
     ['org-created', 'org-created', [PINS]],
     ['signup-org', 'signup-org', [PINS]],
     ['model-pins', 'model-pins', [PINS]],
-    ['entitlements', 'entitlements', [PINS]],
+    ['entitlements', 'entitlements', [ROSTER, PINS]],
     ['erasure', 'erasure', [STALE, PINS]],
   ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so
