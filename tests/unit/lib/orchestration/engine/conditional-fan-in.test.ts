@@ -579,26 +579,29 @@ describe('the provider model audit, when a validation guard gives up', () => {
     registerStepType('send_notification', realNotification);
   });
 
-  it.each([
-    ['the schema guard', { validate_proposals: () => 'fail' as const }],
-    [
-      'the rationale guard',
-      { validate_proposals: () => 'pass' as const, validate_rationale: () => 'fail' as const },
-    ],
-  ])('%s: runs report_validation_failure and ends failed, not deadlocked', async (_, verdicts) => {
-    registerStepType('guard', guardStub(verdicts));
+  type Verdicts = Record<string, () => 'pass' | 'fail'>;
+  const giveUps: Array<[string, Verdicts]> = [
+    ['the schema guard', { validate_proposals: () => 'fail' }],
+    ['the rationale guard', { validate_proposals: () => 'pass', validate_rationale: () => 'fail' }],
+  ];
 
-    const events = await run(definition);
+  it.each(giveUps)(
+    '%s: runs report_validation_failure and ends failed, not deadlocked',
+    async (_, verdicts) => {
+      registerStepType('guard', guardStub(verdicts));
 
-    expect(started(events).at(-1)).toBe('report_validation_failure');
-    expect(started(events)).not.toContain('refine_findings');
-    const end = terminal(events);
-    expect(end.type).toBe('workflow_failed');
-    expect(end.type === 'workflow_failed' && end.error).toContain(HALTED);
-    expect(end.type === 'workflow_failed' && end.error).not.toContain('deadlocked');
-    expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
-    expect(finalised().status).toBe('failed');
-  });
+      const events = await run(definition);
+
+      expect(started(events).at(-1)).toBe('report_validation_failure');
+      expect(started(events)).not.toContain('refine_findings');
+      const end = terminal(events);
+      expect(end.type).toBe('workflow_failed');
+      expect(end.type === 'workflow_failed' && end.error).toContain(HALTED);
+      expect(end.type === 'workflow_failed' && end.error).not.toContain('deadlocked');
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
+      expect(finalised().status).toBe('failed');
+    }
+  );
 
   it('ends failed, not completed, when the admin email is refused', async () => {
     registerStepType('guard', guardStub({ validate_proposals: () => 'fail' }));
