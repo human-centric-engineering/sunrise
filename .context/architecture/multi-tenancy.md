@@ -138,8 +138,9 @@ says which piece each feature lands):
 - **The Learn page is the install org's alone.** The Pattern Advisor, the
   Quiz Master and their patterns knowledge help the install's app admins
   build their app, so they exist only in the install org. It is a platform
-  page, so an org admin is not shown it and is refused it (§111). A platform
-  admin switched into a customer org still finds it empty there.
+  page, so an org admin is not shown it and is refused it (§111). So is a
+  platform admin acting in a customer org: there they are presented as their
+  org role (t-1032).
 - **Some process-global state is shared across orgs on purpose.** RLS cannot
   see a Node heap, so every module-level holder in `lib/` is declared in
   [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) with
