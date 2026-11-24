@@ -29,8 +29,8 @@ release process.
   them owner standing only as an OWNER of the org, and the org's entitlement
   switches limit them. Platform work is done from the install org: per-org
   backup (`?orgId=`), caps, switches and meters already work from there.
-  Force-failing a customer org's run and bulk-clearing its conversations do
-  not yet, and are no longer possible from inside it. There is no
+  Force-failing a customer org's run and bulk-clearing its conversations work
+  from there too (`?orgId=`, t-1083), and are no longer possible from inside it. There is no
   setting: in the install org the platform role is presented, in every other
   org it is not. Nothing changes at `single`. **What a fork checks:** a handler
   that needs the account's own platform role (a fact about the account, not
@@ -46,11 +46,47 @@ release process.
 
 ### Added
 
+- **`?orgId=` on force-fail and bulk conversation clear (t-1083).**
+  `POST /api/v1/admin/orchestration/executions/:id/force-fail` and
+  `POST /api/v1/admin/orchestration/conversations/clear` take an optional
+  `orgId`, so a platform admin in the install org can unstick a customer org's
+  run or clear its conversations at `multi`. The named org is checked against
+  the authorization policy and must exist; the work runs inside it, its hooks
+  go to its webhooks, and the audit row is written under it. Force-fail's
+  ownership rule is unchanged: the run must be system-owned (a scheduled or
+  triggered run) or the caller's own, so a run a customer's user started is
+  still 404. Left out, the
+  routes act on the org the caller is in, as before. A suspended org may be
+  named on force-fail but is refused on bulk clear (409). Both stay platform-tier,
+  so a platform admin inside a customer org is still refused. The rule is
+  `resolveTargetOrg()` / `runInTargetOrg()` in `lib/tenancy/target-org.ts`,
+  which backup export and import now share (`resolveBackupScope()` is
+  unchanged in behaviour).
+
+- **`runAsFounderRelease(userId, fn)` in `lib/tenancy/context.ts` (t-1084).**
+  A debug-logged null-org system scope for releasing the signup orgs a founder
+  can now act in, which at `multi` runs on every sign-in, beside
+  `runAsCredentialLookup` and `runAsLivenessProbe`. It is confined to
+  `lib/tenancy/lifecycle.ts` by an always-run site test
+  (`tests/unit/lib/tenancy/founder-release-sites.test.ts`); a fork that needs a
+  system scope elsewhere uses `runAsSystem`.
+
 - **A banner with the way back to the install org (t-1032).** A platform admin
   acting in a customer org as a member sees `MemberPlatformAdminBanner`
   (`components/layouts/member-platform-admin-banner.tsx`) in the admin console
   and the account area: the org, their role in it, and **Switch to** the install
   org. It is fed by `requestMemberPlatformAdmin()` (`lib/auth/admin-page-viewer.ts`).
+
+### Fixed
+
+- **A founder's signup org is set up at sign-in at `multi` (t-1084).** Its
+  release and the org-created hooks' lease are raw SQL, and they ran on an
+  auth hook's stack, which entered no org, so the data layer refused them: the
+  org waited for the `orgCreatedHooks` job instead. They now run at sign-in or
+  verification, the release in `runAsFounderRelease` and the setup inside the
+  new org, so a fork's org-created hooks fire then, with the new org as their
+  context.
+
 
 ## [0.20.0] — 2026-11-21
 

@@ -33,6 +33,7 @@ import {
   requireOrgId,
   runAsCredentialLookup,
   runAsCrossOrgCount,
+  runAsFounderRelease,
   runAsLivenessProbe,
   runAsOrg,
   runAsSystem,
@@ -235,6 +236,20 @@ describe('runAsLivenessProbe — the database health probe (#1262)', () => {
     expect(seen).toEqual({ orgId: null, source: 'system' });
     expect(mockLogger.debug).toHaveBeenCalledWith(
       'Entering system tenant scope for the database liveness probe'
+    );
+    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(getTenantContext()).toBeNull();
+  });
+});
+
+describe('runAsFounderRelease — releasing a founder’s signup orgs at sign-in (t-1084)', () => {
+  it('is the same null-org system scope, logged at debug rather than info', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const seen = await runAsFounderRelease('user-1', async () => getTenantContext());
+    expect(seen).toEqual({ orgId: null, source: 'system' });
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Entering system tenant scope to release a founder’s signup orgs',
+      { userId: 'user-1' }
     );
     expect(mockLogger.info).not.toHaveBeenCalled();
     expect(getTenantContext()).toBeNull();

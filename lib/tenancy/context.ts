@@ -371,6 +371,29 @@ export function runAsLivenessProbe<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Run `fn` as the system scope for releasing the signup orgs one founder can
+ * now act in (t-1084).
+ *
+ * `releaseFoundedSignupOrgs()` is one raw `UPDATE … RETURNING` over `org` and
+ * `org_membership`, filtered to one user, and it runs on an auth hook's stack,
+ * which entered no org. At `multi` the data layer refuses raw SQL with no
+ * tenant context, so it runs in the same scope as {@link runAsSystem}, with
+ * the same `app.bypass_rls` setter.
+ *
+ * Logged at debug, as {@link runAsCredentialLookup} is, and for its reason: it
+ * runs on every sign-in at `multi`, and an info line per sign-in would drown
+ * the signal {@link runAsSystem}'s log exists to give. The trade is only safe
+ * while that one statement is the thing inside, so it has one caller,
+ * `completeFoundedSignupOrgs()` in `lib/tenancy/lifecycle.ts`, and
+ * `tests/unit/lib/tenancy/founder-release-sites.test.ts` (always-run) fails
+ * naming any other.
+ */
+export function runAsFounderRelease<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  logger.debug('Entering system tenant scope to release a founder’s signup orgs', { userId });
+  return inSystemScope(fn);
+}
+
+/**
  * Run `fn` outside every tenant scope, whatever the caller is inside.
  *
  * **For arming something whose lifetime is the PROCESS's from inside a

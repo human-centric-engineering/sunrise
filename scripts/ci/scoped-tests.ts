@@ -225,6 +225,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'any but `lib/db/utils.ts`. A new caller is a file no import chain connects to this test (#1262).',
   },
   {
+    path: 'tests/unit/lib/tenancy/founder-release-sites.test.ts',
+    reason:
+      'scans every non-test source file in the checkout, root files included, with the ' +
+      'TypeScript scanner for code that names `runAsFounderRelease` (the debug-logged system ' +
+      'bypass for releasing a founder’s signup orgs at sign-in) or star-re-exports its module, and ' +
+      'fails naming any but `lib/tenancy/lifecycle.ts`. A new caller is a file no import chain connects to this test (t-1084).',
+  },
+  {
     path: 'tests/unit/scripts/ci/shared-settings-writes.test.ts',
     reason:
       'parses every route and module under app/ and lib/ and fails naming any route ' +

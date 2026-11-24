@@ -94,6 +94,20 @@ plus a `⚠` icon in the column.
 5. Emits **both** `workflow.failed` (with `source: 'admin-force-fail'`)
    and `execution.force_failed`. Two hooks on purpose — see below.
 
+**A customer org's run, from the install org (t-1083).** At `multi` a
+platform admin inside a customer org is presented as their org role (#1177),
+and this route is platform-tier, so it refuses them there. To unstick a
+customer's run, stay in the install org and name the org:
+`POST …/force-fail?orgId=<org id>`. The named org is checked against the
+authorization policy and must exist (404 otherwise; a suspended org may be
+named). The run is read, failed and its hooks emitted inside that org, so the
+customer's own webhooks are told, and the audit row is written under it
+(`actingOrgId`). The ownership rule is unchanged: the run must be
+system-owned or the caller's own. Without `?orgId=` the run is looked up in
+the org the caller is in. An unbound admin API key enters no org, so at
+`multi` it must name one (400). The rule is `resolveTargetOrg()` in
+`lib/tenancy/target-org.ts`, which backup export and import share.
+
 The UI surfaces this as a per-row dropdown menu item (disabled on
 terminal statuses) → confirmation `AlertDialog` with an optional
 reason textarea → server error text appears inline on conflict.

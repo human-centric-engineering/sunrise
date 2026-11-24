@@ -162,6 +162,14 @@ level.
   reads no rows, is called from one file, `lib/db/utils.ts`, and
   `tests/unit/lib/tenancy/liveness-probe-sites.test.ts` (always-run) fails
   naming any other.
+- **`runAsFounderRelease(userId, fn)`** (t-1084) — the same null-org system
+  scope, for `releaseFoundedSignupOrgs()`'s one statement, which releases the
+  signup orgs one founder can now act in. It runs on an auth hook's stack,
+  which entered no org, on every sign-in at `multi`, so it is logged at
+  `debug` for `runAsCredentialLookup`'s reason. It is called from one file,
+  `lib/tenancy/lifecycle.ts` (`completeFoundedSignupOrgs()`), and
+  `tests/unit/lib/tenancy/founder-release-sites.test.ts` (always-run) fails
+  naming any other.
 - **`runDetached(fn)`** (§108 t-715) — runs `fn` outside every scope, for
   arming something whose lifetime is the **process's** from inside a request.
   Synchronous and unawaited, unlike the runners above: a caller arms a timer

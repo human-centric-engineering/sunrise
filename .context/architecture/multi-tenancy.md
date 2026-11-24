@@ -499,7 +499,9 @@ has the numbers.
   read, logged at `debug`, and `runAsCrossOrgCount` the same for a read-only
   global-config usage count, also at `debug` and confined to one module
   (§107 t-752). `runAsLivenessProbe` is the same for the database health
-  probe's `SELECT 1`, at `debug` and confined to `lib/db/utils.ts` (#1262).
+  probe's `SELECT 1`, at `debug` and confined to `lib/db/utils.ts` (#1262),
+  and `runAsFounderRelease` the same for releasing a founder's signup orgs at
+  sign-in, at `debug` and confined to `lib/tenancy/lifecycle.ts` (t-1084).
   Nothing else should run inside any of them.
 - **Nested creates are stamped; raw inserts are not.** The injection walks
   every write and stamps create-shaped nodes at any depth. A raw `INSERT`

@@ -58,6 +58,7 @@ import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { isMultiTenant, runAsFounderRelease, runAsOrg } from '@/lib/tenancy/context';
 import {
   countNonStaffMembers,
   hasOwnerStanding,
@@ -354,10 +355,18 @@ export async function createSignupOrg(
  * run it after the response, since a hook may take seconds. Never throws:
  * whatever fails is caught up by the `orgCreatedHooks` and `platformAgents`
  * maintenance jobs.
+ *
+ * At `multi` it enters the new org itself (t-1084), whatever context the
+ * caller is in (an auth hook's stack has none; a heal may run inside another
+ * org's), as the `orgCreatedHooks` job does for each org it retries: the
+ * hooks' lease is raw SQL, which the data layer refuses outside a context, and
+ * the hooks must see the new org. Signup orgs are only made at `multi`; at `single`
+ * nothing is entered, as before.
  */
 export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {
   logger.info('Signup org founded', { orgId, ownerUserId });
-  await setUpCreatedOrg(orgId, ownerUserId);
+  const setUp = () => setUpCreatedOrg(orgId, ownerUserId);
+  await (isMultiTenant() ? runAsOrg(orgId, setUp, { source: 'job' }) : setUp());
 }
 
 /**
@@ -373,9 +382,14 @@ export async function completeFoundedSignupOrgs(
   userId: string,
   options: { signingIn?: boolean } = {}
 ): Promise<void> {
+  const release = () => releaseFoundedSignupOrgs({ userId, signingIn: options.signingIn });
   let founded: Array<{ orgId: string; ownerUserId: string }>;
   try {
-    founded = await releaseFoundedSignupOrgs({ userId, signingIn: options.signingIn });
+    // The release reads and writes across orgs by design, and runs on an auth
+    // hook's stack, which entered none: at `multi` its raw SQL needs the
+    // system scope or the data layer refuses it (t-1084). Its own scope, logged
+    // at debug, because it runs on every sign-in.
+    founded = isMultiTenant() ? await runAsFounderRelease(userId, release) : await release();
   } catch (error) {
     logger.error('Failed to release a verified founder’s signup org', error, { userId });
     return;

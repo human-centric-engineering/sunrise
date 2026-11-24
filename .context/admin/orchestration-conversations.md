@@ -163,6 +163,7 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
   - default → caller's own conversations (`session.user.id`).
   - `userId: '<cuid>'` → that specific user's conversations.
   - `allUsers: true` → across all users (still narrowed by `olderThan` / `agentId`). Mutually exclusive with `userId`.
+- **A customer org's conversations, from the install org (t-1083).** At `multi` the route is platform-tier, so a platform admin inside a customer org (presented there as their org role, #1177) is refused. From the install org, `?orgId=<org id>` names the org to clear: checked against the authorization policy, 404 for an org that does not exist, 409 for a suspended one (the delete is permanent, and a suspension may be a hold on the org's data). The delete runs inside that org, so `userId` and `allUsers` mean that org's conversations, and the audit row is written under it (`actingOrgId`). Without `?orgId=` it is the org the caller is in. An unbound admin API key must name one at `multi` (400). The rule is `resolveTargetOrg()` in `lib/tenancy/target-org.ts`.
 - All bulk clear operations (including self-scoped) emit an `AiAdminAuditLog` entry (`conversation.bulk_clear`) with scope, target, filters, and `deletedCount`.
 - Rate limit: `adminLimiter` per client IP.
 
@@ -185,7 +186,7 @@ One row per admin endpoint backing this UI.
 | `/api/v1/admin/orchestration/conversations/:id`          | DELETE | Hard delete; messages cascade via FK. Owner or system-owned only; 404 otherwise. No UI caller.                                                    |
 | `/api/v1/admin/orchestration/conversations/:id/messages` | GET    | Full messages with **admin-visible metadata** (tokens, cost, latency) — consumer route strips these. Cross-user allowed.                          |
 | `/api/v1/admin/orchestration/conversations/export`       | GET    | JSON / CSV export, capped at 500, 1/min per admin IP.                                                                                             |
-| `/api/v1/admin/orchestration/conversations/clear`        | POST   | Bulk delete by filter; default scope = caller, opt-in `userId` or `allUsers: true` for cross-user. Empty body rejected.                           |
+| `/api/v1/admin/orchestration/conversations/clear`        | POST   | Bulk delete by filter; default scope = caller, opt-in `userId` or `allUsers: true` for cross-user. Empty body rejected. `?orgId=` names the org.  |
 | `/api/v1/admin/orchestration/conversations/search`       | GET    | pgvector semantic search across message embeddings, same visibility as the list. Wired into the UI via "Search messages".                         |
 
 Ownership / scope notes:
