@@ -21,53 +21,67 @@
  * platform test, which is the merge cost §6 exists to avoid.
  *
  * So the test asks here first, and runs a page's checks only while the page is
- * still the platform's. The same answer as `forkOwnedRouteModules` in
- * `tests/unit/app/layout-metadata.test.ts`: a route module whose content comes
- * from a fork tier has been taken over, and the platform has no standing to
- * assert its copy.
+ * still the platform's. Gated the way `forkOwnedRouteModules` in
+ * `tests/unit/app/layout-metadata.test.ts` is: only a checkout that declares a
+ * fork tier in `lib/app/reserved-tiers.ts` is a fork, and only a fork can have
+ * taken a page over. Sunrise declares none, so upstream every page is checked,
+ * and a page that is missing or re-exported fails rather than being skipped.
+ * A fork that shims a page the §6 way already declares `components/app`, since
+ * `reserved-fork-tiers.test.ts` fails a fork that fills it without saying so.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { occupiedTiers } from '@/lib/app/reserved-tiers';
+
+/** The checkout's root, from this file's place in it, not the runner's cwd. */
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** The marketing pages the static-pages test covers, by route segment. */
 export const MARKETING_PAGES = ['about', 'contact', 'privacy', 'terms'] as const;
 export type MarketingPage = (typeof MARKETING_PAGES)[number];
 
 /**
- * Where a route file re-exports its page from a fork tier.
- *
- * Matches `export { …default… } from '@/<components|lib>/<app|framework>/…'`
- * and `export * from …` on the same paths. Both tiers are reserved for forks
- * (`platform.reserved-tiers`): Sunrise never creates a file under either, so
- * upstream this can never match a platform page.
+ * Where a route file re-exports its page from a fork tier:
+ * `export { …default… } from '@/<components|lib>/<app|framework>/…'`.
  *
  * Keyed on `default` being re-exported, not on the tier appearing anywhere in
  * the file: a platform page that merely imports a fork component is still the
- * platform's page.
+ * platform's page. `export * from …` does not count, because it never
+ * re-exports `default`, so a file that has it still has its own page.
  */
 const FORK_TIER_RE_EXPORT =
-  /export\s*(?:\{[^}]*\bdefault\b[^}]*\}|\*)\s*from\s*['"]@\/(?:components|lib)\/(?:app|framework)\//;
+  /export\s*\{[^}]*\bdefault\b[^}]*\}\s*from\s*['"]@\/(?:components|lib)\/(?:app|framework)\//;
 
-/** The `app:shim` region comment §6 asks a shim to carry. */
-const SHIM_MARKER = /\/\/\s*app:shim\b/;
-
-/** Whether a route file's source is a fork's §6 shim rather than the platform's page. */
+/** Whether a route file's source re-exports its page from a fork tier, as a §6 shim does. */
 export function isForkShim(source: string): boolean {
-  return FORK_TIER_RE_EXPORT.test(source) || SHIM_MARKER.test(source);
+  return FORK_TIER_RE_EXPORT.test(source);
 }
 
 /** The route file of a marketing page, absolute. */
-export function marketingPageFile(page: MarketingPage, cwd: string = process.cwd()): string {
-  return path.join(cwd, 'app', '(public)', page, 'page.tsx');
+export function marketingPageFile(page: MarketingPage, root: string = REPO_ROOT): string {
+  return path.join(root, 'app', '(public)', page, 'page.tsx');
+}
+
+interface Checkout {
+  /** The checkout's root. Defaults to this repository's. */
+  root?: string;
+  /** The fork tiers it declares. Defaults to `lib/app/reserved-tiers.ts`. */
+  tiers?: readonly string[];
 }
 
 /**
- * Whether this checkout still ships `page` as the platform's own page: the
- * route file exists and is not a fork's shim.
+ * Whether this checkout still ships `page` as the platform's own page. Always
+ * true in a checkout that declares no fork tier, which is Sunrise; in a fork,
+ * true unless the route file is gone or is a shim.
  */
-export function isPlatformMarketingPage(page: MarketingPage, cwd: string = process.cwd()): boolean {
-  const file = marketingPageFile(page, cwd);
+export function isPlatformMarketingPage(
+  page: MarketingPage,
+  { root = REPO_ROOT, tiers = occupiedTiers }: Checkout = {}
+): boolean {
+  if (tiers.length === 0) return true;
+  const file = marketingPageFile(page, root);
   if (!existsSync(file)) return false;
   return !isForkShim(readFileSync(file, 'utf8'));
 }

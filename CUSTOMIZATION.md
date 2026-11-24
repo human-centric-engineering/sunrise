@@ -1640,7 +1640,9 @@ comment (as above) so the intent is obvious at merge time.
 
 The platform's own test of these pages (`tests/unit/app/(public)/static-pages.test.tsx`)
 skips a page you have shimmed this way, or deleted, since its copy is now yours
-(#1317). Test your content modules in your own test files; you do not need to
+(#1317). It does so once `lib/app/reserved-tiers.ts` declares the tier your
+content lives in (`components/app` here), which the reserved-tier test already
+asks of you. Test your content modules in your own test files; you do not need to
 edit that one.
 
 **Contact page — behavior is untouched.** Only the displayed copy moves. Your

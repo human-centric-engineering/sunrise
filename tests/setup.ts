@@ -416,10 +416,11 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * which may read the real seam too. `defaults.test.ts` fails any other file
  * that reads a pinned seam past its pin, or unmocks one.
  *
- * Ten seams are pinned, not every lazy init in `lib/app/`: six a measured
- * fill failed, the org-created, signup-org and model-pins seams (below), and
- * the entitlements seam a fork's fill failed (#1324). The rest are #636's
- * sweep. `tests/unit/setup-seam-pins.test.ts` fails if a pinned init stops
+ * Eleven seams are pinned in this file, not every lazy init in `lib/app/`:
+ * the four above (llm-providers, brand, emails, waitlist-config) and the seven
+ * inits below (admin-tier, user-created, erasure, org-created, signup-org,
+ * model-pins, entitlements). The rest are #636's sweep.
+ * `tests/unit/setup-seam-pins.test.ts` fails if one of the seven inits stops
  * being replaced.
  */
 // Each keeps the module's other exports, as the brand pin derives its keys: a

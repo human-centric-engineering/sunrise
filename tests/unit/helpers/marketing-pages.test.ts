@@ -28,14 +28,29 @@ describe('isForkShim', () => {
   it.each([
     ["export { default, metadata } from '@/components/app/marketing/terms-page';"],
     ['export { default } from "@/components/framework/marketing/privacy";'],
-    ["export * from '@/lib/app/pages/about';"],
+    ["export { default, generateMetadata } from '@/lib/app/pages/about';"],
     ["export {\n  default,\n  generateMetadata,\n} from '@/components/app/about-page';"],
   ])('recognises a re-export of the page from a fork tier without the marker: %s', (src) => {
     expect(isForkShim(src)).toBe(true);
   });
 
-  it('recognises the app:shim marker on its own', () => {
-    expect(isForkShim("// app:shim\nexport { default } from './mine';")).toBe(true);
+  // The marker is a note for whoever merges, not evidence: a platform page's
+  // comment can mention it.
+  it('leaves a page that carries the app:shim marker but re-exports nothing alone', () => {
+    const src = [
+      '// A fork replaces this file with an // app:shim re-export (CUSTOMIZATION.md §6).',
+      'export default async function AboutPage() { return null; }',
+    ].join('\n');
+    expect(isForkShim(src)).toBe(false);
+  });
+
+  // `export *` never re-exports `default`, so the file still has its own page.
+  it('leaves a page with its own default and an `export *` from a fork tier alone', () => {
+    const src = [
+      "export * from '@/lib/app/about-extras';",
+      'export default async function AboutPage() { return null; }',
+    ].join('\n');
+    expect(isForkShim(src)).toBe(false);
   });
 
   it('leaves a platform page that only imports a fork component alone', () => {
@@ -59,33 +74,54 @@ describe('isForkShim', () => {
 });
 
 describe('isPlatformMarketingPage', () => {
-  let cwd: string;
+  let root: string;
+  const FORK = ['components/app'];
 
   beforeEach(() => {
-    cwd = mkdtempSync(path.join(tmpdir(), 'marketing-pages-'));
+    root = mkdtempSync(path.join(tmpdir(), 'marketing-pages-'));
   });
 
   afterEach(() => {
-    rmSync(cwd, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   });
 
   const write = (page: (typeof MARKETING_PAGES)[number], src: string) => {
-    const file = marketingPageFile(page, cwd);
+    const file = marketingPageFile(page, root);
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, src);
   };
 
-  it('is true for a page that is the platform’s own', () => {
-    write('privacy', 'export default async function PrivacyPage() { return null; }');
-    expect(isPlatformMarketingPage('privacy', cwd)).toBe(true);
+  describe('in a fork (a tier declared)', () => {
+    it('is true for a page that is the platform’s own', () => {
+      write('privacy', 'export default async function PrivacyPage() { return null; }');
+      expect(isPlatformMarketingPage('privacy', { root, tiers: FORK })).toBe(true);
+    });
+
+    it('is false for a page the fork has shimmed', () => {
+      write('contact', SECTION_6_SHIM);
+      expect(isPlatformMarketingPage('contact', { root, tiers: FORK })).toBe(false);
+    });
+
+    it('is false for a page the fork has deleted', () => {
+      expect(isPlatformMarketingPage('about', { root, tiers: FORK })).toBe(false);
+    });
   });
 
-  it('is false for a page a fork has shimmed', () => {
-    write('contact', SECTION_6_SHIM);
-    expect(isPlatformMarketingPage('contact', cwd)).toBe(false);
+  // Upstream nothing is skipped: a moved or re-exported page fails its checks.
+  describe('in Sunrise (no tier declared)', () => {
+    it('is true for a page that has gone missing', () => {
+      expect(isPlatformMarketingPage('about', { root, tiers: [] })).toBe(true);
+    });
+
+    it('is true for a page that re-exports from a fork tier', () => {
+      write('contact', SECTION_6_SHIM);
+      expect(isPlatformMarketingPage('contact', { root, tiers: [] })).toBe(true);
+    });
   });
 
-  it('is false for a page a fork has deleted', () => {
-    expect(isPlatformMarketingPage('about', cwd)).toBe(false);
+  it('resolves pages from this checkout, not the runner’s working directory', () => {
+    expect(marketingPageFile('about')).toBe(
+      path.resolve(__dirname, '..', '..', '..', 'app', '(public)', 'about', 'page.tsx')
+    );
   });
 });

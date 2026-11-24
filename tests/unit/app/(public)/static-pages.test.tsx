@@ -8,19 +8,26 @@
  * placeholder copy says, and fail if a page stops reading a key.
  *
  * FORK NOTE (#1317): a page you have taken over with the CUSTOMIZATION.md §6
- * thin shim, or deleted, is skipped here, because its copy is yours. Each
- * page is imported only once it is known to be the platform's, so a shim's
- * different exports cannot fail type-check or the import. You should not need
- * to edit this file; see `tests/helpers/marketing-pages.ts`.
+ * thin shim, or deleted, is skipped here, because its copy is yours. That
+ * holds once `lib/app/reserved-tiers.ts` declares the tier you fill, which a
+ * §6 shim's `components/app` already requires. Each page is imported only
+ * once it is known to be the platform's, so a shim's different exports cannot
+ * fail type-check or the import. You should not need to edit this file; see
+ * `tests/helpers/marketing-pages.ts`.
  */
 
+import { existsSync } from 'node:fs';
 import type { Metadata } from 'next';
 import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import en from '@/lib/i18n/messages/en.json';
 import { BRAND } from '@/lib/brand';
-import { isPlatformMarketingPage, type MarketingPage } from '@/tests/helpers/marketing-pages';
+import {
+  isPlatformMarketingPage,
+  marketingPageFile,
+  type MarketingPage,
+} from '@/tests/helpers/marketing-pages';
 
 interface PageModule {
   default: () => Promise<ReactElement>;
@@ -43,12 +50,19 @@ function isPageModule(mod: unknown): mod is PageModule {
  * broke on a fork's shim (TS2614) or deleted page (TS2307).
  */
 async function loadPage(page: MarketingPage): Promise<PageModule> {
+  const file = `app/(public)/${page}/page.tsx`;
+  if (!existsSync(marketingPageFile(page))) {
+    throw new Error(
+      `${file} is missing. Sunrise ships it, so upstream this is a defect. A fork that ` +
+        'has deleted it declares its fork tier in lib/app/reserved-tiers.ts ' +
+        '(see tests/helpers/marketing-pages.ts).'
+    );
+  }
   const mod: unknown = await import(`@/app/(public)/${page}/page.tsx`);
   if (!isPageModule(mod)) {
     throw new Error(
-      `app/(public)/${page}/page.tsx is not a §6 shim but does not export a default page ` +
-        'and generateMetadata. If it is your own page, make it a §6 shim ' +
-        '(see tests/helpers/marketing-pages.ts).'
+      `${file} must export a default page component and an async generateMetadata ` +
+        '(not a static `metadata`), which is what this test renders and calls.'
     );
   }
   return mod;
