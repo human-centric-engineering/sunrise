@@ -56,7 +56,8 @@ release process.
   ownership rule is unchanged: the run must be system-owned (a scheduled or
   triggered run) or the caller's own, so a run a customer's user started is
   still 404. Left out, the
-  routes act on the org the caller is in, as before. Both stay platform-tier,
+  routes act on the org the caller is in, as before. A suspended org may be
+  named on force-fail but is refused on bulk clear (409). Both stay platform-tier,
   so a platform admin inside a customer org is still refused. The rule is
   `resolveTargetOrg()` / `runInTargetOrg()` in `lib/tenancy/target-org.ts`,
   which backup export and import now share (`resolveBackupScope()` is
@@ -75,6 +76,17 @@ release process.
   (`components/layouts/member-platform-admin-banner.tsx`) in the admin console
   and the account area: the org, their role in it, and **Switch to** the install
   org. It is fed by `requestMemberPlatformAdmin()` (`lib/auth/admin-page-viewer.ts`).
+
+### Fixed
+
+- **A founder's signup org is set up at sign-in at `multi` (t-1084).** Its
+  release and the org-created hooks' lease are raw SQL, and they ran on an
+  auth hook's stack, which entered no org, so the data layer refused them: the
+  org waited for the `orgCreatedHooks` job instead. They now run at sign-in or
+  verification, the release in `runAsFounderRelease` and the setup inside the
+  new org, so a fork's org-created hooks fire then, with the new org as their
+  context.
+
 
 ## [0.20.0] — 2026-11-21
 

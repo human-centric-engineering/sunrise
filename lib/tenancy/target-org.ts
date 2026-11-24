@@ -120,8 +120,8 @@ export async function resolveTargetOrg(
  * Run `fn` in `orgId`: as it is when that is the org the call stack already
  * runs in, inside `runAsOrg(orgId)` when it is another.
  *
- * In another org the caller's source is kept (a session, an admin API key), so
- * what reads the context sees an admin's request, not a background job. The
+ * In another org the caller's source is kept (a session's), so what reads the
+ * context sees an admin's request, not a background job. The
  * role is not: it is the caller's role in the org they entered, and they hold
  * none in the target. Nor is a support entry, which is consent for the org the
  * caller entered, so a `support` source is not carried either. An unbound

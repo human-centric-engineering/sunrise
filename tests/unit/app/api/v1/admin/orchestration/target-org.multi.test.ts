@@ -193,6 +193,16 @@ describe('from the install org, naming a customer org', () => {
     expect(logAdminAction).not.toHaveBeenCalled();
   });
 
+  it('refuses to clear a suspended org’s conversations (409) but still force-fails its run', async () => {
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'SUSPENDED' } as never);
+
+    expect((await clearConversations(clearRequest(CUSTOMER_ORG))).status).toBe(409);
+    expect(dataCalls()).toEqual([]);
+    expect(logAdminAction).not.toHaveBeenCalled();
+
+    expect((await forceFail(forceFailRequest(CUSTOMER_ORG), params)).status).toBe(200);
+  });
+
   it('acts on the install org itself when no org is named, as before', async () => {
     expect((await clearConversations(clearRequest())).status).toBe(200);
     expect(dataCalls()).toEqual([{ call: 'conversation.deleteMany', orgId: INSTALL_ORG_ID }]);

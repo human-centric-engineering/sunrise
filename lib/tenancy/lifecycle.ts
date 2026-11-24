@@ -356,10 +356,11 @@ export async function createSignupOrg(
  * whatever fails is caught up by the `orgCreatedHooks` and `platformAgents`
  * maintenance jobs.
  *
- * Every caller is an auth hook, whose stack entered no org, so at `multi` it
- * enters the new org itself (t-1084), as the `orgCreatedHooks` job does for
- * each org it retries: there the hooks' lease is raw SQL, which the data layer
- * refuses outside a context. Signup orgs are only made at `multi`; at `single`
+ * At `multi` it enters the new org itself (t-1084), whatever context the
+ * caller is in (an auth hook's stack has none; a heal may run inside another
+ * org's), as the `orgCreatedHooks` job does for each org it retries: the
+ * hooks' lease is raw SQL, which the data layer refuses outside a context, and
+ * the hooks must see the new org. Signup orgs are only made at `multi`; at `single`
  * nothing is entered, as before.
  */
 export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {

@@ -82,8 +82,9 @@ export type BackupPurpose = 'export' | 'import';
  *
  * @throws {ValidationError} an unbound key at `multi` named no org, or a
  *   `single` install was asked for an org other than the install org
- * @throws {NotFoundError} the named org does not exist
  * @throws {ForbiddenError} the policy does not let the caller administer the named org
+ *   (asked first, so a refused caller is not told whether the org exists)
+ * @throws {NotFoundError} the named org does not exist
  * @throws {ConflictError} an import named a suspended org
  * @throws {APIError} 403 `shared_settings_install_org_only` — the shared part was asked
  *   for by a caller outside the install org

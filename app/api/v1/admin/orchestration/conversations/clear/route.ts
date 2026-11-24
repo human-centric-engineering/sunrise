@@ -40,7 +40,9 @@
  * policy and must exist (`resolveTargetOrg`); the delete runs inside that org
  * (`runAsOrg`), so the scopes above mean that org's conversations, and the
  * audit row is written under it. Left out, it is the org the caller is in, as
- * before.
+ * before. A suspended org is refused (409): the delete is permanent, and a
+ * suspension may be a hold on the org's data. Force-fail, which only unsticks
+ * runs, admits one.
  *
  * All deletions (including self-scoped) are recorded in the admin audit
  * log so there's an immutable trail. `AiMessage` rows cascade via the
@@ -69,6 +71,8 @@ export const POST = withAdminAuth(async (request, session) => {
   const orgId = await resolveTargetOrg(query.orgId, session.principal, {
     noOrgMessage:
       'An admin API key enters no organisation: name the organisation whose conversations to clear with ?orgId=.',
+    suspendedMessage:
+      'That organisation is suspended; reactivate it before clearing its conversations.',
   });
 
   const scope: 'self' | 'user' | 'all' = body.allUsers ? 'all' : body.userId ? 'user' : 'self';
