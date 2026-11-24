@@ -58,6 +58,7 @@ import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { isMultiTenant, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import {
   countNonStaffMembers,
   hasOwnerStanding,
@@ -354,10 +355,15 @@ export async function createSignupOrg(
  * run it after the response, since a hook may take seconds. Never throws:
  * whatever fails is caught up by the `orgCreatedHooks` and `platformAgents`
  * maintenance jobs.
+ *
+ * Every caller is an auth hook, whose stack entered no org, so it enters the
+ * new org itself (t-1084), as the `orgCreatedHooks` job does for each org it
+ * retries: at `multi` the hooks' lease is raw SQL, which the data layer
+ * refuses outside a context.
  */
 export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {
   logger.info('Signup org founded', { orgId, ownerUserId });
-  await setUpCreatedOrg(orgId, ownerUserId);
+  await runAsOrg(orgId, () => setUpCreatedOrg(orgId, ownerUserId), { source: 'job' });
 }
 
 /**
@@ -373,9 +379,15 @@ export async function completeFoundedSignupOrgs(
   userId: string,
   options: { signingIn?: boolean } = {}
 ): Promise<void> {
+  const release = () => releaseFoundedSignupOrgs({ userId, signingIn: options.signingIn });
   let founded: Array<{ orgId: string; ownerUserId: string }>;
   try {
-    founded = await releaseFoundedSignupOrgs({ userId, signingIn: options.signingIn });
+    // The release reads and writes across orgs by design, and runs on an auth
+    // hook's stack, which entered none: at `multi` its raw SQL needs the
+    // system scope or the data layer refuses it (t-1084).
+    founded = isMultiTenant()
+      ? await runAsSystem('release the signup orgs a founder can now act in', release)
+      : await release();
   } catch (error) {
     logger.error('Failed to release a verified founder’s signup org', error, { userId });
     return;

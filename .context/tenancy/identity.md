@@ -353,7 +353,10 @@ never holds the signup. Otherwise (an email signup in production) the org
 keeps its mark until it does: `afterEmailVerificationHook`, and the session
 hook at every sign-in at `multi`, run `completeFoundedSignupOrgs()`, which
 releases it (`releaseFoundedSignupOrgs()`, one `UPDATE … RETURNING`) and runs
-the setup. So a form submitted with an address nobody proves runs none of the
+the setup. These run on auth hooks, which enter no org, so each enters its own
+scope at `multi`: the release, which spans orgs, runs under `runAsSystem`, and
+`completeSignupOrg()` runs the setup inside `runAsOrg` for the new org, as the
+retry job does (t-1084). So a form submitted with an address nobody proves runs none of the
 app's setup; such an org has a member, so the sweep below leaves it. A founder
 healed in later (at sign-in, or by `healSignupRecord()` when an admin adds them
 elsewhere) has the mark removed the same way, and that org's setup runs after
