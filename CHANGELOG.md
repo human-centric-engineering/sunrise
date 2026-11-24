@@ -29,8 +29,8 @@ release process.
   them owner standing only as an OWNER of the org, and the org's entitlement
   switches limit them. Platform work is done from the install org: per-org
   backup (`?orgId=`), caps, switches and meters already work from there.
-  Force-failing a customer org's run and bulk-clearing its conversations do
-  not yet, and are no longer possible from inside it. There is no
+  Force-failing a customer org's run and bulk-clearing its conversations work
+  from there too (`?orgId=`, t-1083), and are no longer possible from inside it. There is no
   setting: in the install org the platform role is presented, in every other
   org it is not. Nothing changes at `single`. **What a fork checks:** a handler
   that needs the account's own platform role (a fact about the account, not
@@ -45,6 +45,19 @@ release process.
   [support-access.md](./.context/tenancy/support-access.md#a-platform-admin-who-is-a-member-t-1032).
 
 ### Added
+
+- **`?orgId=` on force-fail and bulk conversation clear (t-1083).**
+  `POST /api/v1/admin/orchestration/executions/:id/force-fail` and
+  `POST /api/v1/admin/orchestration/conversations/clear` take an optional
+  `orgId`, so a platform admin in the install org can unstick a customer org's
+  run or clear its conversations at `multi`. The named org is checked against
+  the authorization policy and must exist; the work runs inside it, its hooks
+  go to its webhooks, and the audit row is written under it. Left out, the
+  routes act on the org the caller is in, as before. Both stay platform-tier,
+  so a platform admin inside a customer org is still refused. The rule is
+  `resolveTargetOrg()` / `runInTargetOrg()` in `lib/tenancy/target-org.ts`,
+  which backup export and import now share (`resolveBackupScope()` is
+  unchanged in behaviour).
 
 - **A banner with the way back to the install org (t-1032).** A platform admin
   acting in a customer org as a member sees `MemberPlatformAdminBanner`
