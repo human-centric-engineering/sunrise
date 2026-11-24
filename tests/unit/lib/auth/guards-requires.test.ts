@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -166,11 +167,23 @@ describe('withAdminAuth({ tier, requires }) (t-1034)', () => {
     expect(ran).toEqual([]);
   });
 
-  it('does not limit a platform admin, even acting in an org that lacks the switch', async () => {
-    signedIn('ADMIN', ORG_ADMIN_ROLE, ORG);
+  it('does not limit a platform admin in the install org, even where it lacks the switch', async () => {
+    signedIn('ADMIN', ORG_OWNER_ROLE, INSTALL_ORG_ID);
     const { call, ran } = route(LEADS);
     expect((await call()).status).toBe(200);
     expect(ran).toEqual(['ran']);
+  });
+
+  it('limits a platform admin acting in a customer org as a member there, as the org’s own admin (t-1032)', async () => {
+    signedIn('ADMIN', ORG_ADMIN_ROLE, ORG);
+    const { call, ran } = route(LEADS);
+    const { status, body } = await call();
+    expect(status).toBe(403);
+    expect(body.error?.details).toEqual({
+      reason: SWITCH_REQUIRED_REASON,
+      requires: 'lead_gen',
+    });
+    expect(ran).toEqual([]);
   });
 
   it('gives someone the tier refuses anyway the ordinary refusal, which says nothing of switches', async () => {

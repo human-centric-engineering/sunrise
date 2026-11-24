@@ -14,6 +14,8 @@ import type { NextRequest } from 'next/server';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
+import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
+import { registerForkAdmittingOrgOwners } from '@/tests/helpers/fork-admits-org-owners';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -113,6 +115,7 @@ const REPORT = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetAuthorizationPolicyForTests();
   mockEnv.TENANCY_MODE = 'multi';
   mockResolveApiKey.mockResolvedValue(null);
   mockGetOrgUsage.mockResolvedValue(REPORT);
@@ -164,8 +167,18 @@ describe('GET /api/v1/admin/orchestration/costs/orgs at multi', () => {
     expect(body.data.totals).toMatchObject({ totalCostUsd: 34, ownKeyCostUsd: 30, count: 5 });
   });
 
-  it('refuses a platform admin switched into a customer org, reading nothing', async () => {
+  it('refuses a platform admin switched into a customer org as their org role there, reading nothing (t-1032)', async () => {
     signedIn('ADMIN', CUSTOMER);
+
+    const res = await get();
+
+    expect(res.status).toBe(403);
+    expect(mockGetOrgUsage).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the read
+  });
+
+  it('refuses a customer-org caller a fork policy admits, naming the install org, reading nothing', async () => {
+    registerForkAdmittingOrgOwners();
+    signedIn('USER', CUSTOMER, ORG_OWNER_ROLE);
 
     const res = await get();
     const body = (await res.json()) as {

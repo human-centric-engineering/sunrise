@@ -290,8 +290,33 @@ describe('AdminLayout tells every page whether shared settings are read-only (§
     __resetAuthorizationPolicyForTests();
   });
 
-  it('is read-only in a customer org at multi', async () => {
-    expect(await renderedFor('multi', 'cmorg00000000000customer')).toBe('read-only');
+  it('is read-only in a customer org at multi, to an org admin on an org-tier page', async () => {
+    // A platform admin is not shown a platform page there at all: outside
+    // the install org they are presented as their org role (t-1032). Whoever
+    // the console does admit in a customer org reads shared settings as fixed.
+    const CUSTOMER = 'cmorg00000000000customer';
+    const previous = env.TENANCY_MODE;
+    env.TENANCY_MODE = 'multi';
+    roster.pages = ['/admin'];
+    membership.row = { orgId: CUSTOMER, role: 'ADMIN', org: { status: 'ACTIVE' } };
+    vi.mocked(headers).mockResolvedValue(new Headers({ [ADMIN_PATHNAME_HEADER]: '/admin' }));
+    const previousPath = nav.pathname;
+    nav.pathname = '/admin';
+    try {
+      const orgAdmin = createMockSession({ user: { role: 'USER' } });
+      vi.mocked(getServerSession).mockResolvedValue({
+        ...orgAdmin,
+        session: { ...orgAdmin.session, activeOrgId: CUSTOMER },
+      });
+      render(await AdminLayout({ children: <Probe /> }));
+      expect(screen.getByTestId('probe')).toHaveTextContent('read-only');
+    } finally {
+      env.TENANCY_MODE = previous;
+      roster.pages = [];
+      nav.pathname = previousPath;
+      membership.row = { orgId: 'install', role: 'OWNER', org: { status: 'ACTIVE' } };
+      vi.mocked(headers).mockResolvedValue(new Headers());
+    }
   });
 
   it('is editable in the install org at multi, and in any org at single', async () => {
@@ -338,6 +363,49 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
     support.open = null;
     support.pastGrants = [];
     vi.mocked(headers).mockReset();
+  });
+
+  describe('a platform admin who is a member of the customer org (t-1032)', () => {
+    function memberAdmin(role: string) {
+      membership.row = { orgId: CUSTOMER, role, org: { status: 'ACTIVE' } };
+      const admin = createMockSession({ user: { role: 'ADMIN' } });
+      vi.mocked(getServerSession).mockResolvedValue({
+        ...admin,
+        session: { ...admin.session, activeOrgId: CUSTOMER },
+      });
+    }
+
+    it('opens an org-tier page as an org viewer, under a banner with the way back', async () => {
+      memberAdmin('ADMIN');
+      onPage(ORG_PAGE);
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">agents</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+      expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-viewer-tier', 'org');
+      expect(screen.getByRole('status')).toHaveTextContent(
+        `You are working in Org ${CUSTOMER} as an admin`
+      );
+      expect(screen.getByRole('button', { name: 'Switch to Org install' })).toBeInTheDocument();
+    });
+
+    it('refuses a platform page there', async () => {
+      memberAdmin('OWNER');
+      onPage('/admin/settings');
+
+      await expect(AdminLayout({ children: <div>settings</div> })).rejects.toThrow(
+        `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
+    });
+
+    it('shows no banner to the org’s own admin', async () => {
+      actingAs('ADMIN');
+      onPage(ORG_PAGE);
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">agents</div> }));
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
   });
 
   describe('a support session (§121 t-824)', () => {
@@ -634,7 +702,21 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
       );
     });
 
-    it('opens it to a platform admin acting in an org that lacks it', async () => {
+    it('opens it to a platform admin in the install org, which lacks it', async () => {
+      membership.row = { orgId: INSTALL_ORG_ID, role: 'OWNER', org: { status: 'ACTIVE' } };
+      const user = createMockSession({ user: { role: 'ADMIN' } });
+      vi.mocked(getServerSession).mockResolvedValue({
+        ...user,
+        session: { ...user.session, activeOrgId: INSTALL_ORG_ID },
+      });
+      onPage(LEADS);
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">leads</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+    });
+
+    it('refuses it to a platform admin acting in a customer org that lacks it, as its own admin (t-1032)', async () => {
       membership.row = { orgId: CUSTOMER, role: 'ADMIN', org: { status: 'ACTIVE' } };
       const user = createMockSession({ user: { role: 'ADMIN' } });
       vi.mocked(getServerSession).mockResolvedValue({
@@ -643,9 +725,9 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
       });
       onPage(LEADS);
 
-      render(await AdminLayout({ children: <div data-testid="admin-content">leads</div> }));
-
-      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+      await expect(AdminLayout({ children: <div>leads</div> })).rejects.toThrow(
+        `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
     });
 
     it('still opens an org-tier page that requires nothing to the same admin', async () => {
@@ -740,9 +822,9 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
         const admin = createMockSession({ user: { role: 'ADMIN' } });
         vi.mocked(getServerSession).mockResolvedValue({
           ...admin,
-          session: { ...admin.session, activeOrgId: CUSTOMER },
+          session: { ...admin.session, activeOrgId: INSTALL_ORG_ID },
         });
-        membership.row = { orgId: CUSTOMER, role: 'OWNER', org: { status: 'ACTIVE' } };
+        membership.row = { orgId: INSTALL_ORG_ID, role: 'OWNER', org: { status: 'ACTIVE' } };
         onPage(ORG_PAGE);
 
         render(await AdminLayout({ children: <div data-testid="admin-content">agents</div> }));
@@ -752,6 +834,20 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
         expect(
           screen.getByTestId('admin-header').getAttribute('data-org-tier-pages')?.split(' ')
         ).toContain(ORG_PAGE);
+      });
+
+      it('closes it to a platform admin acting in a customer org as its OWNER, as to the org’s own (t-1032)', async () => {
+        const admin = createMockSession({ user: { role: 'ADMIN' } });
+        vi.mocked(getServerSession).mockResolvedValue({
+          ...admin,
+          session: { ...admin.session, activeOrgId: CUSTOMER },
+        });
+        membership.row = { orgId: CUSTOMER, role: 'OWNER', org: { status: 'ACTIVE' } };
+        onPage(ORG_PAGE);
+
+        await expect(AdminLayout({ children: <div>agents</div> })).rejects.toThrow(
+          `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+        );
       });
     });
 

@@ -459,9 +459,15 @@ describe('the scope', () => {
       loggedIn.push(getTenantContext()?.orgId ?? null);
     });
 
-    const handler = withAdminAuth(() => {
-      throw new Error('admin handler blew up');
-    }, NOT_ABOUT_OWNERSHIP);
+    // An org-tier route: outside the install org a platform admin who is a
+    // member is presented as their org role (t-1032), so a platform-tier
+    // route would refuse them before the handler ran.
+    const handler = withAdminAuth(
+      () => {
+        throw new Error('admin handler blew up');
+      },
+      { ...NOT_ABOUT_OWNERSHIP, tier: 'org' }
+    );
 
     const response = await handler(request());
 
@@ -521,11 +527,39 @@ describe('a route that writes shared settings (§107 t-751)', () => {
     return { handler, ran };
   }
 
-  it('at multi refuses a platform admin switched into a customer org, naming the install org', async () => {
+  it('at multi refuses a platform admin acting in a customer org before the handler, as their org role (t-1032)', async () => {
+    // A platform admin who is a member there is presented as that role
+    // alone, so a platform-tier route refuses them in the policy, with the
+    // ordinary refusal — not the shared-settings one, which would tell them
+    // what only switching to the install org could change.
     mockEnv.TENANCY_MODE = 'multi';
     vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', OTHER));
     memberOf(ORG_OWNER_ROLE);
     const { handler, ran } = sharedWrite();
+
+    const res = await handler(request());
+    const body = (await res.json()) as { error: { code: string; message: string } };
+
+    expect(res.status).toBe(403);
+    expect(body.error.code).toBe('FORBIDDEN');
+    expect(body.error.message).not.toBe(SHARED_SETTINGS_REFUSAL);
+    expect(ran).toEqual([]);
+  });
+
+  it('at multi refuses a shared-settings write outside the install org, naming the install org, to a caller the route admits', async () => {
+    // Who reaches this now is whoever a route's tier admits in a customer
+    // org — here an org-tier route, and an org OWNER.
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+    memberOf(ORG_OWNER_ROLE);
+    const ran: (string | null | undefined)[] = [];
+    const handler = withAdminAuth(
+      () => {
+        ran.push(getTenantContext()?.orgId);
+        return ok();
+      },
+      { ...SHARED, tier: 'org' }
+    );
 
     const res = await handler(request());
     const body = (await res.json()) as {
@@ -544,12 +578,12 @@ describe('a route that writes shared settings (§107 t-751)', () => {
     );
   });
 
-  it('control: the same session reaches a route that does not declare it — reads stay open', async () => {
+  it('control: the same caller reaches a route that does not declare it — reads stay open', async () => {
     mockEnv.TENANCY_MODE = 'multi';
-    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', OTHER));
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
     memberOf(ORG_OWNER_ROLE);
 
-    const res = await withAdminAuth(() => ok())(request());
+    const res = await withAdminAuth(() => ok(), { ...NOT_ABOUT_OWNERSHIP, tier: 'org' })(request());
 
     expect(res.status).toBe(200);
   });

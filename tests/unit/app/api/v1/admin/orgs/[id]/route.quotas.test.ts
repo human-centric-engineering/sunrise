@@ -13,6 +13,8 @@ import type { NextRequest } from 'next/server';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
+import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
+import { registerForkAdmittingOrgOwners } from '@/tests/helpers/fork-admits-org-owners';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -94,6 +96,16 @@ function signedIn(role: 'USER' | 'ADMIN', org: string, orgRole: string = ORG_OWN
   mockMembership.mockResolvedValue({ role: orgRole, org: { status: 'ACTIVE' } });
 }
 
+/**
+ * An OWNER of `org` who is not a platform admin, admitted to this platform
+ * route by a fork's policy. Since t-1032 that is who reaches it from a
+ * customer org: a platform admin there is presented as their org role.
+ */
+function forkOwnerIn(org: string) {
+  registerForkAdmittingOrgOwners();
+  signedIn('USER', org, ORG_OWNER_ROLE);
+}
+
 const patch = (body: unknown, id = CUSTOMER) =>
   PATCH(
     new Request(`http://localhost/api/v1/admin/orgs/${id}`, {
@@ -111,6 +123,7 @@ let writtenFrom: Array<string | null | undefined>;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetAuthorizationPolicyForTests();
   mockEnv.TENANCY_MODE = 'multi';
   mockResolveApiKey.mockResolvedValue(null);
   writtenFrom = [];
@@ -133,8 +146,19 @@ beforeEach(() => {
 });
 
 describe('PATCH /api/v1/admin/orgs/[id] — settings.quotas at multi', () => {
-  it('refuses a platform admin switched into a customer org, writing nothing', async () => {
+  it('refuses a platform admin acting in a customer org as their org role, before the route’s own rule (t-1032)', async () => {
     signedIn('ADMIN', CUSTOMER);
+
+    const res = await patch(CAP);
+    const body = (await res.json()) as { error: { details?: { reason?: string } } };
+
+    expect(res.status).toBe(403);
+    expect(body.error.details?.reason).not.toBe(SHARED_SETTINGS_REFUSAL_CODE);
+    expect(mockUpdateOrg).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused by the guard
+  });
+
+  it('refuses a customer-org caller a fork admits, writing nothing', async () => {
+    forkOwnerIn(CUSTOMER);
 
     const res = await patch(CAP);
     const body = (await res.json()) as {
@@ -153,7 +177,7 @@ describe('PATCH /api/v1/admin/orgs/[id] — settings.quotas at multi', () => {
   });
 
   it('refuses clearing the caps from a customer org too', async () => {
-    signedIn('ADMIN', CUSTOMER);
+    forkOwnerIn(CUSTOMER);
 
     const res = await patch({ settings: { quotas: null } });
 
@@ -183,7 +207,7 @@ describe('PATCH /api/v1/admin/orgs/[id] — settings.quotas at multi', () => {
   it('refuses a request cap from a customer org, and lets the install org set it (§110 t-789)', async () => {
     const REQUEST_CAP = { settings: { quotas: { requestsPerMinute: 600 } } };
 
-    signedIn('ADMIN', CUSTOMER);
+    forkOwnerIn(CUSTOMER);
     const refused = await patch(REQUEST_CAP);
     expect(refused.status).toBe(403);
     expect(mockUpdateOrg).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the write
@@ -214,8 +238,8 @@ describe('PATCH /api/v1/admin/orgs/[id] — settings.quotas at multi', () => {
     expect(writtenFrom).toEqual([undefined]);
   });
 
-  it('still lets a platform admin in a customer org rename it', async () => {
-    signedIn('ADMIN', CUSTOMER);
+  it('still lets a customer-org caller a fork admits rename it', async () => {
+    forkOwnerIn(CUSTOMER);
 
     const res = await patch({ name: 'Renamed' });
 

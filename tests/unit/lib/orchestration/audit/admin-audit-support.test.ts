@@ -274,15 +274,18 @@ describe('logAdminAction’s acting org: the org whose data changed (t-1005 revi
 
 describe('a real admin route files its row under the org it changed (t-1005 review)', () => {
   // A platform admin who is also an ADMIN member of the customer org, acting
-  // in it. The same body behind a platform-tier route and an org-tier one: a
-  // platform-tier route (clearing conversations, force-failing a run) changes
-  // the entered org's own rows, so both are that org's history.
+  // in it. Outside the install org they are presented as that org role
+  // (t-1032), so a platform-tier route refuses them and writes nothing, and an
+  // org-tier one files its row under the org it changed.
   const body = () => {
     logAdminAction({ userId: 'user_1', action: 'execution.force_failed', entityType: 'execution' });
     return new Response(null, { status: 204 });
   };
+  const ownership = {
+    ownership: { decidedBy: 'nothing', because: 'Fixture: about the audit row, not the rows.' },
+  } as const;
   const platformRoute = withAdminAuth(async () => body());
-  const orgRoute = withAdminAuth(async () => body(), { tier: 'org' });
+  const orgRoute = withAdminAuth(async () => body(), { ...ownership, tier: 'org' });
   const call = (route: typeof platformRoute) =>
     route(new NextRequest('http://localhost:3000/api/v1/admin/x', { method: 'POST' }));
 
@@ -294,9 +297,9 @@ describe('a real admin route files its row under the org it changed (t-1005 revi
     });
   });
 
-  it('on a platform-tier route', async () => {
-    expect((await call(platformRoute)).status).toBe(204);
-    expect(writtenRow()).toMatchObject({ actingOrgId: CUSTOMER });
+  it('on a platform-tier route, refuses them there and writes nothing (t-1032)', async () => {
+    expect((await call(platformRoute)).status).toBe(403);
+    expect(db.aiAdminAuditLog.create).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a refused request writes no row;
   });
 
   it('on an org-tier route', async () => {

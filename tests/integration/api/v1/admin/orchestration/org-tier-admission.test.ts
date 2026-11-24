@@ -323,8 +323,9 @@ describe('an ADMIN of a customer org, at multi: testing a provider from the agen
     expect(ranIn).toEqual([ORG_B]);
   });
 
-  it('control: a platform admin in the same org skips the approval check and probes as the install org', async () => {
-    signIn('ADMIN', ORG_B);
+  it('control: a platform admin in the install org skips the approval check and probes as the install org', async () => {
+    // The install org: in a customer org a platform admin is that org's role (t-1032).
+    signIn('ADMIN', INSTALL_ORG_ID);
     const ranIn: (string | null | undefined)[] = [];
     vi.mocked(getProvider).mockResolvedValue({
       chat: vi.fn(() => {
@@ -392,8 +393,21 @@ describe('an ADMIN of a customer org, at multi: the provider list (§111 t-811 c
     expect(body.data[0]).not.toHaveProperty('metadata');
   });
 
-  it('control: a platform admin still gets the whole row', async () => {
+  it('a platform admin acting in the same customer org gets what its own ADMIN gets (t-1032)', async () => {
     signIn('ADMIN', ORG_B);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([row] as never);
+    const res = await providers.GET(get('/providers'));
+    const body = (await res.json()) as { data: Record<string, unknown>[] };
+
+    expect(res.status).toBe(200);
+    expect(body.data[0]).toMatchObject({ slug: 'anthropic' });
+    expect(body.data[0]).not.toHaveProperty('baseUrl');
+    expect(body.data[0]).not.toHaveProperty('apiKeyEnvVar');
+  });
+
+  it('control: a platform admin still gets the whole row', async () => {
+    // The install org: in a customer org a platform admin is that org's role (t-1032).
+    signIn('ADMIN', INSTALL_ORG_ID);
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([row] as never);
     const res = await providers.GET(get('/providers'));
     const body = (await res.json()) as { data: Record<string, unknown>[] };
@@ -435,7 +449,8 @@ describe('an ADMIN of a customer org, at multi: an MCP key’s rate limit (§111
   });
 
   it('control: a platform admin may raise it', async () => {
-    signIn('ADMIN', ORG_B);
+    // The install org: in a customer org a platform admin is that org's role (t-1032).
+    signIn('ADMIN', INSTALL_ORG_ID);
     const res = await createMcpKey(
       post('/mcp/keys', { name: 'k', scopes: ['tools:list'], rateLimitOverride: 10000 })
     );
@@ -462,7 +477,8 @@ describe('an ADMIN of a customer org, at multi: other orgs’ usage of shared ro
   });
 
   it('control: a platform admin sees it', async () => {
-    signIn('ADMIN', ORG_B);
+    // The install org: in a customer org a platform admin is that org's role (t-1032).
+    signIn('ADMIN', INSTALL_ORG_ID);
     vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([CAP] as never);
     vi.mocked(capabilityAgentUsage).mockResolvedValue(
       new Map([['cap-1', { agents: [], otherOrgAgents: 7 }]])
@@ -487,7 +503,8 @@ describe('an ADMIN of a customer org, at multi: other orgs’ usage of shared ro
   });
 
   it('control: a platform admin’s lists count every org', async () => {
-    signIn('ADMIN', ORG_B);
+    // The install org: in a customer org a platform admin is that org's role (t-1032).
+    signIn('ADMIN', INSTALL_ORG_ID);
     vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([{ id: 'tag-1' }] as never);
     vi.mocked(prisma.aiAgentProfile.findMany).mockResolvedValue([{ id: 'prof-1' }] as never);
 
@@ -604,8 +621,9 @@ describe('an ADMIN of a customer org, at multi: the mixed pages (§111 t-812)', 
     expect(body.data.globalCap).toEqual({ cap: null, spent: null, exceeded: true });
   });
 
-  it('control: a platform admin in the same org is given the cap', async () => {
-    signIn('ADMIN', ORG_B);
+  it('control: a platform admin in the install org is given the cap', async () => {
+    // The install org: in a customer org a platform admin is that org's role (t-1032).
+    signIn('ADMIN', INSTALL_ORG_ID);
     const body = (await (await costAlerts(get('/costs/alerts'))).json()) as {
       data: { globalCap: { cap: number | null; exceeded: boolean } };
     };
@@ -622,7 +640,8 @@ describe('an ADMIN of a customer org, at multi: the mixed pages (§111 t-812)', 
   });
 
   it('control: a platform admin may force one', async () => {
-    signIn('ADMIN', ORG_B);
+    // The install org: in a customer org a platform admin is that org's role (t-1032).
+    signIn('ADMIN', INSTALL_ORG_ID);
     const res = await modelList(get('/models?refresh=true'));
 
     expect(res.status).toBe(200);

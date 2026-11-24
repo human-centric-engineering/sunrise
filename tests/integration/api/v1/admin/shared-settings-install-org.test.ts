@@ -1,9 +1,10 @@
 /**
  * Integration: shared-settings writes refuse a customer org at multi (§107 t-751)
  *
- * One write route per family, through the real `withAdminAuth`: a platform
- * admin switched into a customer org is refused with the install-org message
- * and nothing is written; from the install org, and at `single`, the guard
+ * One write route per family, through the real `withAdminAuth`: a caller a
+ * policy admits from a customer org is refused with the install-org message
+ * and nothing is written (a platform admin there is refused before that, as
+ * their org role — t-1032); from the install org, and at `single`, the guard
  * lets the same request through to the handler. The guard's own arms (API
  * key, the ordinary refusal first) are in `guards-tenancy.test.ts`; that
  * every writing route declares the option is the whole-tree test's job
@@ -59,7 +60,9 @@ import {
   SHARED_SETTINGS_REFUSAL,
   SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
-import { mockAdminUser } from '@/tests/helpers/auth';
+import { mockAdminUser, mockAuthenticatedUser } from '@/tests/helpers/auth';
+import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
+import { registerForkAdmittingOrgOwners } from '@/tests/helpers/fork-admits-org-owners';
 
 import * as providers from '@/app/api/v1/admin/orchestration/providers/route';
 import * as providerModel from '@/app/api/v1/admin/orchestration/provider-models/[id]/route';
@@ -129,6 +132,25 @@ function adminIn(orgId: string) {
   ).mockResolvedValue({ role: ORG_OWNER_ROLE, org: { status: 'ACTIVE' } });
 }
 
+/**
+ * An OWNER of `orgId` who is not a platform admin, on an install whose fork
+ * policy admits org owners to these platform routes. Since t-1032 that is who
+ * reaches them from a customer org: a platform admin there is presented as
+ * their org role, and the default policy refuses them first.
+ */
+function forkAdmitsOwnerIn(orgId: string) {
+  const owner = mockAuthenticatedUser();
+  vi.mocked(auth.api.getSession).mockResolvedValue({
+    ...owner,
+    session: { ...owner.session, activeOrgId: orgId },
+  });
+  prismaStub.models.clear();
+  vi.mocked(
+    (prismaStub.client.orgMembership as { findUnique: ReturnType<typeof vi.fn> }).findUnique
+  ).mockResolvedValue({ role: ORG_OWNER_ROLE, org: { status: 'ACTIVE' } });
+  registerForkAdmittingOrgOwners();
+}
+
 async function send(method: string, path: string, handler: Handler) {
   const request = new NextRequest(`http://localhost:3000/api/v1/admin/${path}`, {
     method,
@@ -149,12 +171,25 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetAuthorizationPolicyForTests();
 });
 
 describe.each(FAMILIES)('%s: %s', (_family, method, path, handler) => {
-  it('at multi, refuses a platform admin in a customer org, and writes nothing', async () => {
+  it('at multi, refuses a platform admin in a customer org as their org role there, and writes nothing (t-1032)', async () => {
     env.TENANCY_MODE = 'multi';
     adminIn(CUSTOMER);
+
+    const { status, body } = await send(method, path, handler);
+
+    expect(status).toBe(403);
+    // The policy's refusal: the install-org one is for whoever may administer.
+    expect(body.error?.details?.reason).not.toBe(SHARED_SETTINGS_REFUSAL_CODE);
+    expect(writesMade()).toEqual([]);
+  });
+
+  it('at multi, refuses a customer org a policy admits, with the install-org message, and writes nothing', async () => {
+    env.TENANCY_MODE = 'multi';
+    forkAdmitsOwnerIn(CUSTOMER);
 
     const { status, body } = await send(method, path, handler);
 
