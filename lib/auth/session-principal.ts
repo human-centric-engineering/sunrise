@@ -21,6 +21,7 @@
  */
 import { enterSessionOrg, isOrgRefusal, type OrgRefusal } from '@/lib/tenancy/entry';
 import { presentedRole } from '@/lib/auth/support-principal';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import type { SupportEntry } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import type { AuthorizationPrincipal, AuthorizationScope } from '@/lib/auth/authorization';
@@ -82,7 +83,9 @@ export async function sessionPrincipal(
       },
       scope: { org: entry.orgId },
       ...(entry.support ? { support: entry.support } : {}),
-      ...(role !== base.role ? { platformRoleWithheld: true as const } : {}),
+      // Against the role the session would present anyway: a session with no
+      // stored role had no platform role to withhold.
+      ...(role !== (base.role ?? DEFAULT_USER_ROLE) ? { platformRoleWithheld: true as const } : {}),
     };
   } catch (error) {
     // No org facts is the closed answer: nothing org-scoped is admitted, and

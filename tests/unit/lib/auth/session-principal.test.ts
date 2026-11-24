@@ -106,6 +106,16 @@ describe('sessionPrincipal', () => {
     expect(findFirst).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a member never falls through to the grant;
   });
 
+  it('flags nothing for a session with no stored role: there was no platform role to withhold', async () => {
+    findUnique.mockResolvedValue({ role: 'OWNER', org: { status: 'ACTIVE' } });
+    const result = await sessionPrincipal(
+      { user: { id: 'user-1' }, session: { activeOrgId: ORG } },
+      null
+    );
+    expect(result.principal).toMatchObject({ role: 'USER', orgRole: 'OWNER' });
+    expect(result.platformRoleWithheld).toBeUndefined();
+  });
+
   it('a platform admin in the install org keeps their role (t-1032)', async () => {
     findUnique.mockResolvedValue({ role: 'OWNER', org: { status: 'ACTIVE' } });
     const result = await sessionPrincipal(session(INSTALL_ORG_ID, 'ADMIN'), null);

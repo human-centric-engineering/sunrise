@@ -65,6 +65,11 @@ describe('MemberPlatformAdminBanner', () => {
     expect(screen.getByRole('status')).toHaveTextContent(words);
   });
 
+  it('names a role an app added by its own name, not as a member', () => {
+    render(<MemberPlatformAdminBanner view={view({ orgRole: 'BILLING' })} />);
+    expect(screen.getByRole('status')).toHaveTextContent('as BILLING, so');
+  });
+
   it('falls back to plain words when a name could not be read', () => {
     render(<MemberPlatformAdminBanner view={view({ orgName: null, installOrgName: null })} />);
     expect(screen.getByRole('status')).toHaveTextContent(

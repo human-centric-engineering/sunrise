@@ -140,6 +140,15 @@ describe('POST /api/v1/invitations/accept', () => {
     }
   });
 
+  it('refuses, and accepts nothing, when the account’s row cannot be read', async () => {
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+
+    const res = await post({ token: 'tok', email: 'pat@example.com' });
+
+    expect(res.status).toBe(401);
+    expect(mockAccept).not.toHaveBeenCalled();
+  });
+
   it('passes a refusal through with its status and code', async () => {
     mockAccept.mockRejectedValue(
       new APIError('sent to a different address', 'INVITATION_WRONG_ACCOUNT', 403)

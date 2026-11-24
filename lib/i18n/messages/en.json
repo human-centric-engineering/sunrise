@@ -917,7 +917,7 @@
       "failed": "Couldn’t change the language. Please try again."
     },
     "memberPlatformAdmin": {
-      "message": "You are working in <strong>{org}</strong> as {role, select, OWNER {an owner} ADMIN {an admin} other {a member}}, so you can do only what that role allows here. Platform administration is in {installOrg}.",
+      "message": "You are working in <strong>{org}</strong> as {role, select, OWNER {an owner} ADMIN {an admin} MEMBER {a member} other {{role}}}, so you can do only what that role allows here. Platform administration is in {installOrg}.",
       "switch": "Switch to {installOrg}",
       "switching": "Switching…",
       "viaResolver": "To work as a platform admin, open {installOrg} at its own address.",
