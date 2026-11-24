@@ -165,7 +165,7 @@ import {
   __resetAuthorizationPolicyForTests,
 } from '@/lib/auth/authorization';
 
-// tests/setup.ts pins these six seams for every file (#1125, #1139). This
+// tests/setup.ts pins these seams for every file (#1125, #1139, #1324). This
 // file asserts what Sunrise really ships, so it puts the real scaffolds back:
 // their rows below read them through the registries' own lazy wiring, which a
 // per-row `importActual` would bypass.
@@ -175,6 +175,7 @@ vi.mock('@/lib/app/erasure', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/org-created', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/signup-org', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/model-pins', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/entitlements', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -803,17 +804,20 @@ describe('lib/app/ seams ship empty', () => {
   // real module too: the brand pin derives its keys from it.
   const ROSTER = path.join('tests', 'unit', 'scripts', 'ci', 'admin-tier-roster.test.ts');
   const STALE = path.join('tests', 'unit', 'lib', 'privacy', 'stale-writers.test.ts');
+  // Compares each pinned init against the real one, so it reads past the pin.
+  const PINS = path.join('tests', 'unit', 'setup-seam-pins.test.ts');
   it.each([
     ['brand', 'brand', []],
     ['emails', 'email-override', []],
     ['waitlist-config', 'waitlist-config', []],
     ['llm-providers', 'provider-eligibility', []],
-    ['admin-tier', 'org-tier admin', [ROSTER]],
-    ['user-created', 'user-created', []],
-    ['org-created', 'org-created', []],
-    ['signup-org', 'signup-org', []],
-    ['model-pins', 'model-pins', []],
-    ['erasure', 'erasure', [STALE]],
+    ['admin-tier', 'org-tier admin', [ROSTER, PINS]],
+    ['user-created', 'user-created', [PINS]],
+    ['org-created', 'org-created', [PINS]],
+    ['signup-org', 'signup-org', [PINS]],
+    ['model-pins', 'model-pins', [PINS]],
+    ['entitlements', 'entitlements', [PINS]],
+    ['erasure', 'erasure', [STALE, PINS]],
   ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so
     // that no core test can read a fork's brand and fail for a reason the fork
