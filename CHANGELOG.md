@@ -46,6 +46,26 @@ release process.
 
 ### Added
 
+- **An app can move its own model pins as part of a model move (t-1088,
+  #1321).** `lib/orchestration/model-lifecycle/app-pins.ts` gains a third
+  registration beside the reporter and the check: `registerModelPinMover()`
+  (with `AppModelPinMover`, `AppModelPinMoveRequest`, `AppModelPinMoveAnswer`,
+  `AppModelPinLeft`, `APP_MODEL_PIN_MOVE_TIMEOUT_MS` and `appModelPinsCounted()`). The move asks it
+  `{ model, replacement, orgId, tx, signal }` once per org it enters, in that
+  org's scope and inside the org's own transaction, after erasure's locks and
+  before any row is written, so the org's app pins, agents and workflows move
+  together or not at all. With a mover, an org with only the app's pins is
+  entered too; one skipped for its own key is not offered to the mover. It fails closed: a mover
+  that throws, runs past 30 seconds or answers badly rolls its org back and
+  the org is reported `failed`. Additive results: `OrgMoveResult.appPins`
+  (`{ moved, left }`), `totals.appPins`, the preview's `app.mover` and
+  `app.uncounted`, the uses' `appPinsMovable` and `appPinsUncounted` (a mover
+  with no reporter, or a failed report, may move uses nobody counted, so the
+  move is offered), and the `app.model_pins_moved` audit row. With no mover
+  registered nothing changes. **What a fork checks:** an app whose check
+  refuses a move while its pins remain can now register a mover and let the
+  check allow those pins. See
+  [llm-providers.md](./.context/orchestration/llm-providers.md#an-apps-own-model-pins-136-t-1067).
 - **`?orgId=` on force-fail and bulk conversation clear (t-1083).**
   `POST /api/v1/admin/orchestration/executions/:id/force-fail` and
   `POST /api/v1/admin/orchestration/conversations/clear` take an optional

@@ -18,6 +18,13 @@
  *   reason. A refusal stops the whole move before anything is written, and
  *   the preview shows it. It is told which (`phase`): the preview asks on
  *   every replacement an admin picks, so it should answer from what is known.
+ * - **a mover** (t-1088), asked once per org the move enters, inside that
+ *   org's scope and the org's own transaction (`tx`), to move the app's pins
+ *   to the replacement with its own code. It runs after the move has taken
+ *   erasure's locks for the org and before any row is written, so the org's
+ *   app pins, agents and workflows move together or not at all. It answers
+ *   what it moved and what it left. Sunrise still never writes an app's pins
+ *   itself: with no mover the app moves them after the move.
  *
  * ## Failure
  *
@@ -27,6 +34,11 @@
  * throws (rolled back: nothing it registered is kept), since what it meant to
  * register cannot be known, and a reporter that fails while a check is
  * registered, since the check cannot then be asked honestly.
+ *
+ * The mover fails closed too: one that throws, runs past
+ * {@link APP_MODEL_PIN_MOVE_TIMEOUT_MS} or answers nothing usable fails its
+ * org's transaction ({@link AppModelPinMoveError}), so nothing in that org
+ * moves, and the move reports the org failed and goes on to the next.
  *
  * A reporter is informational, so with no check registered its failure does
  * not refuse a move: the finder and the preview say the app's uses could not
@@ -41,6 +53,7 @@
  * Platform-agnostic: no Next.js imports.
  */
 
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
 import { initAppModelPins } from '@/lib/app/model-pins';
@@ -61,6 +74,11 @@ export const APP_MODEL_PIN_REPORT_TIMEOUT_MS = 10_000;
 export const APP_MODEL_PIN_REPORT_BUDGET_MS = 20_000;
 /** How long the check may take before it counts as a refusal. */
 export const APP_MODEL_MOVE_CHECK_TIMEOUT_MS = 120_000;
+/**
+ * How long the mover may take in one org. It runs inside the org's
+ * transaction, whose timeout allows for it (`move.ts`).
+ */
+export const APP_MODEL_PIN_MOVE_TIMEOUT_MS = 30_000;
 /**
  * Orgs asked for their report at once: well under the database pool, since a
  * reporter that ignores its signal keeps its connection after its timeout.
@@ -134,15 +152,68 @@ export type AppModelMoveCheck = (
   request: AppModelMoveCheckRequest
 ) => AppModelMoveCheckAnswer | Promise<AppModelMoveCheckAnswer>;
 
+/** What the mover is asked. */
+export interface AppModelPinMoveRequest {
+  model: AppPinModel;
+  replacement: AppPinModel;
+  /** The org whose pins to move: the scope the mover runs in. */
+  orgId: string;
+  /**
+   * The org's transaction. Write through it, so your pins move with the
+   * org's agents and workflows or not at all; a write through `prisma`
+   * outside it is not rolled back with the org. Erasure's locks for the
+   * people the move's own rows name are already held; if your rows name
+   * someone else, take their lock (`lockSubjects` in
+   * `lib/privacy/erased-subjects.ts`) before your first write.
+   */
+  tx: Prisma.TransactionClient;
+  /** Aborts when the mover runs out of time. Stop on it: the org is rolled back either way. */
+  signal: AbortSignal;
+}
+
+/** A pin the mover left on the model, and why. */
+export interface AppModelPinLeft extends AppModelPin {
+  reason: string;
+}
+
+/** What the mover answers: the pins it moved, and any it left. */
+export interface AppModelPinMoveAnswer {
+  moved: readonly AppModelPin[];
+  left?: readonly AppModelPinLeft[];
+}
+
+export type AppModelPinMover = (
+  request: AppModelPinMoveRequest
+) => AppModelPinMoveAnswer | Promise<AppModelPinMoveAnswer>;
+
 /** App code's output: validated, not trusted. */
-const pinsSchema = z
-  .array(
-    z.object({
-      label: z.string().trim().min(1).max(200),
-      where: z.string().trim().min(1).max(500),
-    })
-  )
-  .max(MAX_PINS_PER_ORG);
+const pinSchema = z.object({
+  label: z.string().trim().min(1).max(200),
+  where: z.string().trim().min(1).max(500),
+});
+
+const pinsSchema = z.array(pinSchema).max(MAX_PINS_PER_ORG);
+
+/**
+ * A label as the mover gave it, clipped to fit rather than refused: its
+ * writes have already happened in the org's transaction, so refusing a label
+ * would roll back a move that worked, and fail the same way on every retry.
+ */
+function clipped(max: number) {
+  return z.string().transform((text) => text.trim().slice(0, max) || '(unnamed)');
+}
+
+/**
+ * Checked for its shape only, for the same reason: not capped like a report,
+ * and its labels clipped. The counts are kept whole; the audit names only the
+ * first few (`move.ts`).
+ */
+const moveAnswerSchema = z.object({
+  moved: z.array(z.object({ label: clipped(200), where: clipped(500) })),
+  left: z
+    .array(z.object({ label: clipped(200), where: clipped(500), reason: clipped(500) }))
+    .optional(),
+});
 
 const answerSchema = z.discriminatedUnion('allow', [
   z.object({ allow: z.literal(true) }),
@@ -151,6 +222,7 @@ const answerSchema = z.discriminatedUnion('allow', [
 
 let reporter: AppModelPinReporter | null = null;
 let check: AppModelMoveCheck | null = null;
+let mover: AppModelPinMover | null = null;
 let initFailed = false;
 
 /**
@@ -170,6 +242,14 @@ export function registerModelMoveCheck(next: AppModelMoveCheck): void {
 }
 
 /**
+ * Register the app's mover. Call it inside `initAppModelPins()`; registering
+ * twice replaces the first.
+ */
+export function registerModelPinMover(next: AppModelPinMover): void {
+  mover = next;
+}
+
+/**
  * Run the fork's init once, lazily, before the first read — see
  * `lib/fork-init.ts`. Rolled back on a throw (both holders), and latched as
  * failed, which refuses every move.
@@ -178,26 +258,48 @@ const appInit = createAppInitGate({
   label: 'model-pins: initAppModelPins',
   subject: 'app model pins',
   init: initAppModelPins,
-  snapshot: () => ({ reporter, check }),
+  snapshot: () => ({ reporter, check, mover }),
   restore: (before) => {
     reporter = before.reporter;
     check = before.check;
+    mover = before.mover;
   },
   onFailure: () => {
     initFailed = true;
   },
 });
 
-/** What the app registered. Runs the fork's init first. */
-export function appModelPinsRegistered(): { reporter: boolean; check: boolean; failed: boolean } {
+/**
+ * Whether `report` counted every pin the app's mover may move: a reporter is
+ * registered and its report did not fail. When it did not, a move asks the
+ * mover in every org it enters, and the preview and the uses say so.
+ */
+export function appModelPinsCounted(report: AppModelPinReport): boolean {
   appInit.ensure();
-  return { reporter: reporter !== null, check: check !== null, failed: initFailed };
+  return reporter !== null && !report.failed;
+}
+
+/** What the app registered. Runs the fork's init first. */
+export function appModelPinsRegistered(): {
+  reporter: boolean;
+  check: boolean;
+  mover: boolean;
+  failed: boolean;
+} {
+  appInit.ensure();
+  return {
+    reporter: reporter !== null,
+    check: check !== null,
+    mover: mover !== null,
+    failed: initFailed,
+  };
 }
 
 /** Test-only: forget what was registered and re-arm the one-shot init. */
 export function __resetAppModelPinsForTests(): void {
   reporter = null;
   check = null;
+  mover = null;
   initFailed = false;
   appInit.reset();
 }
@@ -352,4 +454,60 @@ export async function checkAppModelMove(
   if (parsed.data.allow) return { allowed: true };
   logger.info('App model-move check refused the move', { ...log, reason: parsed.data.reason });
   return { allowed: false, reason: parsed.data.reason };
+}
+
+// ── The mover (t-1088) ──────────────────────────────────────────────────────
+
+/**
+ * The mover failed in an org: thrown inside the org's transaction, so the
+ * org rolls back. Its message is Sunrise's, safe to show an admin.
+ */
+export class AppModelPinMoveError extends Error {
+  constructor() {
+    super('The app’s own uses in it could not be moved. Nothing in it moved.');
+    this.name = 'AppModelPinMoveError';
+  }
+}
+
+/** What the mover did in one org, as validated. */
+export interface AppModelPinMoveResult {
+  moved: AppModelPin[];
+  left: AppModelPinLeft[];
+}
+
+/**
+ * Ask the app's mover to move its pins in `orgId`, through `tx`, the org's
+ * transaction. `null` when no mover is registered. Runs in the caller's
+ * scope (the org's). Fails closed: a mover that throws, runs past
+ * {@link APP_MODEL_PIN_MOVE_TIMEOUT_MS} or answers nothing usable throws
+ * {@link AppModelPinMoveError}, which rolls the org back.
+ */
+export async function moveAppModelPins(
+  tx: Prisma.TransactionClient,
+  model: AppPinModel,
+  replacement: AppPinModel,
+  orgId: string
+): Promise<AppModelPinMoveResult | null> {
+  appInit.ensure();
+  const move = mover;
+  if (!move) return null;
+  const log = { orgId, providerModelId: model.id, replacementId: replacement.id };
+  let raw: unknown;
+  try {
+    raw = await withTimeout(APP_MODEL_PIN_MOVE_TIMEOUT_MS, 'model-pin mover', (signal) =>
+      Promise.resolve(move({ model, replacement, orgId, tx, signal }))
+    );
+  } catch (error) {
+    logger.error('App model-pin mover failed; the org is rolled back', error, log);
+    throw new AppModelPinMoveError();
+  }
+  const parsed = moveAnswerSchema.safeParse(raw);
+  if (!parsed.success) {
+    logger.error('App model-pin mover gave no usable answer; the org is rolled back', undefined, {
+      ...log,
+      issues: parsed.error.issues.slice(0, 5).map((issue) => issue.message),
+    });
+    throw new AppModelPinMoveError();
+  }
+  return { moved: parsed.data.moved, left: parsed.data.left ?? [] };
 }

@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 
 import {
   modelHasMovableUses,
@@ -246,6 +246,34 @@ describe('the app’s own uses (§136 t-1067)', () => {
   it('modelHasMovableUses leaves out the app’s uses, which the move does not change', () => {
     expect(modelHasMovableUses({ ...NONE, appPins: [{ label: 'P', where: 'w' }] })).toBe(false);
     expect(modelHasMovableUses({ ...NONE, otherOrgAppPins: 2, otherOrgAgents: 1 })).toBe(true);
+  });
+
+  it('with a mover, counts the app’s uses as movable and says the move takes them (t-1088)', () => {
+    const pins = { appPins: [{ label: 'P', where: 'w' }], appPinsMovable: true };
+    expect(modelHasMovableUses({ ...NONE, ...pins })).toBe(true);
+    expect(modelHasMovableUses({ ...NONE, otherOrgAppPins: 2, appPinsMovable: true })).toBe(true);
+    expect(modelHasMovableUses({ ...NONE, appPinsMovable: true })).toBe(false);
+    // Not all counted (no reporter, or it failed): the mover may have some.
+    expect(modelHasMovableUses({ ...NONE, appPinsMovable: true, appPinsUncounted: true })).toBe(
+      true
+    );
+    expect(modelHasMovableUses({ ...NONE, appPinsUncounted: true })).toBe(false);
+    expect(panel({ appPinsMovable: true, appPinsUncounted: true })).toHaveTextContent(
+      'Nothing Sunrise can see uses this model.'
+    );
+    cleanup();
+
+    const app = column(panel(pins), 'In the app');
+    expect(app).toHaveTextContent('The app moves these when the model’s uses are moved.');
+    expect(app).not.toHaveTextContent('does not change them');
+    expect(app).not.toHaveTextContent('suspended');
+
+    // Other orgs' uses: those in a suspended org are not moved.
+    cleanup();
+    const elsewhere = column(panel({ otherOrgAppPins: 2, appPinsMovable: true }), 'In the app');
+    expect(elsewhere).toHaveTextContent(
+      'The app moves these when the model’s uses are moved, except in an organisation the move skips: a suspended one, or one whose own key cannot use the replacement.'
+    );
   });
 
   it('modelHasUses counts the app’s uses, in any org', () => {

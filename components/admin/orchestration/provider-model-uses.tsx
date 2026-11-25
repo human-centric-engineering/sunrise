@@ -57,6 +57,10 @@ export interface ProviderModelUsesData {
   otherOrgAppPins?: number;
   /** Some org's report of the app's uses failed. */
   appPinsUnavailable?: boolean;
+  /** The app moves its uses with a move (it registered a mover, t-1088). */
+  appPinsMovable?: boolean;
+  /** The mover may move uses the counts leave out: no reporter, or its report failed. */
+  appPinsUncounted?: boolean;
 }
 
 const SLOT_LABEL: Record<SettingsPinSlot, string> = {
@@ -125,13 +129,21 @@ export function modelHasUses(uses: ProviderModelUsesData): boolean {
   );
 }
 
+/** Whether the platform's own uses include one: an agent, workflow or setting. */
+function modelHasPlatformUses(uses: ProviderModelUsesData): boolean {
+  return modelHasUses({ ...uses, appPins: [], otherOrgAppPins: 0 });
+}
+
 /**
- * Whether anything the move can change uses the model: everything
- * {@link modelHasUses} counts but the app's own uses, which the app moves
- * itself. What gates the move's trigger.
+ * Whether anything the move can change uses the model: the platform's own
+ * uses, and the app's when it moves them with the move (`appPinsMovable`);
+ * otherwise the app moves its uses itself. A mover whose uses were not all
+ * counted (`appPinsUncounted`) may have some, so the move is offered. What
+ * gates the move's trigger.
  */
 export function modelHasMovableUses(uses: ProviderModelUsesData): boolean {
-  return modelHasUses({ ...uses, appPins: [], otherOrgAppPins: 0 });
+  if (!uses.appPinsMovable) return modelHasPlatformUses(uses);
+  return uses.appPinsUncounted === true || modelHasUses(uses);
 }
 
 /** The app's own uses (§136 t-1067): named in the caller's org, counted elsewhere. */
@@ -157,7 +169,11 @@ function AppUses({ uses }: { uses: ProviderModelUsesData }) {
       )}
       {(own.length > 0 || elsewhere > 0) && (
         <p className="text-muted-foreground text-xs">
-          The app sets these itself, so moving the model’s uses does not change them.
+          {uses.appPinsMovable
+            ? elsewhere > 0
+              ? 'The app moves these when the model’s uses are moved, except in an organisation the move skips: a suspended one, or one whose own key cannot use the replacement.'
+              : 'The app moves these when the model’s uses are moved.'
+            : 'The app sets these itself, so moving the model’s uses does not change them.'}
         </p>
       )}
       {uses.appPinsUnavailable && (
@@ -172,7 +188,7 @@ function AppUses({ uses }: { uses: ProviderModelUsesData }) {
 export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: ProviderModelUsesProps) {
   const nothing = !modelHasUses(uses);
   // The platform's own uses: the grid, which the app's uses alone leave out.
-  const platform = modelHasMovableUses(uses);
+  const platform = modelHasPlatformUses(uses);
   const { state, replacement } = lifecycle;
 
   return (
@@ -225,7 +241,7 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
       {nothing || !platform ? (
         nothing && (
           <p className="text-muted-foreground text-sm">
-            {uses.appPinsUnavailable
+            {uses.appPinsUnavailable || uses.appPinsUncounted
               ? 'Nothing Sunrise can see uses this model.'
               : 'Nothing uses this model.'}
           </p>

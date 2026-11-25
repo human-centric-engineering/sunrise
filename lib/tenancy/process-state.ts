@@ -902,9 +902,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/model-lifecycle/app-pins.ts',
-    holders: ['reporter', 'check', 'initFailed', 'appInit'],
+    holders: ['reporter', 'check', 'mover', 'initFailed', 'appInit'],
     posture: 'no-tenant-data',
-    why: "The model-pin reporter and move check an app registers from code (§136 t-1067), the same for every org, and whether its init failed. Each org's pins are asked for inside that org's scope on every read and never held here.",
+    why: "The model-pin reporter, move check and mover an app registers from code (§136 t-1067, t-1088), the same for every org, and whether its init failed. Each org's pins are asked for, and moved, inside that org's scope on every call and never held here.",
   },
   {
     file: 'lib/tenancy/signup-org.ts',

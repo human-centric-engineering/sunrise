@@ -507,7 +507,7 @@ small and conflict-free.)
 | `lib/app/tenancy-classification.ts`        | a fork's models with no `orgId`: system, shared settings or user-owned        | `classifyModels()` → the chokepoint, the scanners + the coverage guard (server + test)                                |
 | `lib/app/mcp-resources.ts`                 | app-owned MCP resource types + URI scheme                                     | the MCP resource registry (server route-handler)                                                                      |
 | `lib/app/evaluations.ts`                   | app evaluation graders (`initAppGraders`)                                     | the grader registry (server route-handler)                                                                            |
-| `lib/app/model-pins.ts`                    | models your app names itself, and a check on moving them (`initAppModelPins`) | a model's uses, its delete check, config health, and the model move (server)                                          |
+| `lib/app/model-pins.ts`                    | models your app names, its check on a move and its mover (`initAppModelPins`) | a model's uses, its delete check, config health, and the model move (server)                                          |
 | `lib/app/account-sections.ts`              | extra sections on `/profile` + `/settings`                                    | `<AccountSections/>` on both account pages (server)                                                                   |
 | `lib/app/entitlements.ts`                  | the switches and meters an org can have (`initAppEntitlements`)               | the entitlements registry → `/admin/orgs/[id]`, `orgHasSwitch()` and `checkMeterQuota()` (server)                     |
 | `lib/app/messages.ts`                      | an app's own strings, its languages, replaced platform strings                | the catalogue registry → every translated screen and email, and `supportedLocales()` (server only)                    |
@@ -1239,13 +1239,15 @@ score an admin reads without changing anything they can see. See
 retires a model, a platform admin moves everything that uses it to a
 replacement on the same provider (§136). Sunrise finds its own agents,
 workflows and settings, but not a model your app names in its own code or
-tables. Fill the empty `initAppModelPins()` to report those, and, if your app
-must vet a replacement first, to stop a move it is not ready for:
+tables. Fill the empty `initAppModelPins()` to report those, to stop a move
+your app is not ready for if it must vet a replacement first, and to move your
+pins with the move:
 
 ```typescript
 // lib/app/model-pins.ts — yours to edit
 import {
   registerModelMoveCheck,
+  registerModelPinMover,
   registerModelPinReporter,
 } from '@/lib/orchestration/model-lifecycle/app-pins';
 
@@ -1262,13 +1264,22 @@ export function initAppModelPins(): void {
       ? { allow: true }
       : { allow: false, reason: `${replacement.name} has not passed the panel evaluations` }
   );
+  // Asked once per org the move enters, in that org's transaction: write
+  // through `tx`, so your pins move with its agents and workflows or not at all.
+  // At `multi` scope every query by `orgId` (row isolation may not be on
+  // yet); at `single` the one org holds every row, `NULL`-org ones included.
+  registerModelPinMover(async ({ model, replacement, orgId, tx }) => {
+    const panels = await repointPanelJudges(tx, orgId, model, replacement);
+    return { moved: panels.map((p) => ({ label: `Panel: ${p.name}`, where: 'Panels › Judge' })) };
+  });
 }
 ```
 
 Your pins appear on the model's page (yours named, other orgs' counted), block
 its delete, count towards config health's retiring-model warnings, and show per
-org in the move's preview. Sunrise never writes them: move them yourself once
-the move is done. Report a pin set in code, the same for every org, from the
+org in the move's preview. Sunrise never writes them itself. Register a mover
+to move them inside the move, or move them yourself once the move is done.
+Report a pin set in code, the same for every org, from the
 install org only (`orgId === INSTALL_ORG_ID`), or it is counted once per org.
 
 The check is asked at each preview (`phase: 'preview'`, every time the admin
@@ -1288,7 +1299,24 @@ timeout holds a database connection. Every org is asked, suspended ones too.
 Each org's report has 10 seconds
 (`APP_MODEL_PIN_REPORT_TIMEOUT_MS`), and one report over every org 20 seconds
 in all (`APP_MODEL_PIN_REPORT_BUDGET_MS`): orgs not asked by then count as
-failed. See
+failed.
+
+The mover (t-1088) is asked `{ model, replacement, orgId, tx, signal }` in each
+org the move enters, one with none of Sunrise's uses included, after the move
+has taken erasure's locks and before it writes any row. It answers
+`{ moved, left? }` (`left` items carry a `reason`). Write through `tx`, and if
+your rows name a person, take their lock with `lockSubjects()`
+(`lib/privacy/erased-subjects.ts`) before your first write. It also **fails
+closed**: a mover that throws, runs past 30 seconds
+(`APP_MODEL_PIN_MOVE_TIMEOUT_MS`) or answers anything else rolls its org back,
+Sunrise's writes there included, and the move reports that org failed and goes
+on. An org skipped because its own key cannot reach the replacement is not
+offered to the mover, and nor is a suspended org. An org with none of
+Sunrise's uses is entered only when your reporter counted pins there, or
+there is no reporter to ask, so register one. At `multi` scope your queries by
+`orgId` yourself; at `single` match every row, `NULL`-org ones included. Answer
+the rows you actually changed. A mover does not stand in for the check: if your check
+refuses while pins remain, let it allow the pins your mover will move. See
 [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#an-apps-own-model-pins-136-t-1067).
 
 **App-owned MCP resources — `lib/app/mcp-resources.ts`.** MCP _tools_ already had

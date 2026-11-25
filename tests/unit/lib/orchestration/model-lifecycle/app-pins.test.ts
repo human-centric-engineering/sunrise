@@ -28,15 +28,21 @@ import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
   APP_MODEL_MOVE_CHECK_TIMEOUT_MS,
+  APP_MODEL_PIN_MOVE_TIMEOUT_MS,
   APP_MODEL_PIN_REPORT_BUDGET_MS,
   APP_MODEL_PIN_REPORT_TIMEOUT_MS,
   __resetAppModelPinsForTests,
+  AppModelPinMoveError,
+  appModelPinsCounted,
   appModelPinsRegistered,
   checkAppModelMove,
+  moveAppModelPins,
   registerModelMoveCheck,
+  registerModelPinMover,
   registerModelPinReporter,
   reportAppModelPins,
   type AppModelMoveCheckRequest,
+  type AppModelPinMoveRequest,
   type AppModelPinQuery,
 } from '@/lib/orchestration/model-lifecycle/app-pins';
 
@@ -44,6 +50,9 @@ const MODEL = { id: 'm-old', name: 'GPT-4o', providerSlug: 'openai', modelId: 'g
 const REPLACEMENT = { id: 'm-new', name: 'GPT-4.1', providerSlug: 'openai', modelId: 'gpt-4.1' };
 
 let scope: string | null = null;
+
+/** Stands in for the org's transaction the move hands the mover. */
+const TX = { marker: 'org-tx' } as unknown as AppModelPinMoveRequest['tx'];
 
 /** The orgs in the install, in creation order, suspended ones included. */
 function orgsAre(ids: string[]): void {
@@ -89,7 +98,12 @@ function reportFrom(byOrg: Record<string, Array<{ label: string; where: string }
 
 describe('with nothing registered', () => {
   it('reports nothing, enters no org, and allows every move', async () => {
-    expect(appModelPinsRegistered()).toEqual({ reporter: false, check: false, failed: false });
+    expect(appModelPinsRegistered()).toEqual({
+      reporter: false,
+      check: false,
+      mover: false,
+      failed: false,
+    });
 
     const report = await reportAppModelPins(MODEL);
     expect(report).toEqual({ pins: [], failed: false });
@@ -327,10 +341,18 @@ describe('an init that throws part-way', () => {
     appInit.run = () => {
       registerModelPinReporter(() => [{ label: 'Kept?', where: 'x' }]);
       registerModelMoveCheck(() => ({ allow: true }));
+      registerModelPinMover(() => ({ moved: [] }));
       throw new Error('fork init bug');
     };
 
-    expect(appModelPinsRegistered()).toEqual({ reporter: false, check: false, failed: true });
+    expect(appModelPinsRegistered()).toEqual({
+      reporter: false,
+      check: false,
+      mover: false,
+      failed: true,
+    });
+    // The mover it registered is gone with the rest.
+    expect(await moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a')).toBeNull();
     expect(logger.error).toHaveBeenCalledWith(
       'model-pins: initAppModelPins threw — app model pins rolled back and disabled',
       expect.anything()
@@ -354,5 +376,103 @@ describe('an init that throws part-way', () => {
     await reportAppModelPins(MODEL);
     await checkAppModelMove(MODEL, REPLACEMENT, { pins: [], failed: false }, 'move');
     expect(init).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the mover (t-1088)', () => {
+  it('is not asked, and answers null, with no mover registered', async () => {
+    expect(await moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a')).toBeNull();
+    expect(appModelPinsRegistered().mover).toBe(false);
+  });
+
+  it('is handed the org’s transaction, the org, both models and a signal, and its answer is validated', async () => {
+    const asked: AppModelPinMoveRequest[] = [];
+    registerModelPinMover((request) => {
+      asked.push(request);
+      return {
+        moved: [{ label: '  Panel: Contracts ', where: 'Panels › Judge' }],
+        left: [{ label: 'Panel: Legacy', where: 'Panels › Judge', reason: 'Launched version' }],
+      };
+    });
+
+    const result = await moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a');
+
+    expect(appModelPinsRegistered().mover).toBe(true);
+    expect(asked).toHaveLength(1);
+    expect(asked[0].tx).toBe(TX);
+    expect(asked[0].orgId).toBe('org-a');
+    expect(asked[0].model).toEqual(MODEL);
+    expect(asked[0].replacement).toEqual(REPLACEMENT);
+    expect(asked[0].signal).toBeInstanceOf(AbortSignal);
+    expect(result).toEqual({
+      moved: [{ label: 'Panel: Contracts', where: 'Panels › Judge' }],
+      left: [{ label: 'Panel: Legacy', where: 'Panels › Judge', reason: 'Launched version' }],
+    });
+  });
+
+  it('clips labels that do not fit, rather than rolling back a move that worked', async () => {
+    registerModelPinMover(() => ({
+      moved: [{ label: `  ${'a'.repeat(250)}  `, where: '   ' }],
+      left: [{ label: 'b', where: 'c', reason: 'r'.repeat(600) }],
+    }));
+    expect(await moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a')).toEqual({
+      moved: [{ label: 'a'.repeat(200), where: '(unnamed)' }],
+      left: [{ label: 'b', where: 'c', reason: 'r'.repeat(500) }],
+    });
+  });
+
+  it('counts the mover’s pins only with a reporter whose report did not fail', () => {
+    expect(appModelPinsCounted({ pins: [], failed: false })).toBe(false);
+    registerModelPinReporter(() => []);
+    expect(appModelPinsCounted({ pins: [], failed: false })).toBe(true);
+    expect(appModelPinsCounted({ pins: [], failed: true })).toBe(false);
+  });
+
+  it('reads an answer with no `left` as nothing left', async () => {
+    registerModelPinMover(() => ({ moved: [] }));
+    expect(await moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a')).toEqual({
+      moved: [],
+      left: [],
+    });
+  });
+
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new Error('app table missing');
+      },
+    ],
+    ['answers nothing', () => undefined],
+    ['answers a pin with no label', () => ({ moved: [{ where: 'x' }] })],
+    ['leaves a pin with no reason', () => ({ moved: [], left: [{ label: 'a', where: 'b' }] })],
+  ])('fails closed when it %s, so the org rolls back', async (_, mover) => {
+    registerModelPinMover(mover as never);
+    await expect(moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a')).rejects.toThrow(
+      AppModelPinMoveError
+    );
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('fails closed when it runs past its time, aborting its signal', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    registerModelPinMover((request) => {
+      signal = request.signal;
+      return new Promise(() => {});
+    });
+
+    const pending = moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a');
+    const settled = expect(pending).rejects.toThrow(AppModelPinMoveError);
+    await vi.advanceTimersByTimeAsync(APP_MODEL_PIN_MOVE_TIMEOUT_MS);
+
+    await settled;
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('says what an admin can act on, and nothing the app’s error carried', () => {
+    expect(new AppModelPinMoveError().message).toBe(
+      'The app’s own uses in it could not be moved. Nothing in it moved.'
+    );
   });
 });
