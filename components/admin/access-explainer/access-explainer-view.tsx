@@ -167,9 +167,11 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
               ))}
             </ul>
           </div>
-        ) : (
+        ) : explainer.switches && explainer.switches.length > 0 ? (
+          // Only where there are switches to have: on an install that
+          // registers none, "none on" would say nothing.
           <p>{t('you.noSwitchesOn')}</p>
-        )}
+        ) : null}
         {explainer.areas && (
           <div>
             <h3 className="font-medium">{t('you.closedTitle')}</h3>
