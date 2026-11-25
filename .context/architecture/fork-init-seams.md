@@ -52,6 +52,7 @@ Three properties come with it:
 
 | Seam file (`lib/app/`)             | Init function                        | Registry                                                    | On a throw                     |
 | ---------------------------------- | ------------------------------------ | ----------------------------------------------------------- | ------------------------------ |
+| `access-explainer.ts`              | `initAppAccessExplainer`             | `lib/auth/access-explainer-registry.ts`                     | roll back, log, degrade        |
 | `account-sections.ts`              | `initAppAccountSections`             | `lib/account-sections/registry.ts`                          | roll back, log, degrade        |
 | `admin-tier.ts`                    | `initAppOrgTierAdminPages`           | `lib/auth/admin-tier.ts`                                    | roll back, log, degrade        |
 | `authorization.ts`                 | `initAppAuthorizationPolicy`         | `lib/auth/authorization.ts`                                 | roll back, log, **safe mode**  |

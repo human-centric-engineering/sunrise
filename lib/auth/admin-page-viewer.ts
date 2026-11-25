@@ -25,27 +25,12 @@
 import { cache } from 'react';
 import { headers } from 'next/headers';
 
-import { canAdminister } from '@/lib/auth/authorization';
 import { sessionPrincipal } from '@/lib/auth/session-principal';
 import { getServerSession } from '@/lib/auth/utils';
-import type {
-  AdminReach,
-  AdminSwitchGrant,
-  AdminViewerTier,
-  DeclaredAdminTier,
-  LockedAdminSwitch,
-} from '@/lib/auth/admin-tier';
-import { reachesTier } from '@/lib/auth/admin-tier';
-import { adminPageRequirements, namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
-import { heldTierLanding } from '@/lib/auth/admin-landing';
+import type { AdminReach, AdminViewerTier, LockedAdminSwitch } from '@/lib/auth/admin-tier';
+import { administersPlatformIn, lockedSwitchesOf, orgAdminReachOf } from '@/lib/auth/admin-reach';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { prisma } from '@/lib/db/client';
-import { logger } from '@/lib/logging';
-import {
-  loadOrgSwitches,
-  registeredEntitlementSwitches,
-  switchRequiredMessage,
-} from '@/lib/tenancy/entitlements';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
@@ -72,7 +57,7 @@ export const requestPrincipal = cache(async () => {
 export const requestAdministersPlatform = cache(async (): Promise<boolean> => {
   const entry = await requestPrincipal();
   if (!entry) return false;
-  return canAdminister(entry.principal, null, entry.scope);
+  return administersPlatformIn(entry.principal, entry.scope);
 });
 
 /**
@@ -113,28 +98,7 @@ export const requestAdminReach = cache(async (): Promise<AdminReach> => {
   if (await requestAdministersPlatform()) return 'platform';
   const entry = await requestPrincipal();
   if (!entry) return { tiers: [], landing: null };
-  const candidates: DeclaredAdminTier[] = ['org', ...namedAdminTiers()];
-  const admitted = await Promise.all(
-    candidates.map((tier) => canAdminister(entry.principal, null, { ...entry.scope, tier }))
-  );
-  const tiers = candidates.filter((_, i) => admitted[i]);
-  const required = [...new Set(adminPageRequirements().map((r) => r.requires))];
-  const asked: AdminSwitchGrant[] = required.flatMap((requires) =>
-    tiers.map((tier) => ({ tier, requires }))
-  );
-  const met = await Promise.all(
-    asked.map((grant) => canAdminister(entry.principal, null, { ...entry.scope, ...grant }))
-  );
-  const switchesMet = asked.filter((_, i) => met[i]);
-  // A landing that requires a switch is this viewer's only if their org has it.
-  const landing = tiers.includes('org')
-    ? null
-    : heldTierLanding(tiers, (tier, requires) =>
-        reachesTier({ tiers, landing: null, switchesMet }, tier, requires)
-      );
-  // With no switch to ask about, the reach is exactly what it was before them.
-  if (asked.length === 0) return { tiers, landing };
-  return { tiers, landing, switchesMet };
+  return orgAdminReachOf(entry.principal, entry.scope);
 });
 
 /**
@@ -156,38 +120,7 @@ export const requestAdminReach = cache(async (): Promise<AdminReach> => {
 export const requestLockedSwitches = cache(async (): Promise<readonly LockedAdminSwitch[]> => {
   const reach = await requestAdminReach();
   if (reach === 'platform' || reach.tiers.length === 0) return [];
-  const required = new Set(adminPageRequirements().map((r) => r.requires));
-  const candidates = registeredEntitlementSwitches().filter(
-    (s) =>
-      s.whenLacking === 'lock' &&
-      required.has(s.key) &&
-      reach.tiers.some((tier) => !reachesTier(reach, tier, s.key))
-  );
-  if (candidates.length === 0) return [];
-  const orgId = (await requestPrincipal())?.principal.orgId;
-  if (!orgId) return [];
-  let org: Awaited<ReturnType<typeof loadOrgSwitches>>;
-  try {
-    org = await loadOrgSwitches(orgId);
-  } catch (error) {
-    logger.error("admin: could not read the org's switches to show locked items; hiding them", {
-      orgId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return [];
-  }
-  if (!org || org.unreadable) return [];
-  const on = new Set(org.on);
-  return candidates
-    .filter((s) => !on.has(s.key))
-    .map((s) =>
-      Object.freeze({
-        requires: s.key,
-        label: s.label,
-        message: switchRequiredMessage(s.key),
-        upgradeUrl: s.upgradeUrl,
-      })
-    );
+  return lockedSwitchesOf(reach, (await requestPrincipal())?.principal.orgId);
 });
 
 /**

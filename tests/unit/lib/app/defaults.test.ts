@@ -139,6 +139,10 @@ import { APP_ORG_TIER_ADMIN_ROUTES } from '@/lib/app/admin-tier-routes';
 import { appOrgAdminLandingRoute } from '@/lib/app/admin-landing';
 import { orgAdminLanding } from '@/lib/auth/admin-landing';
 import {
+  accessExplainerRegistrations,
+  __resetAccessExplainerForTests,
+} from '@/lib/auth/access-explainer';
+import {
   getAppOrgTierAdminPages,
   namedAdminTiers,
   orgTierAdminPages,
@@ -176,6 +180,7 @@ vi.mock('@/lib/app/org-created', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/signup-org', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/model-pins', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/entitlements', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/access-explainer', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -680,6 +685,19 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       // …and it closes none of core's sections (t-929), so the routes keep
       // the tier they declare.
       expect(closedCoreOrgTierSections()).toEqual([]);
+    },
+  },
+  {
+    seam: 'lib/app/access-explainer.ts',
+    risk: "a stray area, platform-only surface or section would show every install's admins words about access that are not theirs, and a stray audience would hide one of the explainer's own sections from them; it opens and closes nothing",
+    assert: () => {
+      __resetAccessExplainerForTests();
+      // The read triggers the lazy init, so this exercises the REAL seam.
+      const registered = accessExplainerRegistrations();
+      expect([...registered.areas.keys()]).toEqual([]);
+      expect([...registered.platformOnly.keys()]).toEqual([]);
+      expect([...registered.sections.keys()]).toEqual([]);
+      expect([...registered.audiences.keys()]).toEqual([]);
     },
   },
   {
