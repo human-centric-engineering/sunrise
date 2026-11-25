@@ -180,9 +180,10 @@ release process.
   `ALWAYS_RUN_TESTS`) fails unless `package.json` pins the two equal and the
   lockfile holds one core, at the root, at better-auth's version. **In a fork:**
   when you merge `package.json`, keep `better-auth` exact and equal to
-  `@better-auth/core`, and bump the two in the same PR. If your Dependabot
-  groups them separately, or a better-auth major arrives on its own, the PR
-  fails this test until the other one is moved to match.
+  `@better-auth/core`, bump the two in the same PR, and don't name either in
+  `overrides`. A Dependabot security update ignores `groups` and bumps only
+  `better-auth`, as does a better-auth major. That PR fails this test until you
+  move `@better-auth/core` to the same version in it.
 
 - **A founder's signup org is set up at sign-in at `multi` (t-1084).** Its
   release and the org-created hooks' lease are raw SQL, and they ran on an

@@ -13,16 +13,19 @@
  * and only a log line to show for it (t-1081).
  *
  * `npm ls` reports the skew as invalid, but nothing gated on it, and
- * `legacy-peer-deps` hides it at install. Three ways in: a lock refresh,
- * `npm update better-auth`, or a fork's Dependabot moving one package without
- * the other (Sunrise's own grouping moves minors and patches together, but a
- * major arrives on its own).
+ * `legacy-peer-deps` hides it at install. Four ways in: a lock refresh,
+ * `npm update better-auth`, an npm `overrides` entry, or Dependabot moving one
+ * package without the other. Sunrise's grouping moves version-update minors
+ * and patches together, but a major arrives on its own, and a security update
+ * ignores `groups` and bumps only the package its advisory names. When a
+ * better-auth security PR fails here, bump `@better-auth/core` to the same
+ * version in that PR.
  *
  * So this holds three things over the real `package.json` and
  * `package-lock.json`:
  *
  * 1. `package.json` declares both packages at the same exact version, so they
- *    move together by construction.
+ *    move together by construction, and no `overrides` entry names either.
  * 2. The lockfile has `@better-auth/core` only at the root.
  * 3. The root core is the version `better-auth` is locked at, and the version
  *    better-auth's own dependency on core asks for.
@@ -47,24 +50,38 @@ const ROOT_BETTER_AUTH = `node_modules/${BETTER_AUTH}`;
 /** A plain version, no range operator: `1.7.27`, `1.8.0-beta.2`. */
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
-const lockEntrySchema = z
-  .object({
-    version: z.string().optional(),
-    dependencies: z.record(z.string(), z.string()).optional(),
-  })
-  .passthrough();
+const lockEntrySchema = z.looseObject({
+  version: z.string().optional(),
+  dependencies: z.record(z.string(), z.string()).optional(),
+});
 
-const lockfileSchema = z.object({ packages: z.record(z.string(), lockEntrySchema) }).passthrough();
+const lockfileSchema = z.looseObject({ packages: z.record(z.string(), lockEntrySchema) });
 
-const manifestSchema = z
-  .object({
-    dependencies: z.record(z.string(), z.string()).optional(),
-    devDependencies: z.record(z.string(), z.string()).optional(),
-  })
-  .passthrough();
+const manifestSchema = z.looseObject({
+  dependencies: z.record(z.string(), z.string()).optional(),
+  devDependencies: z.record(z.string(), z.string()).optional(),
+  overrides: z.record(z.string(), z.unknown()).optional(),
+});
 
 type Lockfile = z.infer<typeof lockfileSchema>;
 type Manifest = z.infer<typeof manifestSchema>;
+
+/**
+ * The paths in an npm `overrides` tree whose key is `better-auth` or
+ * `@better-auth/core`, at any depth (`"some-pkg": { "@better-auth/core": … }`
+ * forces a version as surely as a top-level entry).
+ */
+function overridePaths(tree: Record<string, unknown>, prefix: string[] = []): string[] {
+  const found: string[] = [];
+  for (const [key, value] of Object.entries(tree)) {
+    const path = [...prefix, key];
+    const name = key.replace(/@[^@/]*$/, '') || key;
+    if (name === BETTER_AUTH || name === CORE) found.push(path.join(' > '));
+    const nested = z.record(z.string(), z.unknown()).safeParse(value);
+    if (nested.success) found.push(...overridePaths(nested.data, path));
+  }
+  return found;
+}
 
 /** Each way the manifest lets the two packages drift apart. Empty is in step. */
 function manifestProblems(manifest: Manifest): string[] {
@@ -72,6 +89,9 @@ function manifestProblems(manifest: Manifest): string[] {
   const core = declared[CORE];
   const betterAuth = declared[BETTER_AUTH];
   const problems: string[] = [];
+  for (const path of overridePaths(manifest.overrides ?? {})) {
+    problems.push(`package.json overrides ${path}; pin it in dependencies instead`);
+  }
   if (betterAuth === undefined) problems.push(`package.json does not declare ${BETTER_AUTH}`);
   if (core === undefined) problems.push(`package.json does not declare ${CORE}`);
   if (problems.length > 0) return problems;
@@ -108,8 +128,10 @@ function lockfileProblems(lock: Lockfile): string[] {
       `${BETTER_AUTH} is locked at ${betterAuth.version} but the root ${CORE} at ${core.version}`
     );
   }
+  // An exact ask must equal the root core. A range the root core falls outside
+  // makes npm nest a second copy, which the nested check above reports.
   const wanted = betterAuth.dependencies?.[CORE];
-  if (wanted !== undefined && wanted !== core.version) {
+  if (wanted !== undefined && EXACT_VERSION.test(wanted) && wanted !== core.version) {
     problems.push(
       `${BETTER_AUTH} ${betterAuth.version} depends on ${CORE} "${wanted}", ` +
         `but the root ${CORE} is ${core.version}`
@@ -122,7 +144,10 @@ function readJson(file: string): unknown {
   return JSON.parse(readFileSync(resolve(process.cwd(), file), 'utf8'));
 }
 
-/** A lockfile shaped like the real one, at `version` for both packages. */
+/**
+ * A lockfile shaped like the real one: better-auth at `betterAuth`, depending
+ * on core at that same version, and the root core at `core`.
+ */
 function lockAt(betterAuth: string, core: string, extra: Lockfile['packages'] = {}): Lockfile {
   return {
     packages: {
@@ -166,6 +191,27 @@ describe('manifestProblems', () => {
     expect(
       manifestProblems({ dependencies: { [BETTER_AUTH]: '1.7.28', [CORE]: '1.7.27' } })
     ).toEqual(['better-auth is declared as "1.7.28" but @better-auth/core as "1.7.27"']);
+  });
+
+  it('fails an override on the core, at any depth', () => {
+    expect(
+      manifestProblems({
+        dependencies: { [BETTER_AUTH]: '1.7.27', [CORE]: '1.7.27' },
+        overrides: { [CORE]: '1.7.26', 'some-pkg': { [`${BETTER_AUTH}@1`]: '1.7.28' } },
+      })
+    ).toEqual([
+      'package.json overrides @better-auth/core; pin it in dependencies instead',
+      'package.json overrides some-pkg > better-auth@1; pin it in dependencies instead',
+    ]);
+  });
+
+  it('passes overrides that name neither package', () => {
+    expect(
+      manifestProblems({
+        dependencies: { [BETTER_AUTH]: '1.7.27', [CORE]: '1.7.27' },
+        overrides: { '@prisma/config': { effect: '^3.22.1' } },
+      })
+    ).toEqual([]);
   });
 
   it('fails when the core is not declared, since lib/auth imports it from the root', () => {
@@ -216,6 +262,12 @@ describe('lockfileProblems', () => {
     expect(lockfileProblems(lock)).toEqual([
       'better-auth 1.7.27 depends on @better-auth/core "1.7.26", but the root @better-auth/core is 1.7.27',
     ]);
+  });
+
+  it('passes a range ask the single root core satisfies', () => {
+    const lock = lockAt('1.8.0', '1.8.0');
+    lock.packages[ROOT_BETTER_AUTH] = { version: '1.8.0', dependencies: { [CORE]: '^1.8.0' } };
+    expect(lockfileProblems(lock)).toEqual([]);
   });
 
   it('fails a lock with no root core', () => {
