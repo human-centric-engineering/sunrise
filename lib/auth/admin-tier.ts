@@ -82,6 +82,7 @@
  */
 
 import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
+import { APP_MESSAGE_NAMESPACES } from '@/lib/i18n/registry';
 
 /**
  * The tier core's admin surfaces declare. Only one value: the absence of a
@@ -192,6 +193,76 @@ export interface NamedAdminTierDefinition {
    * test fails on it.
    */
   landing?: string;
+  /**
+   * What the tier is called where the console explains access (§143): a few
+   * plain words, such as "Agency designers". Optional; with none, the access
+   * explainer shows the tier's name with its first letter capitalised and `_`
+   * and `-` as spaces. Plain text, or `{ message }` naming a key in your
+   * catalogue (`lib/app/messages.ts`) so it is translated. Nothing is
+   * decided by it.
+   */
+  label?: AdminText;
+  /**
+   * One or two sentences on who holds the tier and what it is for, shown
+   * beside {@link label} on the access explainer (§143). Optional.
+   */
+  description?: AdminText;
+}
+
+/**
+ * Words an app gives the console for a reader, not a decision: plain text, or
+ * `{ message }` naming a key in the app's catalogue (`lib/app/messages.ts`,
+ * such as `'app.access.designers'`), which is then shown in the viewer's
+ * language. Used by named tiers' labels and by the access explainer's seam
+ * (`lib/app/access-explainer.ts`, §143).
+ */
+export type AdminText = string | { readonly message: string };
+
+/** The longest plain {@link AdminText} a label may be. */
+export const MAX_ADMIN_TEXT_LABEL = 80;
+/** The longest plain {@link AdminText} a description may be. */
+export const MAX_ADMIN_TEXT_DESCRIPTION = 600;
+/** What a catalogue key in {@link AdminText} may look like: dotted segments. */
+const ADMIN_TEXT_MESSAGE_KEY = /^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$/;
+
+/** Is `key` a dotted key in a downstream tier's own namespace (`app.…`, `framework.…`)? */
+function isAppMessageKey(key: string): boolean {
+  return ADMIN_TEXT_MESSAGE_KEY.test(key) && APP_MESSAGE_NAMESPACES.includes(key.split('.')[0]);
+}
+
+/**
+ * Check one {@link AdminText} an app passed, and return it trimmed and frozen.
+ * Throws a `TypeError` naming `what` on a value that is neither a non-empty
+ * string of at most `max` characters nor `{ message }` with a dotted key in
+ * the app's own namespace (`app.…` or `framework.…`), so a mistake registers
+ * nothing. A platform key is reworded with `overridePlatformMessages()`, not
+ * named here.
+ */
+export function adminTextOrThrow(value: unknown, what: string, max: number): AdminText {
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (text.length === 0) throw new TypeError(`${what} is empty`);
+    if (text.length > max) throw new TypeError(`${what} is longer than ${max} characters`);
+    return text;
+  }
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { message?: unknown }).message === 'string' &&
+    isAppMessageKey((value as { message: string }).message)
+  ) {
+    return Object.freeze({ message: (value as { message: string }).message });
+  }
+  throw new TypeError(
+    `${what} is neither plain text nor { message } naming a key in the app's catalogue such as 'app.access.title'`
+  );
+}
+
+/** Are two {@link AdminText} values the same words? */
+function sameAdminText(a: AdminText | undefined, b: AdminText | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (typeof a === 'string' || typeof b === 'string') return a === b;
+  return a.message === b.message;
 }
 
 /**
@@ -341,7 +412,8 @@ const RESERVED_TIER_NAMES: readonly string[] = Object.freeze(['org', 'platform']
  * Throws, so a mistake opens nothing, on a name that is not lower case
  * letters, digits, `_` and `-` (a letter first, at most 48), on `'org'` or
  * `'platform'`, on a `holds` that is not a function, on a `landing` that is
- * not a plain `/admin/…` path.
+ * not a plain `/admin/…` path, and on a `label` or `description` that is not
+ * {@link AdminText} (§143).
  *
  * Registering a name again replaces its definition, as `registerNavSection()`
  * replaces a section: under `next dev` a hot reload of the scaffold runs the
@@ -387,9 +459,40 @@ export function registerAdminTier(
       `has a landing (${JSON.stringify(landing)}) that is not a plain /admin/ path: literal segments only, with no trailing slash, query, fragment or [x].`
     );
   }
+  const label =
+    definition.label === undefined
+      ? undefined
+      : adminTextOrThrow(
+          definition.label,
+          `registerAdminTier: ${JSON.stringify(name)}'s label`,
+          MAX_ADMIN_TEXT_LABEL
+        );
+  const description =
+    definition.description === undefined
+      ? undefined
+      : adminTextOrThrow(
+          definition.description,
+          `registerAdminTier: ${JSON.stringify(name)}'s description`,
+          MAX_ADMIN_TEXT_DESCRIPTION
+        );
   const existing = namedTiers.get(name);
-  if (existing?.holds === definition.holds && existing.landing === landing) return;
-  namedTiers.set(name, Object.freeze({ holds: definition.holds, landing }));
+  if (
+    existing?.holds === definition.holds &&
+    existing.landing === landing &&
+    sameAdminText(existing.label, label) &&
+    sameAdminText(existing.description, description)
+  ) {
+    return;
+  }
+  namedTiers.set(
+    name,
+    Object.freeze({
+      holds: definition.holds,
+      landing,
+      ...(label === undefined ? {} : { label }),
+      ...(description === undefined ? {} : { description }),
+    })
+  );
   namedTiersView = null;
 }
 

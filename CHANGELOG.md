@@ -46,6 +46,32 @@ release process.
 
 ### Added
 
+- **Who can do what: the access explainer's read model, endpoint and app
+  seam (§143 t-1090).** `GET /api/v1/admin/access` says, in the request's
+  locale for its own words, every role and named tier, every entitlement switch, the org-tier
+  admin pages grouped into areas with the tier and switch each needs and
+  whether the caller opens it (and why not, when a switch is missing), what the
+  install keeps for the platform, and the caller's own access. All of it is
+  derived from the registrations that decide access, and each caller gets
+  their own slice: a platform admin everything, an org OWNER/ADMIN their org's
+  view, a holder of a named tier only those tiers. Anyone else is refused.
+  It decides nothing. New: `buildAccessExplainer()`, `accessAudienceOf()` and the
+  `AccessExplainer` view types (`lib/auth/access-explainer.ts`); the
+  reach the admin layout acts on, now callable for any principal, as
+  `adminReachOf()`, `orgAdminReachOf()`, `administersPlatformIn()` and
+  `lockedSwitchesOf()` (`lib/auth/admin-reach.ts`), plus
+  `lockedSwitchesIn()` for a caller that has already read the org's switches, with
+  `requestAdminReach()` and `requestLockedSwitches()` unchanged on top; an
+  optional `label` and `description` on `registerAdminTier()`, with the
+  `AdminText` type (plain text or `{ message }`, a key in the app's own
+  `app.` or `framework.` namespace); and a new
+  seam, `lib/app/access-explainer.ts` → `initAppAccessExplainer()`, with
+  `registerAccessArea()`, `registerPlatformOnlySurface()`,
+  `setAccessSectionAudience()` and `registerAccessSection()`
+  (`lib/auth/access-explainer-registry.ts`). It ships empty and is inert
+  when empty. Sunrise's own words are under `admin.access` in the catalogue.
+  See [access-explainer.md](./.context/auth/access-explainer.md).
+
 - **An app can move its own model pins as part of a model move (t-1088,
   #1321).** `lib/orchestration/model-lifecycle/app-pins.ts` gains a third
   registration beside the reporter and the check: `registerModelPinMover()`

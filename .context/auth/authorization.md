@@ -153,6 +153,10 @@ fork surfaces included, so an upgrade opens nothing a fork did not opt into,
 and opening a surface is a one-line diff a reviewer sees. The roster lives in
 [`lib/auth/admin-tier.ts`](../../lib/auth/admin-tier.ts) (§111 t-810).
 
+What the tiers below open, for whoever is asking, is said back in plain words
+by the access explainer ([access-explainer.md](./access-explainer.md), §143),
+which reads these declarations and decides nothing.
+
 **How a surface declares it:**
 
 | Surface  | Declaration                                                   | Read by                                                               |
@@ -1834,6 +1838,7 @@ through `enterApiKeyOrg`) — so a fork's policy cannot widen it. See
 - [`lib/auth/authorization.ts`](../../lib/auth/authorization.ts) — the contract, with the reasoning for each shape decision
 - [`lib/app/authorization.ts`](../../lib/app/authorization.ts) — the fork's scaffold, with two worked policies
 - [`integration.md`](./integration.md) — `withAuth` / `withAdminAuth` usage
+- [`access-explainer.md`](./access-explainer.md) — the admin tiers, switches and roles said back to each viewer (§143)
 - [`../architecture/multi-tenancy.md`](../architecture/multi-tenancy.md) — enabling the capability, and the control-plane split
 - [`../architecture/multi-tenancy-design.md`](../architecture/multi-tenancy-design.md) — the org axis; design principles and the Q6 ruling
 - [`../architecture/fork-init-seams.md`](../architecture/fork-init-seams.md) — the init-gate contract every `lib/app/*` seam shares

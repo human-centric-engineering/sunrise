@@ -1526,6 +1526,73 @@
         "erasing": "Erasing…",
         "eraseFailed": "Could not erase the entry. Try again."
       }
+    },
+    "access": {
+      "roles": {
+        "platformAdmin": {
+          "label": "Platform admin",
+          "description": "Runs this install for every organisation. Opens every admin page, including the ones kept for the platform, and is not limited by an organisation's switches."
+        },
+        "support": {
+          "label": "Support access",
+          "description": "A platform admin let into one organisation for a limited time, because that organisation agreed. An owner or admin grants it from Support access, at full admin or read-only level, and can end it at any time."
+        },
+        "owner": {
+          "label": "Owner",
+          "description": "Runs the organisation. Opens every admin page the organisation can use, manages its members and settings, and can grant support access."
+        },
+        "admin": {
+          "label": "Admin",
+          "description": "Helps run the organisation. Opens the same admin pages as an owner."
+        },
+        "member": {
+          "label": "Member",
+          "description": "Uses the product. Does not open the admin console."
+        },
+        "namedTier": {
+          "description": "A role this app adds. Opens only the pages listed for it, in the organisation where it is held."
+        }
+      },
+      "areas": {
+        "members": {
+          "label": "Members",
+          "description": "Invite people to the organisation and change their roles."
+        },
+        "orgOptions": {
+          "label": "Options",
+          "description": "The organisation's own settings."
+        },
+        "providerKeys": {
+          "label": "AI keys",
+          "description": "The organisation's own accounts with AI providers."
+        },
+        "supportAccess": {
+          "label": "Support access",
+          "description": "Let support staff into the organisation, and see who has been in."
+        },
+        "waitlist": {
+          "label": "Waitlist",
+          "description": "People waiting to join, and inviting them."
+        },
+        "orchestration": {
+          "label": "AI dashboard",
+          "description": "An overview of the organisation's AI agents and workflows."
+        },
+        "orchestrationBuild": {
+          "label": "Build",
+          "description": "Agents, workflows and the MCP server."
+        },
+        "orchestrationOperate": {
+          "label": "Operate",
+          "description": "Knowledge, conversations, runs, approvals, triggers, testing, analytics and costs."
+        }
+      },
+      "closedSections": {
+        "orchestration": {
+          "label": "AI orchestration",
+          "reason": "This install keeps AI agents, workflows and their settings for the platform team."
+        }
+      }
     }
   },
   "emails": {

@@ -418,11 +418,11 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * which may read the real seam too. `defaults.test.ts` fails any other file
  * that reads a pinned seam past its pin, or unmocks one.
  *
- * Eleven seams are pinned in this file, not every lazy init in `lib/app/`:
- * the four above (llm-providers, brand, emails, waitlist-config) and the seven
+ * Twelve seams are pinned in this file, not every lazy init in `lib/app/`:
+ * the four above (llm-providers, brand, emails, waitlist-config) and the eight
  * inits below (admin-tier, user-created, erasure, org-created, signup-org,
- * model-pins, entitlements). The rest are #636's sweep.
- * `tests/unit/setup-seam-pins.test.ts` fails if one of the seven inits stops
+ * model-pins, entitlements, access-explainer). The rest are #636's sweep.
+ * `tests/unit/setup-seam-pins.test.ts` fails if one of the eight inits stops
  * being replaced.
  */
 // Each keeps the module's other exports, as the brand pin derives its keys: a
@@ -481,6 +481,15 @@ vi.mock('@/lib/app/entitlements', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   initAppEntitlements: () => {
     // Registers no switch and no meter: Sunrise's shipped default.
+  },
+}));
+
+// Pinned when the seam was added (§143 t-1090): a filled one regroups and
+// rewords what the access-explainer tests assert exactly.
+vi.mock('@/lib/app/access-explainer', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  initAppAccessExplainer: () => {
+    // Registers no area, surface, audience or section: Sunrise's shipped default.
   },
 }));
 

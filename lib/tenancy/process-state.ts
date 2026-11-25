@@ -496,6 +496,18 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The configured analytics provider, its one-shot init promise and a warn-once latch.',
   },
   {
+    file: 'lib/auth/access-explainer-registry.ts',
+    holders: ['CORE_AREA_KEYS', 'areas', 'platformOnly', 'sections', 'audiences'],
+    posture: 'no-tenant-data',
+    why: 'The words and grouping an app registers for the access explainer from code (§143 t-1090): areas by key, platform-only surfaces, section audiences and its own sections, plus the set of core area keys built once from a constant. Text and admin paths only; nothing about any org or person.',
+  },
+  {
+    file: 'lib/auth/access-explainer.ts',
+    holders: ['appInit', 'warnedMissingKeys'],
+    posture: 'no-tenant-data',
+    why: 'The one-shot latch on the app’s access-explainer init, and a warn-once latch over the catalogue keys the app named that are missing (§143 t-1090). Message keys only; nothing about any org or person.',
+  },
+  {
     file: 'lib/auth/admin-tier.ts',
     holders: [
       'appPages',
