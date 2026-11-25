@@ -17,6 +17,7 @@
  *   import { formatModelPin } from '@/lib/orchestration/llm/model-pin';
  *   import {
  *     registerModelMoveCheck,
+ *     registerModelPinMover,
  *     registerModelPinReporter,
  *   } from '@/lib/orchestration/model-lifecycle/app-pins';
  *
@@ -43,13 +44,25 @@
  *         ? { allow: true }
  *         : { allow: false, reason: `${replacement.name} failed the panel evaluations` };
  *     });
+ *     // Asked once per org the move enters, in its transaction: write
+ *     // through `tx`, so your pins move with the org's agents or not at all.
+ *     registerModelPinMover(async ({ model, replacement, tx }) => {
+ *       const from = formatModelPin(model.providerSlug, model.modelId);
+ *       const panels = await tx.appPanel.findMany({ where: { judgeModel: from } });
+ *       await tx.appPanel.updateMany({
+ *         where: { judgeModel: from },
+ *         data: { judgeModel: formatModelPin(replacement.providerSlug, replacement.modelId) },
+ *       });
+ *       return { moved: panels.map((p) => ({ label: `Panel: ${p.name}`, where: 'Panels › Judge' })) };
+ *     });
  *   }
  *
  * The reporter answers `{ label, where }[]` for the org it is asked about
  * (`{ model, orgId, signal }`); Sunrise stamps the org. Report a pin set in
  * code, the same for every org, from the install org only (`orgId ===
  * INSTALL_ORG_ID`), or it is counted once per org. Sunrise never writes your
- * pins: move them yourself, after the move.
+ * pins itself: register a mover to move them inside the move, or move them
+ * yourself after it.
  *
  * The check is asked `{ model, replacement, pins, phase, signal }` in the
  * admin's scope, at each preview (`phase: 'preview'`) and again at the move
@@ -61,7 +74,14 @@
  * refuses the model's delete and leaves config health's retiring-model
  * checks unable to run.
  *
- * Empty = no app uses reported and every move allowed, as before this seam.
+ * The mover is asked `{ model, replacement, orgId, tx, signal }` in each org
+ * the move enters, after erasure's locks and before any row is written, and
+ * answers `{ moved, left? }`. It fails closed: one that throws, runs past 30
+ * seconds or answers anything else rolls its org back, Sunrise's writes there
+ * included.
+ *
+ * Empty = no app uses reported, every move allowed and no app pin moved, as
+ * before this seam.
  *
  * Full guide: .context/orchestration/llm-providers.md (Model lifecycle) ·
  * .context/architecture/fork-init-seams.md
