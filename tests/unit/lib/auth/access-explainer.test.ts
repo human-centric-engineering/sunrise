@@ -32,9 +32,12 @@ import {
 } from '@/lib/auth/access-explainer';
 import {
   CORE_ACCESS_AREAS,
+  CORE_ACCESS_PERMISSIONS,
   registerAccessArea,
+  registerAccessPermission,
   registerAccessSection,
   registerPlatformOnlySurface,
+  setAccessPermission,
   setAccessSectionAudience,
 } from '@/lib/auth/access-explainer-registry';
 import {
@@ -634,10 +637,18 @@ describe('the app seam (lib/app/access-explainer.ts)', () => {
       registerAccessArea({ key: 'team', label: 'Team', pages: ['/admin/members'] });
       registerPlatformOnlySurface({ key: 'billing', label: 'Billing', reason: 'Ours.' });
       setAccessSectionAudience('roles', []);
+      setAccessPermission('manageMembers', null);
+      registerAccessPermission({
+        key: 'publish',
+        label: 'Publish',
+        allowed: { platform_admin: true, owner: true, admin: true, member: false },
+      });
       throw new Error('boom');
     };
 
     const registered = accessExplainerRegistrations();
+    expect([...registered.permissions.keys()]).toEqual([]);
+    expect([...registered.permissionOverrides.keys()]).toEqual([]);
     expect([...registered.areas.keys()]).toEqual([]);
     expect([...registered.platformOnly.keys()]).toEqual([]);
     expect([...registered.audiences.keys()]).toEqual([]);
@@ -668,6 +679,58 @@ describe('the app seam (lib/app/access-explainer.ts)', () => {
         registerPlatformOnlySurface({ key: 'x', label: 'X', reason: 'Y', href: 'https://x.test' }),
     ],
     [
+      'a restated permission that is not one of core’s',
+      () =>
+        setAccessPermission('publish', {
+          platform_admin: true,
+          owner: true,
+          admin: true,
+          member: true,
+        }),
+    ],
+    [
+      'a restated permission missing a cell',
+      () =>
+        setAccessPermission('manageMembers', {
+          platform_admin: true,
+          owner: true,
+          admin: false,
+        } as never),
+    ],
+    [
+      'a permission cell for a column that is not one',
+      () =>
+        registerAccessPermission({
+          key: 'publish',
+          label: 'Publish',
+          allowed: {
+            platform_admin: true,
+            owner: true,
+            admin: true,
+            member: false,
+            guest: true,
+          } as never,
+        }),
+    ],
+    [
+      'an app permission with core’s key',
+      () =>
+        registerAccessPermission({
+          key: 'manageMembers',
+          label: 'X',
+          allowed: { platform_admin: true, owner: true, admin: true, member: true },
+        }),
+    ],
+    [
+      'a permission cell that is not true or false',
+      () =>
+        registerAccessPermission({
+          key: 'publish',
+          label: 'Publish',
+          allowed: { platform_admin: true, owner: 'yes', admin: true, member: false } as never,
+        }),
+    ],
+    [
       'a tier label that is neither text nor a key',
       () => registerAdminTier('designers', { holds: () => true, label: { message: 'nodots' } }),
     ],
@@ -678,5 +741,138 @@ describe('the app seam (lib/app/access-explainer.ts)', () => {
     ],
   ])('refuses %s', (_name, register) => {
     expect(register).toThrow();
+  });
+});
+
+describe('the role model (RBAC tables)', () => {
+  const cells = (explainer: AccessExplainer | null) =>
+    Object.fromEntries((explainer?.model?.permissions ?? []).map((p) => [p.key, p.allowed]));
+
+  it('sends every core role and Sunrise’s permission table, in the viewer’s words', () => {
+    const explainer = buildAccessExplainer(viewer(), translator());
+
+    expect(explainer?.model?.platformRoles.map((r) => [r.key, r.label, r.held])).toEqual([
+      ['user', 'User', false],
+      ['platform_admin', 'Platform admin', true],
+      ['support', 'Support access', false],
+    ]);
+    expect(explainer?.model?.orgRoles.map((r) => r.label)).toEqual(['Owner', 'Admin', 'Member']);
+    expect(explainer?.model?.columns.map((c) => c.label)).toEqual([
+      'Platform admin',
+      'Owner',
+      'Admin',
+      'Member',
+    ]);
+    expect(explainer?.model?.permissions.map((p) => p.key)).toEqual(
+      CORE_ACCESS_PERMISSIONS.map((p) => p.key)
+    );
+    expect(explainer?.model?.permissions.every((p) => p.source === 'core')).toBe(true);
+  });
+
+  it('pins every cell of Sunrise’s table to the rule it restates', () => {
+    expect(cells(buildAccessExplainer(viewer(), translator()))).toEqual({
+      useProduct: { platform_admin: true, owner: true, admin: true, member: true },
+      openConsole: { platform_admin: true, owner: true, admin: true, member: false },
+      manageMembers: { platform_admin: true, owner: true, admin: true, member: false },
+      // lib/tenancy/lifecycle.ts: only an OWNER, or a platform admin, touches OWNER.
+      manageOwners: { platform_admin: true, owner: true, admin: false, member: false },
+      orgSettings: { platform_admin: true, owner: true, admin: true, member: false },
+      // lib/tenancy/support-grants.ts: only the org's own OWNER grants.
+      grantSupport: { platform_admin: false, owner: true, admin: false, member: false },
+      endSupport: { platform_admin: true, owner: true, admin: true, member: false },
+      switchesOff: { platform_admin: true, owner: false, admin: false, member: false },
+      platformPages: { platform_admin: true, owner: false, admin: false, member: false },
+      manageOrgs: { platform_admin: true, owner: false, admin: false, member: false },
+    });
+  });
+
+  it('sends the whole model at single too, where `roles` is the platform admin alone', () => {
+    const explainer = buildAccessExplainer(viewer({ multiTenant: false }), translator());
+
+    expect(explainer?.tenancy).toBe('single');
+    expect(explainer?.roles?.map((r) => r.key)).toEqual(['platform_admin']);
+    expect(explainer?.model?.orgRoles.map((r) => r.key)).toEqual(['owner', 'admin', 'member']);
+    // No org role is in force there, so none is the viewer's.
+    expect(explainer?.model?.orgRoles.some((r) => r.held)).toBe(false);
+  });
+
+  it('marks an org owner as a User and as the Owner, and a support entry as neither', () => {
+    const owner = buildAccessExplainer(
+      viewer({ reach: orgAdminReach(), orgRole: 'OWNER' }),
+      translator()
+    );
+    expect(owner?.model?.platformRoles.find((r) => r.key === 'user')?.held).toBe(true);
+    expect(owner?.model?.orgRoles.find((r) => r.key === 'owner')?.held).toBe(true);
+
+    const support = buildAccessExplainer(
+      viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', supportEntry: true }),
+      translator()
+    );
+    expect(support?.model?.platformRoles.filter((r) => r.held).map((r) => r.key)).toEqual([
+      'support',
+    ]);
+    expect(support?.model?.orgRoles.some((r) => r.held)).toBe(false);
+  });
+
+  it('is not sent to a named-tier holder, nor when the app hides the roles section', () => {
+    registerAgencyApp();
+    const holder = buildAccessExplainer(
+      viewer({
+        reach: { tiers: ['designers'], landing: null, switchesMet: [] },
+        orgRole: 'MEMBER',
+      }),
+      translator()
+    );
+    expect(holder?.roles).toBeDefined();
+    expect(holder?.model).toBeUndefined();
+
+    __resetAccessExplainerForTests();
+    app.init = () => setAccessSectionAudience('roles', ['platform']);
+    const org = buildAccessExplainer(
+      viewer({ reach: orgAdminReach(), orgRole: 'OWNER' }),
+      translator()
+    );
+    expect(org?.model).toBeUndefined();
+  });
+
+  it('lets an app restate a core row its policy answers differently, or leave one out', () => {
+    app.init = () => {
+      setAccessPermission('manageMembers', {
+        platform_admin: true,
+        owner: true,
+        admin: false,
+        member: false,
+      });
+      setAccessPermission('useProduct', null);
+    };
+    const explainer = buildAccessExplainer(viewer(), translator());
+
+    expect(cells(explainer).manageMembers).toEqual({
+      platform_admin: true,
+      owner: true,
+      admin: false,
+      member: false,
+    });
+    expect(explainer?.model?.permissions.map((p) => p.key)).not.toContain('useProduct');
+    expect(explainer?.model?.permissions.find((p) => p.key === 'manageMembers')?.source).toBe(
+      'core'
+    );
+  });
+
+  it('adds an app row after core’s, in its own words', () => {
+    app.init = () =>
+      registerAccessPermission({
+        key: 'publish',
+        label: 'Publish a client’s pages',
+        allowed: { platform_admin: true, owner: true, admin: true, member: false },
+      });
+    const permissions = buildAccessExplainer(viewer(), translator())?.model?.permissions ?? [];
+
+    expect(permissions.at(-1)).toEqual({
+      key: 'publish',
+      label: 'Publish a client’s pages',
+      allowed: { platform_admin: true, owner: true, admin: true, member: false },
+      source: 'app',
+    });
   });
 });

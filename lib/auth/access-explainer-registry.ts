@@ -17,7 +17,10 @@
  *   theirs rather than that it is missing;
  * - {@link setAccessSectionAudience}: which viewers see each of the
  *   explainer's own sections;
- * - {@link registerAccessSection}: a section of the app's own.
+ * - {@link registerAccessSection}: a section of the app's own;
+ * - {@link setAccessPermission} / {@link registerAccessPermission}: restate a
+ *   cell of the role model's permission table where the app's policy differs
+ *   from Sunrise's, or add a row of its own.
  *
  * Nothing registered here opens or closes anything. Changing who may open a
  * page is a registration in `lib/app/admin-tier.ts` or the policy, never this.
@@ -108,6 +111,73 @@ export const CORE_ACCESS_AREAS: readonly Readonly<{ key: string; pages: readonly
     },
   ]);
 
+/** The roles the permission table has a column for, in column order. */
+export const ACCESS_PERMISSION_ROLES = Object.freeze([
+  'platform_admin',
+  'owner',
+  'admin',
+  'member',
+] as const);
+
+/** One of {@link ACCESS_PERMISSION_ROLES}. */
+export type AccessPermissionRole = (typeof ACCESS_PERMISSION_ROLES)[number];
+
+/** Whether each role may do a thing: one cell per {@link ACCESS_PERMISSION_ROLES}. */
+export type AccessPermissionCells = Readonly<Record<AccessPermissionRole, boolean>>;
+
+/**
+ * Sunrise's role model, as a permission table: what each role may do for one
+ * organisation at `multi`, under the default policy. Each row restates a rule
+ * the routes and `lib/tenancy/lifecycle.ts` enforce, so change both together;
+ * the access-explainer test pins every cell. A platform admin's column is what
+ * they do from the install org: inside a customer's org the platform role is
+ * withheld (`withholdsPlatformRole()`), and they act as the role that org gave
+ * them. The words are the platform catalogue's, under
+ * `admin.access.permissions.<key>`.
+ *
+ * A fork whose policy answers differently restates the cells with
+ * {@link setAccessPermission}, so the table never claims what its guards do
+ * not do.
+ */
+export const CORE_ACCESS_PERMISSIONS: readonly Readonly<{
+  key: string;
+  allowed: AccessPermissionCells;
+}>[] = Object.freeze(
+  (
+    [
+      ['useProduct', [true, true, true, true]],
+      // An org MEMBER is refused by the admin layout.
+      ['openConsole', [true, true, true, false]],
+      ['manageMembers', [true, true, true, false]],
+      // Only an OWNER, or a platform admin, confers, changes or removes OWNER.
+      ['manageOwners', [true, true, false, false]],
+      // The org's own options (language, AI keys, the switches it sets).
+      // Retention and privacy are platform-only.
+      ['orgSettings', [true, true, true, false]],
+      // Only the org's own OWNER, acting in it: a vendor granting itself
+      // access is what a grant exists to prevent (lib/tenancy/support-grants.ts).
+      ['grantSupport', [false, true, false, false]],
+      // Anyone the policy admits to the org may end it.
+      ['endSupport', [true, true, true, false]],
+      ['switchesOff', [true, false, false, false]],
+      ['platformPages', [true, false, false, false]],
+      ['manageOrgs', [true, false, false, false]],
+    ] as const
+  ).map(([key, [platform_admin, owner, admin, member]]) =>
+    Object.freeze({ key, allowed: Object.freeze({ platform_admin, owner, admin, member }) })
+  )
+);
+
+/** A row of the app's own, as it registers it with {@link registerAccessPermission}. */
+export interface AccessPermissionDefinition {
+  /** Its id, as {@link AccessAreaDefinition.key}. Registering it again replaces it. */
+  key: string;
+  /** What the role may do, as a short phrase ("Publish a client's pages"). */
+  label: AdminText;
+  /** Whether each role may do it, under the app's policy. */
+  allowed: AccessPermissionCells;
+}
+
 /** An area as an app registers it with {@link registerAccessArea}. */
 export interface AccessAreaDefinition {
   /**
@@ -176,6 +246,11 @@ export interface RegisteredPlatformOnlySurface {
   readonly reason: AdminText;
   readonly href: string | null;
 }
+export interface RegisteredAccessPermission {
+  readonly key: string;
+  readonly label: AdminText;
+  readonly allowed: AccessPermissionCells;
+}
 export interface RegisteredAccessSection {
   readonly key: string;
   readonly title: AdminText;
@@ -187,6 +262,40 @@ const areas = new Map<string, RegisteredAccessArea>();
 const platformOnly = new Map<string, RegisteredPlatformOnlySurface>();
 const sections = new Map<string, RegisteredAccessSection>();
 const audiences = new Map<AccessExplainerSection, readonly AccessAudience[]>();
+const permissions = new Map<string, RegisteredAccessPermission>();
+const permissionOverrides = new Map<string, AccessPermissionCells | null>();
+
+const CORE_PERMISSION_KEYS: ReadonlySet<string> = new Set(
+  CORE_ACCESS_PERMISSIONS.map((p) => p.key)
+);
+
+function cellsOrThrow(fn: string, key: string, value: unknown): AccessPermissionCells {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(`${fn}: "${key}"'s cells are not an object`);
+  }
+  const given: Record<string, unknown> = { ...value };
+  const known: readonly string[] = ACCESS_PERMISSION_ROLES;
+  for (const name of Object.keys(given)) {
+    if (!known.includes(name)) {
+      throw new TypeError(
+        `${fn}: "${key}" has a cell for ${JSON.stringify(name)}, which is not a column (${ACCESS_PERMISSION_ROLES.join(', ')})`
+      );
+    }
+  }
+  const cell = (role: AccessPermissionRole): boolean => {
+    const v = given[role];
+    if (typeof v !== 'boolean') {
+      throw new TypeError(`${fn}: "${key}"'s ${role} cell is not true or false`);
+    }
+    return v;
+  };
+  return Object.freeze({
+    platform_admin: cell('platform_admin'),
+    owner: cell('owner'),
+    admin: cell('admin'),
+    member: cell('member'),
+  });
+}
 
 function keyOrThrow(fn: string, key: unknown): string {
   if (typeof key !== 'string' || !ACCESS_KEY.test(key)) {
@@ -360,12 +469,74 @@ export function registerAccessSection(definition: AccessSectionDefinition): void
   sections.set(key, Object.freeze({ key, title, body, audience }));
 }
 
+/**
+ * Restate one of core's permission rows ({@link CORE_ACCESS_PERMISSIONS})
+ * where the app's policy answers differently, or pass `null` to leave the row
+ * out. Every cell must be given, so a restated row says the whole answer.
+ * Throws on a key that is not one of core's (add a row of your own with
+ * {@link registerAccessPermission}) and on cells that are not four booleans.
+ *
+ * It changes the table, not access: change the policy first, then say so here.
+ *
+ * @example
+ * ```ts
+ * // Our policy keeps member management with owners.
+ * setAccessPermission('manageMembers', {
+ *   platform_admin: true,
+ *   owner: true,
+ *   admin: false,
+ *   member: false,
+ * });
+ * ```
+ */
+export function setAccessPermission(key: string, allowed: AccessPermissionCells | null): void {
+  const fn = 'setAccessPermission';
+  if (typeof key !== 'string' || !CORE_PERMISSION_KEYS.has(key)) {
+    throw new TypeError(
+      `${fn}: ${JSON.stringify(key)} is not one of core's permissions (${[...CORE_PERMISSION_KEYS].join(', ')}); add your own with registerAccessPermission()`
+    );
+  }
+  permissionOverrides.set(key, allowed === null ? null : cellsOrThrow(fn, key, allowed));
+}
+
+/**
+ * Add a row of the app's own to the permission table: something its policy
+ * lets some roles do. Shown after core's rows, in registration order. Throws
+ * on a key that is not a key or is one of core's (restate those with
+ * {@link setAccessPermission}), a label that is not {@link AdminText}, and
+ * cells that are not four booleans.
+ *
+ * @example
+ * ```ts
+ * registerAccessPermission({
+ *   key: 'publish',
+ *   label: { message: 'app.access.publish' },
+ *   allowed: { platform_admin: true, owner: true, admin: true, member: false },
+ * });
+ * ```
+ */
+export function registerAccessPermission(definition: AccessPermissionDefinition): void {
+  const fn = 'registerAccessPermission';
+  const key = keyOrThrow(fn, definition?.key);
+  if (CORE_PERMISSION_KEYS.has(key)) {
+    throw new TypeError(
+      `${fn}: "${key}" is one of core's permissions; restate it with setAccessPermission()`
+    );
+  }
+  const label = adminTextOrThrow(definition.label, `${fn}: "${key}"'s label`, MAX_ADMIN_TEXT_LABEL);
+  const allowed = cellsOrThrow(fn, key, definition.allowed);
+  roomOrThrow(fn, permissions, key);
+  permissions.set(key, Object.freeze({ key, label, allowed }));
+}
+
 /** Everything the app registered, for the init gate's snapshot and the explainer. */
 export interface AccessExplainerRegistrations {
   readonly areas: ReadonlyMap<string, RegisteredAccessArea>;
   readonly platformOnly: ReadonlyMap<string, RegisteredPlatformOnlySurface>;
   readonly sections: ReadonlyMap<string, RegisteredAccessSection>;
   readonly audiences: ReadonlyMap<AccessExplainerSection, readonly AccessAudience[]>;
+  readonly permissions: ReadonlyMap<string, RegisteredAccessPermission>;
+  readonly permissionOverrides: ReadonlyMap<string, AccessPermissionCells | null>;
 }
 
 /**
@@ -381,6 +552,8 @@ export function snapshotAccessExplainerRegistry(): AccessExplainerRegistrations 
     platformOnly: new Map(platformOnly),
     sections: new Map(sections),
     audiences: new Map(audiences),
+    permissions: new Map(permissions),
+    permissionOverrides: new Map(permissionOverrides),
   };
 }
 
@@ -399,6 +572,10 @@ export function restoreAccessExplainerRegistry(snapshot: AccessExplainerRegistra
   for (const [k, v] of snapshot.sections) sections.set(k, v);
   audiences.clear();
   for (const [k, v] of snapshot.audiences) audiences.set(k, v);
+  permissions.clear();
+  for (const [k, v] of snapshot.permissions) permissions.set(k, v);
+  permissionOverrides.clear();
+  for (const [k, v] of snapshot.permissionOverrides) permissionOverrides.set(k, v);
 }
 
 /** Nothing registered: Sunrise's shipped state. */
@@ -407,4 +584,6 @@ export const EMPTY_ACCESS_EXPLAINER_REGISTRY: AccessExplainerRegistrations = Obj
   platformOnly: new Map(),
   sections: new Map(),
   audiences: new Map(),
+  permissions: new Map(),
+  permissionOverrides: new Map(),
 });

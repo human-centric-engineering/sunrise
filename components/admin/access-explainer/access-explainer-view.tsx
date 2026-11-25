@@ -216,71 +216,6 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
   );
 }
 
-/** The core roles the reference tables describe, keyed as the response keys them. */
-type CoreRoleKey = 'user' | 'platform_admin' | 'support' | 'owner' | 'admin' | 'member';
-
-/** Columns of the permission matrix, in order. */
-const MATRIX_ROLES = ['platform_admin', 'owner', 'admin', 'member'] as const;
-
-/**
- * What each role may do for one organisation. Sunrise's model, stated once:
- * the routes and `lib/tenancy/lifecycle.ts` enforce it, and the view test
- * pins every cell. A platform admin's column is what they do from the install
- * org: inside a customer's org the platform role is withheld
- * (`withholdsPlatformRole()`), and they act as the role that org gave them.
- */
-const PERMISSIONS: ReadonlyArray<{
-  key:
-    | 'useProduct'
-    | 'openConsole'
-    | 'manageMembers'
-    | 'manageOwners'
-    | 'orgSettings'
-    | 'grantSupport'
-    | 'endSupport'
-    | 'switchesOff'
-    | 'platformPages'
-    | 'manageOrgs';
-  allowed: Readonly<Record<(typeof MATRIX_ROLES)[number], boolean>>;
-}> = [
-  { key: 'useProduct', allowed: { platform_admin: true, owner: true, admin: true, member: true } },
-  {
-    key: 'openConsole',
-    allowed: { platform_admin: true, owner: true, admin: true, member: false },
-  },
-  {
-    key: 'manageMembers',
-    allowed: { platform_admin: true, owner: true, admin: true, member: false },
-  },
-  {
-    key: 'manageOwners',
-    allowed: { platform_admin: true, owner: true, admin: false, member: false },
-  },
-  {
-    key: 'orgSettings',
-    allowed: { platform_admin: true, owner: true, admin: true, member: false },
-  },
-  // Not a platform admin: a vendor granting itself access is what a grant
-  // exists to prevent (`lib/tenancy/support-grants.ts`).
-  {
-    key: 'grantSupport',
-    allowed: { platform_admin: false, owner: true, admin: false, member: false },
-  },
-  { key: 'endSupport', allowed: { platform_admin: true, owner: true, admin: true, member: false } },
-  {
-    key: 'switchesOff',
-    allowed: { platform_admin: true, owner: false, admin: false, member: false },
-  },
-  {
-    key: 'platformPages',
-    allowed: { platform_admin: true, owner: false, admin: false, member: false },
-  },
-  {
-    key: 'manageOrgs',
-    allowed: { platform_admin: true, owner: false, admin: false, member: false },
-  },
-];
-
 function RoleTable({
   rows,
   t,
@@ -316,112 +251,81 @@ function RoleTable({
 }
 
 /**
- * Sunrise's role model as reference tables: the platform roles, the
- * organisation roles and what each may do. Every core role is shown whatever
- * the tenancy mode, since this describes the model, not who holds what. The
- * "You" marks come from the response. A named-tier holder sees only their own
- * tiers, as the route narrows `roles` for them.
+ * The role model as reference tables: the platform roles, the organisation
+ * roles and what each may do, then the app's own roles. All of it is the
+ * route's (`model` and `roles`), which leaves `model` out for a named-tier
+ * holder, who sees only their own tiers. At `single` the org roles carry a
+ * note that they are not in force on this install.
  */
 function Roles({ explainer }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
-  const tRoles = useTranslations('admin.access.roles');
   const roles = explainer.roles;
+  const model = explainer.model;
   if (!roles) return null;
-  // Core roles only: a named tier may share a core role's key (`support`).
-  const held = new Set(
-    roles.filter((role) => role.held && role.kind !== 'named-tier').map((role) => role.key)
-  );
   const appRoles = roles.filter((role) => role.kind === 'named-tier');
-  const core = (
-    key: CoreRoleKey,
-    catalogue: 'platformAdmin' | 'support' | 'owner' | 'admin' | 'member'
-  ) => ({
-    key,
-    label: tRoles(`${catalogue}.label`),
-    description: tRoles(`${catalogue}.description`),
-    held: held.has(key),
-  });
-  const platformRows = [
-    {
-      key: 'user',
-      label: t('roles.user.label'),
-      description: t('roles.user.description'),
-      // The route sends no `held` for it, so it is not marked.
-      held: false,
-    },
-    core('platform_admin', 'platformAdmin'),
-    core('support', 'support'),
-  ];
-  const orgRows = [core('owner', 'owner'), core('admin', 'admin'), core('member', 'member')];
-  const columnLabels: Record<(typeof MATRIX_ROLES)[number], string> = {
-    platform_admin: tRoles('platformAdmin.label'),
-    owner: tRoles('owner.label'),
-    admin: tRoles('admin.label'),
-    member: tRoles('member.label'),
-  };
-  // At `single` no org role opens the console and no support grant exists:
-  // the tables describe the model, and this says it is not in force here.
-  const singleTenant = explainer.tenancy === 'single' && (
-    <p role="note" className="text-sm">
-      {t('roles.singleTenant')}
-    </p>
-  );
   const appTable = appRoles.length > 0 && (
     <Section id="named-tier-roles" title={t('roles.appTitle')} intro={t('roles.appIntro')}>
       <RoleTable rows={appRoles} t={t} />
     </Section>
   );
-  // A holder is told about their own tiers, not who else may do what here.
-  if (explainer.audience === 'holder') return appTable || null;
+  if (!model) return appTable || null;
 
   return (
     <>
       <Section id="roles" title={t('roles.platformTitle')} intro={t('roles.platformIntro')}>
-        <RoleTable rows={platformRows} t={t} />
+        <RoleTable rows={model.platformRoles} t={t} />
       </Section>
       <Section id="org-roles" title={t('roles.orgTitle')} intro={t('roles.orgIntro')}>
-        {singleTenant}
-        <RoleTable rows={orgRows} t={t} />
+        {explainer.tenancy === 'single' && (
+          <p role="note" className="text-sm">
+            {t('roles.singleTenant')}
+          </p>
+        )}
+        <RoleTable rows={model.orgRoles} t={t} />
       </Section>
-      <Section id="permissions" title={t('roles.matrixTitle')} intro={t('roles.matrixIntro')}>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('roles.colPermission')}</TableHead>
-              {MATRIX_ROLES.map((key) => (
-                <TableHead key={key} className="text-center">
-                  {columnLabels[key]}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {PERMISSIONS.map((permission) => (
-              <TableRow key={permission.key}>
-                <TableCell className="whitespace-normal">
-                  {t(`roles.perm.${permission.key}`)}
-                </TableCell>
-                {MATRIX_ROLES.map((key) => (
-                  <TableCell key={key} className="text-center">
-                    {permission.allowed[key] ? (
-                      <span role="img" aria-label={t('roles.yes')}>
-                        ✓
-                      </span>
-                    ) : (
-                      <span role="img" aria-label={t('roles.no')} className="text-muted-foreground">
-                        –
-                      </span>
-                    )}
-                  </TableCell>
+      {model.permissions.length > 0 && (
+        <Section id="permissions" title={t('roles.matrixTitle')} intro={t('roles.matrixIntro')}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('roles.colPermission')}</TableHead>
+                {model.columns.map((column) => (
+                  <TableHead key={column.key} className="text-center">
+                    {column.label}
+                  </TableHead>
                 ))}
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {appRoles.length > 0 && (
-          <p className="text-muted-foreground text-sm">{t('roles.matrixAppRoles')}</p>
-        )}
-      </Section>
+            </TableHeader>
+            <TableBody>
+              {model.permissions.map((permission) => (
+                <TableRow key={permission.key}>
+                  <TableCell className="whitespace-normal">{permission.label}</TableCell>
+                  {model.columns.map((column) => (
+                    <TableCell key={column.key} className="text-center">
+                      {permission.allowed[column.key] ? (
+                        <span role="img" aria-label={t('roles.yes')}>
+                          ✓
+                        </span>
+                      ) : (
+                        <span
+                          role="img"
+                          aria-label={t('roles.no')}
+                          className="text-muted-foreground"
+                        >
+                          –
+                        </span>
+                      )}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {appRoles.length > 0 && (
+            <p className="text-muted-foreground text-sm">{t('roles.matrixAppRoles')}</p>
+          )}
+        </Section>
+      )}
       {appTable}
     </>
   );

@@ -1531,6 +1531,10 @@
     },
     "access": {
       "roles": {
+        "user": {
+          "label": "User",
+          "description": "Everyone with an account. Has no platform powers: what they can do inside an organisation comes from their organisation role."
+        },
         "platformAdmin": {
           "label": "Platform admin",
           "description": "Runs this install for every organisation, from the install org. There it opens every admin page, including the ones kept for the platform, and is not limited by an organisation's switches. Inside a customer's organisation it has only the role that organisation gave it."
@@ -1554,6 +1558,18 @@
         "namedTier": {
           "description": "A role this app adds. Opens only the pages listed for it, in the organisation where it is held."
         }
+      },
+      "permissions": {
+        "useProduct": "Use the product",
+        "openConsole": "Open the admin console",
+        "manageMembers": "Invite people, and change or remove members and admins",
+        "manageOwners": "Make someone an owner, or change or remove an owner",
+        "orgSettings": "Change the organisation's language, AI keys and the switches it sets",
+        "grantSupport": "Grant support access",
+        "endSupport": "End support access",
+        "switchesOff": "Open pages the organisation's switches have turned off",
+        "platformPages": "Open the pages kept for the platform team",
+        "manageOrgs": "Create, suspend or erase organisations"
       },
       "areas": {
         "members": {
@@ -1627,28 +1643,12 @@
           "no": "No",
           "platformTitle": "Platform roles",
           "platformIntro": "Held on the install itself, across every organisation.",
-          "user": {
-            "label": "User",
-            "description": "Everyone with an account. Has no platform powers: what they can do inside an organisation comes from their organisation role."
-          },
           "orgTitle": "Organisation roles",
           "orgIntro": "Held in one organisation, and used when the install runs multi-tenant. In a single-tenant install, platform admins are its owners and everyone else is a member.",
           "appTitle": "App roles",
           "appIntro": "Roles this app adds. Each opens only the pages listed for it, in the organisation where it is held.",
           "matrixTitle": "What each role can do",
           "matrixIntro": "For one organisation, when the install runs multi-tenant. A platform admin does these for customer organisations from the install org; inside a customer's organisation they have only the role it gave them. Roles in the install org itself follow the platform role.",
-          "perm": {
-            "useProduct": "Use the product",
-            "openConsole": "Open the admin console",
-            "manageMembers": "Invite people, and change or remove members and admins",
-            "manageOwners": "Make someone an owner, or change or remove an owner",
-            "orgSettings": "Change the organisation's language, AI keys and the switches it sets",
-            "grantSupport": "Grant support access",
-            "endSupport": "End support access",
-            "switchesOff": "Open pages the organisation's switches have turned off",
-            "platformPages": "Open the pages kept for the platform team",
-            "manageOrgs": "Create, suspend or erase organisations"
-          },
           "singleTenant": "This install runs single-tenant: only platform admins open the admin console, and there is no support access. These roles take effect when it runs multi-tenant.",
           "matrixAppRoles": "A member who also holds an app role opens that role's pages."
         },

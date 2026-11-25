@@ -417,8 +417,8 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
     for (const role of ['Owner', 'Admin', 'Member']) {
       expect(within(org).getByRole('cell', { name: new RegExp(`^${role}`) })).toBeInTheDocument();
     }
-    // Marked from the response's `held` only: the route sends none for User.
-    expect(within(platform).getByRole('cell', { name: 'User' })).toBeInTheDocument();
+    // From the response's `held`: an org owner is a User on the platform and the Owner here.
+    expect(within(platform).getByRole('cell', { name: 'User You' })).toBeInTheDocument();
     expect(within(org).getByRole('cell', { name: 'Owner You' })).toBeInTheDocument();
     expect(within(org).getByRole('cell', { name: 'Admin' })).toBeInTheDocument();
   });

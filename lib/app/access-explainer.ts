@@ -1,5 +1,5 @@
 /**
- * App words for the access explainer: who can do what in the admin console
+ * App words for the access explainer: roles and access in the admin console
  * (§143).
  *
  * **Fork-owned scaffold** — Sunrise ships this empty and does NOT change it
@@ -21,7 +21,12 @@
  * - `setAccessSectionAudience()` — which viewers see each of the explainer's
  *   own sections;
  * - `registerAccessSection()` — a section of your own, such as how your
- *   packages work or who to ask.
+ *   packages work or who to ask;
+ * - `setAccessPermission()` — restate a row of the role model's permission
+ *   table where your authorization policy answers differently from Sunrise's
+ *   (or pass `null` to leave the row out), so the table never claims what
+ *   your guards do not do;
+ * - `registerAccessPermission()` — add a row of your own to that table.
  *
  * Text is plain, or `{ message: 'app.…' }` naming a key you add in
  * `lib/app/messages.ts`, which is then shown in the viewer's language.

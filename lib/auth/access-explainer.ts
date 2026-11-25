@@ -39,13 +39,17 @@ import { createAppInitGate } from '@/lib/fork-init';
 import {
   ACCESS_AUDIENCES,
   ACCESS_EXPLAINER_SECTIONS,
+  ACCESS_PERMISSION_ROLES,
   CORE_ACCESS_AREAS,
+  CORE_ACCESS_PERMISSIONS,
   restoreAccessExplainerRegistry,
   snapshotAccessExplainerRegistry,
   EMPTY_ACCESS_EXPLAINER_REGISTRY,
   type AccessAudience,
   type AccessExplainerRegistrations,
   type AccessExplainerSection,
+  type AccessPermissionCells,
+  type AccessPermissionRole,
 } from '@/lib/auth/access-explainer-registry';
 import {
   ADMIN_INDEX_PATH,
@@ -141,6 +145,43 @@ export interface AccessRoleView {
    * support grant only `support` is held, never an org role.
    */
   readonly held: boolean;
+}
+
+/** One role in the role model's tables. */
+export interface AccessModelRoleView {
+  /** `user`, `platform_admin` or `support`; or `owner`, `admin` or `member`. */
+  readonly key: string;
+  readonly label: string;
+  readonly description: string;
+  /** Whether the viewer holds it where they are now. */
+  readonly held: boolean;
+}
+
+/** One row of the permission table. */
+export interface AccessPermissionView {
+  readonly key: string;
+  readonly label: string;
+  /** Whether each role may do it, as Sunrise's model says or the app restated it. */
+  readonly allowed: AccessPermissionCells;
+  /** `'core'` for one of Sunrise's rows (restated or not), `'app'` for one the app added. */
+  readonly source: 'core' | 'app';
+}
+
+/**
+ * Sunrise's role model (RBAC), whatever the tenancy mode: it describes the
+ * model, and `tenancy` says whether the org roles are in force. Sent with the
+ * `roles` section to every audience but a named-tier holder, who is told about
+ * their own tiers only.
+ */
+export interface AccessRoleModelView {
+  /** User, Platform admin, Support access. */
+  readonly platformRoles: readonly AccessModelRoleView[];
+  /** Owner, Admin, Member. */
+  readonly orgRoles: readonly AccessModelRoleView[];
+  /** The permission table's columns, in order, with each role's name. */
+  readonly columns: readonly { readonly key: AccessPermissionRole; readonly label: string }[];
+  /** Core's rows (less any the app left out), then the app's. */
+  readonly permissions: readonly AccessPermissionView[];
 }
 
 /** One entitlement switch, as the explainer shows it. */
@@ -250,6 +291,8 @@ export interface AccessExplainer {
   readonly sections: readonly AccessExplainerSection[];
   readonly you?: YourAccessView;
   readonly roles?: readonly AccessRoleView[];
+  /** The role model's tables; with `roles`, for every audience but `'holder'`. */
+  readonly model?: AccessRoleModelView;
   readonly areas?: readonly AccessAreaView[];
   readonly switches?: readonly AccessSwitchView[];
   readonly platformOnly?: readonly PlatformOnlyView[];
@@ -334,6 +377,10 @@ export function buildAccessExplainer(
         }
       : {}),
     ...(shows('roles') ? { roles: rolesFor(audience, viewer, text, t) } : {}),
+    // A holder is told about their own tiers, not who else may do what here.
+    ...(shows('roles') && audience !== 'holder'
+      ? { model: roleModelFor(audience, viewer, registrations, text, t) }
+      : {}),
     ...(shows('areas') ? { areas } : {}),
     ...(shows('switches') ? { switches: switchesFor(audience, viewer, visibleSwitchKeys) } : {}),
     ...(shows('platform-only')
@@ -388,6 +435,67 @@ function switchLabelResolver(): (key: string) => string {
 function humanise(name: string): string {
   const words = name.replace(/[_-]+/g, ' ').trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Each org role's catalogue name: `admin.access.roles.<name>`. */
+const ROLE_CATALOGUE: Readonly<Record<string, string>> = {
+  user: 'user',
+  platform_admin: 'platformAdmin',
+  support: 'support',
+  owner: 'owner',
+  admin: 'admin',
+  member: 'member',
+};
+
+function roleModelFor(
+  audience: AccessAudience,
+  viewer: AccessExplainerViewer,
+  registrations: AccessExplainerRegistrations,
+  text: (value: AdminText) => string,
+  t: AccessTranslator
+): AccessRoleModelView {
+  const role = (key: string, held: boolean): AccessModelRoleView => ({
+    key,
+    label: t(`admin.access.roles.${ROLE_CATALOGUE[key]}.label`),
+    description: t(`admin.access.roles.${ROLE_CATALOGUE[key]}.description`),
+    held,
+  });
+  const platformAdmin = audience === 'platform';
+  // At `single` no org role is in force, so none is the viewer's; and a
+  // support entry carries a role for the policy, not a membership.
+  const orgRoleHeld = (orgRole: string) =>
+    viewer.multiTenant && !viewer.supportEntry && viewer.orgRole === orgRole;
+  const core = CORE_ACCESS_PERMISSIONS.flatMap((row): AccessPermissionView[] => {
+    const restated = registrations.permissionOverrides.get(row.key);
+    if (restated === null) return [];
+    return [
+      {
+        key: row.key,
+        label: t(`admin.access.permissions.${row.key}`),
+        allowed: restated ?? row.allowed,
+        source: 'core',
+      },
+    ];
+  });
+  const app = [...registrations.permissions.values()].map((row): AccessPermissionView => ({
+    key: row.key,
+    label: text(row.label),
+    allowed: row.allowed,
+    source: 'app',
+  }));
+  return {
+    platformRoles: [
+      role('user', !platformAdmin && !viewer.supportEntry),
+      role('platform_admin', platformAdmin),
+      role('support', viewer.supportEntry),
+    ],
+    orgRoles: ORG_ROLES.map((orgRole) => role(orgRole.toLowerCase(), orgRoleHeld(orgRole))),
+    columns: ACCESS_PERMISSION_ROLES.map((key) => ({
+      key,
+      label: t(`admin.access.roles.${ROLE_CATALOGUE[key]}.label`),
+    })),
+    permissions: [...core, ...app],
+  };
 }
 
 function rolesFor(

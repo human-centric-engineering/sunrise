@@ -114,9 +114,15 @@ release process.
   `app.` or `framework.` namespace); and a new
   seam, `lib/app/access-explainer.ts` → `initAppAccessExplainer()`, with
   `registerAccessArea()`, `registerPlatformOnlySurface()`,
-  `setAccessSectionAudience()` and `registerAccessSection()`
-  (`lib/auth/access-explainer-registry.ts`). It ships empty and is inert
-  when empty. Sunrise's own words are under `admin.access` in the catalogue.
+  `setAccessSectionAudience()`, `registerAccessSection()`, and
+  `setAccessPermission()` / `registerAccessPermission()` to restate a row of
+  the role model's permission table (`CORE_ACCESS_PERMISSIONS`) where a fork's
+  policy answers differently, or add one (`lib/auth/access-explainer-registry.ts`).
+  The response's `model` carries that table and every core role, whatever the
+  tenancy mode. It ships empty and is inert
+  when empty. **What a fork checks:** if your authorization policy changes
+  who may manage members, owners, settings or support access, restate those
+  rows with `setAccessPermission()`. Sunrise's own words are under `admin.access` in the catalogue.
   See [access-explainer.md](./.context/auth/access-explainer.md).
 
 - **An app can move its own model pins as part of a model move (t-1088,
