@@ -1786,7 +1786,7 @@ How Sunrise reaches the user — directly, embedded into other sites, and across
 - React Flow's serialisation maps cleanly to the JSON we persist as the workflow definition, so the round-trip is transparent.
 - Single bundled dependency for a contained feature (the workflow builder); doesn't leak React Flow concepts into the rest of the codebase.
 
-**Where it lives:** `components/admin/orchestration/workflow-builder/`, `lib/orchestration/workflows/` (validator, step registry on the engine side), `.context/admin/workflow-builder.md`. `@xyflow/react` v12 in `package.json`.
+**Where it lives:** `components/admin/orchestration/workflow-builder/`, `lib/orchestration/workflows/` (validator, step registry on the engine side), `.context/admin/workflow-builder.md`. `@xyflow/react` v13 in `package.json` (v12 when chosen; t-1099 moved it).
 
 ### 8.6 Per-agent widget customisation: scope and locale strategy
 
