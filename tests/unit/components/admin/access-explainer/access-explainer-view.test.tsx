@@ -472,7 +472,13 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
       'Invite people, and change or remove members and admins': ['Yes', 'Yes', 'Yes', 'No'],
       // Only an OWNER, or a platform admin, confers or touches OWNER (lib/tenancy/lifecycle.ts).
       'Make someone an owner, or change or remove an owner': ['Yes', 'Yes', 'No', 'No'],
-      "Change the organisation's settings": ['Yes', 'Yes', 'Yes', 'No'],
+      // Retention and privacy are platform-only (withAdminAuth), so the row names what is not.
+      "Change the organisation's language, AI keys and the switches it sets": [
+        'Yes',
+        'Yes',
+        'Yes',
+        'No',
+      ],
       // Only an org's own OWNER grants support access (lib/tenancy/support-grants.ts).
       'Grant support access': ['No', 'Yes', 'No', 'No'],
       // Anyone the policy admits may end it.
