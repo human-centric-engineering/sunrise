@@ -42,6 +42,10 @@ const ORG_VIEW = {
     tiers: ['org'],
     switchesOn: [],
     switchesUnreadable: false,
+    supportEntry: false,
+    tierLabels: { org: 'Owners and admins' },
+    switchLabels: {},
+    anySwitches: false,
   },
   roles: [
     { key: 'admin', kind: 'org-role', label: 'Admin', description: 'Helps run it.', held: true },

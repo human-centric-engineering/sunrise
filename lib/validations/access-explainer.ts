@@ -36,8 +36,11 @@ const pageSchema = z.object({
   pattern: z.string(),
   href: z.string().nullable(),
   tier: z.string(),
+  tierLabel: z.string(),
   requires: z.string().nullable(),
+  requiresLabel: z.string().nullable(),
   opens: z.boolean(),
+  closedBy: z.enum(['tier', 'switch', 'unread']).nullable(),
   locked: z
     .object({
       label: z.string(),
@@ -68,6 +71,10 @@ const youSchema = z.object({
   tiers: z.union([z.literal('platform'), z.array(z.string())]),
   switchesOn: z.array(z.string()).nullable(),
   switchesUnreadable: z.boolean(),
+  supportEntry: z.boolean(),
+  tierLabels: z.record(z.string(), z.string()),
+  switchLabels: z.record(z.string(), z.string()),
+  anySwitches: z.boolean(),
 });
 
 export const accessExplainerResponseSchema = z.object({

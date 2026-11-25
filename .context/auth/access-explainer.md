@@ -105,6 +105,15 @@ the org or named-tier arm, so any other key is refused. The route also sets
 A role's `held` says whether the viewer holds it where they are now: support
 access is held when the guard entered the org under a support grant.
 
+Each page carries what is needed to say why it is closed, without reading
+another section: `tierLabel` and `requiresLabel` name its tier and switch, and
+`closedBy` is `'tier'` when the viewer does not hold the tier, `'switch'` when
+they do and the org lacks the switch, `'unread'` when they do and the org's
+switches could not be read, and `null` when the page opens. `you` likewise
+carries `tierLabels`, `switchLabels`, `supportEntry` and `anySwitches`. An app
+may hide `roles` or `switches` from an audience (`setAccessSectionAudience()`),
+and the viewer's own panel still names everything in it.
+
 ## The page
 
 `/admin/access` ("Who can do what") is a shell over the endpoint: it reads

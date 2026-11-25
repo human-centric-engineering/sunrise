@@ -45,20 +45,6 @@ const ORG_ROLE_LABEL_KEYS: Partial<Record<string, 'owner.label' | 'admin.label' 
     member: 'member.label',
   };
 
-/** A tier's name: the catalogue's for `'org'`, a named tier's label from the roles. */
-function tierLabelOf(explainer: AccessExplainerResponse, t: Translate) {
-  return (tier: string): string => {
-    if (tier === 'org') return t('tierOrg');
-    const role = explainer.roles?.find((r) => r.kind === 'named-tier' && r.key === tier);
-    return role?.label ?? tier;
-  };
-}
-
-/** A switch's label from the switches section, or its key when that is not shown. */
-function switchLabelOf(explainer: AccessExplainerResponse) {
-  return (key: string): string => explainer.switches?.find((s) => s.key === key)?.label ?? key;
-}
-
 /** A link to where an org can get a switch: a path on this site or an https address. */
 function GetItLink({ href, children }: { href: string; children: React.ReactNode }) {
   const external = !href.startsWith('/');
@@ -66,7 +52,8 @@ function GetItLink({ href, children }: { href: string; children: React.ReactNode
     <a
       href={href}
       className="underline"
-      {...(external ? { rel: 'noopener noreferrer', target: '_blank' } : {})}
+      // As the locked page's link: the same tab, whichever kind it is.
+      {...(external ? { rel: 'noopener noreferrer' } : {})}
     >
       {children}
     </a>
@@ -86,32 +73,21 @@ function PagePath({ page }: { page: AccessExplainerPage }) {
   return path;
 }
 
-/** Whether the viewer holds a page's tier: a platform admin holds every one. */
-function reachesTierOf(explainer: AccessExplainerResponse) {
-  return (tier: string): boolean => {
-    const tiers = explainer.you?.tiers;
-    return tiers === 'platform' || (tiers ?? []).includes(tier);
-  };
-}
-
 /**
- * Why a page is closed to this viewer, in a sentence. The missing switch is
- * the reason only when the viewer holds the page's tier: an org owner shown a
- * named tier's page is kept out by the tier, whether or not the org has the
- * switch.
+ * Why a page is closed to this viewer, in a sentence. The route says which
+ * of its tier or its switch keeps them out, so the reason holds whichever
+ * sections the app shows this viewer.
  */
-function closedReason(
-  page: AccessExplainerPage,
-  t: Translate,
-  tierLabel: (tier: string) => string,
-  switchLabel: (key: string) => string,
-  reachesTier: (tier: string) => boolean
-): string {
+function closedReason(page: AccessExplainerPage, t: Translate): string {
   if (page.locked) return page.locked.message;
-  if (page.requires && reachesTier(page.tier)) {
-    return t('areas.needsSwitch', { switch: switchLabel(page.requires) });
+  const label = page.requiresLabel ?? page.requires;
+  if (label !== null && page.closedBy === 'switch') {
+    return t('areas.needsSwitch', { switch: label });
   }
-  return t('areas.needsTier', { tier: tierLabel(page.tier) });
+  if (label !== null && page.closedBy === 'unread') {
+    return t('areas.needsSwitchUnread', { switch: label });
+  }
+  return t('areas.needsTier', { tier: page.tierLabel });
 }
 
 function Section({
@@ -143,9 +119,6 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
   const tRoles = useTranslations('admin.access.roles');
   const you = explainer.you;
   if (!you) return null;
-  const tierLabel = tierLabelOf(explainer, t);
-  const switchLabel = switchLabelOf(explainer);
-  const reachesTier = reachesTierOf(explainer);
   const title = orgName ? t('you.titleIn', { org: orgName }) : t('you.title');
 
   if (you.tiers === 'platform') {
@@ -156,14 +129,10 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
     );
   }
 
-  // The roles section names the org roles for the org audience only; a
-  // named-tier holder's own org role comes from the catalogue instead.
-  const roleKey = you.orgRole?.toLowerCase() ?? null;
-  const catalogueKey = roleKey ? ORG_ROLE_LABEL_KEYS[roleKey] : undefined;
-  const role = roleKey
-    ? (explainer.roles?.find((r) => r.kind === 'org-role' && r.key === roleKey)?.label ??
-      (catalogueKey ? tRoles(catalogueKey) : you.orgRole))
-    : null;
+  // From the catalogue, as the roles section words it: that section may not
+  // be shown to this viewer.
+  const roleKey = you.orgRole ? ORG_ROLE_LABEL_KEYS[you.orgRole.toLowerCase()] : undefined;
+  const role = roleKey ? tRoles(roleKey) : you.orgRole;
   const closed = (explainer.areas ?? []).flatMap((area) =>
     area.pages.filter((page) => !page.opens)
   );
@@ -171,13 +140,17 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
   return (
     <Section id="your-access" title={title}>
       <div className="space-y-3 rounded-lg border p-4 text-sm">
-        <p>{role ? t('you.role', { role }) : t('you.supportEntry')}</p>
+        {you.supportEntry ? (
+          <p>{t('you.supportEntry')}</p>
+        ) : (
+          role && <p>{t('you.role', { role })}</p>
+        )}
         <div>
           <p>{t('you.tiers')}</p>
           <ul className="mt-1 flex flex-wrap gap-2">
             {you.tiers.map((tier) => (
               <li key={tier}>
-                <Badge variant="secondary">{tierLabel(tier)}</Badge>
+                <Badge variant="secondary">{you.tierLabels[tier] ?? tier}</Badge>
               </li>
             ))}
           </ul>
@@ -192,12 +165,12 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
             <ul className="mt-1 flex flex-wrap gap-2">
               {you.switchesOn.map((key) => (
                 <li key={key}>
-                  <Badge variant="outline">{switchLabel(key)}</Badge>
+                  <Badge variant="outline">{you.switchLabels[key] ?? key}</Badge>
                 </li>
               ))}
             </ul>
           </div>
-        ) : explainer.switches && explainer.switches.length > 0 ? (
+        ) : you.anySwitches ? (
           // Only where there are switches to have: on an install that
           // registers none, "none on" would say nothing.
           <p>{t('you.noSwitchesOn')}</p>
@@ -214,7 +187,7 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
                     <PagePath page={page} />
                     <span className="text-muted-foreground">
                       {' — '}
-                      {closedReason(page, t, tierLabel, switchLabel, reachesTier)}
+                      {closedReason(page, t)}
                     </span>
                     {page.locked?.upgradeUrl && (
                       <>
@@ -258,9 +231,6 @@ function Areas({ explainer }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
   const areas = explainer.areas;
   if (!areas) return null;
-  const tierLabel = tierLabelOf(explainer, t);
-  const switchLabel = switchLabelOf(explainer);
-  const reachesTier = reachesTierOf(explainer);
   return (
     <Section id="areas" title={t('areas.title')} intro={t('areas.intro')}>
       {areas.length === 0 ? (
@@ -287,17 +257,20 @@ function Areas({ explainer }: AccessExplainerViewProps) {
                     <TableCell>
                       <PagePath page={page} />
                     </TableCell>
-                    <TableCell>{tierLabel(page.tier)}</TableCell>
+                    <TableCell>{page.tierLabel}</TableCell>
                     <TableCell>
-                      {page.requires ? switchLabel(page.requires) : t('areas.noSwitch')}
+                      {page.requires ? (page.requiresLabel ?? page.requires) : t('areas.noSwitch')}
                     </TableCell>
                     <TableCell>
                       {page.opens ? (
                         t('areas.opens')
                       ) : (
-                        <span title={closedReason(page, t, tierLabel, switchLabel, reachesTier)}>
+                        <>
                           {t('areas.closed')}
-                        </span>
+                          <span className="text-muted-foreground block text-xs">
+                            {closedReason(page, t)}
+                          </span>
+                        </>
                       )}
                     </TableCell>
                   </TableRow>

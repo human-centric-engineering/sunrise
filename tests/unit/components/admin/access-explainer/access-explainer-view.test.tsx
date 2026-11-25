@@ -25,6 +25,7 @@ import {
 import {
   registerAccessSection,
   registerPlatformOnlySurface,
+  setAccessSectionAudience,
 } from '@/lib/auth/access-explainer-registry';
 import {
   registerAdminTier,
@@ -187,6 +188,17 @@ describe('AccessExplainerView — an org OWNER', () => {
     expect(within(kept).queryByRole('link')).not.toBeInTheDocument();
   });
 
+  it('shows why a page is closed in the table itself, not only on hover', () => {
+    render(<AccessExplainerView explainer={explainerFor(ORG_OWNER)} orgName="Acme" />);
+
+    const areas = screen.getByRole('region', { name: 'Pages by area' });
+    const row = within(areas).getByText('/admin/leads').closest('tr');
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getByText(/Lead generation comes with the Growth plan/)
+    ).toBeInTheDocument();
+  });
+
   it('links a page they open, and not one they cannot', () => {
     render(<AccessExplainerView explainer={explainerFor(ORG_OWNER)} orgName="Acme" />);
 
@@ -260,6 +272,14 @@ describe('AccessExplainerView — a named-tier holder', () => {
 
 describe('AccessExplainerView — what the route leaves out', () => {
   it('says the org’s switches could not be read, rather than that it has none', () => {
+    // A switch the org sets itself is shown to its admin whatever the read did.
+    registerEntitlementSwitch({
+      key: 'beta_reports',
+      label: 'Beta reports',
+      description: 'Early reports.',
+      setBy: 'org',
+    });
+    registerOrgTierAdminPage('/admin/beta-reports', { requires: 'beta_reports' });
     render(
       <AccessExplainerView
         explainer={explainerFor({ ...ORG_OWNER, switchesOn: null, locked: [] })}
@@ -271,6 +291,34 @@ describe('AccessExplainerView — what the route leaves out', () => {
       "Couldn't read this organisation's switches"
     );
     expect(screen.queryByText('This organisation has no switches on.')).not.toBeInTheDocument();
+    // Nor does it say the org lacks a switch it could not read.
+    expect(screen.queryByText(/which this organisation does not have/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Needs Beta reports\. Couldn't check whether this organisation has it\./)
+        .length
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps naming tiers and switches in the panel when the app hides those sections', () => {
+    app.init = () => {
+      setAccessSectionAudience('roles', ['platform']);
+      setAccessSectionAudience('switches', ['platform']);
+    };
+    render(<AccessExplainerView explainer={explainerFor(HOLDER)} orgName="Acme" />);
+
+    expect(heading('Roles')).not.toBeInTheDocument();
+    const panel = screen.getByRole('region', { name: 'Your access in Acme' });
+    expect(within(panel).getByText('Agency designers')).toBeInTheDocument();
+    expect(within(panel).queryByText('designers')).not.toBeInTheDocument();
+  });
+
+  it('says nothing of a role for a viewer with none, rather than calling it support access', () => {
+    render(
+      <AccessExplainerView explainer={explainerFor({ ...HOLDER, orgRole: null })} orgName="Acme" />
+    );
+
+    expect(screen.queryByText(/under support access/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your role here/)).not.toBeInTheDocument();
   });
 
   it('renders the app’s own section for its audience', () => {

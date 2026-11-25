@@ -171,10 +171,20 @@ export interface AccessPageView {
   readonly href: string | null;
   /** The tier it is in: `'org'` or a named tier. */
   readonly tier: DeclaredAdminTier;
+  /** The tier's name, in the viewer's words. */
+  readonly tierLabel: string;
   /** The switch it needs, or `null`. */
   readonly requires: string | null;
+  /** That switch's label, or `null` when it needs none. */
+  readonly requiresLabel: string | null;
   /** Whether the viewer opens it. */
   readonly opens: boolean;
+  /**
+   * Why it is closed to them: `'tier'` when they do not hold its tier,
+   * `'switch'` when they do and the org lacks its switch, `'unread'` when
+   * they do and the org's switches could not be read. `null` when it opens.
+   */
+  readonly closedBy: 'tier' | 'switch' | 'unread' | null;
   /** Why it is closed to them when only a switch is missing; `null` otherwise. */
   readonly locked: {
     readonly label: string;
@@ -220,6 +230,14 @@ export interface YourAccessView {
   readonly switchesOn: readonly string[] | null;
   /** True when the org's switches could not be read, so locked pages cannot be explained. */
   readonly switchesUnreadable: boolean;
+  /** Whether they entered the org under a support grant, not as a member. */
+  readonly supportEntry: boolean;
+  /** The name of each tier in `tiers`, in the viewer's words. */
+  readonly tierLabels: Readonly<Record<string, string>>;
+  /** The label of each switch in `switchesOn`. */
+  readonly switchLabels: Readonly<Record<string, string>>;
+  /** Whether this viewer may know of any switch at all; with none, "none on" says nothing. */
+  readonly anySwitches: boolean;
 }
 
 /** What `GET /api/v1/admin/access` returns. Each section is present only for its audience. */
@@ -273,7 +291,22 @@ export function buildAccessExplainer(
   const switchesUnreadable = audience !== 'platform' && viewer.switchesOn === null;
   const visibleSwitchKeys = switchKeysFor(audience, viewer);
 
-  const areas = areasFor(audience, viewer, registrations, text, visibleSwitchKeys);
+  const tierLabel = tierLabelResolver(text, t);
+  const switchLabel = switchLabelResolver();
+  const areas = areasFor(
+    audience,
+    viewer,
+    registrations,
+    text,
+    visibleSwitchKeys,
+    tierLabel,
+    switchLabel
+  );
+  const youTiers = viewer.reach === 'platform' ? 'platform' : viewer.reach.tiers;
+  const youSwitches =
+    viewer.switchesOn === null
+      ? null
+      : viewer.switchesOn.filter((key) => visibleSwitchKeys.has(key));
   return {
     audience,
     tenancy: viewer.multiTenant ? 'multi' : 'single',
@@ -284,12 +317,17 @@ export function buildAccessExplainer(
             audience,
             // A support entry carries a role for the policy, not a membership.
             orgRole: viewer.supportEntry ? null : viewer.orgRole,
-            tiers: viewer.reach === 'platform' ? 'platform' : viewer.reach.tiers,
-            switchesOn:
-              viewer.switchesOn === null
-                ? null
-                : viewer.switchesOn.filter((key) => visibleSwitchKeys.has(key)),
+            tiers: youTiers,
+            switchesOn: youSwitches,
             switchesUnreadable,
+            supportEntry: viewer.supportEntry,
+            tierLabels: Object.fromEntries(
+              (youTiers === 'platform' ? [] : youTiers).map((tier) => [tier, tierLabel(tier)])
+            ),
+            switchLabels: Object.fromEntries(
+              (youSwitches ?? []).map((key) => [key, switchLabel(key)])
+            ),
+            anySwitches: visibleSwitchKeys.size > 0,
           },
         }
       : {}),
@@ -326,6 +364,24 @@ function textResolver(t: AccessTranslator): (value: AdminText) => string {
   };
 }
 
+/** A tier's name: the catalogue's for `'org'`, a named tier's label or its humanised name. */
+function tierLabelResolver(
+  text: (value: AdminText) => string,
+  t: AccessTranslator
+): (tier: string) => string {
+  return (tier) => {
+    if (tier === 'org') return t('admin.access.page.tierOrg');
+    const label = namedAdminTier(tier)?.label;
+    return label === undefined ? humanise(tier) : text(label);
+  };
+}
+
+/** A switch's label as the app registered it, or its key for one it did not. */
+function switchLabelResolver(): (key: string) => string {
+  const labels = new Map(registeredEntitlementSwitches().map((s) => [s.key, s.label]));
+  return (key) => labels.get(key) ?? key;
+}
+
 /** `page_designs` → `Page designs`: a name to show when the app gave no label. */
 function humanise(name: string): string {
   const words = name.replace(/[_-]+/g, ' ').trim();
@@ -346,7 +402,7 @@ function rolesFor(
       return {
         key: name,
         kind: 'named-tier',
-        label: definition?.label === undefined ? humanise(name) : text(definition.label),
+        label: tierLabelResolver(text, t)(name),
         description:
           definition?.description === undefined
             ? t('admin.access.roles.namedTier.description')
@@ -470,7 +526,9 @@ function areasFor(
   viewer: AccessExplainerViewer,
   registrations: AccessExplainerRegistrations,
   text: (value: AdminText) => string,
-  visibleSwitches: ReadonlySet<string>
+  visibleSwitches: ReadonlySet<string>,
+  tierLabel: (tier: string) => string,
+  switchLabel: (key: string) => string
 ): AccessAreaView[] {
   // At `single` there is no areas section: see `buildAccessExplainer()`.
   if (!viewer.multiTenant) return [];
@@ -515,8 +573,11 @@ function areasFor(
       pattern,
       href: pattern.includes('[') ? null : pattern,
       tier,
+      tierLabel: tierLabel(tier),
       requires,
+      requiresLabel: requires === null ? null : switchLabel(requires),
       opens,
+      closedBy: closedByOf(viewer, tier, opens),
       locked: lock
         ? { label: lock.label, message: lock.message, upgradeUrl: lock.upgradeUrl }
         : null,
@@ -557,6 +618,20 @@ function areasFor(
           pages,
         }
   );
+}
+
+/**
+ * Why a page is closed to this viewer. Holding the tier leaves only the
+ * switch, which is unknown rather than missing when it could not be read.
+ */
+function closedByOf(
+  viewer: AccessExplainerViewer,
+  tier: DeclaredAdminTier,
+  opens: boolean
+): AccessPageView['closedBy'] {
+  if (opens) return null;
+  if (viewer.reach === 'platform' || !viewer.reach.tiers.includes(tier)) return 'tier';
+  return viewer.switchesOn === null ? 'unread' : 'switch';
 }
 
 /** `/admin/reports/[id]` → `reports`. */

@@ -1634,6 +1634,7 @@
           "closed": "Can't open",
           "needsTier": "Needs {tier}.",
           "needsSwitch": "Needs {switch}, which this organisation does not have.",
+          "needsSwitchUnread": "Needs {switch}. Couldn't check whether this organisation has it.",
           "empty": "No pages are listed for you here."
         },
         "switches": {
