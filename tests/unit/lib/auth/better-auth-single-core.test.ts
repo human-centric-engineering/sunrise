@@ -54,6 +54,7 @@ const lockEntrySchema = z.looseObject({
   version: z.string().optional(),
   dependencies: z.record(z.string(), z.string()).optional(),
   peerDependencies: z.record(z.string(), z.string()).optional(),
+  devDependencies: z.record(z.string(), z.string()).optional(),
 });
 
 const lockfileSchema = z.looseObject({ packages: z.record(z.string(), lockEntrySchema) });
@@ -154,6 +155,27 @@ function lockfileProblems(lock: Lockfile): string[] {
   return problems;
 }
 
+/**
+ * Where the lock's own copy of the manifest (`packages[""]`) disagrees with
+ * `package.json` for either package: a pin edited without `npm install`, which
+ * leaves both other checks passing on a lock that `npm ci` will refuse.
+ */
+function lockManifestProblems(lock: Lockfile, manifest: Manifest): string[] {
+  const root = lock.packages[''];
+  const locked = { ...root?.devDependencies, ...root?.dependencies };
+  const declared = { ...manifest.devDependencies, ...manifest.dependencies };
+  const problems: string[] = [];
+  for (const name of [BETTER_AUTH, CORE]) {
+    if (locked[name] !== declared[name]) {
+      problems.push(
+        `package.json declares ${name} as "${declared[name]}" but package-lock.json ` +
+          `records "${locked[name]}"; run npm install`
+      );
+    }
+  }
+  return problems;
+}
+
 function readJson(file: string): unknown {
   const path = resolve(process.cwd(), file);
   if (!existsSync(path)) {
@@ -189,6 +211,31 @@ describe('the real tree', () => {
   it('locks one @better-auth/core, at the version better-auth runs on', () => {
     const lock = lockfileSchema.parse(readJson('package-lock.json'));
     expect(lockfileProblems(lock)).toEqual([]);
+  });
+
+  it('has a lock written from this package.json', () => {
+    const manifest = manifestSchema.parse(readJson('package.json'));
+    const lock = lockfileSchema.parse(readJson('package-lock.json'));
+    expect(lockManifestProblems(lock, manifest)).toEqual([]);
+  });
+});
+
+describe('lockManifestProblems', () => {
+  const pinned = { dependencies: { [BETTER_AUTH]: '1.7.27', [CORE]: '1.7.27' } };
+
+  it('passes a lock whose root entry records the same pins', () => {
+    const lock = lockAt('1.7.27', '1.7.27', { '': pinned });
+    expect(lockManifestProblems(lock, pinned)).toEqual([]);
+  });
+
+  it('fails pins edited in package.json without regenerating the lock', () => {
+    const lock = lockAt('1.7.27', '1.7.27', { '': pinned });
+    expect(
+      lockManifestProblems(lock, { dependencies: { [BETTER_AUTH]: '1.7.28', [CORE]: '1.7.28' } })
+    ).toEqual([
+      'package.json declares better-auth as "1.7.28" but package-lock.json records "1.7.27"; run npm install',
+      'package.json declares @better-auth/core as "1.7.28" but package-lock.json records "1.7.27"; run npm install',
+    ]);
   });
 });
 

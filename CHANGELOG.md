@@ -170,12 +170,14 @@ release process.
 - **`better-auth` is pinned exactly, and a test fails if its core splits in
   two (t-1081).** `better-auth` had a caret range beside an exact
   `@better-auth/core` pin. Each better-auth release depends on its own core at
-  exactly its own version, so once better-auth moved past the pin (a lock
-  refresh, `npm update`, or Dependabot moving only one of them), npm nested a
-  second core under `better-auth`. The signup hooks then read request state
-  from a different store than `lib/auth/pending-signup.ts` writes, and an
-  invited user's membership was decided without their invitation, with only a
-  log line to show for it. Both are now pinned to `1.7.27`, and
+  exactly its own version, so the next time better-auth moved past the pin (a
+  lock refresh, `npm update`, or Dependabot moving only one of them), npm would
+  have nested a second core under `better-auth`. The signup hooks would then
+  read request state from a different store than `lib/auth/pending-signup.ts`
+  writes, and an invited user's membership would be decided without their
+  invitation, with only a log line to show for it. Sunrise's lock never held
+  two cores, so no past membership is affected unless your fork's lock did
+  (`npm ls @better-auth/core` shows it). Both are now pinned to `1.7.27`, and
   `tests/unit/lib/auth/better-auth-single-core.test.ts` (in
   `ALWAYS_RUN_TESTS`) fails unless `package.json` pins the two equal and the
   lockfile holds one core, at the root, at better-auth's version. **In a fork:**
