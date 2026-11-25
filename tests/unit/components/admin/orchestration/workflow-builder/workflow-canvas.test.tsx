@@ -25,10 +25,14 @@ import type { ReactNode } from 'react';
 
 // vi.hoisted runs before the vi.mock factory is hoisted, so the reference
 // is available inside the factory closure.
-const { ReactFlowMock } = vi.hoisted(() => ({
+const { ReactFlowMock, BackgroundMock, themeState } = vi.hoisted(() => ({
   ReactFlowMock: vi.fn((props: Record<string, unknown>) => (
-    <div data-testid="rf-canvas" aria-label={props['aria-label'] as string} />
+    <div data-testid="rf-canvas" aria-label={props['aria-label'] as string}>
+      {props.children as ReactNode}
+    </div>
   )),
+  BackgroundMock: vi.fn((_props: Record<string, unknown>) => null),
+  themeState: { theme: 'light' },
 }));
 
 vi.mock('@xyflow/react', () => ({
@@ -38,7 +42,7 @@ vi.mock('@xyflow/react', () => ({
     <div data-testid="handle" data-type={type} data-position={position} />
   ),
   Position: { Left: 'left', Right: 'right', Top: 'top', Bottom: 'bottom' },
-  Background: () => null,
+  Background: BackgroundMock,
   Controls: () => null,
   MiniMap: () => null,
   useReactFlow: vi.fn(() => ({
@@ -50,7 +54,7 @@ vi.mock('@xyflow/react', () => ({
 }));
 
 vi.mock('@/hooks/use-theme', () => ({
-  useTheme: () => ({ theme: 'light', setTheme: vi.fn() }),
+  useTheme: () => ({ theme: themeState.theme, setTheme: vi.fn() }),
   ThemeProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -74,6 +78,7 @@ const DEFAULT_PROPS = {
 describe('WorkflowCanvas', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    themeState.theme = 'light';
   });
 
   // Helper to get props passed to the last ReactFlow render call
@@ -106,6 +111,30 @@ describe('WorkflowCanvas', () => {
       const props = getLastRFProps();
       expect(props.nodes).toEqual([]);
       expect(props.edges).toEqual([]);
+    });
+  });
+
+  // @xyflow/react 13 follows the system colour scheme unless forceColorMode
+  // is passed (12 called the prop colorMode), so the canvas must hand it the
+  // app's own theme or it ignores the theme toggle.
+  describe('colour mode', () => {
+    function lastBackgroundProps(): Record<string, unknown> {
+      const calls = BackgroundMock.mock.calls;
+      return calls[calls.length - 1]?.[0] ?? {};
+    }
+
+    it('forces the light colour mode when the app theme is light', () => {
+      render(<WorkflowCanvas {...DEFAULT_PROPS} />);
+      expect(getLastRFProps().forceColorMode).toBe('light');
+      expect(getLastRFProps()).not.toHaveProperty('colorMode');
+      expect(lastBackgroundProps().color).toBeUndefined();
+    });
+
+    it('forces the dark colour mode and a dark grid when the app theme is dark', () => {
+      themeState.theme = 'dark';
+      render(<WorkflowCanvas {...DEFAULT_PROPS} />);
+      expect(getLastRFProps().forceColorMode).toBe('dark');
+      expect(lastBackgroundProps().color).toBe('#3f3f46');
     });
   });
 
