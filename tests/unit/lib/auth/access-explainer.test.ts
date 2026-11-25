@@ -335,14 +335,17 @@ describe('each viewer’s slice', () => {
     expect(pagesOf(explainer)).not.toContain('/admin/leads');
   });
 
-  it('marks the support role held for a viewer who entered under a support grant', () => {
-    const roles = (supportEntry: boolean) =>
+  it('under a support grant, marks support held and no org role, as a member is not', () => {
+    const held = (supportEntry: boolean) =>
       buildAccessExplainer(
         viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', switchesOn: [], supportEntry }),
         translator()
-      )?.roles?.find((role) => role.key === 'support')?.held;
-    expect(roles(true)).toBe(true);
-    expect(roles(false)).toBe(false);
+      )
+        ?.roles?.filter((role) => role.kind === 'support' || role.kind === 'org-role')
+        .filter((role) => role.held)
+        .map((role) => role.key);
+    expect(held(true)).toEqual(['support']);
+    expect(held(false)).toEqual(['admin']);
   });
 
   it('at single, shows the platform role alone and no org pages', () => {
@@ -467,10 +470,9 @@ describe('the app seam (lib/app/access-explainer.ts)', () => {
     expect(surface?.label).toBe('app.access.billing');
     // Once per key, not once per request.
     expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenCalledWith(
-      'access-explainer: a catalogue key the app named is missing',
-      { key: 'app.access.billing' }
-    );
+    expect(logger.warn).toHaveBeenCalledWith('access-explainer: a catalogue key is missing', {
+      key: 'app.access.billing',
+    });
   });
 
   it('rolls back everything the init registered when it throws part-way', () => {

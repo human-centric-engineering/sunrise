@@ -6,8 +6,10 @@
  * The roles and tiers, the entitlement switches, the admin pages grouped into
  * areas with the tier and switch each needs, what the install keeps for the
  * platform, and the caller's own access in the org they entered: all derived
- * from the registrations that decide access (`lib/auth/access-explainer.ts`),
- * in the caller's language.
+ * from the registrations that decide access (`lib/auth/access-explainer.ts`).
+ * The explainer's own words and an app's catalogue keys are in the locale
+ * the request resolves to (`lib/i18n/request.ts`); a switch's label,
+ * description and refusal are shown as the app registered them.
  *
  * **Open to everyone the admin console admits, each to their own slice:** a
  * platform admin sees every registration, an org's OWNER/ADMIN their org's

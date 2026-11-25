@@ -79,7 +79,12 @@ disagree.
 ## The endpoint
 
 `GET /api/v1/admin/access` returns `{ success: true, data: AccessExplainer }`,
-with every string already in the viewer's language.
+with every string resolved on the server. The explainer's own words, and any
+`{ message }` key an app gave, are in the locale the request resolves to
+(`lib/i18n/request.ts`, the same resolution every page uses; an API-key call
+carries no session cookie, so it gets the fallback a cookie-less request
+gets). A switch's label, description and refusal are shown as
+`registerEntitlementSwitch()` gave them, which is plain text today.
 
 It is a `withAuth` route, not `withAdminAuth`. No single tier admits all three
 audiences, so the handler asks the policy for the caller's whole reach

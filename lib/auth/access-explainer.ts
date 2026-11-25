@@ -132,7 +132,12 @@ export interface AccessRoleView {
   readonly kind: 'platform' | 'support' | 'org-role' | 'named-tier';
   readonly label: string;
   readonly description: string;
-  /** Whether the viewer holds it where they are now. */
+  /**
+   * Whether the viewer holds it where they are now. For a named tier, whether
+   * the policy admits them to it: the default policy admits an org's
+   * OWNER/ADMIN to every named tier, so for them each one is held. Under a
+   * support grant only `support` is held, never an org role.
+   */
   readonly held: boolean;
 }
 
@@ -302,7 +307,7 @@ function textResolver(t: AccessTranslator): (value: AdminText) => string {
     // its catalogue does not have, and the key is what to go and add.
     if (!warnedMissingKeys.has(value.message)) {
       warnedMissingKeys.add(value.message);
-      logger.warn('access-explainer: a catalogue key the app named is missing', {
+      logger.warn('access-explainer: a catalogue key is missing', {
         key: value.message,
       });
     }
@@ -362,7 +367,13 @@ function rolesFor(
     role('support', 'support', 'support', viewer.supportEntry),
     // Each org role's words are `admin.access.roles.<role, lower case>`.
     ...ORG_ROLES.map((orgRole) =>
-      role(orgRole.toLowerCase(), 'org-role', orgRole.toLowerCase(), viewer.orgRole === orgRole)
+      role(
+        orgRole.toLowerCase(),
+        'org-role',
+        orgRole.toLowerCase(),
+        // A support entry carries a role for the policy, not a membership.
+        !viewer.supportEntry && viewer.orgRole === orgRole
+      )
     ),
     ...named,
   ];

@@ -47,8 +47,8 @@ release process.
 ### Added
 
 - **Who can do what: the access explainer's read model, endpoint and app
-  seam (§143 t-1090).** `GET /api/v1/admin/access` says, in the caller's
-  language, every role and named tier, every entitlement switch, the org-tier
+  seam (§143 t-1090).** `GET /api/v1/admin/access` says, in the request's
+  locale for its own words, every role and named tier, every entitlement switch, the org-tier
   admin pages grouped into areas with the tier and switch each needs and
   whether the caller opens it (and why not, when a switch is missing), what the
   install keeps for the platform, and the caller's own access. All of it is

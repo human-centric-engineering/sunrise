@@ -6,8 +6,7 @@
  * after release, so your edits here merge cleanly on upgrade (the stable
  * contract is this file's export, not its body).
  *
- * The explainer (`GET /api/v1/admin/access`, and the page that renders it)
- * already shows everything your registrations decide: your org-tier pages
+ * The explainer (`GET /api/v1/admin/access`) already shows everything your registrations decide: your org-tier pages
  * (`lib/app/admin-tier.ts`), your named tiers, with the `label` and
  * `description` you give them in `registerAdminTier()`, and your entitlement
  * switches (`lib/app/entitlements.ts`). Each viewer sees their own slice: a
