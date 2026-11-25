@@ -45,7 +45,12 @@ export default async function AccessExplainerPage() {
     getExplainer(),
     // The org is named in the viewer's panel at `multi` only; a failed
     // lookup leaves the name out rather than the page.
-    isMultiTenant() ? requestActingOrg().catch(() => null) : Promise.resolve(null),
+    isMultiTenant()
+      ? requestActingOrg().catch((error: unknown) => {
+          logger.error('access page: could not read the acting org', error);
+          return null;
+        })
+      : Promise.resolve(null),
   ]);
   const t = await getTranslations('admin.access.page');
 

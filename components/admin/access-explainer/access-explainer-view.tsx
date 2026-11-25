@@ -37,6 +37,14 @@ export interface AccessExplainerViewProps {
 
 type Translate = ReturnType<typeof useTranslations<'admin.access.page'>>;
 
+/** Each org role's catalogue label, keyed by the role in lower case. */
+const ORG_ROLE_LABEL_KEYS: Partial<Record<string, 'owner.label' | 'admin.label' | 'member.label'>> =
+  {
+    owner: 'owner.label',
+    admin: 'admin.label',
+    member: 'member.label',
+  };
+
 /** A tier's name: the catalogue's for `'org'`, a named tier's label from the roles. */
 function tierLabelOf(explainer: AccessExplainerResponse, t: Translate) {
   return (tier: string): string => {
@@ -78,15 +86,31 @@ function PagePath({ page }: { page: AccessExplainerPage }) {
   return path;
 }
 
-/** Why a page is closed to this viewer, in a sentence. */
+/** Whether the viewer holds a page's tier: a platform admin holds every one. */
+function reachesTierOf(explainer: AccessExplainerResponse) {
+  return (tier: string): boolean => {
+    const tiers = explainer.you?.tiers;
+    return tiers === 'platform' || (tiers ?? []).includes(tier);
+  };
+}
+
+/**
+ * Why a page is closed to this viewer, in a sentence. The missing switch is
+ * the reason only when the viewer holds the page's tier: an org owner shown a
+ * named tier's page is kept out by the tier, whether or not the org has the
+ * switch.
+ */
 function closedReason(
   page: AccessExplainerPage,
   t: Translate,
   tierLabel: (tier: string) => string,
-  switchLabel: (key: string) => string
+  switchLabel: (key: string) => string,
+  reachesTier: (tier: string) => boolean
 ): string {
   if (page.locked) return page.locked.message;
-  if (page.requires) return t('areas.needsSwitch', { switch: switchLabel(page.requires) });
+  if (page.requires && reachesTier(page.tier)) {
+    return t('areas.needsSwitch', { switch: switchLabel(page.requires) });
+  }
   return t('areas.needsTier', { tier: tierLabel(page.tier) });
 }
 
@@ -116,10 +140,12 @@ function Section({
 
 function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
+  const tRoles = useTranslations('admin.access.roles');
   const you = explainer.you;
   if (!you) return null;
   const tierLabel = tierLabelOf(explainer, t);
   const switchLabel = switchLabelOf(explainer);
+  const reachesTier = reachesTierOf(explainer);
   const title = orgName ? t('you.titleIn', { org: orgName }) : t('you.title');
 
   if (you.tiers === 'platform') {
@@ -130,9 +156,13 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
     );
   }
 
-  const role = you.orgRole
-    ? (explainer.roles?.find((r) => r.kind === 'org-role' && r.key === you.orgRole?.toLowerCase())
-        ?.label ?? you.orgRole)
+  // The roles section names the org roles for the org audience only; a
+  // named-tier holder's own org role comes from the catalogue instead.
+  const roleKey = you.orgRole?.toLowerCase() ?? null;
+  const catalogueKey = roleKey ? ORG_ROLE_LABEL_KEYS[roleKey] : undefined;
+  const role = roleKey
+    ? (explainer.roles?.find((r) => r.kind === 'org-role' && r.key === roleKey)?.label ??
+      (catalogueKey ? tRoles(catalogueKey) : you.orgRole))
     : null;
   const closed = (explainer.areas ?? []).flatMap((area) =>
     area.pages.filter((page) => !page.opens)
@@ -184,7 +214,7 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
                     <PagePath page={page} />
                     <span className="text-muted-foreground">
                       {' — '}
-                      {closedReason(page, t, tierLabel, switchLabel)}
+                      {closedReason(page, t, tierLabel, switchLabel, reachesTier)}
                     </span>
                     {page.locked?.upgradeUrl && (
                       <>
@@ -230,6 +260,7 @@ function Areas({ explainer }: AccessExplainerViewProps) {
   if (!areas) return null;
   const tierLabel = tierLabelOf(explainer, t);
   const switchLabel = switchLabelOf(explainer);
+  const reachesTier = reachesTierOf(explainer);
   return (
     <Section id="areas" title={t('areas.title')} intro={t('areas.intro')}>
       {areas.length === 0 ? (
@@ -264,7 +295,7 @@ function Areas({ explainer }: AccessExplainerViewProps) {
                       {page.opens ? (
                         t('areas.opens')
                       ) : (
-                        <span title={closedReason(page, t, tierLabel, switchLabel)}>
+                        <span title={closedReason(page, t, tierLabel, switchLabel, reachesTier)}>
                           {t('areas.closed')}
                         </span>
                       )}

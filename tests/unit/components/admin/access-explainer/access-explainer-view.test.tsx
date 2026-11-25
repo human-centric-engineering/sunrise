@@ -197,6 +197,25 @@ describe('AccessExplainerView — an org OWNER', () => {
     );
     expect(within(areas).queryByRole('link', { name: '/admin/leads' })).not.toBeInTheDocument();
   });
+  it('says a page is closed for its tier, not its switch, when the org has the switch', () => {
+    // The org has Briefs on; the owner does not hold the designers tier.
+    registerOrgTierAdminPage('/admin/designs/briefs', { tier: 'designers', requires: 'briefs' });
+    const owner = {
+      ...ORG_OWNER,
+      reach: {
+        tiers: ['org'],
+        landing: null,
+        switchesMet: [{ tier: 'org', requires: 'briefs' }],
+      } satisfies AdminReach,
+    };
+    render(<AccessExplainerView explainer={explainerFor(owner)} orgName="Acme" />);
+
+    const panel = screen.getByRole('region', { name: 'Your access in Acme' });
+    const row = within(panel).getByText('/admin/designs/briefs').closest('li');
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText(/Needs Agency designers\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Needs Briefs, which this organisation/)).not.toBeInTheDocument();
+  });
 });
 
 describe('AccessExplainerView — a named-tier holder', () => {
@@ -218,6 +237,14 @@ describe('AccessExplainerView — a named-tier holder', () => {
     // Only the switch their pages need.
     const switches = screen.getByRole('region', { name: 'Switches' });
     expect(within(switches).queryByText('Briefs')).not.toBeInTheDocument();
+  });
+
+  it('names their org role in words, not as the enum', () => {
+    render(<AccessExplainerView explainer={explainerFor(HOLDER)} orgName="Acme" />);
+
+    const panel = screen.getByRole('region', { name: 'Your access in Acme' });
+    expect(within(panel).getByText('Your role here: Member')).toBeInTheDocument();
+    expect(within(panel).queryByText(/MEMBER/)).not.toBeInTheDocument();
   });
 
   it('says why their tier’s page needing a switch is locked', () => {
