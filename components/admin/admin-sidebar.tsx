@@ -44,6 +44,7 @@ import {
   Hourglass,
   Lock,
   SlidersHorizontal,
+  UserCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -58,8 +59,10 @@ import {
 } from '@/lib/admin-nav/registry';
 import { initAppNav } from '@/lib/app/admin-nav';
 import {
+  ACCESS_EXPLAINER_PAGE,
   adminPageRequirementOf,
   adminPageTierOf,
+  isEveryViewerAdminPage,
   lockedSwitchFor,
   reachesTier,
   type AdminPageRequirement,
@@ -147,6 +150,14 @@ export const coreNavSections: NavSection[] = [
         label: 'Feature Flags',
         icon: ToggleRight,
         description: 'Toggle features',
+      },
+      // No tier: its page opens to every viewer the console admits
+      // (EVERY_VIEWER_ADMIN_PAGES, t-1091), and the sidebar shows it to each.
+      {
+        href: ACCESS_EXPLAINER_PAGE,
+        label: 'Who can do what',
+        icon: UserCheck,
+        description: 'Who can open each part of this console, and why',
       },
     ],
   },
@@ -629,6 +640,8 @@ export function sectionsForCapabilities(
  * §138 planning), and a fork's own items are the fork's copy, used as given.
  */
 type NavKey =
+  | 'access'
+  | 'accessDescription'
   | 'management'
   | 'members'
   | 'membersDescription'
@@ -642,6 +655,7 @@ type NavKey =
   | 'waitlistDescription';
 
 const CATALOGUE_ITEMS: Readonly<Record<string, { label: NavKey; description: NavKey }>> = {
+  [ACCESS_EXPLAINER_PAGE]: { label: 'access', description: 'accessDescription' },
   '/admin/members': { label: 'members', description: 'membersDescription' },
   '/admin/org-options': { label: 'orgOptions', description: 'orgOptionsDescription' },
   '/admin/provider-keys': { label: 'providerKeys', description: 'providerKeysDescription' },
@@ -778,7 +792,8 @@ function injectBadges(
  * with a tier they hold whose page is listed in a tier they hold, and the
  * subgroups and sections that still hold one. For an org admin that is the
  * items marked `tier: 'org'` over org-tier pages, as before t-999; for a holder
- * of a fork's named tier, the items and pages declared for it. An item whose
+ * of a fork's named tier, the items and pages declared for it. Both see the
+ * items over a page open to every admin viewer (t-1091). An item whose
  * page, or which itself, requires an entitlement switch is kept only where the
  * reach records the viewer's org meeting it (§135 t-1034). A platform viewer
  * gets the same array back, untouched.
@@ -795,6 +810,9 @@ export function sectionsForViewer(
   const reachable = (items: NavItem[]) =>
     items.filter((item) => {
       const page = item.href.split(/[?#]/)[0];
+      // A page every admitted viewer opens (t-1091), shown to anyone the
+      // policy admitted to a tier, as the layout and the gate let them in.
+      if (isEveryViewerAdminPage(page)) return reach.tiers.length > 0;
       return (
         (reachesTier(reach, item.tier, item.requires) &&
           reachesTier(

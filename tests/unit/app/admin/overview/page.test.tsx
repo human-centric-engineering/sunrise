@@ -187,6 +187,17 @@ describe('AdminOverviewPage', () => {
     expect(screen.getByTestId('system-info')).toBeInTheDocument();
   });
 
+  it('links to who can do what, from the dashboard a platform admin lands on (t-1091)', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(STATS));
+
+    render(await AdminOverviewPage());
+
+    expect(screen.getByRole('link', { name: 'See who can do what' })).toHaveAttribute(
+      'href',
+      '/admin/access'
+    );
+  });
+
   // ── Config health (#865) ─────────────────────────────────────────────────
 
   describe('config-health card', () => {

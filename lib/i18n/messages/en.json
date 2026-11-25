@@ -1141,7 +1141,9 @@
       "supportAccess": "Support access",
       "supportAccessDescription": "Let platform support into this organisation",
       "waitlist": "Waitlist",
-      "waitlistDescription": "People waiting to be let in"
+      "waitlistDescription": "People waiting to be let in",
+      "access": "Who can do what",
+      "accessDescription": "Who can open each part of this console, and why"
     },
     "members": {
       "metaTitle": "Members",
@@ -1591,6 +1593,68 @@
         "orchestration": {
           "label": "AI orchestration",
           "reason": "This install keeps AI agents, workflows and their settings for the platform team."
+        }
+      },
+      "page": {
+        "metaTitle": "Who can do what",
+        "metaDescription": "Who can open each part of the admin console, and what decides it.",
+        "title": "Who can do what",
+        "intro": "Who can open each part of this admin console, and what decides it. This page shows the parts that apply to you.",
+        "loadFailed": "Couldn't load who can do what. Reload the page to try again.",
+        "tierOrg": "Owners and admins",
+        "linkText": "Who can open what in this console?",
+        "linkAction": "See who can do what",
+        "you": {
+          "title": "Your access",
+          "titleIn": "Your access in {org}",
+          "platform": "You are a platform admin. You can open every page in this console, and an organisation's switches do not limit you.",
+          "role": "Your role here: {role}",
+          "supportEntry": "You are here under support access, not as a member of this organisation.",
+          "tiers": "You can open the pages for:",
+          "switchesOn": "Switches this organisation has on:",
+          "noSwitchesOn": "This organisation has no switches on.",
+          "noNeededSwitchesOn": "None of the switches your pages need are on.",
+          "switchesUnreadable": "Couldn't read this organisation's switches, so the reasons pages are locked can't be shown.",
+          "closedTitle": "Pages you can't open",
+          "noneClosed": "You can open every page listed for you."
+        },
+        "roles": {
+          "title": "Roles",
+          "intro": "The role someone holds in an organisation decides which pages they can open there.",
+          "held": "You"
+        },
+        "areas": {
+          "title": "Pages by area",
+          "intro": "Each area lists its pages, who can open them, and the switch a page needs, if any.",
+          "page": "Page",
+          "openTo": "Open to",
+          "needs": "Needs",
+          "you": "You",
+          "noSwitch": "No switch",
+          "opens": "Can open",
+          "closed": "Can't open",
+          "needsTier": "Needs {tier}.",
+          "needsSwitch": "Needs {switch}, which this organisation does not have.",
+          "needsSwitchUnread": "Needs {switch}. Couldn't check whether this organisation has it.",
+          "closedByPolicy": "Closed to you by this app's own access rules.",
+          "empty": "No pages are listed for you here."
+        },
+        "switches": {
+          "title": "Switches",
+          "intro": "Parts of the app that are turned on or off for each organisation.",
+          "setByPlatform": "Set by the platform team",
+          "setByOrg": "Set by the organisation's owners and admins",
+          "whenLackingHide": "Hidden when off",
+          "whenLackingLock": "Shown locked when off",
+          "on": "On",
+          "off": "Off",
+          "getIt": "How to get it",
+          "empty": "This install has no switches."
+        },
+        "platformOnly": {
+          "title": "Kept for the platform team",
+          "intro": "Parts of this install that only platform admins can open.",
+          "empty": "Nothing is kept for the platform team beyond its own pages."
         }
       }
     }

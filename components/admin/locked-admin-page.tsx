@@ -7,13 +7,15 @@
  * registered as the refusal, and links to where the org can get it. The page
  * is not shown, and its routes still refuse. It is the reader's lock, not the
  * boundary: the page still renders on the server, so it reads its rows
- * through its routes, never straight from the database.
+ * through its routes, never straight from the database. It links to the
+ * access explainer (t-1091), which says what each switch opens.
  */
 
 import { Lock } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 
 import { Button } from '@/components/ui/button';
+import { AccessExplainerLink } from '@/components/admin/access-explainer/access-explainer-link';
 import type { LockedAdminSwitch } from '@/lib/auth/admin-tier';
 
 export function LockedAdminPage({ locked }: { locked: LockedAdminSwitch }) {
@@ -31,6 +33,8 @@ export function LockedAdminPage({ locked }: { locked: LockedAdminSwitch }) {
       </div>
       <p className="text-muted-foreground text-sm">{locked.message}</p>
       {locked.upgradeUrl && <UpgradeLink locked={locked} />}
+      {/* Who can open what, and why this is locked to this org (t-1091). */}
+      <AccessExplainerLink />
     </section>
   );
 }

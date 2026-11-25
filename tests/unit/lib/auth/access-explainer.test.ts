@@ -436,6 +436,103 @@ describe('each viewer’s slice', () => {
   });
 });
 
+describe('why a page is closed, and the names that say so', () => {
+  const pageOf = (explainer: AccessExplainer | null, pattern: string) =>
+    explainer?.areas?.flatMap((area) => area.pages).find((page) => page.pattern === pattern);
+
+  it('puts a closed page down to its tier when the viewer lacks it, and to its switch when not', () => {
+    registerAgencyApp();
+    registerOrgTierAdminPage('/admin/designs/briefs', { tier: 'designers', requires: 'briefs' });
+    // An org owner the policy does not admit to the designers tier; the org has briefs.
+    const explainer = buildAccessExplainer(
+      viewer({
+        reach: {
+          tiers: ['org'],
+          landing: null,
+          switchesMet: [{ tier: 'org', requires: 'briefs' }],
+        },
+        orgRole: 'OWNER',
+        switchesOn: ['briefs'],
+        locked: [LEAD_LOCK],
+      }),
+      translator()
+    );
+
+    expect(pageOf(explainer, '/admin/designs/briefs')).toMatchObject({
+      opens: false,
+      closedBy: 'tier',
+      tierLabel: 'Agency designers',
+      requiresLabel: 'Briefs',
+    });
+    expect(pageOf(explainer, '/admin/leads')).toMatchObject({
+      opens: false,
+      closedBy: 'switch',
+      tierLabel: 'Owners and admins',
+      requiresLabel: 'Lead generation',
+    });
+    expect(pageOf(explainer, '/admin/briefs')).toMatchObject({ opens: true, closedBy: null });
+  });
+
+  it('puts a page the policy keeps closed down to the policy, not a switch the org has', () => {
+    registerAgencyApp();
+    // The org has briefs on; this policy still does not meet it for the org tier.
+    const explainer = buildAccessExplainer(
+      viewer({
+        reach: { tiers: ['org'], landing: null, switchesMet: [] },
+        orgRole: 'ADMIN',
+        switchesOn: ['briefs'],
+      }),
+      translator()
+    );
+
+    expect(pageOf(explainer, '/admin/briefs')).toMatchObject({ opens: false, closedBy: 'policy' });
+  });
+
+  it('calls the switch unknown, not missing, when the org’s switches could not be read', () => {
+    registerAgencyApp();
+    const explainer = buildAccessExplainer(
+      viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', switchesOn: null, locked: [LEAD_LOCK] }),
+      translator()
+    );
+
+    expect(pageOf(explainer, '/admin/leads')).toMatchObject({ opens: false, closedBy: 'unread' });
+  });
+
+  it('names the viewer’s tiers and switches in their panel when the app hides those sections', () => {
+    registerAgencyApp();
+    app.init = () => {
+      setAccessSectionAudience('roles', ['platform']);
+      setAccessSectionAudience('switches', ['platform']);
+    };
+    const explainer = buildAccessExplainer(
+      viewer({
+        reach: { tiers: ['designers'], landing: '/admin/designs' },
+        orgRole: 'MEMBER',
+        switchesOn: ['lead_gen'],
+      }),
+      translator()
+    );
+
+    expect(explainer?.roles).toBeUndefined();
+    expect(explainer?.switches).toBeUndefined();
+    expect(explainer?.you).toMatchObject({
+      tierLabels: { designers: 'Agency designers' },
+      switchLabels: { lead_gen: 'Lead generation' },
+      anySwitches: true,
+      supportEntry: false,
+    });
+  });
+
+  it('says a support entry is one, and that an install with no switches has none to show', () => {
+    const explainer = buildAccessExplainer(
+      viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', switchesOn: [], supportEntry: true }),
+      translator()
+    );
+
+    expect(explainer?.you).toMatchObject({ supportEntry: true, orgRole: null, anySwitches: false });
+  });
+});
+
 describe('the app seam (lib/app/access-explainer.ts)', () => {
   it('is inert when empty: every section, core’s areas, nothing of the app’s', () => {
     const explainer = buildAccessExplainer(viewer(), translator());

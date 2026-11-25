@@ -46,7 +46,7 @@ vi.mock('@/components/admin/members/member-invite-form', () => ({
   },
 }));
 
-import MembersPage from '@/app/admin/members/page';
+import MembersPage, { generateMetadata } from '@/app/admin/members/page';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -82,6 +82,24 @@ describe('MembersPage', () => {
       currentUserId: 'u-1',
     });
     expect(formProps).toHaveBeenCalledWith({ orgId: 'org-entered' });
+  });
+
+  it('links to who can do what, from the page an org admin may land on (t-1091)', async () => {
+    actAs({ id: 'org-entered', name: 'Acme' });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ members: MEMBERS }));
+
+    render(await MembersPage());
+
+    expect(screen.getByRole('link', { name: 'See who can do what' })).toHaveAttribute(
+      'href',
+      '/admin/access'
+    );
+  });
+
+  it('takes its title from the catalogue', async () => {
+    const metadata = await generateMetadata();
+
+    expect(metadata.title).toBe('Members');
   });
 
   it('points to Users in the install org, and only there', async () => {
