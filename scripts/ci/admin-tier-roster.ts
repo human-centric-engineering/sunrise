@@ -29,7 +29,12 @@
  *   matcher, which cannot see the tree, would call it org-tier;
  * - a core section (`CORE_ADMIN_SECTIONS`) with no page under it, or a core
  *   page or nav item in a section the list does not name — the list is what
- *   keeps a fork's pages out of core's.
+ *   keeps a fork's pages out of core's;
+ * - a page open to every admin viewer (`EVERY_VIEWER_ADMIN_PAGES`, t-1091)
+ *   with no `page.tsx` behind it, one that is also on an org-tier list (a
+ *   page is in one class), and a fork's page in the class's section — the
+ *   registrar already refuses one, so this catches a fork that edited core's
+ *   list or section list instead.
  *
  * Named tiers (t-999) are held to the same checks, and to three of their own:
  * a route, page or nav item may declare a tier only if the fork registered it
@@ -332,6 +337,11 @@ export interface RosterInput {
   pageFiles: readonly string[];
   /** Every sidebar item: core's, and the sections the fork registered. */
   navItems: readonly NavItemFacts[];
+  /**
+   * `EVERY_VIEWER_ADMIN_PAGES` (t-1091): core's pages open to every viewer the
+   * console admits. Unchecked when left out.
+   */
+  everyViewerPages?: readonly string[];
   /** `CORE_ADMIN_SECTIONS`. Unchecked when left out. */
   coreSections?: readonly string[];
   /** Core's sidebar hrefs alone, for the section check. */
@@ -496,7 +506,11 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
         );
       }
     }
-    for (const path of [...input.listedPages, ...(input.coreNavHrefs ?? [])]) {
+    for (const path of [
+      ...input.listedPages,
+      ...(input.everyViewerPages ?? []),
+      ...(input.coreNavHrefs ?? []),
+    ]) {
       const section = adminSectionOf(path);
       if (section !== null && !sections.has(section)) {
         problems.push(
@@ -505,6 +519,8 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
       }
     }
   }
+
+  problems.push(...everyViewerProblems(input, appPages));
 
   const closed = input.closedSections ?? [];
   for (const at of appListed) {
@@ -560,6 +576,40 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
     if (problem !== null) {
       problems.push(
         `named tier '${name}': its landing ${landing} ${problem} /admin would ignore it and log why.`
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * The pages open to every admin viewer that would not do what they say
+ * (t-1091): one with no page behind it, one also on an org-tier list, where
+ * the two classes would disagree about who opens it, and a fork's page in the
+ * section such a page is in, which would sit beside it as if it were core's.
+ */
+function everyViewerProblems(input: RosterInput, appPages: readonly string[]): string[] {
+  const problems: string[] = [];
+  const everyViewer = input.everyViewerPages ?? [];
+  const pageFiles = new Set(input.pageFiles);
+  const orgTier = new Set([...input.listedPages, ...appPages]);
+  for (const pattern of everyViewer) {
+    const file = `app${pattern}/page.tsx`;
+    if (!pageFiles.has(file)) {
+      problems.push(`${pattern}: listed in EVERY_VIEWER_ADMIN_PAGES but ${file} does not exist.`);
+    }
+    if (orgTier.has(pattern)) {
+      problems.push(
+        `${pattern}: listed in EVERY_VIEWER_ADMIN_PAGES and on an org-tier list. A page is in one class: take it off the org-tier list.`
+      );
+    }
+  }
+  const sections = new Set(everyViewer.map(adminSectionOf).filter((s): s is string => s !== null));
+  for (const pattern of appPages) {
+    const section = adminSectionOf(pattern);
+    if (section !== null && sections.has(section)) {
+      problems.push(
+        `${pattern}: listed in lib/app/admin-tier.ts inside /admin/${section}, the section of a page core opens to every admin viewer. The class is core's: put the fork's page in a section of its own.`
       );
     }
   }

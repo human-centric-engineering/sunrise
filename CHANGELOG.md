@@ -46,6 +46,23 @@ release process.
 
 ### Added
 
+- **Who can do what: the access explainer page (§143 t-1091).** `/admin/access`
+  renders `GET /api/v1/admin/access` for whoever opens it: a platform admin
+  everything, an org OWNER/ADMIN their org's view, a named-tier holder their
+  tiers, each with a **Your access** panel naming why each page they cannot
+  open is closed. It is open to every viewer the console admits through a new
+  core-only page class, `EVERY_VIEWER_ADMIN_PAGES` (with
+  `isEveryViewerAdminPage()`), which `reachesAdminPage()`, and so the admin
+  layout, `AdminTierGate` and the sidebar, honour; a reach of nothing (an org
+  MEMBER) is still refused. A sidebar item under Management, and
+  `AccessExplainerLink` (`components/admin/access-explainer/access-explainer-link.tsx`)
+  on the overview, the orchestration dashboard, Members and `LockedAdminPage`.
+  Its words are under `admin.access.page` and `admin.nav.access`. **What a
+  fork checks:** `access` is now in `CORE_ADMIN_SECTIONS`, so
+  `registerOrgTierAdminPage()` refuses a fork page under `/admin/access/`;
+  move one to a section of your own. Put `<AccessExplainerLink />` on a named
+  tier's landing page so its holders find the page from where they arrive.
+  See [access-explainer.md](./.context/auth/access-explainer.md#the-page).
 - **Who can do what: the access explainer's read model, endpoint and app
   seam (§143 t-1090).** `GET /api/v1/admin/access` says, in the request's
   locale for its own words, every role and named tier, every entitlement switch, the org-tier

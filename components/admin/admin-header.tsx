@@ -41,8 +41,12 @@ interface AdminHeaderProps {
  * planning).
  */
 const catalogueSegments: Readonly<
-  Record<string, 'members' | 'orgOptions' | 'providerKeys' | 'supportAccess' | 'waitlist'>
+  Record<
+    string,
+    'access' | 'members' | 'orgOptions' | 'providerKeys' | 'supportAccess' | 'waitlist'
+  >
 > = {
+  access: 'access',
   members: 'members',
   'org-options': 'orgOptions',
   'provider-keys': 'providerKeys',

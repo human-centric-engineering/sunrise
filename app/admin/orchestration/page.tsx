@@ -19,6 +19,7 @@ import {
   type CapabilityUsage,
 } from '@/components/admin/orchestration/top-capabilities-panel';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
+import { AccessExplainerLink } from '@/components/admin/access-explainer/access-explainer-link';
 import { API } from '@/lib/api/endpoints';
 import { logger } from '@/lib/logging';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
@@ -241,6 +242,7 @@ export default async function OrchestrationDashboardPage() {
           <p className="text-muted-foreground text-sm">
             Operational overview — agents, spend, and activity.
           </p>
+          <AccessExplainerLink className="mt-1" />
         </div>
         {setupState && <SetupWizardLauncher forceOpen={!setupState.hasProvider} />}
       </header>

@@ -35,6 +35,7 @@ import {
 } from '@/scripts/ci/admin-tier-roster';
 import {
   CORE_ADMIN_SECTIONS,
+  EVERY_VIEWER_ADMIN_PAGES,
   ORG_TIER_ADMIN_PAGES,
   ORG_TIER_ADMIN_ROUTES,
 } from '@/lib/auth/admin-tier';
@@ -101,6 +102,7 @@ const TREE: RosterInput = {
   appListedPages: getAppOrgTierAdminPages(),
   pageFiles: PAGE_FILES,
   navItems: NAV_ITEMS,
+  everyViewerPages: EVERY_VIEWER_ADMIN_PAGES,
   coreSections: CORE_ADMIN_SECTIONS,
   coreNavHrefs: itemsOf(coreNavSections).map((item) => item.href),
   // The core sections the fork closed, from lib/app/admin-tier.ts: its nav
@@ -118,6 +120,14 @@ const TREE: RosterInput = {
 };
 
 describe('the pins', () => {
+  it('opens exactly the access explainer to every admin viewer, whatever their tier (t-1091)', () => {
+    // A page here opens to every org admin AND every holder of every named
+    // tier a fork registers. Core only: there is no registrar, and a fork
+    // that edits this list fails here. List a page only when its route
+    // answers each viewer for themselves.
+    expect(EVERY_VIEWER_ADMIN_PAGES).toEqual(['/admin/access']);
+  });
+
   it('opens exactly the customer’s sections, the mixed pages, Members, AI keys and Support access to an org admin (t-811, t-812, t-813, t-823, t-1045)', () => {
     // A page added here is a page every org OWNER/ADMIN can open: add it to
     // ORG_TIER_ADMIN_PAGES and here, in the same diff, and say why in the PR.
@@ -404,6 +414,7 @@ describe('the core sections', () => {
     // adding it here and in CORE_ADMIN_SECTIONS in the same diff; the tree
     // check above fails for a core page or nav item in a section left out.
     expect(CORE_ADMIN_SECTIONS).toEqual([
+      'access',
       'features',
       'logs',
       'members',
@@ -768,6 +779,64 @@ describe('what it catches', () => {
       expect.stringContaining('CORE_ADMIN_SECTIONS lists gone'),
       expect.stringContaining('/admin/billing: core'),
     ]);
+  });
+
+  describe('pages open to every admin viewer (t-1091)', () => {
+    const EVERY = '/admin/access';
+    const FILE = 'app/admin/access/page.tsx';
+
+    it('accepts one with a page, on no org-tier list, in a core section — the control', () => {
+      expect(
+        findAdminTierRosterProblems(
+          input({
+            everyViewerPages: [EVERY],
+            pageFiles: [FILE],
+            coreSections: ['access'],
+          })
+        )
+      ).toEqual([]);
+    });
+
+    it('one with no page behind it', () => {
+      expect(findAdminTierRosterProblems(input({ everyViewerPages: [EVERY] }))).toEqual([
+        expect.stringContaining(`${EVERY}: listed in EVERY_VIEWER_ADMIN_PAGES but ${FILE}`),
+      ]);
+    });
+
+    it('one also on an org-tier list, core’s or the fork’s', () => {
+      const onBoth = expect.stringContaining(`${EVERY}: listed in EVERY_VIEWER_ADMIN_PAGES and on`);
+      expect(
+        findAdminTierRosterProblems(
+          input({ everyViewerPages: [EVERY], pageFiles: [FILE], listedPages: [EVERY] })
+        )
+      ).toEqual([onBoth]);
+      // The fork's copy is also a fork page in the class's section.
+      expect(
+        findAdminTierRosterProblems(
+          input({ everyViewerPages: [EVERY], pageFiles: [FILE], appListedPages: [EVERY] })
+        )
+      ).toEqual([onBoth, expect.stringContaining(`${EVERY}: listed in lib/app/admin-tier.ts`)]);
+    });
+
+    it('one in a section CORE_ADMIN_SECTIONS does not name, where a fork could list pages', () => {
+      expect(
+        findAdminTierRosterProblems(
+          input({ everyViewerPages: [EVERY], pageFiles: [FILE], coreSections: [] })
+        )
+      ).toEqual([expect.stringContaining(`${EVERY}: core's, in a section`)]);
+    });
+
+    it('a fork’s page in the class’s section, as if it were core’s', () => {
+      expect(
+        findAdminTierRosterProblems(
+          input({
+            everyViewerPages: [EVERY],
+            pageFiles: [FILE, 'app/admin/access/agency/page.tsx'],
+            appListedPages: ['/admin/access/agency'],
+          })
+        )
+      ).toEqual([expect.stringContaining('/admin/access/agency: listed in lib/app/admin-tier.ts')]);
+    });
   });
 
   it('a nav item marked org-tier over a page the roster does not list', () => {

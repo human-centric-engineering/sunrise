@@ -529,6 +529,48 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
     );
   });
 
+  describe('the access explainer, open to every admin viewer (t-1091)', () => {
+    it.each(['OWNER', 'ADMIN'])('opens to an org %s, under the real gate', async (role) => {
+      actingAs(role);
+      onPage('/admin/access');
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">access</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+    });
+
+    it('opens to a platform admin', async () => {
+      const admin = createMockSession({ user: { role: 'ADMIN' } });
+      vi.mocked(getServerSession).mockResolvedValue({
+        ...admin,
+        session: { ...admin.session, activeOrgId: INSTALL_ORG_ID },
+      });
+      onPage('/admin/access');
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">access</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+    });
+
+    it('turns a MEMBER of the org away', async () => {
+      actingAs('MEMBER');
+      onPage('/admin/access');
+
+      await expect(AdminLayout({ children: <div>access</div> })).rejects.toThrow(
+        `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
+    });
+
+    it('sends a signed-out visitor to sign in', async () => {
+      vi.mocked(getServerSession).mockResolvedValue(null);
+      onPage('/admin/access');
+
+      await expect(AdminLayout({ children: <div>access</div> })).rejects.toThrow(
+        'NEXT_REDIRECT:/login'
+      );
+    });
+  });
+
   it('refuses an org OWNER at single, where nothing isolates the org’s rows', async () => {
     env.TENANCY_MODE = 'single';
     actingAs('OWNER');
@@ -625,6 +667,19 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
 
       await expect(AdminLayout({ children: <div>page</div> })).rejects.toThrow(
         `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
+    });
+
+    it('opens the access explainer to a holder, who holds no org tier (t-1091)', async () => {
+      actingAs('MEMBER');
+      onPage('/admin/access');
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">access</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+      expect(screen.getByTestId('admin-sidebar')).toHaveAttribute(
+        'data-viewer-tier',
+        'page_designs'
       );
     });
 

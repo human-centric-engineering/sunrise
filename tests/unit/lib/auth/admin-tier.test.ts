@@ -42,6 +42,8 @@ import {
   withoutClosedSections,
   type ClosableCoreOrgTierSection,
   CORE_ADMIN_SECTIONS,
+  EVERY_VIEWER_ADMIN_PAGES,
+  isEveryViewerAdminPage,
   matchesAdminPagePattern,
   ORG_TIER_ADMIN_PAGES,
   registeredAppOrgTierAdminPages,
@@ -504,6 +506,46 @@ describe('reachesAdminPage (t-999)', () => {
     for (const path of ['/admin', '/admin/members', '/admin/designs/d1', '/admin/users']) {
       expect(reaches(none, path)).toBe(false);
     }
+  });
+});
+
+describe('pages open to every admin viewer (t-1091)', () => {
+  const reaches = (reach: AdminReach, path: string) =>
+    reachesAdminPage(reach, path, adminPageTierOf(path, ORG_TIER_ADMIN_PAGES, []));
+
+  it('opens the access explainer to a platform admin, an org admin and a named-tier holder', () => {
+    for (const reach of [
+      'platform',
+      { tiers: ['org'], landing: null },
+      { tiers: ['page_designs'], landing: '/admin/designs' },
+      { tiers: ['page_designs'], landing: null },
+    ] satisfies AdminReach[]) {
+      expect(reaches(reach, '/admin/access')).toBe(true);
+      expect(reaches(reach, '/admin/access/')).toBe(true);
+    }
+  });
+
+  it('refuses it to a viewer the policy admitted to no tier, an org MEMBER among them', () => {
+    expect(reaches({ tiers: [], landing: null }, '/admin/access')).toBe(false);
+  });
+
+  it('opens only the page listed, not one below it or beside it', () => {
+    const holder: AdminReach = { tiers: ['page_designs'], landing: null };
+    for (const path of ['/admin/access/x', '/admin/accessx', '/admin/users']) {
+      expect([path, reaches(holder, path)]).toEqual([path, false]);
+    }
+    expect(isEveryViewerAdminPage(null)).toBe(false);
+    expect(isEveryViewerAdminPage('/admin/access')).toBe(true);
+  });
+
+  it('is on no org-tier list, and in a section a fork may not list pages in', () => {
+    for (const pattern of EVERY_VIEWER_ADMIN_PAGES) {
+      expect(ORG_TIER_ADMIN_PAGES).not.toContain(pattern);
+      expect(CORE_ADMIN_SECTIONS).toContain(adminSectionOf(pattern));
+      expect(() => registerOrgTierAdminPage(pattern)).toThrow(/core's/);
+      expect(() => registerOrgTierAdminPage(`${pattern}/agency`)).toThrow(/core's/);
+    }
+    expect(Object.isFrozen(EVERY_VIEWER_ADMIN_PAGES)).toBe(true);
   });
 });
 

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getTranslations } from 'next-intl/server';
 
+import { AccessExplainerLink } from '@/components/admin/access-explainer/access-explainer-link';
 import { MemberInviteForm } from '@/components/admin/members/member-invite-form';
 import { MembersTable, type OrgMember } from '@/components/admin/members/members-table';
 import { API } from '@/lib/api/endpoints';
@@ -42,6 +43,7 @@ export default async function MembersPage() {
           {org ? t('titleOf', { org: org.name }) : t('title')}
         </h1>
         <p className="text-muted-foreground text-sm">{t('intro')}</p>
+        <AccessExplainerLink className="mt-1" />
       </header>
 
       {!org ? (

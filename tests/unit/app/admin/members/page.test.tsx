@@ -84,6 +84,18 @@ describe('MembersPage', () => {
     expect(formProps).toHaveBeenCalledWith({ orgId: 'org-entered' });
   });
 
+  it('links to who can do what, from the page an org admin may land on (t-1091)', async () => {
+    actAs({ id: 'org-entered', name: 'Acme' });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ members: MEMBERS }));
+
+    render(await MembersPage());
+
+    expect(screen.getByRole('link', { name: 'See who can do what' })).toHaveAttribute(
+      'href',
+      '/admin/access'
+    );
+  });
+
   it('points to Users in the install org, and only there', async () => {
     vi.mocked(serverFetch).mockImplementation(() =>
       Promise.resolve(apiSuccess({ members: MEMBERS }))

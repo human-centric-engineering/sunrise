@@ -32,6 +32,10 @@
  *   A core item marked `'org'` must point at a page listed here; the roster
  *   test holds that.
  *
+ * A few core pages are open to every viewer the console admits, whatever
+ * their tier ({@link EVERY_VIEWER_ADMIN_PAGES}, t-1091): the access explainer,
+ * whose route answers each viewer for themselves. A fork cannot add to them.
+ *
  * A fork can also take core's orchestration off all three for its install
  * ({@link closeCoreOrgTierSection}, t-929): the pages leave the list the
  * layout and the sidebar read, and the guard treats the section's routes as
@@ -342,6 +346,32 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * Admin pages every viewer the console admits may open (§143 t-1091): a
+ * platform admin, an org OWNER/ADMIN, and a holder of any of the app's named
+ * tiers. Someone the console admits to nothing, an org MEMBER included, is
+ * still turned away. Each viewer sees their own slice of such a page, because
+ * the page is a shell over a route that narrows its answer to the caller.
+ *
+ * A class of its own because no tier fits: an `'org'` page is closed to a
+ * named-tier holder, and a named-tier page belongs to one tier. Exact
+ * patterns, matched as {@link ORG_TIER_ADMIN_PAGES} is, so a page added below
+ * one is not in the class until it is listed.
+ *
+ * **Core only.** Frozen, with no registrar, and its section is in
+ * {@link CORE_ADMIN_SECTIONS}, so a fork cannot list a page here or under it.
+ * The roster test pins it. Widening it opens a page to every tier holder of
+ * every fork, so it holds pages whose route answers each viewer for
+ * themselves, and nothing else.
+ */
+export const EVERY_VIEWER_ADMIN_PAGES: readonly string[] = Object.freeze(['/admin/access']);
+
+/** Is the page at this pathname one {@link EVERY_VIEWER_ADMIN_PAGES} lists? */
+export function isEveryViewerAdminPage(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  return EVERY_VIEWER_ADMIN_PAGES.some((pattern) => matchesAdminPagePattern(pattern, pathname));
+}
+
+/**
  * The top-level admin sections core owns: the first segment under `/admin` of
  * every core admin page. A fork's page may not sit inside one
  * ({@link registerOrgTierAdminPage}), which is what keeps the fork's list from
@@ -351,6 +381,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
  * one of these, and each is a directory under `app/admin`.
  */
 export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
+  'access',
   'features',
   'logs',
   'members',
@@ -1277,10 +1308,12 @@ export const ADMIN_INDEX_PATH = '/admin';
  * ({@link adminPageRequirementOf}, t-1034)? The layout's answer on a full
  * load and the gate's on every in-app navigation, so the two agree.
  *
- * One page is answered apart: `/admin` itself, for a holder of named tiers
- * with a landing. It is an `'org'` page so that it can send an org admin on,
- * and it renders nothing — it redirects — so letting a holder in sends them to
- * their landing rather than turning them away.
+ * Two pages are answered apart. A page {@link EVERY_VIEWER_ADMIN_PAGES} lists
+ * opens to any reach that holds a tier (t-1091), and to a platform one; a
+ * reach of nothing is refused it like any other. And `/admin` itself, for a
+ * holder of named tiers with a landing: it is an `'org'` page so that it can
+ * send an org admin on, and it renders nothing — it redirects — so letting a
+ * holder in sends them to their landing rather than turning them away.
  */
 export function reachesAdminPage(
   reach: AdminReach,
@@ -1289,6 +1322,9 @@ export function reachesAdminPage(
   pageRequires: string | null = null
 ): boolean {
   if (reachesTier(reach, pageTier, pageRequires)) return true;
+  if (reach !== 'platform' && reach.tiers.length > 0 && isEveryViewerAdminPage(pathname)) {
+    return true;
+  }
   return (
     reach !== 'platform' &&
     reach.landing !== null &&

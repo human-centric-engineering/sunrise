@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { API } from '@/lib/api/endpoints';
 import { loadServerData } from '@/lib/api/server-load';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
+import { AccessExplainerLink } from '@/components/admin/access-explainer/access-explainer-link';
 import { StatsCards } from '@/components/admin/stats-cards';
 import { SystemInfo } from '@/components/admin/system-info';
 import { StatusPage } from '@/components/status/status-page';
@@ -40,6 +41,8 @@ export default async function AdminOverviewPage() {
 
   return (
     <div className="space-y-8">
+      <AccessExplainerLink />
+
       {/* Config health — renders only when a critical/warning setting is missing. */}
       <ConfigHealthBanner report={configHealth} variant="card" />
 

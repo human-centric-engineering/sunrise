@@ -77,6 +77,35 @@ describe('AdminTierGate', () => {
   });
 });
 
+describe('AdminTierGate on the access explainer, open to every admin viewer (t-1091)', () => {
+  it.each([
+    ['an org admin', ORG_REACH],
+    ['a named-tier holder', { tiers: ['page_designs'], landing: null }],
+  ])('renders it for %s navigating in from another page', (_l, reach) => {
+    nav.pathname = '/admin/access';
+    render(
+      <AdminTierGate reach={reach} orgTierPages={PAGES}>
+        {page}
+      </AdminTierGate>
+    );
+
+    expect(screen.getByTestId('page')).toBeInTheDocument();
+    expect(nav.replace).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+  });
+
+  it('sends a viewer admitted to no tier away from it', () => {
+    nav.pathname = '/admin/access';
+    render(
+      <AdminTierGate reach={{ tiers: [], landing: null }} orgTierPages={PAGES}>
+        {page}
+      </AdminTierGate>
+    );
+
+    expect(screen.queryByTestId('page')).not.toBeInTheDocument();
+    expect(nav.replace).toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
+  });
+});
+
 describe('AdminTierGate on a page the fork lists in lib/app/admin-tier.ts (t-817)', () => {
   // The layout reads the whole list on the server, the fork's pages included,
   // and hands it here; that half is proved in tests/unit/app/admin/layout.test.tsx.
@@ -214,6 +243,11 @@ describe('AdminTierGate on a page that requires a switch (t-1034)', () => {
     expect(screen.getByRole('link', { name: 'How to get Lead generation' })).toHaveAttribute(
       'href',
       'https://example.com/plans'
+    );
+    // Where the viewer finds out who can open what, and why (t-1091).
+    expect(screen.getByRole('link', { name: 'See who can do what' })).toHaveAttribute(
+      'href',
+      '/admin/access'
     );
   });
 

@@ -479,6 +479,17 @@ describe('OrchestrationDashboardPage — an org admin’s half (§111 t-812)', (
     expect(urls.some((u) => u.includes('/observability/dashboard-stats'))).toBe(true);
   });
 
+  it('links to who can do what, from the dashboard an org admin lands on (t-1091)', async () => {
+    await setupHappyPathMocks({ hasProvider: true, hasAgent: true, hasDefaultChatModel: true });
+
+    await renderPage();
+
+    expect(screen.getByRole('link', { name: 'See who can do what' })).toHaveAttribute(
+      'href',
+      '/admin/access'
+    );
+  });
+
   it('neither fetches nor renders the setup wizard, setup banner or quarantines', async () => {
     const { getSetupState } = await import('@/lib/orchestration/setup-state');
     // No provider: the platform's view would force the wizard open and show the banner.

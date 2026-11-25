@@ -17,6 +17,7 @@ opens or closes a page.
 | Read model            | [`lib/auth/access-explainer.ts`](../../lib/auth/access-explainer.ts) — `buildAccessExplainer()`                           |
 | The viewer's reach    | [`lib/auth/admin-reach.ts`](../../lib/auth/admin-reach.ts) — `adminReachOf()`, `lockedSwitchesOf()`, `lockedSwitchesIn()` |
 | Endpoint              | `GET /api/v1/admin/access` ([route](../../app/api/v1/admin/access/route.ts))                                              |
+| Page                  | `/admin/access` ([page](../../app/admin/access/page.tsx)), drawn by `components/admin/access-explainer/`                  |
 | App seam (registrars) | [`lib/auth/access-explainer-registry.ts`](../../lib/auth/access-explainer-registry.ts)                                    |
 | App seam (scaffold)   | [`lib/app/access-explainer.ts`](../../lib/app/access-explainer.ts) — `initAppAccessExplainer()`                           |
 | Sunrise's words       | `admin.access` in [`lib/i18n/messages/en.json`](../../lib/i18n/messages/en.json)                                          |
@@ -104,6 +105,49 @@ the org or named-tier arm, so any other key is refused. The route also sets
 A role's `held` says whether the viewer holds it where they are now: support
 access is held when the guard entered the org under a support grant.
 
+## The page
+
+`/admin/access` ("Who can do what") is a shell over the endpoint: it reads
+`GET /api/v1/admin/access` through `loadServerData`, checks the response with
+`accessExplainerResponseSchema` (`lib/validations/access-explainer.ts`), and
+renders the sections the response names, in its order, then the app's own
+(`AccessExplainerView`). It decides nothing and filters nothing: a section
+missing from the response is one this viewer does not get. A failed load, or a
+response the schema rejects, shows "Couldn't load who can do what" and is
+logged, never an empty page.
+
+| Viewer                        | What the page shows                                                                                                                                                |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A platform admin              | that switches do not limit them; every role, area, page and switch; what the install keeps for the platform, with links                                            |
+| An org OWNER/ADMIN            | **Your access in _org_**: their role, the tiers they open, the org's switches, and each page they cannot open with the reason (the app's refusal and upgrade link) |
+| A named-tier holder           | the same panel for their tiers only, and only their tiers' pages and those pages' switches                                                                         |
+| A MEMBER, or no one signed in | nothing: the admin layout turns them away                                                                                                                          |
+
+**Who reaches it.** The page is in its own class, `EVERY_VIEWER_ADMIN_PAGES`
+(`lib/auth/admin-tier.ts`): open to every viewer the console admits, which no
+tier says (an `'org'` page is closed to a named-tier holder, a named-tier page
+to every other tier). `reachesAdminPage()` admits any reach that holds a tier
+there, so the layout, `AdminTierGate` and the sidebar agree, and a reach of
+nothing is still refused. The class is core's: it is a frozen list with no
+registrar, `access` is in `CORE_ADMIN_SECTIONS` so a fork cannot register a
+page under it, and the roster test (`tests/unit/scripts/ci/admin-tier-roster.test.ts`)
+pins the list and fails on a fork page in its section. The route stays the
+boundary; the page-level gate only decides who is shown the shell.
+
+**Where viewers find it.** A sidebar item, "Who can do what", under
+Management, shown to every viewer the console admits. `AccessExplainerLink`
+(`components/admin/access-explainer/access-explainer-link.tsx`) on the overview
+(a platform admin's landing), the orchestration dashboard and Members (an org
+admin's), and on `LockedAdminPage`, so whoever meets a locked page finds the
+explanation. A named tier's landing is the app's page: put
+`<AccessExplainerLink />` on it so a holder finds it from where they arrive.
+
+**Words.** Every string of the page's own is under `admin.access.page`, and
+the nav item's under `admin.nav.access`, so the page follows the viewer's
+language and a fork rewords it with `overridePlatformMessages()`.
+`tests/unit/components/admin/access-explainer/access-explainer-pseudo-locale.test.tsx`
+renders it under the pseudo-locale and fails on a raw key.
+
 ## The app seam
 
 `lib/app/access-explainer.ts` ships empty. With nothing registered, the
@@ -144,3 +188,7 @@ shows Sunrise's own words with what the access registrations decide.
 - **Filtering on the client.** The endpoint already returns only the viewer's
   slice. A page that fetched a wider view and hid parts of it would put
   another audience's view on the wire.
+- **Adding a page to `EVERY_VIEWER_ADMIN_PAGES`.** It opens the page to every
+  holder of every named tier a fork registers. It holds pages whose route
+  answers each viewer for themselves, and a fork cannot add to it; open a
+  fork page to its audience with a tier instead.

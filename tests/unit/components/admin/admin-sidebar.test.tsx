@@ -463,6 +463,8 @@ describe('AdminSidebar — what an org viewer sees', () => {
       .filter((href): href is string => href?.startsWith('/admin/') ?? false);
     expect(hrefs).toEqual([
       '/admin/org-options',
+      // Open to every admin viewer (t-1091).
+      '/admin/access',
       '/admin/orchestration',
       '/admin/orchestration/agents',
       '/admin/orchestration/workflows',
@@ -492,6 +494,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
       '/admin/org-options',
       '/admin/provider-keys',
       '/admin/support-access',
+      '/admin/access',
     ]);
     expect(screen.queryByText('AI Orchestration')).not.toBeInTheDocument();
   });
@@ -614,6 +617,33 @@ describe('sectionsForViewer', () => {
         '/admin/designs/settings?x=1',
       ]);
     });
+  });
+});
+
+describe('sectionsForViewer — a page open to every admin viewer (t-1091)', () => {
+  const Icon: ComponentType<{ className?: string }> = () => null;
+  const item = (href: string) => ({ href, label: href, icon: Icon, description: '' });
+  const sections = [{ title: 'Management', items: [item('/admin/access'), item('/admin/users')] }];
+  const hrefs = (reach: AdminReach) =>
+    sectionsForViewer(sections, reach, ORG_TIER_ADMIN_PAGES).flatMap((s) =>
+      (s.items ?? []).map((i) => i.href)
+    );
+
+  it('shows the access explainer to an org admin and a named-tier holder, with no tier on the item', () => {
+    expect(hrefs(ORG_REACH)).toEqual(['/admin/access']);
+    expect(hrefs({ tiers: ['page_designs'], landing: null })).toEqual(['/admin/access']);
+  });
+
+  it('shows it to nobody the policy admitted to no tier', () => {
+    expect(hrefs({ tiers: [], landing: null })).toEqual([]);
+  });
+
+  it('is in core’s sidebar, so every viewer finds it', () => {
+    render(<AdminSidebar reach={{ tiers: ['page_designs'], landing: null }} orgTierPages={[]} />);
+    expect(screen.getByRole('link', { name: /Who can do what/ })).toHaveAttribute(
+      'href',
+      '/admin/access'
+    );
   });
 });
 

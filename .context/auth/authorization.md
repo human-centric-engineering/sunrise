@@ -155,7 +155,11 @@ and opening a surface is a one-line diff a reviewer sees. The roster lives in
 
 What the tiers below open, for whoever is asking, is said back in plain words
 by the access explainer ([access-explainer.md](./access-explainer.md), §143),
-which reads these declarations and decides nothing.
+which reads these declarations and decides nothing. Its page, `/admin/access`,
+is the one core page outside every tier: `EVERY_VIEWER_ADMIN_PAGES` opens it to
+any viewer the policy admits to some tier (or to the platform), because its
+route answers each of them for themselves. The list is core's and a fork
+cannot add to it (t-1091).
 
 **How a surface declares it:**
 
