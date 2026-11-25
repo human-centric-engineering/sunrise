@@ -1533,7 +1533,7 @@
       "roles": {
         "platformAdmin": {
           "label": "Platform admin",
-          "description": "Runs this install for every organisation. Opens every admin page, including the ones kept for the platform, and is not limited by an organisation's switches."
+          "description": "Runs this install for every organisation, from the install org. There it opens every admin page, including the ones kept for the platform, and is not limited by an organisation's switches. Inside a customer's organisation it has only the role that organisation gave it."
         },
         "support": {
           "label": "Support access",
@@ -1607,7 +1607,7 @@
         "you": {
           "title": "Your access",
           "titleIn": "Your access in {org}",
-          "platform": "You are a platform admin. Every page in this console opens to you.",
+          "platform": "You are a platform admin. From the install org, every page in this console opens to you.",
           "role": "Your role here: {role}",
           "supportEntry": "You are here under support access, not as a member of this organisation.",
           "tiers": "You can open the pages for:",
@@ -1636,7 +1636,7 @@
           "appTitle": "App roles",
           "appIntro": "Roles this app adds. Each opens only the pages listed for it, in the organisation where it is held.",
           "matrixTitle": "What each role can do",
-          "matrixIntro": "Inside one organisation.",
+          "matrixIntro": "For one organisation. A platform admin does these from the install org; inside a customer's organisation, they have only the role that organisation gave them.",
           "perm": {
             "useProduct": "Use the product",
             "openConsole": "Open the admin console",
@@ -1663,7 +1663,8 @@
           "needsTier": "Needs {tier}.",
           "needsSwitch": "Needs {switch}, which this organisation does not have.",
           "needsSwitchUnread": "Needs {switch}. Couldn't check whether this organisation has it.",
-          "closedByPolicy": "Closed to you by this app's own access rules."
+          "closedByPolicy": "Closed to you by this app's own access rules.",
+          "empty": "No pages are listed for you here."
         },
         "switches": {
           "title": "Switches",

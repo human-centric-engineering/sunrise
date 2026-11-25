@@ -1,5 +1,5 @@
 /**
- * Who can do what in the admin console, in plain words (§143).
+ * Roles and access in the admin console, in plain words (§143).
  *
  * Built from the registrations that decide access, never written out by hand:
  * the org roles, the fork's named tiers (`namedAdminTier()`), its entitlement

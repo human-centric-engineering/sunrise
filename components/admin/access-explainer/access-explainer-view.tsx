@@ -223,9 +223,11 @@ type CoreRoleKey = 'user' | 'platform_admin' | 'support' | 'owner' | 'admin' | '
 const MATRIX_ROLES = ['platform_admin', 'owner', 'admin', 'member'] as const;
 
 /**
- * What each role may do inside one organisation. Sunrise's model, stated
- * once: the routes and `lib/tenancy/lifecycle.ts` enforce it, and the
- * view test pins each cell against the rule it restates.
+ * What each role may do for one organisation. Sunrise's model, stated once:
+ * the routes and `lib/tenancy/lifecycle.ts` enforce it, and the view test
+ * pins every cell. A platform admin's column is what they do from the install
+ * org: inside a customer's org the platform role is withheld
+ * (`withholdsPlatformRole()`), and they act as the role that org gave them.
  */
 const PERMISSIONS: ReadonlyArray<{
   key:
@@ -325,7 +327,10 @@ function Roles({ explainer }: AccessExplainerViewProps) {
   const tRoles = useTranslations('admin.access.roles');
   const roles = explainer.roles;
   if (!roles) return null;
-  const held = new Set(roles.filter((role) => role.held).map((role) => role.key));
+  // Core roles only: a named tier may share a core role's key (`support`).
+  const held = new Set(
+    roles.filter((role) => role.held && role.kind !== 'named-tier').map((role) => role.key)
+  );
   const appRoles = roles.filter((role) => role.kind === 'named-tier');
   const core = (
     key: CoreRoleKey,
@@ -349,7 +354,7 @@ function Roles({ explainer }: AccessExplainerViewProps) {
   const orgRows = [core('owner', 'owner'), core('admin', 'admin'), core('member', 'member')];
   const orgLabels = Object.fromEntries(orgRows.map((row) => [row.key, row.label]));
   const appTable = appRoles.length > 0 && (
-    <Section id="app-roles" title={t('roles.appTitle')} intro={t('roles.appIntro')}>
+    <Section id="named-tier-roles" title={t('roles.appTitle')} intro={t('roles.appIntro')}>
       <RoleTable rows={appRoles} t={t} />
     </Section>
   );
@@ -385,9 +390,11 @@ function Roles({ explainer }: AccessExplainerViewProps) {
                 {MATRIX_ROLES.map((key) => (
                   <TableCell key={key} className="text-center">
                     {permission.allowed[key] ? (
-                      <span aria-label={t('roles.yes')}>✓</span>
+                      <span role="img" aria-label={t('roles.yes')}>
+                        ✓
+                      </span>
                     ) : (
-                      <span aria-label={t('roles.no')} className="text-muted-foreground">
+                      <span role="img" aria-label={t('roles.no')} className="text-muted-foreground">
                         –
                       </span>
                     )}
@@ -406,9 +413,11 @@ function Roles({ explainer }: AccessExplainerViewProps) {
 function Areas({ explainer }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
   const areas = explainer.areas;
-  if (!areas || areas.length === 0) return null;
+  if (!areas) return null;
   return (
     <Section id="areas" title={t('areas.title')} intro={t('areas.intro')}>
+      {/* The route sent the section, so say why it lists nothing. */}
+      {areas.length === 0 && <p className="text-muted-foreground text-sm">{t('areas.empty')}</p>}
       {areas.map((area) => (
         <div key={area.key} className="space-y-2 rounded-lg border p-4">
           <h3 className="font-medium">{area.label}</h3>

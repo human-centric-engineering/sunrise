@@ -404,16 +404,6 @@ describe('AccessExplainerView — what the route leaves out', () => {
 });
 
 describe('AccessExplainerView — the role reference (RBAC)', () => {
-  /** The matrix row for a permission, as the cells' accessible names: Yes / No per role. */
-  function matrixRow(permission: string): string[] {
-    const table = screen.getByRole('region', { name: 'What each role can do' });
-    const row = within(table).getByText(permission).closest('tr');
-    expect(row).not.toBeNull();
-    return within(row as HTMLElement)
-      .getAllByLabelText(/^(Yes|No)$/)
-      .map((cell) => cell.getAttribute('aria-label') ?? '');
-  }
-
   it('lays out every platform and organisation role in tables, marking the viewer’s own', () => {
     render(<AccessExplainerView explainer={explainerFor(ORG_OWNER)} orgName="Acme" />);
 
@@ -442,22 +432,48 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
     expect(within(platform).getByRole('cell', { name: 'Platform admin You' })).toBeInTheDocument();
   });
 
-  it('states the rules the routes enforce, column by column: platform admin, owner, admin, member', () => {
+  it('states every rule the routes enforce, column by column: platform admin, owner, admin, member', () => {
     render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
 
-    // Only an org's own OWNER grants support access (lib/tenancy/support-grants.ts).
-    expect(matrixRow('Grant support access')).toEqual(['No', 'Yes', 'No', 'No']);
-    // Anyone the policy admits may end it.
-    expect(matrixRow('End support access')).toEqual(['Yes', 'Yes', 'Yes', 'No']);
-    // Only an OWNER, or a platform admin, confers or touches OWNER (lib/tenancy/lifecycle.ts).
-    expect(matrixRow('Make someone an owner, or change or remove an owner')).toEqual([
-      'Yes',
-      'Yes',
-      'No',
-      'No',
-    ]);
-    expect(matrixRow('Open the admin console')).toEqual(['Yes', 'Yes', 'Yes', 'No']);
-    expect(matrixRow('Create, suspend or erase organisations')).toEqual(['Yes', 'No', 'No', 'No']);
+    const table = screen.getByRole('region', { name: 'What each role can do' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    const matrix = Object.fromEntries(
+      rows.map((row) => {
+        const [permission, ...cells] = within(row).getAllByRole('cell');
+        return [
+          permission.textContent,
+          cells.map((cell) => within(cell).getByRole('img').getAttribute('aria-label')),
+        ];
+      })
+    );
+    expect(matrix).toEqual({
+      'Use the product': ['Yes', 'Yes', 'Yes', 'Yes'],
+      // An org MEMBER is refused by the admin layout.
+      'Open the admin console': ['Yes', 'Yes', 'Yes', 'No'],
+      'Invite people, and change or remove members and admins': ['Yes', 'Yes', 'Yes', 'No'],
+      // Only an OWNER, or a platform admin, confers or touches OWNER (lib/tenancy/lifecycle.ts).
+      'Make someone an owner, or change or remove an owner': ['Yes', 'Yes', 'No', 'No'],
+      "Change the organisation's settings": ['Yes', 'Yes', 'Yes', 'No'],
+      // Only an org's own OWNER grants support access (lib/tenancy/support-grants.ts).
+      'Grant support access': ['No', 'Yes', 'No', 'No'],
+      // Anyone the policy admits may end it.
+      'End support access': ['Yes', 'Yes', 'Yes', 'No'],
+      "Open pages the organisation's switches have turned off": ['Yes', 'No', 'No', 'No'],
+      'Open the pages kept for the platform team': ['Yes', 'No', 'No', 'No'],
+      'Create, suspend or erase organisations': ['Yes', 'No', 'No', 'No'],
+    });
+    // The platform admin's column is from the install org, and the table says so.
+    expect(within(table).getByText(/inside a customer's organisation/)).toBeInTheDocument();
+  });
+
+  it('does not mark a core role as theirs because a named tier shares its key', () => {
+    registerAdminTier('support', { holds: () => true, label: 'Agency support' });
+    render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
+
+    const platform = screen.getByRole('region', { name: 'Platform roles' });
+    expect(within(platform).getByRole('cell', { name: 'Support access' })).toBeInTheDocument();
+    const appRoles = screen.getByRole('region', { name: 'App roles' });
+    expect(within(appRoles).getByRole('cell', { name: 'Agency support You' })).toBeInTheDocument();
   });
 
   it('shows a named-tier holder only their own tiers, not who else may do what', () => {
@@ -469,7 +485,7 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
     expect(heading('What each role can do')).not.toBeInTheDocument();
   });
 
-  it('leaves out a switches or platform-only section with nothing in it', () => {
+  it('leaves out an empty switches or platform-only section, and says why areas list nothing', () => {
     __resetEntitlementRegistryForTests();
     render(
       <AccessExplainerView
@@ -480,6 +496,8 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
 
     expect(heading('Switches')).not.toBeInTheDocument();
     expect(heading('Kept for the platform team')).not.toBeInTheDocument();
-    expect(heading('Pages by area')).not.toBeInTheDocument();
+    // The route sent areas, so the empty section says so rather than vanishing.
+    expect(heading('Pages by area')).toBeInTheDocument();
+    expect(screen.getByText('No pages are listed for you here.')).toBeInTheDocument();
   });
 });

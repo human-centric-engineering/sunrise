@@ -86,7 +86,7 @@ export const API = {
   /** Admin endpoints */
   ADMIN: {
     STATS: '/api/v1/admin/stats',
-    /** Who can do what in the admin console, for the caller (§143) */
+    /** Roles and access in the admin console, for the caller (§143) */
     ACCESS: '/api/v1/admin/access',
     /** Whether the settings that quietly switch features off are set (presence only, #865) */
     CONFIG_HEALTH: '/api/v1/admin/config-health',

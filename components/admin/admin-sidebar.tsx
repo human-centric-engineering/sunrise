@@ -155,9 +155,9 @@ export const coreNavSections: NavSection[] = [
       // (EVERY_VIEWER_ADMIN_PAGES, t-1091), and the sidebar shows it to each.
       {
         href: ACCESS_EXPLAINER_PAGE,
-        label: 'Who can do what',
+        label: 'Roles and access',
         icon: UserCheck,
-        description: 'Who can open each part of this console, and why',
+        description: 'The roles, and what each one can do',
       },
     ],
   },

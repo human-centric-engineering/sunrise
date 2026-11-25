@@ -137,16 +137,20 @@ logged, never an empty page.
 **The role reference.** The `roles` section is drawn as Sunrise's role
 model (RBAC) in tables: the platform roles (User, Platform admin, Support
 access), the organisation roles (Owner, Admin, Member), and a matrix of what
-each may do inside an organisation (`PERMISSIONS` in
+each may do for an organisation (`PERMISSIONS` in
 `access-explainer-view.tsx`). Every core role is shown whatever the tenancy
 mode, because it describes the model, not who holds what; the "You" marks come
 from the response's `held`. The app's named tiers follow as **App roles**. A
 named-tier holder gets the App roles table only, as the route narrows `roles`
 for them. The matrix restates rules the routes and `lib/tenancy/lifecycle.ts`
 enforce (only an OWNER grants support access; only an OWNER or a platform admin
-confers, changes or removes OWNER); the view test pins each of those cells, so
-change both together. Areas, switches and what the platform keeps are tables
-too, and a section with no rows is left out rather than drawn empty.
+confers, changes or removes OWNER); the view test pins every cell, so change
+both together. The platform admin's column is what they do from the install
+org: at `multi`, inside a customer's org the platform role is withheld
+(`withholdsPlatformRole()`) and they act as the role that org gave them, which
+the table's intro says. Areas, switches and what the platform keeps are tables
+too. An empty switches or platform-only section is left out; an empty areas
+section says that no pages are listed for the viewer.
 
 **Who reaches it.** The page is in its own class, `EVERY_VIEWER_ADMIN_PAGES`
 (`lib/auth/admin-tier.ts`): open to every viewer the console admits, which no

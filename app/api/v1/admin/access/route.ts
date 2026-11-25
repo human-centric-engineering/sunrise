@@ -1,5 +1,5 @@
 /**
- * Who can do what in the admin console, for the caller (§143).
+ * Roles and access in the admin console, for the caller (§143).
  *
  * GET /api/v1/admin/access
  *
