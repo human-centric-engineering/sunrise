@@ -64,6 +64,7 @@ import {
   orgTierAdminPages,
 } from '@/lib/auth/org-tier-admin-pages';
 import { registeredEntitlementSwitches } from '@/lib/tenancy/entitlements';
+import { ORG_ROLES } from '@/lib/tenancy/roles';
 import { logger } from '@/lib/logging';
 
 const appInit = createAppInitGate({
@@ -347,9 +348,10 @@ function rolesFor(
   return [
     platform,
     role('support', 'support', 'support', false),
-    role('owner', 'org-role', 'owner', viewer.orgRole === 'OWNER'),
-    role('admin', 'org-role', 'admin', viewer.orgRole === 'ADMIN'),
-    role('member', 'org-role', 'member', viewer.orgRole === 'MEMBER'),
+    // Each org role's words are `admin.access.roles.<role, lower case>`.
+    ...ORG_ROLES.map((orgRole) =>
+      role(orgRole.toLowerCase(), 'org-role', orgRole.toLowerCase(), viewer.orgRole === orgRole)
+    ),
     ...named,
   ];
 }

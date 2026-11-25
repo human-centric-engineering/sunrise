@@ -165,6 +165,29 @@ describe('GET /api/v1/admin/access', () => {
     expect(status).toBe(403);
   });
 
+  it('gives an admin-scoped key held by a platform admin, entered into no org, the platform view', async () => {
+    const { orgId: _none, orgRole: _role, ...unbound } = PLATFORM_ADMIN;
+    const { status, body } = await call({ ...unbound, credential: 'api-key', scopes: ['admin'] });
+
+    expect(status).toBe(200);
+    expect(body.data.audience).toBe('platform');
+    expect(body.data.you).toMatchObject({ orgRole: null, tiers: 'platform' });
+  });
+
+  it('refuses an API key that is not admin-scoped, whoever holds it', async () => {
+    const { status } = await call({ ...ORG_ADMIN, credential: 'api-key', scopes: ['chat'] });
+    expect(status).toBe(403);
+  });
+
+  it('treats an org whose row has gone as switches it could not read', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue(null);
+
+    const { status, body } = await call(ORG_ADMIN);
+
+    expect(status).toBe(200);
+    expect(body.data.you).toMatchObject({ switchesUnreadable: true, switchesOn: null });
+  });
+
   it("says it could not read the org's switches rather than guess", async () => {
     mockPrisma.org.findUnique.mockRejectedValue(new Error('db down'));
 

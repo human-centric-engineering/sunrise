@@ -76,7 +76,7 @@ It is a `withAuth` route, not `withAdminAuth`. No single tier admits all three
 audiences, so the handler asks the policy for the caller's whole reach
 (`adminReachOf()`, the same function behind the admin layout's
 `requestAdminReach()`) and refuses an empty one. An API key is judged as the
-policy judges it: an `admin`-scoped key is the platform's, and a key never takes
+policy judges it: an `admin`-scoped key held by a platform admin is the platform's, and a key never takes
 the org or named-tier arm, so any other key is refused.
 
 ## The app seam
