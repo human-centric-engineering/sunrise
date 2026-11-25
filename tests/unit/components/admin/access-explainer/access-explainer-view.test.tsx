@@ -417,8 +417,8 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
     for (const role of ['Owner', 'Admin', 'Member']) {
       expect(within(org).getByRole('cell', { name: new RegExp(`^${role}`) })).toBeInTheDocument();
     }
-    // An org owner is a User on the platform and the Owner here.
-    expect(within(platform).getByRole('cell', { name: 'User You' })).toBeInTheDocument();
+    // Marked from the response's `held` only: the route sends none for User.
+    expect(within(platform).getByRole('cell', { name: 'User' })).toBeInTheDocument();
     expect(within(org).getByRole('cell', { name: 'Owner You' })).toBeInTheDocument();
     expect(within(org).getByRole('cell', { name: 'Admin' })).toBeInTheDocument();
   });
@@ -430,6 +430,25 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
     expect(within(org).getByRole('cell', { name: 'Member' })).toBeInTheDocument();
     const platform = screen.getByRole('region', { name: 'Platform roles' });
     expect(within(platform).getByRole('cell', { name: 'Platform admin You' })).toBeInTheDocument();
+    // …and says the org roles are not in force on this install.
+    expect(within(org).getByRole('note')).toHaveTextContent(
+      'This install runs single-tenant: only platform admins open the admin console'
+    );
+  });
+
+  it('says nothing of single-tenant at multi', () => {
+    render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
+
+    expect(screen.queryByText(/This install runs single-tenant/)).not.toBeInTheDocument();
+  });
+
+  it('notes under the matrix that an app role opens its pages to a member', () => {
+    render(<AccessExplainerView explainer={explainerFor(ORG_OWNER)} orgName="Acme" />);
+
+    const table = screen.getByRole('region', { name: 'What each role can do' });
+    expect(
+      within(table).getByText("A member who also holds an app role opens that role's pages.")
+    ).toBeInTheDocument();
   });
 
   it('states every rule the routes enforce, column by column: platform admin, owner, admin, member', () => {

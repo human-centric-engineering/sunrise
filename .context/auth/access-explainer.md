@@ -149,8 +149,13 @@ both together. The platform admin's column is what they do from the install
 org: at `multi`, inside a customer's org the platform role is withheld
 (`withholdsPlatformRole()`) and they act as the role that org gave them, which
 the table's intro says. Areas, switches and what the platform keeps are tables
-too. An empty switches or platform-only section is left out; an empty areas
-section says that no pages are listed for the viewer.
+too. An empty switches or platform-only section is left out, since a line saying
+an install has none was noise the page was rewritten to remove; an empty areas
+section says that no pages are listed for the viewer, since there the gap is
+about them. At `single` (the response's `tenancy`) the organisation-roles table
+carries a note that only platform admins open the console and there is no
+support access, so the model is described without claiming it is in force. The
+User row is never marked "You": the route sends no `held` for it.
 
 **Who reaches it.** The page is in its own class, `EVERY_VIEWER_ADMIN_PAGES`
 (`lib/auth/admin-tier.ts`): open to every viewer the console admits, which no

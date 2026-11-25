@@ -346,13 +346,26 @@ function Roles({ explainer }: AccessExplainerViewProps) {
       key: 'user',
       label: t('roles.user.label'),
       description: t('roles.user.description'),
-      held: explainer.audience !== 'platform' && !held.has('support'),
+      // The route sends no `held` for it, so it is not marked.
+      held: false,
     },
     core('platform_admin', 'platformAdmin'),
     core('support', 'support'),
   ];
   const orgRows = [core('owner', 'owner'), core('admin', 'admin'), core('member', 'member')];
-  const orgLabels = Object.fromEntries(orgRows.map((row) => [row.key, row.label]));
+  const columnLabels: Record<(typeof MATRIX_ROLES)[number], string> = {
+    platform_admin: tRoles('platformAdmin.label'),
+    owner: tRoles('owner.label'),
+    admin: tRoles('admin.label'),
+    member: tRoles('member.label'),
+  };
+  // At `single` no org role opens the console and no support grant exists:
+  // the tables describe the model, and this says it is not in force here.
+  const singleTenant = explainer.tenancy === 'single' && (
+    <p role="note" className="text-sm">
+      {t('roles.singleTenant')}
+    </p>
+  );
   const appTable = appRoles.length > 0 && (
     <Section id="named-tier-roles" title={t('roles.appTitle')} intro={t('roles.appIntro')}>
       <RoleTable rows={appRoles} t={t} />
@@ -367,6 +380,7 @@ function Roles({ explainer }: AccessExplainerViewProps) {
         <RoleTable rows={platformRows} t={t} />
       </Section>
       <Section id="org-roles" title={t('roles.orgTitle')} intro={t('roles.orgIntro')}>
+        {singleTenant}
         <RoleTable rows={orgRows} t={t} />
       </Section>
       <Section id="permissions" title={t('roles.matrixTitle')} intro={t('roles.matrixIntro')}>
@@ -376,7 +390,7 @@ function Roles({ explainer }: AccessExplainerViewProps) {
               <TableHead>{t('roles.colPermission')}</TableHead>
               {MATRIX_ROLES.map((key) => (
                 <TableHead key={key} className="text-center">
-                  {key === 'platform_admin' ? platformRows[1].label : orgLabels[key]}
+                  {columnLabels[key]}
                 </TableHead>
               ))}
             </TableRow>
@@ -404,6 +418,9 @@ function Roles({ explainer }: AccessExplainerViewProps) {
             ))}
           </TableBody>
         </Table>
+        {appRoles.length > 0 && (
+          <p className="text-muted-foreground text-sm">{t('roles.matrixAppRoles')}</p>
+        )}
       </Section>
       {appTable}
     </>

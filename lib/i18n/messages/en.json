@@ -1636,7 +1636,7 @@
           "appTitle": "App roles",
           "appIntro": "Roles this app adds. Each opens only the pages listed for it, in the organisation where it is held.",
           "matrixTitle": "What each role can do",
-          "matrixIntro": "For one organisation. A platform admin does these from the install org; inside a customer's organisation, they have only the role that organisation gave them.",
+          "matrixIntro": "For one organisation, when the install runs multi-tenant. A platform admin does these for customer organisations from the install org; inside a customer's organisation they have only the role it gave them. Roles in the install org itself follow the platform role.",
           "perm": {
             "useProduct": "Use the product",
             "openConsole": "Open the admin console",
@@ -1648,7 +1648,9 @@
             "switchesOff": "Open pages the organisation's switches have turned off",
             "platformPages": "Open the pages kept for the platform team",
             "manageOrgs": "Create, suspend or erase organisations"
-          }
+          },
+          "singleTenant": "This install runs single-tenant: only platform admins open the admin console, and there is no support access. These roles take effect when it runs multi-tenant.",
+          "matrixAppRoles": "A member who also holds an app role opens that role's pages."
         },
         "areas": {
           "title": "Pages by area",
