@@ -75,6 +75,26 @@ describe('AccessExplainerPage', () => {
     expect(screen.queryByRole('heading', { name: 'Pages by area' })).not.toBeInTheDocument();
   });
 
+  it('leaves the org’s name out, not the page, when the org cannot be read', async () => {
+    vi.mocked(requestActingOrg).mockRejectedValue(new Error('db down'));
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(ORG_VIEW));
+
+    render(await AccessExplainerPage());
+
+    expect(screen.getByRole('heading', { name: 'Your access' })).toBeInTheDocument();
+    expect(screen.getByText('Your role here: Admin')).toBeInTheDocument();
+  });
+
+  it('does not look the org up at single, where there is one', async () => {
+    env.TENANCY_MODE = 'single';
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(ORG_VIEW));
+
+    render(await AccessExplainerPage());
+
+    expect(requestActingOrg).not.toHaveBeenCalled(); // test-review:accept no_arg_called — at single the page must not read the org;
+    expect(screen.getByRole('heading', { name: 'Your access' })).toBeInTheDocument();
+  });
+
   it('names no org to a platform admin', async () => {
     vi.mocked(serverFetch).mockResolvedValue(
       apiSuccess({

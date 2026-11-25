@@ -46,7 +46,7 @@ vi.mock('@/components/admin/members/member-invite-form', () => ({
   },
 }));
 
-import MembersPage from '@/app/admin/members/page';
+import MembersPage, { generateMetadata } from '@/app/admin/members/page';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -94,6 +94,12 @@ describe('MembersPage', () => {
       'href',
       '/admin/access'
     );
+  });
+
+  it('takes its title from the catalogue', async () => {
+    const metadata = await generateMetadata();
+
+    expect(metadata.title).toBe('Members');
   });
 
   it('points to Users in the install org, and only there', async () => {
