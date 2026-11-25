@@ -410,7 +410,7 @@ function buildInUseMessage(
     appUses === 0
       ? ''
       : appMoves
-        ? ' Moving the model’s uses moves the app’s uses too.'
+        ? ' Moving the model’s uses moves the app’s uses too, except in a suspended organisation or one whose own key cannot use the replacement.'
         : ' The app moves its own uses itself.';
   return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.${appNote}`;
 }

@@ -195,14 +195,24 @@ const pinSchema = z.object({
 const pinsSchema = z.array(pinSchema).max(MAX_PINS_PER_ORG);
 
 /**
- * Not capped like a report: the mover's writes have already happened in the
- * org's transaction, so a cap would roll back a move that worked, and fail
- * the same way on every retry. The counts are kept whole; the audit names
- * only the first few (`move.ts`).
+ * A label as the mover gave it, clipped to fit rather than refused: its
+ * writes have already happened in the org's transaction, so refusing a label
+ * would roll back a move that worked, and fail the same way on every retry.
+ */
+function clipped(max: number) {
+  return z.string().transform((text) => text.trim().slice(0, max) || '(unnamed)');
+}
+
+/**
+ * Checked for its shape only, for the same reason: not capped like a report,
+ * and its labels clipped. The counts are kept whole; the audit names only the
+ * first few (`move.ts`).
  */
 const moveAnswerSchema = z.object({
-  moved: z.array(pinSchema),
-  left: z.array(pinSchema.extend({ reason: z.string().trim().min(1).max(500) })).optional(),
+  moved: z.array(z.object({ label: clipped(200), where: clipped(500) })),
+  left: z
+    .array(z.object({ label: clipped(200), where: clipped(500), reason: clipped(500) }))
+    .optional(),
 });
 
 const answerSchema = z.discriminatedUnion('allow', [
@@ -258,6 +268,16 @@ const appInit = createAppInitGate({
     initFailed = true;
   },
 });
+
+/**
+ * Whether `report` counted every pin the app's mover may move: a reporter is
+ * registered and its report did not fail. When it did not, a move asks the
+ * mover in every org it enters, and the preview and the uses say so.
+ */
+export function appModelPinsCounted(report: AppModelPinReport): boolean {
+  appInit.ensure();
+  return reporter !== null && !report.failed;
+}
 
 /** What the app registered. Runs the fork's init first. */
 export function appModelPinsRegistered(): {

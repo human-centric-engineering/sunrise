@@ -1544,7 +1544,42 @@ describe('the app’s mover (t-1088)', () => {
     const result = await moveModelUses(await target(), ACTOR);
 
     expect(result.orgs[0]).toMatchObject({ orgId: 'org-a', status: 'skipped' });
+    expect(result.orgs[0].reason).toMatch(
+      /The app’s own uses here were not counted, so some may be left on the model\.$/
+    );
     expect(result.totals.skipped).toBe(1);
+  });
+
+  it('with a check and a mover but no reporter, asks the mover in an org with only the app’s pins', async () => {
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-b');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-b');
+    registerModelMoveCheck(() => ({ allow: true }));
+    const seen = registerMover(); // no reporter: no org's count is known
+
+    const preview = await previewModelMove(await target());
+    expect(preview.app).toMatchObject({ mover: true, uncounted: true });
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    // What the preview promised: the mover is asked in every org entered.
+    expect(seen.map((s) => s.orgId)).toEqual(['org-a', 'org-b']);
+    expect(result.orgs.find((o) => o.orgId === 'org-b')).toMatchObject({
+      status: 'moved',
+      appPins: { moved: 2, left: 1 },
+    });
+  });
+
+  it('clips a mover’s overlong labels rather than rolling back the org', async () => {
+    registerMover({
+      'org-a': () => ({ moved: [{ label: `  ${'x'.repeat(250)}  `, where: ' ' }] }),
+    });
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(result.orgs[0]).toMatchObject({ orgId: 'org-a', status: 'moved' });
+    expect(agent('ag-a1').model).toBe('gpt-4.1');
+    const row = audit.find((r) => r.action === 'app.model_pins_moved' && r.scope === 'org-a');
+    expect(row?.metadata?.movedPins).toEqual([{ label: 'x'.repeat(200), where: '(unnamed)' }]);
   });
 
   it('lists an org skipped for its own key when the reporter counts the app’s pins there', async () => {

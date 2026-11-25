@@ -171,7 +171,7 @@ function AppUses({ uses }: { uses: ProviderModelUsesData }) {
         <p className="text-muted-foreground text-xs">
           {uses.appPinsMovable
             ? elsewhere > 0
-              ? 'The app moves these when the model’s uses are moved, except in a suspended organisation.'
+              ? 'The app moves these when the model’s uses are moved, except in an organisation the move skips: a suspended one, or one whose own key cannot use the replacement.'
               : 'The app moves these when the model’s uses are moved.'
             : 'The app sets these itself, so moving the model’s uses does not change them.'}
         </p>

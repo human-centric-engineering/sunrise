@@ -33,6 +33,7 @@ import {
   APP_MODEL_PIN_REPORT_TIMEOUT_MS,
   __resetAppModelPinsForTests,
   AppModelPinMoveError,
+  appModelPinsCounted,
   appModelPinsRegistered,
   checkAppModelMove,
   moveAppModelPins,
@@ -409,6 +410,24 @@ describe('the mover (t-1088)', () => {
     });
   });
 
+  it('clips labels that do not fit, rather than rolling back a move that worked', async () => {
+    registerModelPinMover(() => ({
+      moved: [{ label: `  ${'a'.repeat(250)}  `, where: '   ' }],
+      left: [{ label: 'b', where: 'c', reason: 'r'.repeat(600) }],
+    }));
+    expect(await moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a')).toEqual({
+      moved: [{ label: 'a'.repeat(200), where: '(unnamed)' }],
+      left: [{ label: 'b', where: 'c', reason: 'r'.repeat(500) }],
+    });
+  });
+
+  it('counts the mover’s pins only with a reporter whose report did not fail', () => {
+    expect(appModelPinsCounted({ pins: [], failed: false })).toBe(false);
+    registerModelPinReporter(() => []);
+    expect(appModelPinsCounted({ pins: [], failed: false })).toBe(true);
+    expect(appModelPinsCounted({ pins: [], failed: true })).toBe(false);
+  });
+
   it('reads an answer with no `left` as nothing left', async () => {
     registerModelPinMover(() => ({ moved: [] }));
     expect(await moveAppModelPins(TX, MODEL, REPLACEMENT, 'org-a')).toEqual({
@@ -425,7 +444,7 @@ describe('the mover (t-1088)', () => {
       },
     ],
     ['answers nothing', () => undefined],
-    ['answers a pin with no label', () => ({ moved: [{ label: ' ', where: 'x' }] })],
+    ['answers a pin with no label', () => ({ moved: [{ where: 'x' }] })],
     ['leaves a pin with no reason', () => ({ moved: [], left: [{ label: 'a', where: 'b' }] })],
   ])('fails closed when it %s, so the org rolls back', async (_, mover) => {
     registerModelPinMover(mover as never);

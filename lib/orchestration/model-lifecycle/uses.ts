@@ -44,6 +44,7 @@ import {
 } from '@/lib/orchestration/model-lifecycle/settings-pins';
 import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
 import {
+  appModelPinsCounted,
   appModelPinsRegistered,
   reportAppModelPins,
   type AppModelPin,
@@ -109,7 +110,7 @@ async function appUses(
     otherOrgAppPins: report.pins.length - own.length,
     appPinsUnavailable: report.failed,
     appPinsMovable: registered.mover,
-    appPinsUncounted: registered.mover && (!registered.reporter || report.failed),
+    appPinsUncounted: registered.mover && !appModelPinsCounted(report),
   };
 }
 

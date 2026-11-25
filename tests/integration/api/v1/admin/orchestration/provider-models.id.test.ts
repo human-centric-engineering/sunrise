@@ -1552,7 +1552,7 @@ describe('the app’s own uses of the model (§136 t-1067)', () => {
     expect(response.status).toBe(409);
     const body = await parseJson<{ error: { message: string } }>(response);
     expect(body.error.message).toBe(
-      'Cannot delete model "Claude Opus 4" — 1 use the app reports still references it. Re-point them to a different model first. Moving the model’s uses moves the app’s uses too.'
+      'Cannot delete model "Claude Opus 4" — 1 use the app reports still references it. Re-point them to a different model first. Moving the model’s uses moves the app’s uses too, except in a suspended organisation or one whose own key cannot use the replacement.'
     );
     expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
   });

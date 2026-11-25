@@ -110,6 +110,7 @@ import {
 import {
   APP_MODEL_PIN_MOVE_TIMEOUT_MS,
   AppModelPinMoveError,
+  appModelPinsCounted,
   appModelPinsRegistered,
   checkAppModelMove,
   moveAppModelPins,
@@ -521,7 +522,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
       pinsUnavailable: app.report.failed,
       refused: app.verdict.allowed ? null : app.verdict.reason,
       mover: registered.mover,
-      uncounted: registered.mover && (!registered.reporter || app.report.failed),
+      uncounted: registered.mover && !appModelPinsCounted(app.report),
     },
   };
 }
@@ -877,8 +878,13 @@ async function moveOrg(
     }
     if (keyProblem) {
       // Listed as skipped: an org with nothing of the platform's here reaches
-      // this only when the app may have pins here (counted, or not known).
-      return { ...base, status: 'skipped', reason: keyProblem, agents: 0, workflows: 0 };
+      // this only when the app may have pins here (counted, or not known),
+      // and its reason says which.
+      const reason =
+        usesSomething(uses) || app.reported !== null
+          ? keyProblem
+          : `${keyProblem} The app’s own uses here were not counted, so some may be left on the model.`;
+      return { ...base, status: 'skipped', reason, agents: 0, workflows: 0 };
     }
     let writes: OrgWrites;
     try {
@@ -996,6 +1002,9 @@ export async function moveModelUses(
   const asked =
     app.check || app.failed || (app.mover && app.reporter) ? await askApp(target, 'move') : null;
   const verdict: AppMoveVerdict = asked?.verdict ?? { allowed: true };
+  // The same rule as the preview's `uncounted`: with no reporter, or a failed
+  // report, no org's count is known and the mover is asked in each.
+  const counted = asked !== null && appModelPinsCounted(asked.report);
   if (!verdict.allowed) {
     logger.warn('Model move refused by the app', {
       providerModelId: target.model.id,
@@ -1024,7 +1033,7 @@ export async function moveModelUses(
   for (const pass of passes) {
     const result = await moveOrg(pass, target, keyProblems.get(pass.orgId) ?? null, actor, {
       mover: app.mover,
-      reported: asked && !asked.report.failed ? (asked.perOrg.get(pass.orgId) ?? 0) : null,
+      reported: counted && asked ? (asked.perOrg.get(pass.orgId) ?? 0) : null,
     });
     if (result) orgs.push(result);
   }

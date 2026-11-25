@@ -272,7 +272,7 @@ describe('the app’s own uses (§136 t-1067)', () => {
     cleanup();
     const elsewhere = column(panel({ otherOrgAppPins: 2, appPinsMovable: true }), 'In the app');
     expect(elsewhere).toHaveTextContent(
-      'The app moves these when the model’s uses are moved, except in a suspended organisation.'
+      'The app moves these when the model’s uses are moved, except in an organisation the move skips: a suspended one, or one whose own key cannot use the replacement.'
     );
   });
 

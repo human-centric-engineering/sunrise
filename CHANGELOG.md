@@ -50,7 +50,7 @@ release process.
   #1321).** `lib/orchestration/model-lifecycle/app-pins.ts` gains a third
   registration beside the reporter and the check: `registerModelPinMover()`
   (with `AppModelPinMover`, `AppModelPinMoveRequest`, `AppModelPinMoveAnswer`,
-  `AppModelPinLeft` and `APP_MODEL_PIN_MOVE_TIMEOUT_MS`). The move asks it
+  `AppModelPinLeft`, `APP_MODEL_PIN_MOVE_TIMEOUT_MS` and `appModelPinsCounted()`). The move asks it
   `{ model, replacement, orgId, tx, signal }` once per org it enters, in that
   org's scope and inside the org's own transaction, after erasure's locks and
   before any row is written, so the org's app pins, agents and workflows move
