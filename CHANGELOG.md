@@ -44,6 +44,23 @@ release process.
   replaced it, and the maintenance bypass reads that. See
   [support-access.md](./.context/tenancy/support-access.md#a-platform-admin-who-is-a-member-t-1032).
 
+- **The workflow builder canvas is on `@xyflow/react` 13, and Dependabot's
+  open PRs are taken (t-1099).** `@xyflow/react` moves from 12.12 to 13, which
+  needs React 18 or later and brings zustand 5. The one change Sunrise needed:
+  the canvas's `colorMode` prop is now `forceColorMode`. 13 follows the system
+  colour scheme by default, so the prop is what keeps the canvas on the app's
+  own light or dark theme. **What a fork checks:** React Flow code of your own
+  meets 13's breaking changes. `useStore` is replaced by `useNodesStore`,
+  `useEdgesStore`, `useViewportStore` and the other per-slice stores.
+  `useHandleConnections` and `getHandleConnections` are gone; use
+  `getNodeConnections`. `nodeClickDistance` and `paneClickDistance` are gone.
+  Numbers in `fitViewOptions.padding` are now pixels. The styles now sit in
+  `@layer xyflow`. `@testing-library/jest-dom` moves to 8, which supports
+  vitest 5 only. The `@typescript-eslint/typescript-estree@8` → `minimatch`
+  override (t-1027) is removed, because typescript-estree 8.74.0 now takes
+  `minimatch ^11.0.1` itself. If your fork has its own `overrides` block, drop
+  that entry when you merge.
+
 ### Added
 
 - **Who can do what: the access explainer page (§143 t-1091).** `/admin/access`

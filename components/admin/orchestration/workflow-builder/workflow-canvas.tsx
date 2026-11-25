@@ -106,7 +106,7 @@ export function WorkflowCanvas({
         onConnect={onConnect}
         onNodeClick={(_, node) => onNodeClick(node.id)}
         onPaneClick={() => onNodeClick(null)}
-        colorMode={isDark ? 'dark' : 'light'}
+        forceColorMode={isDark ? 'dark' : 'light'}
         snapToGrid
         snapGrid={[16, 16]}
         fitView

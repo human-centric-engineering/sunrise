@@ -14,7 +14,7 @@ Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand
 - `components/admin/orchestration/executions-table.tsx` — executions list client island
 - `lib/orchestration/engine/step-registry.ts` — single source of truth for pattern step metadata
 
-**Dependency:** `@xyflow/react` (React Flow 12). First React Flow usage in the repo; the canvas / node-type / handle patterns established here will be reused by any future diagram UI.
+**Dependency:** `@xyflow/react` (React Flow 13). First React Flow usage in the repo; the canvas / node-type / handle patterns established here will be reused by any future diagram UI.
 
 ## Pages
 
@@ -35,7 +35,7 @@ All three are async server components. The list page loads `API.ADMIN.ORCHESTRAT
 ├──────────┬────────────────────────────────────┬─────────────────────┤
 │          │                                    │                     │
 │ Pattern  │           Workflow Canvas          │   ConfigPanel       │
-│ Palette  │         (React Flow 12)            │  (shown on select)  │
+│ Palette  │         (React Flow 13)            │  (shown on select)  │
 │ 240px    │              flex-1                │       320px         │
 │          │                                    │                     │
 │  Agents  │        [llm_call]→[route]          │  Step type badge    │
