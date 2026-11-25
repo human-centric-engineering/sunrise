@@ -96,6 +96,9 @@ export function prepareRetryStep(
         currentStep,
         errorMessage: null,
         completedAt: null,
+        // The failed run's walk position is stale once the trace is cut back.
+        // Cleared so the resume does not read it as an approval pause's.
+        walkState: Prisma.DbNull,
       },
     });
     if (updated.count === 0) {

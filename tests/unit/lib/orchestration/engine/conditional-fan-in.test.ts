@@ -514,7 +514,10 @@ describe('a join behind a branch not taken, across a resume or a fallback (t-107
     ],
   });
 
-  /** The position the paused step's iteration saved as it began. */
+  /**
+   * The position the paused step's iteration saved as it began. Approving the
+   * pause sets the row PENDING and keeps it.
+   */
   const pausedAt = (inFlight: string[], visited: string[], untaken?: string[]) => ({
     v: 1,
     inFlight,
@@ -533,7 +536,7 @@ describe('a join behind a branch not taken, across a resume or a fallback (t-107
     const [pick, a, hold] = definition.steps;
 
     const events = await resume(definition, [pick, a, hold], {
-      status: 'paused_for_approval',
+      status: 'pending',
       currentStep: 'hold',
       walkState: pausedAt(['hold'], ['pick', 'a', 'hold'], ['b']),
     });
@@ -547,7 +550,7 @@ describe('a join behind a branch not taken, across a resume or a fallback (t-107
     const [pick, a, hold] = definition.steps;
 
     const events = await resume(definition, [pick, a, hold], {
-      status: 'paused_for_approval',
+      status: 'pending',
       currentStep: 'hold',
       walkState: pausedAt(['a'], ['pick', 'a'], ['b']),
     });
@@ -582,7 +585,7 @@ describe('a join behind a branch not taken, across a resume or a fallback (t-107
     const ran = definition.steps.filter((s) => ['fan', 'a', 'b', 'hold', 'c'].includes(s.id));
 
     const events = await resume(definition, ran, {
-      status: 'paused_for_approval',
+      status: 'pending',
       currentStep: 'hold',
       walkState: pausedAt(['hold', 'c'], ['fan', 'a', 'b', 'hold', 'c'], []),
     });
@@ -695,6 +698,43 @@ describe('a join behind a branch not taken, across a resume or a fallback (t-107
     // Attempt 1's check saw spare untaken; attempt 2 starts with it open.
     expect(positions.some((w) => w.untaken?.includes('spare'))).toBe(true);
     expect(starts[1].untaken).not.toContain('spare');
+  });
+
+  it('runs a join again after a retry that cleared it through an untaken branch', async () => {
+    // s → x → join, s → pick; pick → a | b, b → join; a → check, which
+    // retries pick once. Attempt 1: pick takes a, b is untaken, and the join
+    // runs on x. The retry clears b and, through it, the join, though x
+    // (which reached it) does not run again. The join must run again in
+    // attempt 2 rather than be marked untaken.
+    let checkCalls = 0;
+    registerStepType('guard', guardStub({ check: () => (++checkCalls === 1 ? 'fail' : 'pass') }));
+
+    const events = await run({
+      entryStepId: 's',
+      errorStrategy: 'fail',
+      steps: [
+        step('s', 'llm_call', [{ targetStepId: 'x' }, { targetStepId: 'pick' }]),
+        step('x', 'llm_call', [{ targetStepId: 'join' }]),
+        step('pick', 'route', [
+          { targetStepId: 'a', condition: 'a' },
+          { targetStepId: 'b', condition: 'b' },
+        ]),
+        step('a', 'llm_call', [{ targetStepId: 'check' }]),
+        step('b', 'llm_call', [{ targetStepId: 'join' }]),
+        step('check', 'guard', [
+          { targetStepId: 'pick', condition: 'fail', maxRetries: 1 },
+          { targetStepId: 'done', condition: 'pass' },
+        ]),
+        step('join', 'llm_call'),
+        step('done', 'llm_call'),
+      ],
+    });
+
+    const order = started(events);
+    expect(order.filter((id) => id === 'pick')).toHaveLength(2);
+    expect(order.filter((id) => id === 'join')).toHaveLength(2);
+    expect(order).not.toContain('b');
+    expect(terminal(events).type).toBe('workflow_completed');
   });
 
   it('runs the join once the step that could fall back has run without falling back', async () => {

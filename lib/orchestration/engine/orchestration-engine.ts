@@ -633,11 +633,27 @@ export class OrchestrationEngine {
               }
             }
           }
+          // A visited step cleared only through untaken steps was reached by
+          // a step outside the clear, which will not run again to reach it:
+          // it waits again as pending, so it runs once its other inputs settle
+          // rather than being marked untaken.
+          const stillReached = [...toClear].filter((clearId) => {
+            if (clearId === id || !visited.has(clearId)) return false;
+            const preds = inDegree.get(clearId);
+            if (!preds) return false;
+            let reachedFromOutside = false;
+            for (const pred of preds) {
+              if (toClear.has(pred) && visited.has(pred)) return false;
+              if (!toClear.has(pred) && visited.has(pred)) reachedFromOutside = true;
+            }
+            return reachedFromOutside;
+          });
           for (const clearId of toClear) {
             visited.delete(clearId);
             pending.delete(clearId);
             untaken.delete(clearId);
           }
+          for (const clearId of stillReached) pending.add(clearId);
 
           queue.push(id);
 
@@ -2430,11 +2446,12 @@ export class OrchestrationEngine {
       // orphan resume then takes the cursor path, which is right for them.
       const resumePosition = reason === 'orphan-resume' ? parseWalkPosition(row.walkState) : null;
       // An approval pause leaves the position its step's iteration saved as it
-      // began. Its `untaken` is what the live walk had settled by then, so the
-      // resume can use it (t-1077); the rest of it is stale. Only a position
-      // that is the paused step's own, so never one from an earlier pause.
-      const pausePosition =
-        row.status === WorkflowStatus.PAUSED_FOR_APPROVAL ? parseWalkPosition(row.walkState) : null;
+      // began, and approving it (which sets the row PENDING) keeps it. Its
+      // `untaken` is what the live walk had settled by then, so the resume can
+      // use it (t-1077); the rest of it is stale. Retry-from-step clears the
+      // failed run's position, so a position on a fresh resume is a pause's.
+      // Only one that is the paused step's own, never an earlier pause's.
+      const pausePosition = reason === 'fresh-resume' ? parseWalkPosition(row.walkState) : null;
       const resumeUntaken =
         pausePosition && row.currentStep && pausePosition.inFlight.includes(row.currentStep)
           ? (pausePosition.untaken ?? [])
@@ -3230,7 +3247,7 @@ function forwardTargets(step: WorkflowStep): string[] {
  * The reason a step whose own work failed still fails the run with, when its
  * error strategy skips it (or falls back with no fallback step): a
  * `send_notification` marked `terminalStatus: 'failed'` ends its branch as a
- * failed run whatever happens to its send (t-1078). The executor's own reason
+ * failed run whether or not its send works (t-1078). The executor's own reason
  * (from the notice body) when it gave one; otherwise the error itself, which
  * covers a step timeout and anything thrown before the executor could add it.
  * A cancelled run's abort is left alone, so the run still ends as cancelled.

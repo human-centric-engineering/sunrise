@@ -133,11 +133,13 @@ export class ExecutorError extends Error {
   public readonly tokensUsed: number;
   public readonly costUsd: number;
   /**
-   * Set by a step that ends its branch as a failed run whatever happens to it
-   * — a `send_notification` with `terminalStatus: 'failed'` whose send failed
-   * (t-1078). The step's own failure reason, which the engine still fails the
-   * run with when the step's `skip` strategy swallows this error. Unset, a
-   * skipped step lets the run carry on as before.
+   * Set by a step that ends its branch as a failed run whether its own work
+   * succeeds or fails — a `send_notification` with `terminalStatus: 'failed'`
+   * whose send failed (t-1078). The step's own failure reason, which the
+   * engine still fails the run with when the step's `skip` strategy (or
+   * `fallback` with no `fallbackStepId`) swallows this error. A fallback step
+   * takes the branch over instead. Unset, a skipped step lets the run carry on
+   * as before.
    */
   public readonly failWorkflow?: string;
 

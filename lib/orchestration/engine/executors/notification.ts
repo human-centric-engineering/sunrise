@@ -117,8 +117,9 @@ function deriveFailureReason(body: string): string {
  * whether or not its notice goes out (t-1078). So a send that fails carries
  * the step's reason on its error: under `errorStrategy: 'skip'` the engine
  * skips the step, keeps the delivery error in the trace and still fails the
- * run with that reason, as it would after a send that worked. A cancelled
- * run's abort is left alone, so the run still ends as cancelled.
+ * run with that reason, as it would after a send that worked. A
+ * `fallbackStepId` takes the branch over instead. A cancelled run's abort is
+ * left alone, so the run still ends as cancelled.
  */
 function endsRunFailed(
   err: unknown,
