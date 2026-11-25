@@ -246,6 +246,14 @@ auth request, shared by every hook that request runs. It is also how an
 OAuth-accepted invitation's org reaches the after hook, since the before hook
 consumes the invitation row.
 
+That store only works if `lib/auth/pending-signup.ts` and better-auth's hooks
+resolve the same copy of `@better-auth/core`. A second, nested copy gives the
+hooks a different store, and the carrier reads back `null` with no error. So
+`package.json` pins `better-auth` and `@better-auth/core` exactly and equal,
+and `tests/unit/lib/auth/better-auth-single-core.test.ts` fails a lockfile that
+holds two cores, or a root core at a different version from better-auth
+(t-1081).
+
 **The seeded config-owner — the seed.** `prisma/seeds/001-system-owner.ts`
 upserts the SERVICE owner with Prisma directly, bypassing the hook, and on a
 _fresh_ database it runs _after_ the migration — so the backfill never saw it.

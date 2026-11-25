@@ -301,6 +301,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'every sign-in.',
   },
   {
+    path: 'tests/unit/lib/auth/better-auth-single-core.test.ts',
+    reason:
+      'reads `package.json` and `package-lock.json` and fails when `better-auth` and ' +
+      '`@better-auth/core` are not pinned equal, or when a second core is nested anywhere. ' +
+      'A second core gives the signup hooks a different request-state store, so an invited ' +
+      'user lands without their invitation (t-1081). A lockfile edit reaches no test through the module graph.',
+  },
+  {
     path: 'tests/unit/app/layout-metadata.test.ts',
     reason:
       'walks `app/` off disk to derive the route modules it checks for a leaked ' +
