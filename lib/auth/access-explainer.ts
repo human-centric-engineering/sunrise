@@ -75,9 +75,11 @@ import { logger } from '@/lib/logging';
 const appInit = createAppInitGate({
   label: 'access-explainer: initAppAccessExplainer',
   // With the init rolled back the explainer still shows every registration
-  // that decides access, in Sunrise's own words and grouping.
+  // that decides access, in Sunrise's own words and grouping. The permission
+  // table is the exception: the app's restatements are gone with the rest,
+  // and core's cells may not be what its policy does, so it is not sent.
   subject:
-    "the app's access-explainer areas, platform-only surfaces, section audiences and sections",
+    "the app's access-explainer areas, platform-only surfaces, section audiences, sections and permission rows",
   init: initAppAccessExplainer,
   snapshot: snapshotAccessExplainerRegistry,
   restore: restoreAccessExplainerRegistry,
@@ -87,6 +89,11 @@ const appInit = createAppInitGate({
 export function accessExplainerRegistrations(): AccessExplainerRegistrations {
   appInit.ensure();
   return snapshotAccessExplainerRegistry();
+}
+
+/** Whether the app's explainer init threw and was rolled back. */
+function appInitFailed(): boolean {
+  return appInit.ensure() === 'failed';
 }
 
 /** Test-only: clear the app's registrations and re-arm the one-shot init. */
@@ -180,8 +187,12 @@ export interface AccessRoleModelView {
   readonly orgRoles: readonly AccessModelRoleView[];
   /** The permission table's columns, in order, with each role's name. */
   readonly columns: readonly { readonly key: AccessPermissionRole; readonly label: string }[];
-  /** Core's rows (less any the app left out), then the app's. */
-  readonly permissions: readonly AccessPermissionView[];
+  /**
+   * Core's rows (less any the app left out), then the app's. `null` when the
+   * app's explainer init failed and was rolled back: its restatements went
+   * with it, so core's cells may claim what its policy does not do.
+   */
+  readonly permissions: readonly AccessPermissionView[] | null;
 }
 
 /** One entitlement switch, as the explainer shows it. */
@@ -437,14 +448,21 @@ function humanise(name: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-/** Each org role's catalogue name: `admin.access.roles.<name>`. */
-const ROLE_CATALOGUE: Readonly<Record<string, string>> = {
+/** Each core role's catalogue name, by its key: `admin.access.roles.<name>`. */
+const ROLE_CATALOGUE: Readonly<Record<AccessPermissionRole | 'user' | 'support', string>> = {
   user: 'user',
   platform_admin: 'platformAdmin',
   support: 'support',
   owner: 'owner',
   admin: 'admin',
   member: 'member',
+};
+
+/** Each org role's model key. A Record over `OrgRole`, so a new role fails type-check here. */
+const ORG_ROLE_KEYS: Readonly<Record<(typeof ORG_ROLES)[number], 'owner' | 'admin' | 'member'>> = {
+  OWNER: 'owner',
+  ADMIN: 'admin',
+  MEMBER: 'member',
 };
 
 function roleModelFor(
@@ -454,7 +472,7 @@ function roleModelFor(
   text: (value: AdminText) => string,
   t: AccessTranslator
 ): AccessRoleModelView {
-  const role = (key: string, held: boolean): AccessModelRoleView => ({
+  const role = (key: keyof typeof ROLE_CATALOGUE, held: boolean): AccessModelRoleView => ({
     key,
     label: t(`admin.access.roles.${ROLE_CATALOGUE[key]}.label`),
     description: t(`admin.access.roles.${ROLE_CATALOGUE[key]}.description`),
@@ -489,12 +507,12 @@ function roleModelFor(
       role('platform_admin', platformAdmin),
       role('support', viewer.supportEntry),
     ],
-    orgRoles: ORG_ROLES.map((orgRole) => role(orgRole.toLowerCase(), orgRoleHeld(orgRole))),
+    orgRoles: ORG_ROLES.map((orgRole) => role(ORG_ROLE_KEYS[orgRole], orgRoleHeld(orgRole))),
     columns: ACCESS_PERMISSION_ROLES.map((key) => ({
       key,
       label: t(`admin.access.roles.${ROLE_CATALOGUE[key]}.label`),
     })),
-    permissions: [...core, ...app],
+    permissions: appInitFailed() ? null : [...core, ...app],
   };
 }
 

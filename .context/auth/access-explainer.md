@@ -161,7 +161,13 @@ section says that no pages are listed for the viewer, since there the gap is
 about them. At `single` (the response's `tenancy`) the organisation-roles table
 carries a note that only platform admins open the console and there is no
 support access, so the model is described without claiming it is in force. The
-User row is never marked "You": the route sends no `held` for it.
+User row is marked "You" for anyone who is neither a platform admin nor in
+under support access, from the route's `held` like every other row.
+
+If the app's explainer init throws, everything it registered is rolled back,
+its permission restatements included, so `model.permissions` is `null` rather
+than core's cells, which may claim what its policy does not do. The page says
+the table could not be loaded; the role tables still show.
 
 **Who reaches it.** The page is in its own class, `EVERY_VIEWER_ADMIN_PAGES`
 (`lib/auth/admin-tier.ts`): open to every viewer the console admits, which no

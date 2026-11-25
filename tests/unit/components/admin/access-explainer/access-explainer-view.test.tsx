@@ -501,6 +501,23 @@ describe('AccessExplainerView — the role reference (RBAC)', () => {
     expect(within(appRoles).getByRole('cell', { name: 'Agency support You' })).toBeInTheDocument();
   });
 
+  it('says the permission table could not be loaded rather than guessing its cells', () => {
+    const explainer = explainerFor({});
+    render(
+      <AccessExplainerView
+        explainer={{ ...explainer, model: { ...explainer.model!, permissions: null } }}
+        orgName={null}
+      />
+    );
+
+    const section = screen.getByRole('region', { name: 'What each role can do' });
+    expect(within(section).getByRole('alert')).toHaveTextContent(
+      "Couldn't load this app's access settings"
+    );
+    expect(within(section).queryByRole('table')).not.toBeInTheDocument();
+    expect(heading('Organisation roles')).toBeInTheDocument();
+  });
+
   it('shows a named-tier holder only their own tiers, not who else may do what', () => {
     render(<AccessExplainerView explainer={explainerFor(HOLDER)} orgName="Acme" />);
 

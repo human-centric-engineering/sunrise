@@ -763,10 +763,10 @@ describe('the role model (RBAC tables)', () => {
       'Admin',
       'Member',
     ]);
-    expect(explainer?.model?.permissions.map((p) => p.key)).toEqual(
+    expect(explainer?.model?.permissions?.map((p) => p.key)).toEqual(
       CORE_ACCESS_PERMISSIONS.map((p) => p.key)
     );
-    expect(explainer?.model?.permissions.every((p) => p.source === 'core')).toBe(true);
+    expect(explainer?.model?.permissions?.every((p) => p.source === 'core')).toBe(true);
   });
 
   it('pins every cell of Sunrise’s table to the rule it restates', () => {
@@ -853,10 +853,26 @@ describe('the role model (RBAC tables)', () => {
       admin: false,
       member: false,
     });
-    expect(explainer?.model?.permissions.map((p) => p.key)).not.toContain('useProduct');
-    expect(explainer?.model?.permissions.find((p) => p.key === 'manageMembers')?.source).toBe(
+    expect(explainer?.model?.permissions?.map((p) => p.key)).not.toContain('useProduct');
+    expect(explainer?.model?.permissions?.find((p) => p.key === 'manageMembers')?.source).toBe(
       'core'
     );
+  });
+
+  it('sends no permission table when the app’s init throws, since its restatements went with it', () => {
+    app.init = () => {
+      setAccessPermission('manageMembers', {
+        platform_admin: true,
+        owner: true,
+        admin: false,
+        member: false,
+      });
+      throw new Error('boom');
+    };
+    const explainer = buildAccessExplainer(viewer(), translator());
+
+    expect(explainer?.model?.permissions).toBeNull();
+    expect(explainer?.model?.orgRoles).toHaveLength(3);
   });
 
   it('adds an app row after core’s, in its own words', () => {

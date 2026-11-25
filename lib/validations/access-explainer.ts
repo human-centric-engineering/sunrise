@@ -38,19 +38,21 @@ const modelSchema = z.object({
   platformRoles: z.array(modelRoleSchema),
   orgRoles: z.array(modelRoleSchema),
   columns: z.array(z.object({ key: permissionRoleSchema, label: z.string() })),
-  permissions: z.array(
-    z.object({
-      key: z.string(),
-      label: z.string(),
-      allowed: z.object({
-        platform_admin: z.boolean(),
-        owner: z.boolean(),
-        admin: z.boolean(),
-        member: z.boolean(),
-      }),
-      source: z.enum(['core', 'app']),
-    })
-  ),
+  permissions: z
+    .array(
+      z.object({
+        key: z.string(),
+        label: z.string(),
+        allowed: z.object({
+          platform_admin: z.boolean(),
+          owner: z.boolean(),
+          admin: z.boolean(),
+          member: z.boolean(),
+        }),
+        source: z.enum(['core', 'app']),
+      })
+    )
+    .nullable(),
 });
 
 const switchSchema = z.object({

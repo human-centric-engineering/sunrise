@@ -283,7 +283,14 @@ function Roles({ explainer }: AccessExplainerViewProps) {
         )}
         <RoleTable rows={model.orgRoles} t={t} />
       </Section>
-      {model.permissions.length > 0 && (
+      {model.permissions === null && (
+        <Section id="permissions" title={t('roles.matrixTitle')}>
+          <p role="alert" className="text-destructive text-sm">
+            {t('roles.matrixUnavailable')}
+          </p>
+        </Section>
+      )}
+      {model.permissions && model.permissions.length > 0 && (
         <Section id="permissions" title={t('roles.matrixTitle')} intro={t('roles.matrixIntro')}>
           <Table>
             <TableHeader>
