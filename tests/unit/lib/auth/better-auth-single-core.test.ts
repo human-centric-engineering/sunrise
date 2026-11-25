@@ -36,7 +36,7 @@
  * @see lib/auth/pending-signup.ts — the import that has to share better-auth's copy
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -47,12 +47,13 @@ const BETTER_AUTH = 'better-auth';
 const ROOT_CORE = `node_modules/${CORE}`;
 const ROOT_BETTER_AUTH = `node_modules/${BETTER_AUTH}`;
 
-/** A plain version, no range operator: `1.7.27`, `1.8.0-beta.2`. */
-const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+/** A plain version, no range operator: `1.7.27`, `1.8.0-beta.2`, `1.8.0+sha.1`. */
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 const lockEntrySchema = z.looseObject({
   version: z.string().optional(),
   dependencies: z.record(z.string(), z.string()).optional(),
+  peerDependencies: z.record(z.string(), z.string()).optional(),
 });
 
 const lockfileSchema = z.looseObject({ packages: z.record(z.string(), lockEntrySchema) });
@@ -92,9 +93,17 @@ function manifestProblems(manifest: Manifest): string[] {
   for (const path of overridePaths(manifest.overrides ?? {})) {
     problems.push(`package.json overrides ${path}; pin it in dependencies instead`);
   }
+  for (const name of [BETTER_AUTH, CORE]) {
+    if (
+      manifest.dependencies?.[name] !== undefined &&
+      manifest.devDependencies?.[name] !== undefined
+    ) {
+      problems.push(`${name} is declared in both dependencies and devDependencies`);
+    }
+  }
   if (betterAuth === undefined) problems.push(`package.json does not declare ${BETTER_AUTH}`);
   if (core === undefined) problems.push(`package.json does not declare ${CORE}`);
-  if (problems.length > 0) return problems;
+  if (betterAuth === undefined || core === undefined) return problems;
   for (const [name, spec] of [
     [BETTER_AUTH, betterAuth],
     [CORE, core],
@@ -130,18 +139,30 @@ function lockfileProblems(lock: Lockfile): string[] {
   }
   // An exact ask must equal the root core. A range the root core falls outside
   // makes npm nest a second copy, which the nested check above reports.
-  const wanted = betterAuth.dependencies?.[CORE];
-  if (wanted !== undefined && EXACT_VERSION.test(wanted) && wanted !== core.version) {
-    problems.push(
-      `${BETTER_AUTH} ${betterAuth.version} depends on ${CORE} "${wanted}", ` +
-        `but the root ${CORE} is ${core.version}`
-    );
+  for (const [kind, deps] of [
+    ['depends on', betterAuth.dependencies],
+    ['peer-depends on', betterAuth.peerDependencies],
+  ] as const) {
+    const wanted = deps?.[CORE];
+    if (wanted !== undefined && EXACT_VERSION.test(wanted) && wanted !== core.version) {
+      problems.push(
+        `${BETTER_AUTH} ${betterAuth.version} ${kind} ${CORE} "${wanted}", ` +
+          `but the root ${CORE} is ${core.version}`
+      );
+    }
   }
   return problems;
 }
 
 function readJson(file: string): unknown {
-  return JSON.parse(readFileSync(resolve(process.cwd(), file), 'utf8'));
+  const path = resolve(process.cwd(), file);
+  if (!existsSync(path)) {
+    throw new Error(
+      `${file} not found. This guard reads npm's lockfile; a fork on another ` +
+        `package manager needs its own check that one ${CORE} is installed.`
+    );
+  }
+  return JSON.parse(readFileSync(path, 'utf8'));
 }
 
 /**
@@ -214,6 +235,33 @@ describe('manifestProblems', () => {
     ).toEqual([]);
   });
 
+  it('reports an override and a mismatch together, not one run at a time', () => {
+    expect(
+      manifestProblems({
+        dependencies: { [BETTER_AUTH]: '1.7.28', [CORE]: '1.7.27' },
+        overrides: { [CORE]: '1.7.26' },
+      })
+    ).toEqual([
+      'package.json overrides @better-auth/core; pin it in dependencies instead',
+      'better-auth is declared as "1.7.28" but @better-auth/core as "1.7.27"',
+    ]);
+  });
+
+  it('fails a package declared in both dependencies and devDependencies', () => {
+    expect(
+      manifestProblems({
+        dependencies: { [BETTER_AUTH]: '1.7.27', [CORE]: '1.7.27' },
+        devDependencies: { [CORE]: '^1.7.0' },
+      })
+    ).toEqual(['@better-auth/core is declared in both dependencies and devDependencies']);
+  });
+
+  it('accepts an exact pin with build metadata', () => {
+    expect(
+      manifestProblems({ dependencies: { [BETTER_AUTH]: '1.8.0+sha.1', [CORE]: '1.8.0+sha.1' } })
+    ).toEqual([]);
+  });
+
   it('fails when the core is not declared, since lib/auth imports it from the root', () => {
     expect(manifestProblems({ dependencies: { [BETTER_AUTH]: '1.7.27' } })).toEqual([
       'package.json does not declare @better-auth/core',
@@ -261,6 +309,17 @@ describe('lockfileProblems', () => {
     };
     expect(lockfileProblems(lock)).toEqual([
       'better-auth 1.7.27 depends on @better-auth/core "1.7.26", but the root @better-auth/core is 1.7.27',
+    ]);
+  });
+
+  it('fails a peer ask for a core other than the root one', () => {
+    const lock = lockAt('1.7.27', '1.7.27');
+    lock.packages[ROOT_BETTER_AUTH] = {
+      version: '1.7.27',
+      peerDependencies: { [CORE]: '1.7.26' },
+    };
+    expect(lockfileProblems(lock)).toEqual([
+      'better-auth 1.7.27 peer-depends on @better-auth/core "1.7.26", but the root @better-auth/core is 1.7.27',
     ]);
   });
 
