@@ -128,6 +128,7 @@ describe('modelUses', () => {
       appPins: [],
       otherOrgAppPins: 0,
       appPinsUnavailable: false,
+      appPinsMovable: false,
     });
   });
 

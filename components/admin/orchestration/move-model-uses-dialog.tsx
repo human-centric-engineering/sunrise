@@ -62,7 +62,10 @@ export interface OrgPreview {
   workflows: number;
   left: LeftCounts;
   ownKey: boolean;
-  /** The app's own uses in the org (§136 t-1067), which the app moves itself. */
+  /**
+   * The app's own uses in the org (§136 t-1067): moved with the move when the
+   * app has a mover (`app.mover`, t-1088), else the app moves them itself.
+   */
   appPins?: number;
 }
 
@@ -72,7 +75,7 @@ export interface MovePreview {
   settings: SettingsMovePlan;
   suspendedOrgs: number;
   /** What the app said (§136 t-1067): `refused` is its reason, and blocks the move. */
-  app?: { pinsUnavailable: boolean; refused: string | null };
+  app?: { pinsUnavailable: boolean; refused: string | null; mover?: boolean };
 }
 
 /** One org in the result. */
@@ -85,6 +88,8 @@ export interface OrgResult {
   workflows: number;
   left: LeftCounts;
   agentsFollowingPlatform: number;
+  /** What the app's mover moved and left in the org (t-1088). */
+  appPins?: { moved: number; left: number };
 }
 
 export interface MoveResult {
@@ -92,7 +97,14 @@ export interface MoveResult {
   orgs: OrgResult[];
   settings: SettingsMovePlan;
   suspendedOrgs: number;
-  totals: { agents: number; workflows: number; settings: number; skipped: number; failed: number };
+  totals: {
+    agents: number;
+    workflows: number;
+    settings: number;
+    skipped: number;
+    failed: number;
+    appPins?: number;
+  };
 }
 
 const SLOT_LABEL: Record<SettingsPinSlot, string> = {
@@ -271,6 +283,8 @@ export function MoveModelUsesDialog({
   if (readOnly || replacementOptions.length === 0 || (!open && !hasUses)) return null;
 
   const refused = preview?.app?.refused ?? null;
+  // The app moves its own uses with the move (t-1088).
+  const appMoves = preview?.app?.mover === true;
   // An org with only the app's own uses has nothing this move changes: it is
   // listed apart, under the app's heading.
   const platformUse = (o: OrgPreview) =>
@@ -283,7 +297,7 @@ export function MoveModelUsesDialog({
   const appOnlyOrgs = preview?.orgs.filter((o) => !platformUse(o) && (o.appPins ?? 0) > 0) ?? [];
   const nothingToMove =
     preview !== null &&
-    preview.orgs.every((o) => o.agents + o.workflows === 0) &&
+    preview.orgs.every((o) => o.agents + o.workflows + (appMoves ? (o.appPins ?? 0) : 0) === 0) &&
     preview.settings.moved.length === 0;
 
   return (
@@ -369,8 +383,10 @@ export function MoveModelUsesDialog({
                           />
                           {(org.appPins ?? 0) > 0 && (
                             <p className="text-muted-foreground text-xs">
-                              {plural(org.appPins ?? 0, 'use')} the app reports: the app moves{' '}
-                              {org.appPins === 1 ? 'it' : 'them'} itself, not this move.
+                              {plural(org.appPins ?? 0, 'use')} the app reports:{' '}
+                              {appMoves
+                                ? `the app moves ${org.appPins === 1 ? 'it' : 'them'} with the rest.`
+                                : `the app moves ${org.appPins === 1 ? 'it' : 'them'} itself, not this move.`}
                             </p>
                           )}
                         </li>
@@ -393,7 +409,9 @@ export function MoveModelUsesDialog({
                       ))}
                     </ul>
                     <p className="text-muted-foreground text-xs">
-                      The app moves these itself; this move does not change them.
+                      {appMoves
+                        ? 'The app moves these as part of this move.'
+                        : 'The app moves these itself; this move does not change them.'}
                     </p>
                   </div>
                 )}
@@ -429,6 +447,8 @@ export function MoveModelUsesDialog({
               Moved {plural(result.totals.agents, 'agent')},{' '}
               {plural(result.totals.workflows, 'workflow')} and{' '}
               {plural(result.totals.settings, 'setting')} to {result.replacement.name}.
+              {(result.totals.appPins ?? 0) > 0 &&
+                ` The app moved ${plural(result.totals.appPins ?? 0, 'use')} of its own.`}
               {result.totals.skipped > 0 &&
                 ` ${plural(result.totals.skipped, 'organisation')} skipped.`}
               {result.totals.failed > 0 &&
@@ -440,7 +460,17 @@ export function MoveModelUsesDialog({
                   <li key={org.orgId}>
                     <span className="font-medium">{org.name}</span>: {STATUS_LABEL[org.status]}
                     {org.status === 'moved' &&
-                      ` (${plural(org.agents, 'agent')}, ${plural(org.workflows, 'workflow')})`}
+                      ` (${plural(org.agents, 'agent')}, ${plural(org.workflows, 'workflow')}${
+                        (org.appPins?.moved ?? 0) > 0
+                          ? `, ${plural(org.appPins?.moved ?? 0, 'app use')}`
+                          : ''
+                      })`}
+                    {(org.appPins?.left ?? 0) > 0 && (
+                      <p className="text-muted-foreground text-xs">
+                        The app left {plural(org.appPins?.left ?? 0, 'use')} of its own on the
+                        model.
+                      </p>
+                    )}
                     {org.reason && <p className="text-muted-foreground text-xs">{org.reason}</p>}
                     <LeftList left={org.left} followingPlatform={org.agentsFollowingPlatform} />
                   </li>

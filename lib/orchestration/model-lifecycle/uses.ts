@@ -44,6 +44,7 @@ import {
 } from '@/lib/orchestration/model-lifecycle/settings-pins';
 import { modelLifecycleState } from '@/lib/orchestration/model-lifecycle/state';
 import {
+  appModelPinsRegistered,
   reportAppModelPins,
   type AppModelPin,
   type AppPinModel,
@@ -66,6 +67,11 @@ export interface ModelUses extends ProviderModelUsage {
   otherOrgAppPins: number;
   /** Some org's report of the app's uses failed: they may be undercounted. */
   appPinsUnavailable: boolean;
+  /**
+   * The app registered a mover (t-1088), so a move to a replacement moves
+   * its uses too: they count as movable.
+   */
+  appPinsMovable: boolean;
 }
 
 /** A catalogue row with what the app's reporter is told about it. */
@@ -79,7 +85,9 @@ export type UsesModel = PinnedModelRef & Pick<AppPinModel, 'id' | 'name'>;
 async function appUses(
   model: UsesModel,
   options: CountScope
-): Promise<Pick<ModelUses, 'appPins' | 'otherOrgAppPins' | 'appPinsUnavailable'>> {
+): Promise<
+  Pick<ModelUses, 'appPins' | 'otherOrgAppPins' | 'appPinsUnavailable' | 'appPinsMovable'>
+> {
   const current = isMultiTenant() ? (getTenantContext()?.orgId ?? null) : null;
   const report = await reportAppModelPins(
     { id: model.id, name: model.name, providerSlug: model.providerSlug, modelId: model.modelId },
@@ -91,6 +99,7 @@ async function appUses(
     appPins: own.map(({ label, where }) => ({ label, where })),
     otherOrgAppPins: report.pins.length - own.length,
     appPinsUnavailable: report.failed,
+    appPinsMovable: appModelPinsRegistered().mover,
   };
 }
 

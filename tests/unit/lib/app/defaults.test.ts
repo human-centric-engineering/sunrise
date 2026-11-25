@@ -527,7 +527,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/model-pins.ts',
-    risk: 'a stray reporter would add uses to every model on every install, and a stray check could refuse every model move',
+    risk: 'a stray reporter would add uses to every model on every install, a stray check could refuse every model move, and a stray mover would write into every org on every move',
     assert: () => {
       appModelPins.__resetAppModelPinsForTests();
       // The read runs the lazy init, so this exercises the REAL seam; nothing
@@ -535,6 +535,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect(appModelPins.appModelPinsRegistered()).toEqual({
         reporter: false,
         check: false,
+        mover: false,
         failed: false,
       });
     },

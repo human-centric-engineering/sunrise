@@ -61,8 +61,12 @@
  * move (`app-pins.ts`, the `lib/app/model-pins.ts` seam). The preview counts
  * the app's pins per org and shows the check's verdict. The move asks the
  * check again, first of all, and a refusal throws `ConflictError` with the
- * app's reason before any key is tested or anything is written. The app's
- * pins are never written here: the app moves them itself.
+ * app's reason before any key is tested or anything is written. Sunrise never
+ * writes the app's pins itself. An app that registers a mover (t-1088) moves
+ * them in each org's transaction, with its own code, after the org's erasure
+ * locks and before any row is written: a mover that fails rolls its org back
+ * like any other failure there. With a mover every org the move enters is
+ * offered to it, an org with no platform use included.
  *
  * ## The audit trail
  *
@@ -104,12 +108,16 @@ import {
   type SettingsMovePlan,
 } from '@/lib/orchestration/model-lifecycle/move-plan';
 import {
+  APP_MODEL_PIN_MOVE_TIMEOUT_MS,
+  AppModelPinMoveError,
   appModelPinsRegistered,
   checkAppModelMove,
+  moveAppModelPins,
   reportAppModelPins,
   type AppModelMovePhase,
   type AppModelPinReport,
   type AppMoveVerdict,
+  type AppModelPinMoveResult,
   type AppPinModel,
 } from '@/lib/orchestration/model-lifecycle/app-pins';
 import { settingsPinsFor } from '@/lib/orchestration/model-lifecycle/settings-pins';
@@ -412,7 +420,10 @@ export interface OrgMovePreview {
   left: LeftCounts;
   /** The org pays for the provider with its own key, which the move tests first. */
   ownKey: boolean;
-  /** The app's own uses in the org (§136 t-1067): the app moves them, not the move. */
+  /**
+   * The app's own uses in the org (§136 t-1067): its mover moves them in the
+   * move when it registered one (`app.mover`), else the app moves them itself.
+   */
   appPins: number;
 }
 
@@ -422,6 +433,8 @@ export interface AppMovePreview {
   pinsUnavailable: boolean;
   /** Why the app refuses the move, or `null` when it allows it (or has no check). */
   refused: string | null;
+  /** The app registered a mover (t-1088): its pins move with each org. */
+  mover: boolean;
 }
 
 /** What {@link previewModelMove} answers. */
@@ -500,6 +513,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
     app: {
       pinsUnavailable: app.report.failed,
       refused: app.verdict.allowed ? null : app.verdict.reason,
+      mover: appModelPinsRegistered().mover,
     },
   };
 }
@@ -524,6 +538,8 @@ export interface OrgMoveResult {
   left: LeftCounts;
   /** Agents left because the platform picks their model, and moves them itself. */
   agentsFollowingPlatform: number;
+  /** What the app's mover moved and left in the org (t-1088); zero with no mover. */
+  appPins: { moved: number; left: number };
 }
 
 /** What {@link moveModelUses} answers. */
@@ -531,7 +547,15 @@ export interface ModelMoveResult extends Pick<ModelMovePreview, 'model' | 'repla
   orgs: OrgMoveResult[];
   settings: SettingsMovePlan;
   suspendedOrgs: number;
-  totals: { agents: number; workflows: number; settings: number; skipped: number; failed: number };
+  totals: {
+    agents: number;
+    workflows: number;
+    settings: number;
+    skipped: number;
+    failed: number;
+    /** App pins its mover moved, over every org (t-1088). */
+    appPins: number;
+  };
 }
 
 export interface MoveActor {
@@ -599,7 +623,7 @@ function failureReason(err: unknown): string {
   if (err instanceof StaleRecordError) {
     return 'One of its workflows was changed during the move, so nothing in it moved. Run the move again.';
   }
-  if (err instanceof APIError) return err.message;
+  if (err instanceof APIError || err instanceof AppModelPinMoveError) return err.message;
   return 'Its changes could not be written. Nothing in it moved.';
 }
 
@@ -613,6 +637,8 @@ interface OrgWrites {
     draftChanged: boolean;
     published: { from: number; to: number } | null;
   }>;
+  /** What the app's mover did in the org; `null` with no mover. */
+  appPins: AppModelPinMoveResult | null;
 }
 
 /** One org's agents and workflows, moved in one transaction. */
@@ -626,7 +652,7 @@ async function writeOrg(
   const label = changeLabel(target);
   return prisma.$transaction(
     async (tx) => {
-      const writes: OrgWrites = { agents: [], refused: [], workflows: [] };
+      const writes: OrgWrites = { agents: [], refused: [], workflows: [], appPins: null };
       // Erasure's locks before any row lock (an agent's included), the order
       // every definition writer keeps: everyone the workflows name, the
       // creators of every row this writes (an erasure's delete cascades onto
@@ -635,6 +661,15 @@ async function writeOrg(
         tx,
         uses.workflows.map((w) => w.id),
         [actor.userId, ...uses.agents.flatMap((a) => (a.createdBy ? [a.createdBy] : []))]
+      );
+      // The app's pins next (t-1088): after erasure's locks, before any row
+      // lock, so a mover that takes locks of its own keeps that order. A
+      // mover that fails throws, and the org rolls back.
+      writes.appPins = await moveAppModelPins(
+        tx,
+        appPinModel(target.model),
+        appPinModel(target.replacement),
+        pass.orgId
       );
       for (const agent of uses.agents) {
         // Exactly the binding read above: an agent moved off the model since
@@ -700,8 +735,14 @@ async function writeOrg(
       return writes;
     },
     // It may first wait on an erasure holding a subject's lock for up to the
-    // writers' allowance (`WRITER_TRANSACTION_OPTIONS`), then version a batch.
-    { timeout: WRITER_TRANSACTION_OPTIONS.timeout + AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
+    // writers' allowance (`WRITER_TRANSACTION_OPTIONS`), then run the app's
+    // mover, then version a batch.
+    {
+      timeout:
+        WRITER_TRANSACTION_OPTIONS.timeout +
+        APP_MODEL_PIN_MOVE_TIMEOUT_MS +
+        AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
+    }
   );
 }
 
@@ -736,7 +777,29 @@ function auditOrg(target: MoveTarget, writes: OrgWrites, actor: MoveActor): void
       clientIp: actor.clientIp,
     });
   }
+  const app = writes.appPins;
+  if (app && app.moved.length > 0) {
+    logAdminAction({
+      userId: actor.userId,
+      action: 'app.model_pins_moved',
+      entityType: 'provider_model',
+      entityId: target.model.id,
+      entityName: target.model.name,
+      changes: { model: { from: target.model.modelId, to: target.replacement.modelId } },
+      metadata: {
+        ...metadata,
+        moved: app.moved.length,
+        left: app.left.length,
+        movedPins: app.moved.slice(0, AUDITED_APP_PINS),
+        leftPins: app.left.slice(0, AUDITED_APP_PINS),
+      },
+      clientIp: actor.clientIp,
+    });
+  }
 }
+
+/** The most app pins one org's audit row names; the counts are always whole. */
+const AUDITED_APP_PINS = 50;
 
 /**
  * Whether the org's own key passes its test against the replacement: the
@@ -761,27 +824,33 @@ async function testOrgKey(
   });
 }
 
+const NO_APP_PINS = { moved: 0, left: 0 } as const;
+
 /**
- * Move one org's agents and workflows, in its scope. `keyProblem` is why its
- * own key failed the test against the replacement ({@link testOrgKey}), which
- * skips it.
+ * Move one org's agents and workflows, and the app's pins when it registered
+ * a mover (`appMover`), in its scope. `keyProblem` is why its own key failed
+ * the test against the replacement ({@link testOrgKey}), which skips it.
  */
 async function moveOrg(
   pass: OrgPass,
   target: MoveTarget,
   keyProblem: string | null,
-  actor: MoveActor
+  actor: MoveActor,
+  appMover: boolean
 ): Promise<OrgMoveResult | null> {
   return inOrg(pass, async () => {
     const uses = await readOrgUses(pass, target);
-    if (!usesSomething(uses)) return null;
+    // With a mover the org is entered whatever the platform finds in it: the
+    // app's pins there are the mover's to find.
+    if (!usesSomething(uses) && !appMover) return null;
     const base = {
       orgId: pass.orgId,
       name: pass.name,
       left: countLeft(uses.left),
       agentsFollowingPlatform: uses.followingPlatform,
+      appPins: NO_APP_PINS,
     };
-    if (uses.agents.length + uses.workflows.length === 0) {
+    if (uses.agents.length + uses.workflows.length === 0 && !appMover) {
       return { ...base, status: 'left', agents: 0, workflows: 0 };
     }
     if (keyProblem) {
@@ -799,13 +868,20 @@ async function moveOrg(
       return { ...base, status: 'failed', reason: failureReason(err), agents: 0, workflows: 0 };
     }
     auditOrg(target, writes, actor);
-    const moved = writes.agents.length + writes.workflows.length;
+    const appPins = writes.appPins
+      ? { moved: writes.appPins.moved.length, left: writes.appPins.left.length }
+      : NO_APP_PINS;
+    const moved = writes.agents.length + writes.workflows.length + appPins.moved;
+    // An org the mover had nothing in, and the platform nothing either, is
+    // not listed, as before there was a mover.
+    if (moved === 0 && appPins.left === 0 && !usesSomething(uses)) return null;
     return {
       ...base,
       left: countLeft([...writes.refused, ...uses.left]),
       status: moved > 0 ? 'moved' : 'left',
       agents: writes.agents.length,
       workflows: writes.workflows.length,
+      appPins,
     };
   });
 }
@@ -918,7 +994,13 @@ export async function moveModelUses(
   const settings = await moveSettings(target, keyProblems.size, actor);
   const orgs: OrgMoveResult[] = [];
   for (const pass of passes) {
-    const result = await moveOrg(pass, target, keyProblems.get(pass.orgId) ?? null, actor);
+    const result = await moveOrg(
+      pass,
+      target,
+      keyProblems.get(pass.orgId) ?? null,
+      actor,
+      app.mover
+    );
     if (result) orgs.push(result);
   }
   const totals = {
@@ -927,6 +1009,7 @@ export async function moveModelUses(
     settings: settings.moved.length,
     skipped: orgs.filter((o) => o.status === 'skipped').length,
     failed: orgs.filter((o) => o.status === 'failed').length,
+    appPins: orgs.reduce((n, o) => n + o.appPins.moved, 0),
   };
   logAdminAction({
     userId: actor.userId,

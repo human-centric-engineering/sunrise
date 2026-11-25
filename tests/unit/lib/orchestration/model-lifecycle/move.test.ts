@@ -89,8 +89,11 @@ import { ConflictError, NotFoundError, StaleRecordError, ValidationError } from 
 import {
   __resetAppModelPinsForTests,
   registerModelMoveCheck,
+  registerModelPinMover,
   registerModelPinReporter,
+  APP_MODEL_PIN_MOVE_TIMEOUT_MS,
   type AppModelMoveCheckRequest,
+  type AppModelPinMover,
 } from '@/lib/orchestration/model-lifecycle/app-pins';
 import {
   loadMoveTarget,
@@ -170,9 +173,13 @@ interface World {
   /** Orgs with their own key for the provider row `cfg-openai`. */
   keyed: string[];
   settings: SettingsRow;
+  /** The app's own pins (t-1088), which only its mover writes. */
+  appPins: Array<{ orgId: string; label: string; model: string }>;
 }
 
 let world: World;
+/** The transaction every `prisma.$transaction` callback is handed. */
+let fakeTx: unknown;
 /** The org scope `runAsOrg` entered; `null` outside every one. */
 let scope: string | null = null;
 let multi = true;
@@ -312,6 +319,7 @@ function freshWorld(): World {
       },
     ],
     keyed: [],
+    appPins: [],
     settings: {
       defaultModels: { routing: 'openai::gpt-4o', embeddings: 'gpt-4o' },
       confidentialModelProvider: 'openai',
@@ -457,6 +465,7 @@ function installFakes(): void {
       }),
     },
   };
+  fakeTx = tx;
   vi.mocked(prisma.$transaction).mockImplementation((async (fn: (t: typeof tx) => unknown) => {
     const before = structuredClone(world);
     try {
@@ -626,7 +635,7 @@ describe('previewModelMove', () => {
     ]);
     // Nothing registered at lib/app/model-pins.ts: no app uses, no refusal,
     // and no org entered for them (runAsOrg below counts the two orgs only).
-    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null });
+    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null, mover: false });
     expect(preview.suspendedOrgs).toBe(1);
     expect(preview.settings.moved.map((s) => s.slot)).toEqual(['routing', 'chat', 'confidential']);
     expect(preview.settings.left).toEqual([{ slot: 'embeddings', reason: 'embedding_switch' }]);
@@ -705,6 +714,7 @@ describe('moveModelUses', () => {
         workflows: 1,
         left: { chat_turn_by_id: 1 },
         agentsFollowingPlatform: 0,
+        appPins: { moved: 0, left: 0 },
       },
       {
         orgId: 'org-b',
@@ -714,6 +724,7 @@ describe('moveModelUses', () => {
         workflows: 1,
         left: {},
         agentsFollowingPlatform: 0,
+        appPins: { moved: 0, left: 0 },
       },
     ]);
     // Erasure's locks for the org's workflows before any row is written.
@@ -728,7 +739,14 @@ describe('moveModelUses', () => {
       'agent ag-b1',
       'workflow wf-b1',
     ]);
-    expect(result.totals).toEqual({ agents: 3, workflows: 2, settings: 3, skipped: 0, failed: 0 });
+    expect(result.totals).toEqual({
+      agents: 3,
+      workflows: 2,
+      settings: 3,
+      skipped: 0,
+      failed: 0,
+      appPins: 0,
+    });
     expect(result.suspendedOrgs).toBe(1);
   });
 
@@ -900,6 +918,7 @@ describe('moveModelUses', () => {
         workflows: 0,
         left: { chat_turn_by_id: 1 },
         agentsFollowingPlatform: 0,
+        appPins: { moved: 0, left: 0 },
       },
       {
         orgId: 'org-b',
@@ -909,6 +928,7 @@ describe('moveModelUses', () => {
         workflows: 0,
         left: {},
         agentsFollowingPlatform: 0,
+        appPins: { moved: 0, left: 0 },
       },
     ]);
     // Tested all the same: its agents with no model of their own follow the settings.
@@ -1169,7 +1189,7 @@ describe('the app’s own pins and its check', () => {
       ['org-a', 2, 1, 2],
       ['org-b', 0, 0, 1],
     ]);
-    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null });
+    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null, mover: false });
   });
 
   it('shows the check’s refusal in the preview, and writes nothing', async () => {
@@ -1187,6 +1207,7 @@ describe('the app’s own pins and its check', () => {
     expect(preview.app).toEqual({
       pinsUnavailable: false,
       refused: 'GPT-4.1 failed the contract panel',
+      mover: false,
     });
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(world).toEqual(freshWorld());
@@ -1269,5 +1290,186 @@ describe('the app’s own pins and its check', () => {
 
     expect(seen).toEqual([]);
     expect(result.totals.agents).toBe(3);
+  });
+});
+
+describe('the app’s mover (t-1088)', () => {
+  /**
+   * A mover over `world.appPins`: moves the org's pins on the model, records
+   * the scope and transaction it ran in, and leaves a pin labelled `Stuck`.
+   */
+  function registerMover(over?: Partial<Record<string, AppModelPinMover>>) {
+    const seen: Array<{ orgId: string; scope: string | null; tx: unknown }> = [];
+    registerModelPinMover((request) => {
+      seen.push({ orgId: request.orgId, scope, tx: request.tx });
+      const custom = over?.[request.orgId];
+      if (custom) return custom(request);
+      writeOrder.push(`app ${request.orgId}`);
+      const mine = world.appPins.filter(
+        (p) => p.orgId === request.orgId && p.model === request.model.modelId
+      );
+      const moved = mine.filter((p) => p.label !== 'Stuck');
+      for (const p of moved) p.model = request.replacement.modelId;
+      return {
+        moved: moved.map((p) => ({ label: p.label, where: 'Panels › Judge' })),
+        left: mine
+          .filter((p) => p.label === 'Stuck')
+          .map((p) => ({ label: p.label, where: 'Panels › Judge', reason: 'Launched' })),
+      };
+    });
+    return seen;
+  }
+
+  beforeEach(() => {
+    world.appPins = [
+      { orgId: 'org-a', label: 'Panel A', model: 'gpt-4o' },
+      { orgId: 'org-b', label: 'Panel B1', model: 'gpt-4o' },
+      { orgId: 'org-b', label: 'Panel B2', model: 'gpt-4o' },
+      { orgId: 'org-b', label: 'Stuck', model: 'gpt-4o' },
+    ];
+  });
+
+  it('moves the app’s pins in each org, in its scope and transaction, after the erasure locks and before any row', async () => {
+    const seen = registerMover();
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(seen.map((s) => [s.orgId, s.scope])).toEqual([
+      ['org-a', 'org-a'],
+      ['org-b', 'org-b'],
+    ]);
+    expect(seen.every((s) => s.tx === fakeTx)).toBe(true);
+    expect(writeOrder).toEqual([
+      'settings lock',
+      'subjects wf-a1',
+      'app org-a',
+      'agent ag-a1',
+      'agent ag-a2',
+      'workflow wf-a1',
+      'subjects wf-b1',
+      'app org-b',
+      'agent ag-b1',
+      'workflow wf-b1',
+    ]);
+    expect(world.appPins.map((p) => [p.label, p.model])).toEqual([
+      ['Panel A', 'gpt-4.1'],
+      ['Panel B1', 'gpt-4.1'],
+      ['Panel B2', 'gpt-4.1'],
+      ['Stuck', 'gpt-4o'],
+    ]);
+    expect(result.orgs.map((o) => [o.orgId, o.status, o.appPins])).toEqual([
+      ['org-a', 'moved', { moved: 1, left: 0 }],
+      ['org-b', 'moved', { moved: 2, left: 1 }],
+    ]);
+    expect(result.totals.appPins).toBe(3);
+
+    // One audit row per org the mover moved something in, in that org.
+    const appRows = audit.filter((r) => r.action === 'app.model_pins_moved');
+    expect(appRows.map((r) => [r.scope, r.metadata?.moved, r.metadata?.left])).toEqual([
+      ['org-a', 1, 0],
+      ['org-b', 2, 1],
+    ]);
+    expect(appRows[1].metadata?.leftPins).toEqual([
+      { label: 'Stuck', where: 'Panels › Judge', reason: 'Launched' },
+    ]);
+    const summary = audit.find((r) => r.action === 'provider_model.uses_moved');
+    expect(summary?.metadata).toMatchObject({ appPins: 3 });
+  });
+
+  it('enters an org with only the app’s pins and counts it moved; one with nothing is not listed', async () => {
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-b');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-b');
+    registerMover();
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(result.orgs.find((o) => o.orgId === 'org-b')).toMatchObject({
+      status: 'moved',
+      agents: 0,
+      workflows: 0,
+      appPins: { moved: 2, left: 1 },
+    });
+
+    // And with no app pins there either, the org is not listed at all.
+    world = freshWorld();
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-b');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-b');
+    const again = await moveModelUses(await target(), ACTOR);
+    expect(again.orgs.map((o) => o.orgId)).toEqual(['org-a']);
+  });
+
+  it.each([
+    [
+      'throws',
+      () => {
+        throw new Error('app table missing');
+      },
+    ],
+    ['answers badly', (() => ({ moved: 'all' })) as unknown as AppModelPinMover],
+  ])('rolls back the org, its agents and workflows too, when the mover %s', async (_, bad) => {
+    const seen = registerMover({ 'org-a': bad });
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(seen.map((s) => s.orgId)).toEqual(['org-a', 'org-b']);
+    expect(result.orgs[0]).toMatchObject({
+      orgId: 'org-a',
+      status: 'failed',
+      reason: 'The app’s own uses in it could not be moved. Nothing in it moved.',
+      agents: 0,
+      workflows: 0,
+      appPins: { moved: 0, left: 0 },
+    });
+    // Nothing in org-a moved; org-b still did.
+    expect(agent('ag-a1').model).toBe('gpt-4o');
+    expect(workflow('wf-a1')).toEqual(freshWorld().workflows.find((w) => w.id === 'wf-a1'));
+    expect(world.appPins.find((p) => p.orgId === 'org-a')?.model).toBe('gpt-4o');
+    expect(agent('ag-b1').model).toBe('gpt-4.1');
+    expect(result.orgs[1]).toMatchObject({ orgId: 'org-b', status: 'moved' });
+    expect(result.totals).toMatchObject({ failed: 1, appPins: 2 });
+    expect(audit.filter((r) => r.scope === 'org-a')).toEqual([]);
+  });
+
+  it('rolls back the org when the mover runs past its time', async () => {
+    vi.useFakeTimers();
+    try {
+      registerMover({ 'org-a': () => new Promise(() => {}) });
+      const pending = moveModelUses(await target(), ACTOR);
+      await vi.advanceTimersByTimeAsync(APP_MODEL_PIN_MOVE_TIMEOUT_MS);
+      const result = await pending;
+      expect(result.orgs[0]).toMatchObject({ orgId: 'org-a', status: 'failed' });
+      expect(agent('ag-a1').model).toBe('gpt-4o');
+      expect(result.orgs[1]).toMatchObject({ orgId: 'org-b', status: 'moved' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never offers the mover an org skipped for its own key', async () => {
+    world.keyed = ['org-a'];
+    vi.mocked(testProviderKeyOnModel).mockResolvedValueOnce({ ok: false, failedAt: 'model' });
+    const seen = registerMover();
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(seen.map((s) => s.orgId)).toEqual(['org-b']);
+    expect(result.orgs[0]).toMatchObject({ orgId: 'org-a', status: 'skipped' });
+    expect(world.appPins.find((p) => p.orgId === 'org-a')?.model).toBe('gpt-4o');
+  });
+
+  it('says in the preview that the app moves its pins', async () => {
+    registerMover();
+    const preview = await previewModelMove(await target());
+    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null, mover: true });
+    // A preview moves nothing.
+    expect(world.appPins.every((p) => p.model === 'gpt-4o')).toBe(true);
+  });
+
+  it('with no mover, writes no app pins and records no app audit row', async () => {
+    const result = await moveModelUses(await target(), ACTOR);
+    expect(result.orgs.every((o) => o.appPins.moved === 0 && o.appPins.left === 0)).toBe(true);
+    expect(result.totals.appPins).toBe(0);
+    expect(audit.some((r) => r.action === 'app.model_pins_moved')).toBe(false);
+    expect(world.appPins.every((p) => p.model === 'gpt-4o')).toBe(true);
   });
 });
