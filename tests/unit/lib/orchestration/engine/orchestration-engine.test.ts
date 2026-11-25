@@ -5757,6 +5757,56 @@ describe('OrchestrationEngine', () => {
       expect(ran).toEqual(['b']);
     });
 
+    it('crash-resume: keeps what the walk left untaken, so a join after a route still runs (t-1077)', async () => {
+      // pick (route) → x | y → join. The route takes x, so y is untaken and the
+      // join waits only on x. A resume that forgot y would deadlock on it.
+      const def: WorkflowDefinition = {
+        entryStepId: 'pick',
+        errorStrategy: 'fail',
+        steps: [
+          {
+            id: 'pick',
+            name: 'Pick',
+            type: 'route',
+            config: {},
+            nextSteps: [
+              { targetStepId: 'x', condition: 'x' },
+              { targetStepId: 'y', condition: 'y' },
+            ],
+          },
+          {
+            id: 'x',
+            name: 'X',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'join' }],
+          },
+          {
+            id: 'y',
+            name: 'Y',
+            type: 'llm_call',
+            config: {},
+            nextSteps: [{ targetStepId: 'join' }],
+          },
+          { id: 'join', name: 'Join', type: 'llm_call', config: {}, nextSteps: [] },
+        ],
+      };
+      const impl: StepImpl = async (step) => ({
+        output: `out:${step.id}`,
+        tokensUsed: 0,
+        costUsd: 0,
+        ...(step.id === 'pick' ? { nextStepIds: ['x'] } : {}),
+      });
+
+      const row = await crashRun(def, impl, (m) => m.starting === 'join');
+      expect((row.walkState as { untaken?: string[] }).untaken).toEqual(['y']);
+      const { ran, types } = await resumeRun(def, row, impl, 'join');
+
+      expect(ran).toEqual(['join']);
+      expect(types).toContain('workflow_completed');
+      expect(types).not.toContain('workflow_failed');
+    });
+
     it('crash-resume: a step whose checkpoint landed is not run again', async () => {
       // The host died after b's checkpoint and before c started. b's
       // running-step row may survive (its delete is non-fatal); the walk

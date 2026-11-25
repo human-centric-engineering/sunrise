@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 
 const tx = vi.hoisted(() => ({
   $queryRaw: vi.fn(),
@@ -88,6 +89,9 @@ describe('prepareRetryStep', () => {
         totalCostUsd: 0.5,
         currentStep: 'a',
         errorMessage: null,
+        // The failed run's walk position is stale; the resume must not read
+        // it as an approval pause's (t-1077).
+        walkState: Prisma.DbNull,
       }),
     });
     expect(tx.aiWorkflowRunningStep.deleteMany).toHaveBeenCalledWith({

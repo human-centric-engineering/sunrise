@@ -113,6 +113,55 @@ function deriveFailureReason(body: string): string {
 }
 
 /**
+ * A step marked `terminalStatus: 'failed'` ends its branch as a failed run
+ * whether or not its notice goes out (t-1078). So a send that fails carries
+ * the step's reason on its error: under `errorStrategy: 'skip'` the engine
+ * skips the step, keeps the delivery error in the trace and still fails the
+ * run with that reason, as it would after a send that worked. A
+ * `fallbackStepId` takes the branch over instead. A cancelled run's abort is
+ * left alone, so the run still ends as cancelled.
+ */
+function endsRunFailed(
+  err: unknown,
+  terminalStatus: 'completed' | 'failed' | undefined,
+  body: string,
+  ctx: Readonly<ExecutionContext>,
+  stepId: string
+): unknown {
+  if (terminalStatus !== 'failed' || ctx.signal?.aborted) return err;
+  const reason = deriveFailureReason(body);
+  if (err instanceof ExecutorError) {
+    const withReason = new ExecutorError(
+      err.stepId,
+      err.code,
+      err.message,
+      err.cause,
+      err.retriable,
+      err.tokensUsed,
+      err.costUsd,
+      reason
+    );
+    // The same error with the reason added: logs point where it was thrown.
+    withReason.stack = err.stack;
+    return withReason;
+  }
+  // Anything else thrown before the send (the org's email locale lookup, say)
+  // still carries the reason, rather than reaching the engine without it. It
+  // is wrapped the way the engine wraps a raw throw, `executor_threw`, so its
+  // text (a database error, say) is never shown to the client or the trace.
+  return new ExecutorError(
+    stepId,
+    'executor_threw',
+    err instanceof Error ? err.message : 'Executor threw an unknown error',
+    err,
+    true,
+    0,
+    0,
+    reason
+  );
+}
+
+/**
  * Resolve the email recipient(s) for this run: interpolate each address the
  * same way `subject`/`bodyTemplate` are, then validate the *resolved* value is
  * a well-formed email. A literal `to` interpolates to itself and validates
@@ -379,150 +428,159 @@ async function executeNotification(
 
   let stepResult: StepResult;
 
-  if (config.channel === 'email') {
-    // Interpolate + validate the recipient(s) before any send. Throws a
-    // non-retriable ExecutorError if a resolved address isn't a valid email.
-    const resolved = resolveRecipients(config.to, ctx, step.id);
-    const subject = interpolatePrompt(config.subject, ctx, step.id);
-    // The subject and body are the workflow author's; the email's own copy
-    // is in the language of the org the run belongs to (§138 t-1075).
-    const where = await emailLocaleForOrg(orgIdForCall());
-    try {
-      const { result, to, leftOut } = await sendToLiveRecipients(
-        resolved,
-        (sendTo, signal, idempotencyKey) =>
-          sendEmail({
-            to: sendTo,
-            subject,
-            react: WorkflowNotification({ body, workflowName, ...where }),
-            signal,
-            idempotencyKey,
-          }),
-        ctx,
-        step.id,
-        {
-          content: `${subject}\n${body}`,
-          deadline,
-          unscrubbed: recipientsFromUnscrubbedSources(config.to, resolved),
-        }
-      );
-
-      // A send the run's cancel aborted reports failed: not a send to retry.
-      if (result.status === 'failed' && ctx.signal?.aborted) throw aborted(step.id);
-      if (result.status === 'failed') {
-        throw new ExecutorError(
+  try {
+    if (config.channel === 'email') {
+      // Interpolate + validate the recipient(s) before any send. Throws a
+      // non-retriable ExecutorError if a resolved address isn't a valid email.
+      const resolved = resolveRecipients(config.to, ctx, step.id);
+      const subject = interpolatePrompt(config.subject, ctx, step.id);
+      // The subject and body are the workflow author's; the email's own copy
+      // is in the language of the org the run belongs to (§138 t-1075).
+      const where = await emailLocaleForOrg(orgIdForCall());
+      try {
+        const { result, to, leftOut } = await sendToLiveRecipients(
+          resolved,
+          (sendTo, signal, idempotencyKey) =>
+            sendEmail({
+              to: sendTo,
+              subject,
+              react: WorkflowNotification({ body, workflowName, ...where }),
+              signal,
+              idempotencyKey,
+            }),
+          ctx,
           step.id,
-          'EMAIL_SEND_FAILED',
-          `Email send failed: ${result.error}`,
-          undefined,
-          true
+          {
+            content: `${subject}\n${body}`,
+            deadline,
+            unscrubbed: recipientsFromUnscrubbedSources(config.to, resolved),
+          }
         );
-      }
 
-      // A count, not the addresses: the application log is beyond erasure
-      // (review round 1; `sendEmail` logs them under a redacted key).
-      logger.info('Notification step: email sent', {
-        stepId: step.id,
-        recipients: Array.isArray(to) ? to.length : 1,
-        status: result.status,
-      });
+        // A send the run's cancel aborted reports failed: not a send to retry.
+        if (result.status === 'failed' && ctx.signal?.aborted) throw aborted(step.id);
+        if (result.status === 'failed') {
+          throw new ExecutorError(
+            step.id,
+            'EMAIL_SEND_FAILED',
+            `Email send failed: ${result.error}`,
+            undefined,
+            true
+          );
+        }
 
-      stepResult = {
-        output: {
-          sent: true,
-          channel: 'email',
+        // A count, not the addresses: the application log is beyond erasure
+        // (review round 1; `sendEmail` logs them under a redacted key).
+        logger.info('Notification step: email sent', {
+          stepId: step.id,
+          recipients: Array.isArray(to) ? to.length : 1,
           status: result.status,
-          // How many were left out as erased, so the trace shows why; never who.
-          ...(leftOut > 0 ? { recipientsLeftOut: leftOut } : {}),
-        },
-        tokensUsed: 0,
-        costUsd: 0,
-      };
-    } catch (err) {
-      if (err instanceof ExecutorError) throw err;
-      throw new ExecutorError(
-        step.id,
-        'EMAIL_DELIVERY_ERROR',
-        `Email delivery error: ${err instanceof Error ? err.message : String(err)}`,
-        err,
-        true
-      );
-    }
-  } else {
-    // Webhook channel: POST the body to the step's own URL (t-794). It goes
-    // through the guarded outbound fetch, so the host must be in the
-    // allowlist, a customer org's call is pinned to a checked address, and a
-    // redirect is refused. `text` is the field Slack and Teams incoming
-    // webhooks read; the rest lets a generic receiver tell runs apart.
-    try {
-      const response = await executeHttpRequest({
-        url: config.webhookUrl,
-        method: 'POST',
-        body: JSON.stringify({
-          text: body,
-          workflowId: ctx.workflowId,
-          workflowName,
-          executionId: ctx.executionId,
-          stepId: step.id,
-        }),
-        // The dispatch cache key, so a receiver that honours the header
-        // dedups a re-drive that missed the cache.
-        idempotency: { key: cacheKey },
-        // Only the status is used; a large reply is not worth reading.
-        maxResponseBytes: WEBHOOK_RESPONSE_MAX_BYTES,
-        signal: ctx.signal,
-        logContext: { stepId: step.id },
-      });
-
-      // A webhook URL can carry its credential (path, query or userinfo), so
-      // the log line gets the reduced form (#953). `output.url` keeps the
-      // working URL: later steps read it as `{{steps.<id>.output.url}}`, and a
-      // resumed run rehydrates it from the persisted trace.
-      logger.info('Notification step: webhook sent', {
-        stepId: step.id,
-        webhookUrl: loggableUrl(config.webhookUrl),
-        status: response.status,
-      });
-
-      stepResult = {
-        output: { sent: true, channel: 'webhook', url: config.webhookUrl, status: response.status },
-        tokensUsed: 0,
-        costUsd: 0,
-      };
-    } catch (err) {
-      // A body too large to read comes after a 2xx: the receiver took it.
-      if (err instanceof HttpError && err.code === 'response_too_large') {
-        logger.info('Notification step: webhook sent; reply too large to read', {
-          stepId: step.id,
-          webhookUrl: loggableUrl(config.webhookUrl),
         });
+
         stepResult = {
-          output: { sent: true, channel: 'webhook', url: config.webhookUrl },
+          output: {
+            sent: true,
+            channel: 'email',
+            status: result.status,
+            // How many were left out as erased, so the trace shows why; never who.
+            ...(leftOut > 0 ? { recipientsLeftOut: leftOut } : {}),
+          },
           tokensUsed: 0,
           costUsd: 0,
         };
-      } else if (err instanceof HttpError) {
-        // The fetch guard's verdict: a 5xx may succeed on retry. A refused
-        // host or a 4xx won't, and a timeout is not retried because the
-        // receiver may already have posted it: Slack and Teams incoming
-        // webhooks ignore the Idempotency-Key.
+      } catch (err) {
+        if (err instanceof ExecutorError) throw err;
         throw new ExecutorError(
           step.id,
-          'WEBHOOK_DISPATCH_ERROR',
-          `Webhook send failed: ${err.message}`,
-          err,
-          err.retriable
-        );
-      } else {
-        throw new ExecutorError(
-          step.id,
-          'WEBHOOK_DISPATCH_ERROR',
-          `Webhook send failed: ${err instanceof Error ? err.message : String(err)}`,
+          'EMAIL_DELIVERY_ERROR',
+          `Email delivery error: ${err instanceof Error ? err.message : String(err)}`,
           err,
           true
         );
       }
+    } else {
+      // Webhook channel: POST the body to the step's own URL (t-794). It goes
+      // through the guarded outbound fetch, so the host must be in the
+      // allowlist, a customer org's call is pinned to a checked address, and a
+      // redirect is refused. `text` is the field Slack and Teams incoming
+      // webhooks read; the rest lets a generic receiver tell runs apart.
+      try {
+        const response = await executeHttpRequest({
+          url: config.webhookUrl,
+          method: 'POST',
+          body: JSON.stringify({
+            text: body,
+            workflowId: ctx.workflowId,
+            workflowName,
+            executionId: ctx.executionId,
+            stepId: step.id,
+          }),
+          // The dispatch cache key, so a receiver that honours the header
+          // dedups a re-drive that missed the cache.
+          idempotency: { key: cacheKey },
+          // Only the status is used; a large reply is not worth reading.
+          maxResponseBytes: WEBHOOK_RESPONSE_MAX_BYTES,
+          signal: ctx.signal,
+          logContext: { stepId: step.id },
+        });
+
+        // A webhook URL can carry its credential (path, query or userinfo), so
+        // the log line gets the reduced form (#953). `output.url` keeps the
+        // working URL: later steps read it as `{{steps.<id>.output.url}}`, and a
+        // resumed run rehydrates it from the persisted trace.
+        logger.info('Notification step: webhook sent', {
+          stepId: step.id,
+          webhookUrl: loggableUrl(config.webhookUrl),
+          status: response.status,
+        });
+
+        stepResult = {
+          output: {
+            sent: true,
+            channel: 'webhook',
+            url: config.webhookUrl,
+            status: response.status,
+          },
+          tokensUsed: 0,
+          costUsd: 0,
+        };
+      } catch (err) {
+        // A body too large to read comes after a 2xx: the receiver took it.
+        if (err instanceof HttpError && err.code === 'response_too_large') {
+          logger.info('Notification step: webhook sent; reply too large to read', {
+            stepId: step.id,
+            webhookUrl: loggableUrl(config.webhookUrl),
+          });
+          stepResult = {
+            output: { sent: true, channel: 'webhook', url: config.webhookUrl },
+            tokensUsed: 0,
+            costUsd: 0,
+          };
+        } else if (err instanceof HttpError) {
+          // The fetch guard's verdict: a 5xx may succeed on retry. A refused
+          // host or a 4xx won't, and a timeout is not retried because the
+          // receiver may already have posted it: Slack and Teams incoming
+          // webhooks ignore the Idempotency-Key.
+          throw new ExecutorError(
+            step.id,
+            'WEBHOOK_DISPATCH_ERROR',
+            `Webhook send failed: ${err.message}`,
+            err,
+            err.retriable
+          );
+        } else {
+          throw new ExecutorError(
+            step.id,
+            'WEBHOOK_DISPATCH_ERROR',
+            `Webhook send failed: ${err instanceof Error ? err.message : String(err)}`,
+            err,
+            true
+          );
+        }
+      }
     }
+  } catch (err) {
+    throw endsRunFailed(err, config.terminalStatus, body, ctx, step.id);
   }
 
   // Opt-in: terminal-with-failure. When the workflow author marked this
