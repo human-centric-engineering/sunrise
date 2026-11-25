@@ -9,7 +9,8 @@
  *   their own slice; a holder's response carries none of the org admin's pages;
  * - an org MEMBER holding nothing is refused with a 403, as is an org admin
  *   at `single`, where no org role opens the console;
- * - a failed read of the org's switches is said, not guessed.
+ * - a failed read of the org's switches is said, not guessed;
+ * - an app key naming a group of strings, not one, is shown as the key.
  *
  * @see app/api/v1/admin/access/route.ts
  */
@@ -36,6 +37,14 @@ const mockLog = vi.hoisted(() => ({
 vi.mock('@/lib/api/context', () => ({ getRouteLogger: vi.fn(async () => mockLog) }));
 const mockPrisma = vi.hoisted(() => ({ org: { findUnique: vi.fn() } }));
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
+// The real catalogue, plus an app namespace with a group of strings in it.
+vi.mock('next-intl/server', async () => {
+  await import('next-intl');
+  const { nextIntlServerMock, translatorFor } = await import('@/tests/helpers/i18n');
+  const { default: en } = await import('@/lib/i18n/messages/en.json');
+  const messages = { ...en, app: { access: { agency: { label: 'Agency' } } } };
+  return { ...nextIntlServerMock, getTranslations: async () => translatorFor(undefined, messages) };
+});
 
 import * as route from '@/app/api/v1/admin/access/route';
 import { createMockRequest } from '@/tests/helpers/api';
@@ -44,6 +53,8 @@ import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 import type { AccessExplainer } from '@/lib/auth/access-explainer';
 import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
 import { adminReachOf } from '@/lib/auth/admin-reach';
+import { __resetAccessExplainerForTests } from '@/lib/auth/access-explainer';
+import { registerAccessArea } from '@/lib/auth/access-explainer-registry';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 import {
   __resetEntitlementRegistryForTests,
@@ -113,6 +124,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   env.TENANCY_MODE = previousMode;
+  __resetAccessExplainerForTests();
   __resetAppOrgTierAdminPagesForTests();
   __resetEntitlementRegistryForTests();
 });
@@ -201,6 +213,25 @@ describe('GET /api/v1/admin/access', () => {
     expect(mockPrisma.org.findUnique).toHaveBeenCalledTimes(policyReads + 1);
     expect(body.data.you?.switchesOn).toEqual([]);
     expect(body.data.switches?.find((s) => s.key === 'lead_gen')).toMatchObject({ held: false });
+  });
+
+  it('shows an app key naming a group of strings as the key, and one naming a string as it', async () => {
+    registerAccessArea({
+      key: 'agency',
+      label: { message: 'app.access.agency' },
+      pages: ['/admin/designs'],
+    });
+    registerAccessArea({
+      key: 'leads',
+      label: { message: 'app.access.agency.label' },
+      pages: ['/admin/leads'],
+    });
+
+    const { body } = await call(PLATFORM_ADMIN);
+
+    const labelOf = (key: string) => body.data.areas?.find((area) => area.key === key)?.label;
+    expect(labelOf('agency')).toBe('app.access.agency');
+    expect(labelOf('leads')).toBe('Agency');
   });
 
   it("says it could not read the org's switches rather than guess", async () => {

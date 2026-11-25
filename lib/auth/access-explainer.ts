@@ -11,8 +11,9 @@
  *
  * **Each viewer sees their own slice** ({@link AccessAudience}). A platform
  * admin sees every registration. An org's OWNER/ADMIN sees their org's view:
- * every org-tier and named-tier page, the switches the org holds, and those
- * it lacks that the app shows locked — never one the app hides. A holder of a
+ * every org-tier and named-tier page, the switches the org holds, those it
+ * lacks that a page requires and the app shows locked, and every switch the
+ * org sets itself — never a platform switch the app hides. A holder of a
  * named tier sees their tiers and the pages those open, and the switches
  * those pages need. The narrowing is done here, on the server, so a response
  * never carries what its reader may not know.
@@ -135,7 +136,8 @@ export interface AccessRoleView {
   /**
    * Whether the viewer holds it where they are now. For a named tier, whether
    * the policy admits them to it: the default policy admits an org's
-   * OWNER/ADMIN to every named tier, so for them each one is held. Under a
+   * OWNER/ADMIN to every named tier, and every policy a platform admin, so
+   * for them each one is held. Under a
    * support grant only `support` is held, never an org role.
    */
   readonly held: boolean;
@@ -150,7 +152,10 @@ export interface AccessSwitchView {
   readonly whenLacking: 'hide' | 'lock';
   /** Who may set it on an org. */
   readonly setBy: 'platform' | 'org';
-  /** Whether the viewer's org has it; `null` for a platform admin, whom switches do not limit. */
+  /**
+   * Whether the viewer's org has it; `null` for a platform admin, whom
+   * switches do not limit, and when the org's switches could not be read.
+   */
   readonly held: boolean | null;
   /** What a refusal for it says; `null` while the org has it. */
   readonly refusal: string | null;
@@ -258,8 +263,9 @@ export function buildAccessExplainer(
   const visible = ACCESS_EXPLAINER_SECTIONS.filter(
     (section) =>
       (registrations.audiences.get(section) ?? ACCESS_AUDIENCES).includes(audience) &&
-      // At `single` no org-tier page opens to anyone but a platform admin, so
-      // there are no areas to show and no heading to show them under.
+      // At `single` the console is the platform admin's alone and every page
+      // opens to them, so a page list would tell them apart from no one.
+      // Their sidebar already lists every page.
       (section !== 'areas' || viewer.multiTenant)
   );
   const shows = (section: AccessExplainerSection) => visible.includes(section);
@@ -345,7 +351,8 @@ function rolesFor(
           definition?.description === undefined
             ? t('admin.access.roles.namedTier.description')
             : text(definition.description),
-        held: heldTiers.includes(name),
+        // The policy admits a platform admin to every tier.
+        held: viewer.reach === 'platform' || heldTiers.includes(name),
       };
     });
   // A holder sees the tiers they hold: who else may do what in the org is
@@ -423,12 +430,14 @@ function switchesFor(
   viewer: AccessExplainerViewer,
   visible: Set<string>
 ): AccessSwitchView[] {
+  const unread = viewer.switchesOn === null;
   const on = new Set(viewer.switchesOn ?? []);
   const locked = new Map(viewer.locked.map((l) => [l.requires, l]));
   return registeredEntitlementSwitches()
     .filter((s) => visible.has(s.key))
     .map((s) => {
-      const held = audience === 'platform' ? null : on.has(s.key);
+      // An unread switch is said to be unknown, not guessed off.
+      const held = audience === 'platform' || unread ? null : on.has(s.key);
       const lock = held === false ? locked.get(s.key) : undefined;
       return {
         key: s.key,
@@ -463,8 +472,7 @@ function areasFor(
   text: (value: AdminText) => string,
   visibleSwitches: ReadonlySet<string>
 ): AccessAreaView[] {
-  // At `single` no org-tier page opens to anyone but a platform admin, so
-  // there is nothing of the org's to show.
+  // At `single` there is no areas section: see `buildAccessExplainer()`.
   if (!viewer.multiTenant) return [];
   const tiers = viewer.reach === 'platform' ? null : viewer.reach.tiers;
   const tierOf = new Map(namedTierAdminPages().map((p) => [p.pattern, p.tier]));

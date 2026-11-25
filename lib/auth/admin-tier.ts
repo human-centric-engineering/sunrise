@@ -82,6 +82,7 @@
  */
 
 import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
+import { APP_MESSAGE_NAMESPACES } from '@/lib/i18n/registry';
 
 /**
  * The tier core's admin surfaces declare. Only one value: the absence of a
@@ -224,11 +225,18 @@ export const MAX_ADMIN_TEXT_DESCRIPTION = 600;
 /** What a catalogue key in {@link AdminText} may look like: dotted segments. */
 const ADMIN_TEXT_MESSAGE_KEY = /^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$/;
 
+/** Is `key` a dotted key in a downstream tier's own namespace (`app.…`, `framework.…`)? */
+function isAppMessageKey(key: string): boolean {
+  return ADMIN_TEXT_MESSAGE_KEY.test(key) && APP_MESSAGE_NAMESPACES.includes(key.split('.')[0]);
+}
+
 /**
  * Check one {@link AdminText} an app passed, and return it trimmed and frozen.
  * Throws a `TypeError` naming `what` on a value that is neither a non-empty
- * string of at most `max` characters nor `{ message }` with a dotted
- * catalogue key, so a mistake registers nothing.
+ * string of at most `max` characters nor `{ message }` with a dotted key in
+ * the app's own namespace (`app.…` or `framework.…`), so a mistake registers
+ * nothing. A platform key is reworded with `overridePlatformMessages()`, not
+ * named here.
  */
 export function adminTextOrThrow(value: unknown, what: string, max: number): AdminText {
   if (typeof value === 'string') {
@@ -241,12 +249,12 @@ export function adminTextOrThrow(value: unknown, what: string, max: number): Adm
     typeof value === 'object' &&
     value !== null &&
     typeof (value as { message?: unknown }).message === 'string' &&
-    ADMIN_TEXT_MESSAGE_KEY.test((value as { message: string }).message)
+    isAppMessageKey((value as { message: string }).message)
   ) {
     return Object.freeze({ message: (value as { message: string }).message });
   }
   throw new TypeError(
-    `${what} is neither plain text nor { message } naming a catalogue key such as 'app.access.title'`
+    `${what} is neither plain text nor { message } naming a key in the app's catalogue such as 'app.access.title'`
   );
 }
 

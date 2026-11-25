@@ -36,7 +36,9 @@ Then any sections the app registered (`appSections`).
 `/admin` itself is left out of the areas: it sends each viewer on and shows
 nothing. At `single` there is no `areas` section (it is left out of
 `sections`, not sent empty) and the roles are the platform admin alone, since
-no org role opens the console there.
+no org role opens the console there. Leaving out the areas is deliberate: the
+platform admin is the only reader, every page opens to them, and their sidebar
+already lists every page.
 
 **Areas.** Core's org-tier pages sit in core's areas (`CORE_ACCESS_AREAS`),
 grouped as the sidebar groups them; a test fails on a core org-tier page none of
@@ -50,11 +52,11 @@ registers in the browser only, so the server cannot see either.
 
 ## Each viewer's slice
 
-| Audience     | Who                                                            | Sees                                                                                                                                        |
-| ------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `'platform'` | a platform admin                                               | every registration; every switch, with `held: null` (switches do not limit them); links to platform-only surfaces                           |
-| `'org'`      | the OWNER or ADMIN of the org they entered, at `multi`         | every role; every org-tier and named-tier page; the switches the org holds and those it lacks that the app registered `whenLacking: 'lock'` |
-| `'holder'`   | someone holding a named tier, who is not the org's OWNER/ADMIN | their own tiers; the pages of those tiers; the switches those pages need                                                                    |
+| Audience     | Who                                                            | Sees                                                                                                                                                                                          |
+| ------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `'platform'` | a platform admin                                               | every registration; every switch, with `held: null` (switches do not limit them); links to platform-only surfaces                                                                             |
+| `'org'`      | the OWNER or ADMIN of the org they entered, at `multi`         | every role; every org-tier and named-tier page; the switches the org holds, those it lacks that a page requires and the app registered `whenLacking: 'lock'`, and every `setBy: 'org'` switch |
+| `'holder'`   | someone holding a named tier, who is not the org's OWNER/ADMIN | their own tiers; the pages of those tiers; the switches those pages need                                                                                                                      |
 
 Anyone else, an org `MEMBER` holding nothing included, gets a **403**.
 
@@ -74,7 +76,8 @@ Two rules hold for every audience but the platform's:
   for a client to filter out.
 
 If the org's switches cannot be read, `you.switchesUnreadable` is `true` and
-`switchesOn` is `null`, so a locked page is not explained with a guess. That
+`switchesOn` is `null`, and each switch listed has `held: null`, so neither a
+switch nor a locked page is explained with a guess. That
 includes an org whose row has gone while the session still names it. The route
 reads the org's switches once, and works out both what the org has and what
 it is shown locked (`lockedSwitchesIn()`) from that one read, so the two cannot

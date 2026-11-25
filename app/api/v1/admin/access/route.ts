@@ -62,7 +62,13 @@ export const GET = withAuth(
     const t = await getTranslations();
     const translate: AccessTranslator = Object.assign(
       (key: string) => t(key as Parameters<typeof t>[0]),
-      { has: (key: string) => t.has(key as Parameters<typeof t>[0]) }
+      {
+        // A key naming a group of strings, not one, is treated as missing:
+        // the explainer then shows the key rather than next-intl's error text.
+        has: (key: string) =>
+          t.has(key as Parameters<typeof t>[0]) &&
+          typeof t.raw(key as Parameters<typeof t>[0]) === 'string',
+      }
     );
     const explainer = buildAccessExplainer(
       {

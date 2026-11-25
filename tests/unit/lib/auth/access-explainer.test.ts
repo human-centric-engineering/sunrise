@@ -152,7 +152,8 @@ describe('derived from the registrations', () => {
     expect(everyPage.length).toBeGreaterThan(ORG_TIER_ADMIN_PAGES.length);
     expect(pagesOf(explainer).sort()).toEqual([...everyPage].sort());
     for (const tier of namedAdminTiers()) {
-      expect(explainer?.roles?.map((role) => role.key)).toContain(tier);
+      // The policy admits a platform admin to every tier.
+      expect(explainer?.roles?.find((role) => role.key === tier)?.held).toBe(true);
     }
     expect(explainer?.switches?.map((s) => s.key)).toEqual(
       registeredEntitlementSwitches().map((s) => s.key)
@@ -199,7 +200,8 @@ describe('derived from the registrations', () => {
       kind: 'named-tier',
       label: 'Agency designers',
       description: 'Agency staff who build pages for a client.',
-      held: false,
+      // The viewer is a platform admin, whom the policy admits to every tier.
+      held: true,
     });
   });
 
@@ -313,12 +315,24 @@ describe('each viewer’s slice', () => {
     expect(explainer?.you?.switchesOn).toEqual(['lead_gen']);
   });
 
-  it('says so when the org’s switches could not be read', () => {
+  it('says so when the org’s switches could not be read, and does not guess a switch off', () => {
+    registerEntitlementSwitch({
+      key: 'beta_reports',
+      label: 'Beta reports',
+      description: 'Early reports.',
+      setBy: 'org',
+    });
     const explainer = buildAccessExplainer(
       viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', switchesOn: null }),
       translator()
     );
     expect(explainer?.you).toMatchObject({ switchesUnreadable: true, switchesOn: null });
+    // The org sets this switch itself, so its admin is shown it; its state is unknown.
+    expect(explainer?.switches?.find((s) => s.key === 'beta_reports')).toMatchObject({
+      held: null,
+      refusal: null,
+      upgradeUrl: null,
+    });
   });
 
   it('shows a page the policy opens even when the org’s switches could not be read', () => {
@@ -559,6 +573,11 @@ describe('the app seam (lib/app/access-explainer.ts)', () => {
     [
       'a tier label that is neither text nor a key',
       () => registerAdminTier('designers', { holds: () => true, label: { message: 'nodots' } }),
+    ],
+    [
+      'a label naming a platform key rather than one of the app’s',
+      () =>
+        registerAccessArea({ key: 'x', label: { message: 'admin.access' }, pages: ['/admin/x'] }),
     ],
   ])('refuses %s', (_name, register) => {
     expect(register).toThrow();

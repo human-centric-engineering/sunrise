@@ -63,7 +63,8 @@ release process.
   `lockedSwitchesIn()` for a caller that has already read the org's switches, with
   `requestAdminReach()` and `requestLockedSwitches()` unchanged on top; an
   optional `label` and `description` on `registerAdminTier()`, with the
-  `AdminText` type (plain text or `{ message }`, a catalogue key); and a new
+  `AdminText` type (plain text or `{ message }`, a key in the app's own
+  `app.` or `framework.` namespace); and a new
   seam, `lib/app/access-explainer.ts` → `initAppAccessExplainer()`, with
   `registerAccessArea()`, `registerPlatformOnlySurface()`,
   `setAccessSectionAudience()` and `registerAccessSection()`
