@@ -58,18 +58,22 @@ function explainerFor(reach: AdminReach, orgRole: string | null) {
 }
 
 describe('the access explainer under the pseudo-locale', () => {
-  it.each([
+  const VIEWERS: [string, AdminReach, string | null][] = [
     ['a platform admin', 'platform', null],
     ['an org admin', { tiers: ['org'], landing: null }, 'ADMIN'],
-  ])('renders for %s with no raw key and its own words translated', (_l, reach, orgRole) => {
-    const { container } = render(
-      <AccessExplainerView explainer={explainerFor(reach, orgRole)} orgName="Acme" />
-    );
+  ];
+  it.each(VIEWERS)(
+    'renders for %s with no raw key and its own words translated',
+    (_l, reach, orgRole) => {
+      const { container } = render(
+        <AccessExplainerView explainer={explainerFor(reach, orgRole)} orgName="Acme" />
+      );
 
-    expect(container.textContent).not.toMatch(/admin\.access\./);
-    expect(screen.getByRole('heading', { level: 2, name: pseudo('Roles') })).toBeInTheDocument();
-    expect(screen.queryByText('Roles')).not.toBeInTheDocument();
-  });
+      expect(container.textContent).not.toMatch(/admin\.access\./);
+      expect(screen.getByRole('heading', { level: 2, name: pseudo('Roles') })).toBeInTheDocument();
+      expect(screen.queryByText('Roles')).not.toBeInTheDocument();
+    }
+  );
 
   it('translates the link the dashboards and the locked page carry', () => {
     const { container } = render(
