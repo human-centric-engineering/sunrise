@@ -133,9 +133,24 @@ afterEach(() => {
 
 describe('AccessExplainerView — a platform admin', () => {
   it('shows every section, with what the platform keeps, and says switches do not limit them', () => {
+    app.init = () => {
+      registerPlatformOnlySurface({
+        key: 'billing',
+        label: 'Billing',
+        reason: 'Invoices are handled by the platform team.',
+      });
+    };
     render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
 
-    for (const name of ['Your access', 'Roles', 'Pages by area', 'Switches']) {
+    for (const name of [
+      'Your access',
+      'Platform roles',
+      'Organisation roles',
+      'What each role can do',
+      'App roles',
+      'Pages by area',
+      'Switches',
+    ]) {
       expect(heading(name)).toBeInTheDocument();
     }
     expect(heading('Kept for the platform team')).toBeInTheDocument();
@@ -306,7 +321,7 @@ describe('AccessExplainerView — what the route leaves out', () => {
     };
     render(<AccessExplainerView explainer={explainerFor(HOLDER)} orgName="Acme" />);
 
-    expect(heading('Roles')).not.toBeInTheDocument();
+    expect(heading('App roles')).not.toBeInTheDocument();
     const panel = screen.getByRole('region', { name: 'Your access in Acme' });
     expect(within(panel).getByText('Agency designers')).toBeInTheDocument();
     expect(within(panel).queryByText('designers')).not.toBeInTheDocument();
@@ -385,5 +400,86 @@ describe('AccessExplainerView — what the route leaves out', () => {
 
     expect(screen.getByText(/under support access/)).toBeInTheDocument();
     expect(screen.queryByText(/Your role here/)).not.toBeInTheDocument();
+  });
+});
+
+describe('AccessExplainerView — the role reference (RBAC)', () => {
+  /** The matrix row for a permission, as the cells' accessible names: Yes / No per role. */
+  function matrixRow(permission: string): string[] {
+    const table = screen.getByRole('region', { name: 'What each role can do' });
+    const row = within(table).getByText(permission).closest('tr');
+    expect(row).not.toBeNull();
+    return within(row as HTMLElement)
+      .getAllByLabelText(/^(Yes|No)$/)
+      .map((cell) => cell.getAttribute('aria-label') ?? '');
+  }
+
+  it('lays out every platform and organisation role in tables, marking the viewer’s own', () => {
+    render(<AccessExplainerView explainer={explainerFor(ORG_OWNER)} orgName="Acme" />);
+
+    const platform = screen.getByRole('region', { name: 'Platform roles' });
+    const org = screen.getByRole('region', { name: 'Organisation roles' });
+    for (const role of ['User', 'Platform admin', 'Support access']) {
+      expect(
+        within(platform).getByRole('cell', { name: new RegExp(`^${role}`) })
+      ).toBeInTheDocument();
+    }
+    for (const role of ['Owner', 'Admin', 'Member']) {
+      expect(within(org).getByRole('cell', { name: new RegExp(`^${role}`) })).toBeInTheDocument();
+    }
+    // An org owner is a User on the platform and the Owner here.
+    expect(within(platform).getByRole('cell', { name: 'User You' })).toBeInTheDocument();
+    expect(within(org).getByRole('cell', { name: 'Owner You' })).toBeInTheDocument();
+    expect(within(org).getByRole('cell', { name: 'Admin' })).toBeInTheDocument();
+  });
+
+  it('shows every org role at single too, since it describes the model, not this install', () => {
+    render(<AccessExplainerView explainer={explainerFor({ multiTenant: false })} orgName={null} />);
+
+    const org = screen.getByRole('region', { name: 'Organisation roles' });
+    expect(within(org).getByRole('cell', { name: 'Member' })).toBeInTheDocument();
+    const platform = screen.getByRole('region', { name: 'Platform roles' });
+    expect(within(platform).getByRole('cell', { name: 'Platform admin You' })).toBeInTheDocument();
+  });
+
+  it('states the rules the routes enforce, column by column: platform admin, owner, admin, member', () => {
+    render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
+
+    // Only an org's own OWNER grants support access (lib/tenancy/support-grants.ts).
+    expect(matrixRow('Grant support access')).toEqual(['No', 'Yes', 'No', 'No']);
+    // Anyone the policy admits may end it.
+    expect(matrixRow('End support access')).toEqual(['Yes', 'Yes', 'Yes', 'No']);
+    // Only an OWNER, or a platform admin, confers or touches OWNER (lib/tenancy/lifecycle.ts).
+    expect(matrixRow('Make someone an owner, or change or remove an owner')).toEqual([
+      'Yes',
+      'Yes',
+      'No',
+      'No',
+    ]);
+    expect(matrixRow('Open the admin console')).toEqual(['Yes', 'Yes', 'Yes', 'No']);
+    expect(matrixRow('Create, suspend or erase organisations')).toEqual(['Yes', 'No', 'No', 'No']);
+  });
+
+  it('shows a named-tier holder only their own tiers, not who else may do what', () => {
+    render(<AccessExplainerView explainer={explainerFor(HOLDER)} orgName="Acme" />);
+
+    expect(heading('App roles')).toBeInTheDocument();
+    expect(heading('Platform roles')).not.toBeInTheDocument();
+    expect(heading('Organisation roles')).not.toBeInTheDocument();
+    expect(heading('What each role can do')).not.toBeInTheDocument();
+  });
+
+  it('leaves out a switches or platform-only section with nothing in it', () => {
+    __resetEntitlementRegistryForTests();
+    render(
+      <AccessExplainerView
+        explainer={{ ...explainerFor({}), switches: [], platformOnly: [], areas: [] }}
+        orgName={null}
+      />
+    );
+
+    expect(heading('Switches')).not.toBeInTheDocument();
+    expect(heading('Kept for the platform team')).not.toBeInTheDocument();
+    expect(heading('Pages by area')).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-# The access explainer: who can do what (§143)
+# The access explainer: roles and access (§143)
 
 Once an install runs at `multi`, several things decide who may open what in the
 admin console at once: the platform role, support access, the org role
@@ -118,13 +118,13 @@ and the viewer's own panel still names everything in it.
 
 ## The page
 
-`/admin/access` ("Who can do what") is a shell over the endpoint: it reads
+`/admin/access` ("Roles and access") is a shell over the endpoint: it reads
 `GET /api/v1/admin/access` through `loadServerData`, checks the response with
 `accessExplainerResponseSchema` (`lib/validations/access-explainer.ts`), and
 renders the sections the response names, in its order, then the app's own
 (`AccessExplainerView`). It decides nothing and filters nothing: a section
 missing from the response is one this viewer does not get. A failed load, or a
-response the schema rejects, shows "Couldn't load who can do what" and is
+response the schema rejects, shows "Couldn't load roles and access" and is
 logged, never an empty page.
 
 | Viewer                        | What the page shows                                                                                                                                                |
@@ -133,6 +133,20 @@ logged, never an empty page.
 | An org OWNER/ADMIN            | **Your access in _org_**: their role, the tiers they open, the org's switches, and each page they cannot open with the reason (the app's refusal and upgrade link) |
 | A named-tier holder           | the same panel for their tiers only, and only their tiers' pages and those pages' switches                                                                         |
 | A MEMBER, or no one signed in | nothing: the admin layout turns them away                                                                                                                          |
+
+**The role reference.** The `roles` section is drawn as Sunrise's role
+model (RBAC) in tables: the platform roles (User, Platform admin, Support
+access), the organisation roles (Owner, Admin, Member), and a matrix of what
+each may do inside an organisation (`PERMISSIONS` in
+`access-explainer-view.tsx`). Every core role is shown whatever the tenancy
+mode, because it describes the model, not who holds what; the "You" marks come
+from the response's `held`. The app's named tiers follow as **App roles**. A
+named-tier holder gets the App roles table only, as the route narrows `roles`
+for them. The matrix restates rules the routes and `lib/tenancy/lifecycle.ts`
+enforce (only an OWNER grants support access; only an OWNER or a platform admin
+confers, changes or removes OWNER); the view test pins each of those cells, so
+change both together. Areas, switches and what the platform keeps are tables
+too, and a section with no rows is left out rather than drawn empty.
 
 **Who reaches it.** The page is in its own class, `EVERY_VIEWER_ADMIN_PAGES`
 (`lib/auth/admin-tier.ts`): open to every viewer the console admits, which no
@@ -145,7 +159,7 @@ page under it, and the roster test (`tests/unit/scripts/ci/admin-tier-roster.tes
 pins the list and fails on a fork page in its section. The route stays the
 boundary; the page-level gate only decides who is shown the shell.
 
-**Where viewers find it.** A sidebar item, "Who can do what", under
+**Where viewers find it.** A sidebar item, "Roles and access", under
 Management, shown to every viewer the console admits. `AccessExplainerLink`
 (`components/admin/access-explainer/access-explainer-link.tsx`) on the overview
 (a platform admin's landing), the orchestration dashboard and Members (an org

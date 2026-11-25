@@ -216,80 +216,240 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
   );
 }
 
+/** The core roles the reference tables describe, keyed as the response keys them. */
+type CoreRoleKey = 'user' | 'platform_admin' | 'support' | 'owner' | 'admin' | 'member';
+
+/** Columns of the permission matrix, in order. */
+const MATRIX_ROLES = ['platform_admin', 'owner', 'admin', 'member'] as const;
+
+/**
+ * What each role may do inside one organisation. Sunrise's model, stated
+ * once: the routes and `lib/tenancy/lifecycle.ts` enforce it, and the
+ * view test pins each cell against the rule it restates.
+ */
+const PERMISSIONS: ReadonlyArray<{
+  key:
+    | 'useProduct'
+    | 'openConsole'
+    | 'manageMembers'
+    | 'manageOwners'
+    | 'orgSettings'
+    | 'grantSupport'
+    | 'endSupport'
+    | 'switchesOff'
+    | 'platformPages'
+    | 'manageOrgs';
+  allowed: Readonly<Record<(typeof MATRIX_ROLES)[number], boolean>>;
+}> = [
+  { key: 'useProduct', allowed: { platform_admin: true, owner: true, admin: true, member: true } },
+  {
+    key: 'openConsole',
+    allowed: { platform_admin: true, owner: true, admin: true, member: false },
+  },
+  {
+    key: 'manageMembers',
+    allowed: { platform_admin: true, owner: true, admin: true, member: false },
+  },
+  {
+    key: 'manageOwners',
+    allowed: { platform_admin: true, owner: true, admin: false, member: false },
+  },
+  {
+    key: 'orgSettings',
+    allowed: { platform_admin: true, owner: true, admin: true, member: false },
+  },
+  // Not a platform admin: a vendor granting itself access is what a grant
+  // exists to prevent (`lib/tenancy/support-grants.ts`).
+  {
+    key: 'grantSupport',
+    allowed: { platform_admin: false, owner: true, admin: false, member: false },
+  },
+  { key: 'endSupport', allowed: { platform_admin: true, owner: true, admin: true, member: false } },
+  {
+    key: 'switchesOff',
+    allowed: { platform_admin: true, owner: false, admin: false, member: false },
+  },
+  {
+    key: 'platformPages',
+    allowed: { platform_admin: true, owner: false, admin: false, member: false },
+  },
+  {
+    key: 'manageOrgs',
+    allowed: { platform_admin: true, owner: false, admin: false, member: false },
+  },
+];
+
+function RoleTable({
+  rows,
+  t,
+}: {
+  rows: ReadonlyArray<{ key: string; label: string; description: string; held: boolean }>;
+  t: Translate;
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="w-48">{t('roles.colRole')}</TableHead>
+          <TableHead>{t('roles.colMeans')}</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.key}>
+            <TableCell className="align-top font-medium">
+              <span className="flex flex-wrap items-center gap-2">
+                {row.label}
+                {row.held && <Badge>{t('roles.held')}</Badge>}
+              </span>
+            </TableCell>
+            <TableCell className="text-muted-foreground whitespace-normal">
+              {row.description}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+/**
+ * Sunrise's role model as reference tables: the platform roles, the
+ * organisation roles and what each may do. Every core role is shown whatever
+ * the tenancy mode, since this describes the model, not who holds what. The
+ * "You" marks come from the response. A named-tier holder sees only their own
+ * tiers, as the route narrows `roles` for them.
+ */
 function Roles({ explainer }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
+  const tRoles = useTranslations('admin.access.roles');
   const roles = explainer.roles;
   if (!roles) return null;
-  return (
-    <Section id="roles" title={t('roles.title')} intro={t('roles.intro')}>
-      <ul className="divide-y rounded-lg border">
-        {roles.map((role) => (
-          <li key={`${role.kind}:${role.key}`} className="space-y-1 p-4 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="font-medium">{role.label}</span>
-              {role.held && <Badge>{t('roles.held')}</Badge>}
-            </div>
-            <p className="text-muted-foreground">{role.description}</p>
-          </li>
-        ))}
-      </ul>
+  const held = new Set(roles.filter((role) => role.held).map((role) => role.key));
+  const appRoles = roles.filter((role) => role.kind === 'named-tier');
+  const core = (
+    key: CoreRoleKey,
+    catalogue: 'platformAdmin' | 'support' | 'owner' | 'admin' | 'member'
+  ) => ({
+    key,
+    label: tRoles(`${catalogue}.label`),
+    description: tRoles(`${catalogue}.description`),
+    held: held.has(key),
+  });
+  const platformRows = [
+    {
+      key: 'user',
+      label: t('roles.user.label'),
+      description: t('roles.user.description'),
+      held: explainer.audience !== 'platform' && !held.has('support'),
+    },
+    core('platform_admin', 'platformAdmin'),
+    core('support', 'support'),
+  ];
+  const orgRows = [core('owner', 'owner'), core('admin', 'admin'), core('member', 'member')];
+  const orgLabels = Object.fromEntries(orgRows.map((row) => [row.key, row.label]));
+  const appTable = appRoles.length > 0 && (
+    <Section id="app-roles" title={t('roles.appTitle')} intro={t('roles.appIntro')}>
+      <RoleTable rows={appRoles} t={t} />
     </Section>
+  );
+  // A holder is told about their own tiers, not who else may do what here.
+  if (explainer.audience === 'holder') return appTable || null;
+
+  return (
+    <>
+      <Section id="roles" title={t('roles.platformTitle')} intro={t('roles.platformIntro')}>
+        <RoleTable rows={platformRows} t={t} />
+      </Section>
+      <Section id="org-roles" title={t('roles.orgTitle')} intro={t('roles.orgIntro')}>
+        <RoleTable rows={orgRows} t={t} />
+      </Section>
+      <Section id="permissions" title={t('roles.matrixTitle')} intro={t('roles.matrixIntro')}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('roles.colPermission')}</TableHead>
+              {MATRIX_ROLES.map((key) => (
+                <TableHead key={key} className="text-center">
+                  {key === 'platform_admin' ? platformRows[1].label : orgLabels[key]}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {PERMISSIONS.map((permission) => (
+              <TableRow key={permission.key}>
+                <TableCell className="whitespace-normal">
+                  {t(`roles.perm.${permission.key}`)}
+                </TableCell>
+                {MATRIX_ROLES.map((key) => (
+                  <TableCell key={key} className="text-center">
+                    {permission.allowed[key] ? (
+                      <span aria-label={t('roles.yes')}>✓</span>
+                    ) : (
+                      <span aria-label={t('roles.no')} className="text-muted-foreground">
+                        –
+                      </span>
+                    )}
+                  </TableCell>
+                ))}
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Section>
+      {appTable}
+    </>
   );
 }
 
 function Areas({ explainer }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
   const areas = explainer.areas;
-  if (!areas) return null;
+  if (!areas || areas.length === 0) return null;
   return (
     <Section id="areas" title={t('areas.title')} intro={t('areas.intro')}>
-      {areas.length === 0 ? (
-        <p className="text-muted-foreground text-sm">{t('areas.empty')}</p>
-      ) : (
-        areas.map((area) => (
-          <div key={area.key} className="space-y-2 rounded-lg border p-4">
-            <h3 className="font-medium">{area.label}</h3>
-            {area.description && (
-              <p className="text-muted-foreground text-sm">{area.description}</p>
-            )}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('areas.page')}</TableHead>
-                  <TableHead>{t('areas.openTo')}</TableHead>
-                  <TableHead>{t('areas.needs')}</TableHead>
-                  <TableHead>{t('areas.you')}</TableHead>
+      {areas.map((area) => (
+        <div key={area.key} className="space-y-2 rounded-lg border p-4">
+          <h3 className="font-medium">{area.label}</h3>
+          {area.description && <p className="text-muted-foreground text-sm">{area.description}</p>}
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('areas.page')}</TableHead>
+                <TableHead>{t('areas.openTo')}</TableHead>
+                <TableHead>{t('areas.needs')}</TableHead>
+                <TableHead>{t('areas.you')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {area.pages.map((page) => (
+                <TableRow key={page.pattern}>
+                  <TableCell>
+                    <PagePath page={page} />
+                  </TableCell>
+                  <TableCell>{page.tierLabel}</TableCell>
+                  <TableCell>
+                    {page.requires ? (page.requiresLabel ?? page.requires) : t('areas.noSwitch')}
+                  </TableCell>
+                  <TableCell>
+                    {page.opens ? (
+                      t('areas.opens')
+                    ) : (
+                      <>
+                        {t('areas.closed')}
+                        <span className="text-muted-foreground block text-xs">
+                          {closedReason(page, t)}
+                        </span>
+                      </>
+                    )}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {area.pages.map((page) => (
-                  <TableRow key={page.pattern}>
-                    <TableCell>
-                      <PagePath page={page} />
-                    </TableCell>
-                    <TableCell>{page.tierLabel}</TableCell>
-                    <TableCell>
-                      {page.requires ? (page.requiresLabel ?? page.requires) : t('areas.noSwitch')}
-                    </TableCell>
-                    <TableCell>
-                      {page.opens ? (
-                        t('areas.opens')
-                      ) : (
-                        <>
-                          {t('areas.closed')}
-                          <span className="text-muted-foreground block text-xs">
-                            {closedReason(page, t)}
-                          </span>
-                        </>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        ))
-      )}
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ))}
     </Section>
   );
 }
@@ -297,39 +457,57 @@ function Areas({ explainer }: AccessExplainerViewProps) {
 function Switches({ explainer }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
   const switches = explainer.switches;
-  if (!switches) return null;
+  if (!switches || switches.length === 0) return null;
+  const showHeld = switches.some((s) => s.held !== null);
   return (
     <Section id="switches" title={t('switches.title')} intro={t('switches.intro')}>
-      {switches.length === 0 ? (
-        <p className="text-muted-foreground text-sm">{t('switches.empty')}</p>
-      ) : (
-        <ul className="divide-y rounded-lg border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t('switches.colSwitch')}</TableHead>
+            <TableHead>{t('switches.colSetBy')}</TableHead>
+            <TableHead>{t('switches.colWhenOff')}</TableHead>
+            {showHeld && <TableHead>{t('switches.colHere')}</TableHead>}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {switches.map((s) => (
-            <li key={s.key} className="space-y-1 p-4 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
+            <TableRow key={s.key}>
+              <TableCell className="align-top whitespace-normal">
                 <span className="font-medium">{s.label}</span>
-                {s.held !== null && (
-                  <Badge variant={s.held ? 'default' : 'outline'}>
-                    {s.held ? t('switches.on') : t('switches.off')}
-                  </Badge>
+                {s.description && (
+                  <span className="text-muted-foreground block text-xs">{s.description}</span>
                 )}
-              </div>
-              {s.description && <p className="text-muted-foreground">{s.description}</p>}
-              <p className="text-muted-foreground">
+              </TableCell>
+              <TableCell className="align-top whitespace-normal">
                 {s.setBy === 'org' ? t('switches.setByOrg') : t('switches.setByPlatform')}
-                {' · '}
+              </TableCell>
+              <TableCell className="align-top whitespace-normal">
                 {s.whenLacking === 'lock'
                   ? t('switches.whenLackingLock')
                   : t('switches.whenLackingHide')}
-              </p>
-              {s.held === false && s.refusal && <p>{s.refusal}</p>}
-              {s.held === false && s.upgradeUrl && (
-                <GetItLink href={s.upgradeUrl}>{t('switches.getIt')}</GetItLink>
+              </TableCell>
+              {showHeld && (
+                <TableCell className="align-top whitespace-normal">
+                  {s.held !== null && (
+                    <Badge variant={s.held ? 'default' : 'outline'}>
+                      {s.held ? t('switches.on') : t('switches.off')}
+                    </Badge>
+                  )}
+                  {s.held === false && s.refusal && (
+                    <span className="block text-xs">{s.refusal}</span>
+                  )}
+                  {s.held === false && s.upgradeUrl && (
+                    <span className="block text-xs">
+                      <GetItLink href={s.upgradeUrl}>{t('switches.getIt')}</GetItLink>
+                    </span>
+                  )}
+                </TableCell>
               )}
-            </li>
+            </TableRow>
           ))}
-        </ul>
-      )}
+        </TableBody>
+      </Table>
     </Section>
   );
 }
@@ -337,27 +515,35 @@ function Switches({ explainer }: AccessExplainerViewProps) {
 function PlatformOnly({ explainer }: AccessExplainerViewProps) {
   const t = useTranslations('admin.access.page');
   const items = explainer.platformOnly;
-  if (!items) return null;
+  if (!items || items.length === 0) return null;
   return (
     <Section id="platform-only" title={t('platformOnly.title')} intro={t('platformOnly.intro')}>
-      {items.length === 0 ? (
-        <p className="text-muted-foreground text-sm">{t('platformOnly.empty')}</p>
-      ) : (
-        <ul className="divide-y rounded-lg border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t('platformOnly.colArea')}</TableHead>
+            <TableHead>{t('platformOnly.colWhy')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {items.map((item) => (
-            <li key={item.key} className="space-y-1 p-4 text-sm">
-              {item.href ? (
-                <Link href={item.href} className="font-medium underline">
-                  {item.label}
-                </Link>
-              ) : (
-                <span className="font-medium">{item.label}</span>
-              )}
-              <p className="text-muted-foreground">{item.reason}</p>
-            </li>
+            <TableRow key={item.key}>
+              <TableCell className="align-top font-medium">
+                {item.href ? (
+                  <Link href={item.href} className="underline">
+                    {item.label}
+                  </Link>
+                ) : (
+                  item.label
+                )}
+              </TableCell>
+              <TableCell className="text-muted-foreground whitespace-normal">
+                {item.reason}
+              </TableCell>
+            </TableRow>
           ))}
-        </ul>
-      )}
+        </TableBody>
+      </Table>
     </Section>
   );
 }

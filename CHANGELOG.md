@@ -67,7 +67,12 @@ release process.
 
 ### Added
 
-- **Who can do what: the access explainer page (§143 t-1091).** `/admin/access`
+- **Roles and access (RBAC): the access explainer page (§143 t-1091).**
+  `/admin/access` leads with Sunrise's role model as tables: the platform
+  roles (User, Platform admin, Support access), the organisation roles
+  (Owner, Admin, Member) and what each may do in an organisation. Every core
+  role is shown whatever the tenancy mode; a named-tier holder sees only
+  their own tiers. Below that it
   renders `GET /api/v1/admin/access` for whoever opens it: a platform admin
   everything, an org OWNER/ADMIN their org's view, a named-tier holder their
   tiers, each with a **Your access** panel naming why each page they cannot
@@ -88,7 +93,7 @@ release process.
   `supportEntry`, `tierLabels`, `switchLabels` and `anySwitches`, so the
   reasons hold when an app hides `roles` or `switches` from an audience.
   See [access-explainer.md](./.context/auth/access-explainer.md#the-page).
-- **Who can do what: the access explainer's read model, endpoint and app
+- **Roles and access: the access explainer's read model, endpoint and app
   seam (§143 t-1090).** `GET /api/v1/admin/access` says, in the request's
   locale for its own words, every role and named tier, every entitlement switch, the org-tier
   admin pages grouped into areas with the tier and switch each needs and

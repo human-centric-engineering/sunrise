@@ -479,12 +479,12 @@ describe('OrchestrationDashboardPage — an org admin’s half (§111 t-812)', (
     expect(urls.some((u) => u.includes('/observability/dashboard-stats'))).toBe(true);
   });
 
-  it('links to who can do what, from the dashboard an org admin lands on (t-1091)', async () => {
+  it('links to roles and access, from the dashboard an org admin lands on (t-1091)', async () => {
     await setupHappyPathMocks({ hasProvider: true, hasAgent: true, hasDefaultChatModel: true });
 
     await renderPage();
 
-    expect(screen.getByRole('link', { name: 'See who can do what' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'See roles and access' })).toHaveAttribute(
       'href',
       '/admin/access'
     );

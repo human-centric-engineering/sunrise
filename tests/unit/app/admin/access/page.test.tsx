@@ -72,7 +72,7 @@ describe('AccessExplainerPage', () => {
     render(await AccessExplainerPage());
 
     expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe('/api/v1/admin/access');
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Who can do what');
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Roles and access');
     expect(screen.getByRole('heading', { name: 'Your access in Acme' })).toBeInTheDocument();
     expect(screen.getByText('Your role here: Admin')).toBeInTheDocument();
     // Only the sections the route returned.
@@ -118,7 +118,7 @@ describe('AccessExplainerPage', () => {
 
     render(await AccessExplainerPage());
 
-    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load who can do what");
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load roles and access");
     expect(logger.error).toHaveBeenCalled();
   });
 
@@ -127,7 +127,7 @@ describe('AccessExplainerPage', () => {
 
     render(await AccessExplainerPage());
 
-    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load who can do what");
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load roles and access");
     expect(logger.error).toHaveBeenCalledWith(
       'access explainer: the response did not match its schema',
       expect.objectContaining({ issues: expect.any(Array) })
@@ -136,8 +136,8 @@ describe('AccessExplainerPage', () => {
 
   it('takes its title from the catalogue', async () => {
     expect(await generateMetadata()).toEqual({
-      title: 'Who can do what',
-      description: 'Who can open each part of the admin console, and what decides it.',
+      title: 'Roles and access',
+      description: 'The roles in this install and what each one can do.',
     });
   });
 });
