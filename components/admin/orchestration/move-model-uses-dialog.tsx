@@ -75,7 +75,13 @@ export interface MovePreview {
   settings: SettingsMovePlan;
   suspendedOrgs: number;
   /** What the app said (§136 t-1067): `refused` is its reason, and blocks the move. */
-  app?: { pinsUnavailable: boolean; refused: string | null; mover?: boolean };
+  app?: {
+    pinsUnavailable: boolean;
+    refused: string | null;
+    mover?: boolean;
+    /** The mover may move uses the counts leave out (t-1088). */
+    uncounted?: boolean;
+  };
 }
 
 /** One org in the result. */
@@ -295,8 +301,10 @@ export function MoveModelUsesDialog({
     0;
   const platformOrgs = preview?.orgs.filter(platformUse) ?? [];
   const appOnlyOrgs = preview?.orgs.filter((o) => !platformUse(o) && (o.appPins ?? 0) > 0) ?? [];
+  // A mover whose uses were not all counted may still have some to move.
   const nothingToMove =
     preview !== null &&
+    !(appMoves && preview.app?.uncounted === true) &&
     preview.orgs.every((o) => o.agents + o.workflows + (appMoves ? (o.appPins ?? 0) : 0) === 0) &&
     preview.settings.moved.length === 0;
 
@@ -414,6 +422,12 @@ export function MoveModelUsesDialog({
                         : 'The app moves these itself; this move does not change them.'}
                     </p>
                   </div>
+                )}
+                {appMoves && preview.app?.uncounted === true && (
+                  <p className="text-muted-foreground text-xs">
+                    The app’s own uses were not all counted. The move asks the app to move its uses
+                    in every organisation it enters.
+                  </p>
                 )}
                 {preview.app?.pinsUnavailable && (
                   <p className="text-muted-foreground text-xs">

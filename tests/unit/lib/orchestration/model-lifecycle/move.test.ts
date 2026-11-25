@@ -635,7 +635,12 @@ describe('previewModelMove', () => {
     ]);
     // Nothing registered at lib/app/model-pins.ts: no app uses, no refusal,
     // and no org entered for them (runAsOrg below counts the two orgs only).
-    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null, mover: false });
+    expect(preview.app).toEqual({
+      pinsUnavailable: false,
+      refused: null,
+      mover: false,
+      uncounted: false,
+    });
     expect(preview.suspendedOrgs).toBe(1);
     expect(preview.settings.moved.map((s) => s.slot)).toEqual(['routing', 'chat', 'confidential']);
     expect(preview.settings.left).toEqual([{ slot: 'embeddings', reason: 'embedding_switch' }]);
@@ -1189,7 +1194,12 @@ describe('the app’s own pins and its check', () => {
       ['org-a', 2, 1, 2],
       ['org-b', 0, 0, 1],
     ]);
-    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null, mover: false });
+    expect(preview.app).toEqual({
+      pinsUnavailable: false,
+      refused: null,
+      mover: false,
+      uncounted: false,
+    });
   });
 
   it('shows the check’s refusal in the preview, and writes nothing', async () => {
@@ -1208,6 +1218,7 @@ describe('the app’s own pins and its check', () => {
       pinsUnavailable: false,
       refused: 'GPT-4.1 failed the contract panel',
       mover: false,
+      uncounted: false,
     });
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(world).toEqual(freshWorld());
@@ -1318,6 +1329,15 @@ describe('the app’s mover (t-1088)', () => {
       };
     });
     return seen;
+  }
+
+  /** A reporter over `world.appPins`: the org's pins on the model. */
+  function registerAppReporter() {
+    registerModelPinReporter(({ orgId, model }) =>
+      world.appPins
+        .filter((p) => p.orgId === orgId && p.model === model.modelId)
+        .map((p) => ({ label: p.label, where: 'Panels › Judge' }))
+    );
   }
 
   beforeEach(() => {
@@ -1457,12 +1477,100 @@ describe('the app’s mover (t-1088)', () => {
     expect(world.appPins.find((p) => p.orgId === 'org-a')?.model).toBe('gpt-4o');
   });
 
-  it('says in the preview that the app moves its pins', async () => {
+  it('says in the preview that the app moves its pins, uncounted with no reporter', async () => {
     registerMover();
     const preview = await previewModelMove(await target());
-    expect(preview.app).toEqual({ pinsUnavailable: false, refused: null, mover: true });
+    // No reporter: what the mover will move was not counted.
+    expect(preview.app).toEqual({
+      pinsUnavailable: false,
+      refused: null,
+      mover: true,
+      uncounted: true,
+    });
     // A preview moves nothing.
     expect(world.appPins.every((p) => p.model === 'gpt-4o')).toBe(true);
+  });
+
+  it('counts the mover’s pins in the preview when a reporter answers', async () => {
+    registerMover();
+    registerAppReporter();
+    const preview = await previewModelMove(await target());
+    expect(preview.app).toMatchObject({ mover: true, uncounted: false });
+    expect(preview.orgs.map((o) => [o.orgId, o.appPins])).toEqual([
+      ['org-a', 1],
+      ['org-b', 3],
+    ]);
+  });
+
+  it('does not list an org skipped for its own key that has nothing on the model', async () => {
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-a');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-a');
+    world.appPins = world.appPins.filter((p) => p.orgId !== 'org-a');
+    world.keyed = ['org-a'];
+    vi.mocked(testProviderKeyOnModel).mockResolvedValueOnce({ ok: false, failedAt: 'model' });
+    registerMover();
+    registerAppReporter();
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(result.orgs.map((o) => o.orgId)).toEqual(['org-b']);
+    expect(result.totals.skipped).toBe(0);
+    // Still named as a key failure in the move's audit row.
+    const summary = audit.find((r) => r.action === 'provider_model.uses_moved');
+    expect(summary?.metadata).toMatchObject({ keyFailedOrgs: ['org-a'], skippedOrgs: [] });
+  });
+
+  it('lists an org skipped for its own key when the reporter counts the app’s pins there', async () => {
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-a');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-a');
+    world.keyed = ['org-a'];
+    vi.mocked(testProviderKeyOnModel).mockResolvedValueOnce({ ok: false, failedAt: 'model' });
+    const seen = registerMover();
+    registerAppReporter();
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(seen.map((s) => s.orgId)).toEqual(['org-b']);
+    expect(result.orgs[0]).toMatchObject({ orgId: 'org-a', status: 'skipped' });
+    expect(world.appPins.find((p) => p.orgId === 'org-a')?.model).toBe('gpt-4o');
+  });
+
+  it('audits an org where the mover left pins and moved none', async () => {
+    registerMover({
+      'org-a': () => ({
+        moved: [],
+        left: [{ label: 'Panel A', where: 'Panels › Judge', reason: 'Locked by evaluator' }],
+      }),
+    });
+
+    await moveModelUses(await target(), ACTOR);
+
+    const row = audit.find((r) => r.action === 'app.model_pins_moved' && r.scope === 'org-a');
+    expect(row?.metadata).toMatchObject({
+      moved: 0,
+      left: 1,
+      leftPins: [{ label: 'Panel A', where: 'Panels › Judge', reason: 'Locked by evaluator' }],
+    });
+  });
+
+  it('keeps an org moved when the mover moved more pins than a report may name', async () => {
+    const many = Array.from({ length: 1_500 }, (_, i) => ({
+      label: `Panel ${i}`,
+      where: 'Panels › Judge',
+    }));
+    registerMover({ 'org-a': () => ({ moved: many }) });
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(result.orgs[0]).toMatchObject({
+      orgId: 'org-a',
+      status: 'moved',
+      appPins: { moved: 1_500, left: 0 },
+    });
+    expect(agent('ag-a1').model).toBe('gpt-4.1');
+    const row = audit.find((r) => r.action === 'app.model_pins_moved' && r.scope === 'org-a');
+    expect(row?.metadata?.moved).toBe(1_500);
+    expect(row?.metadata?.movedPins).toHaveLength(50);
   });
 
   it('with no mover, writes no app pins and records no app audit row', async () => {

@@ -413,6 +413,39 @@ describe('the app’s own pins and its check (§136 t-1067)', () => {
     expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeEnabled();
   });
 
+  it('with a mover whose uses were not counted, enables the move with every count zero (t-1088)', async () => {
+    const empty = {
+      ...PREVIEW,
+      orgs: [{ ...PREVIEW.orgs[0], agents: 0, inactiveAgents: 0, workflows: 0, appPins: 0 }],
+      settings: { moved: [], left: [] },
+    };
+    vi.mocked(apiClient.post).mockResolvedValue({
+      ...empty,
+      app: { pinsUnavailable: false, refused: null, mover: true, uncounted: true },
+    });
+    renderDialog();
+    const { dialog } = await open();
+    await within(dialog).findByText(/were not all counted/);
+    expect(dialog).toHaveTextContent(
+      'The app’s own uses were not all counted. The move asks the app to move its uses in every organisation it enters.'
+    );
+    expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeEnabled();
+  });
+
+  it('with a mover whose uses were counted, keeps the move disabled when nothing would move (t-1088)', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      ...PREVIEW,
+      orgs: [{ ...PREVIEW.orgs[0], agents: 0, inactiveAgents: 0, workflows: 0, appPins: 0 }],
+      settings: { moved: [], left: [] },
+      app: { pinsUnavailable: false, refused: null, mover: true, uncounted: false },
+    });
+    renderDialog();
+    const { dialog } = await open();
+    await within(dialog).findByText('Acme');
+    expect(dialog).not.toHaveTextContent('were not all counted');
+    expect(within(dialog).getByRole('button', { name: 'Move uses' })).toBeDisabled();
+  });
+
   it('reports what the app’s mover moved and left (t-1088)', async () => {
     vi.mocked(apiClient.post)
       .mockResolvedValueOnce(PREVIEW)

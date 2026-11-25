@@ -1266,8 +1266,9 @@ export function initAppModelPins(): void {
   );
   // Asked once per org the move enters, in that org's transaction: write
   // through `tx`, so your pins move with its agents and workflows or not at all.
-  registerModelPinMover(async ({ model, replacement, tx }) => {
-    const panels = await repointPanelJudges(tx, model, replacement);
+  // Scope every query by `orgId`: row isolation may not be on yet.
+  registerModelPinMover(async ({ model, replacement, orgId, tx }) => {
+    const panels = await repointPanelJudges(tx, orgId, model, replacement);
     return { moved: panels.map((p) => ({ label: `Panel: ${p.name}`, where: 'Panels › Judge' })) };
   });
 }
@@ -1309,7 +1310,8 @@ closed**: a mover that throws, runs past 30 seconds
 (`APP_MODEL_PIN_MOVE_TIMEOUT_MS`) or answers anything else rolls its org back,
 Sunrise's writes there included, and the move reports that org failed and goes
 on. An org skipped because its own key cannot reach the replacement is not
-offered to the mover. A mover does not stand in for the check: if your check
+offered to the mover, and nor is a suspended org. Scope your queries by
+`orgId` yourself, and answer the rows you actually changed. A mover does not stand in for the check: if your check
 refuses while pins remain, let it allow the pins your mover will move. See
 [`.context/orchestration/llm-providers.md`](./.context/orchestration/llm-providers.md#an-apps-own-model-pins-136-t-1067).
 

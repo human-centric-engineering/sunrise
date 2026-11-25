@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 
 import {
   modelHasMovableUses,
@@ -253,10 +253,23 @@ describe('the app’s own uses (§136 t-1067)', () => {
     expect(modelHasMovableUses({ ...NONE, ...pins })).toBe(true);
     expect(modelHasMovableUses({ ...NONE, otherOrgAppPins: 2, appPinsMovable: true })).toBe(true);
     expect(modelHasMovableUses({ ...NONE, appPinsMovable: true })).toBe(false);
+    // Not all counted (no reporter, or it failed): the mover may have some.
+    expect(modelHasMovableUses({ ...NONE, appPinsMovable: true, appPinsUncounted: true })).toBe(
+      true
+    );
+    expect(modelHasMovableUses({ ...NONE, appPinsUncounted: true })).toBe(false);
 
     const app = column(panel(pins), 'In the app');
     expect(app).toHaveTextContent('The app moves these when the model’s uses are moved.');
     expect(app).not.toHaveTextContent('does not change them');
+    expect(app).not.toHaveTextContent('suspended');
+
+    // Other orgs' uses: those in a suspended org are not moved.
+    cleanup();
+    const elsewhere = column(panel({ otherOrgAppPins: 2, appPinsMovable: true }), 'In the app');
+    expect(elsewhere).toHaveTextContent(
+      'The app moves these when the model’s uses are moved, except in a suspended organisation.'
+    );
   });
 
   it('modelHasUses counts the app’s uses, in any org', () => {

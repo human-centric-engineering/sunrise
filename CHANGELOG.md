@@ -55,11 +55,13 @@ release process.
   org's scope and inside the org's own transaction, after erasure's locks and
   before any row is written, so the org's app pins, agents and workflows move
   together or not at all. With a mover, an org with only the app's pins is
-  entered too; one skipped for its own key is not. It fails closed: a mover
+  entered too; one skipped for its own key is not offered to the mover. It fails closed: a mover
   that throws, runs past 30 seconds or answers badly rolls its org back and
   the org is reported `failed`. Additive results: `OrgMoveResult.appPins`
-  (`{ moved, left }`), `totals.appPins`, the preview's `app.mover`, the uses'
-  `appPinsMovable`, and the `app.model_pins_moved` audit row. With no mover
+  (`{ moved, left }`), `totals.appPins`, the preview's `app.mover` and
+  `app.uncounted`, the uses' `appPinsMovable` and `appPinsUncounted` (a mover
+  with no reporter, or a failed report, may move uses nobody counted, so the
+  move is offered), and the `app.model_pins_moved` audit row. With no mover
   registered nothing changes. **What a fork checks:** an app whose check
   refuses a move while its pins remain can now register a mover and let the
   check allow those pins. See

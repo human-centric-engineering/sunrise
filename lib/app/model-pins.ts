@@ -46,11 +46,15 @@
  *     });
  *     // Asked once per org the move enters, in its transaction: write
  *     // through `tx`, so your pins move with the org's agents or not at all.
- *     registerModelPinMover(async ({ model, replacement, tx }) => {
+ *     // Scope by `orgId` yourself: row isolation may not be on yet.
+ *     registerModelPinMover(async ({ model, replacement, orgId, tx }) => {
  *       const from = formatModelPin(model.providerSlug, model.modelId);
- *       const panels = await tx.appPanel.findMany({ where: { judgeModel: from } });
+ *       const panels = await tx.appPanel.findMany({
+ *         where: { orgId, judgeModel: from },
+ *         select: { id: true, name: true },
+ *       });
  *       await tx.appPanel.updateMany({
- *         where: { judgeModel: from },
+ *         where: { id: { in: panels.map((p) => p.id) }, orgId, judgeModel: from },
  *         data: { judgeModel: formatModelPin(replacement.providerSlug, replacement.modelId) },
  *       });
  *       return { moved: panels.map((p) => ({ label: `Panel: ${p.name}`, where: 'Panels › Judge' })) };

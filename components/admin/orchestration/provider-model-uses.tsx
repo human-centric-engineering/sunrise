@@ -59,6 +59,8 @@ export interface ProviderModelUsesData {
   appPinsUnavailable?: boolean;
   /** The app moves its uses with a move (it registered a mover, t-1088). */
   appPinsMovable?: boolean;
+  /** The mover may move uses the counts leave out: no reporter, or its report failed. */
+  appPinsUncounted?: boolean;
 }
 
 const SLOT_LABEL: Record<SettingsPinSlot, string> = {
@@ -135,10 +137,13 @@ function modelHasPlatformUses(uses: ProviderModelUsesData): boolean {
 /**
  * Whether anything the move can change uses the model: the platform's own
  * uses, and the app's when it moves them with the move (`appPinsMovable`);
- * otherwise the app moves its uses itself. What gates the move's trigger.
+ * otherwise the app moves its uses itself. A mover whose uses were not all
+ * counted (`appPinsUncounted`) may have some, so the move is offered. What
+ * gates the move's trigger.
  */
 export function modelHasMovableUses(uses: ProviderModelUsesData): boolean {
-  return uses.appPinsMovable ? modelHasUses(uses) : modelHasPlatformUses(uses);
+  if (!uses.appPinsMovable) return modelHasPlatformUses(uses);
+  return uses.appPinsUncounted === true || modelHasUses(uses);
 }
 
 /** The app's own uses (§136 t-1067): named in the caller's org, counted elsewhere. */
@@ -165,7 +170,9 @@ function AppUses({ uses }: { uses: ProviderModelUsesData }) {
       {(own.length > 0 || elsewhere > 0) && (
         <p className="text-muted-foreground text-xs">
           {uses.appPinsMovable
-            ? 'The app moves these when the model’s uses are moved.'
+            ? elsewhere > 0
+              ? 'The app moves these when the model’s uses are moved, except in a suspended organisation.'
+              : 'The app moves these when the model’s uses are moved.'
             : 'The app sets these itself, so moving the model’s uses does not change them.'}
         </p>
       )}

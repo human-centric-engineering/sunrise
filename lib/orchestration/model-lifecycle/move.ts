@@ -435,6 +435,12 @@ export interface AppMovePreview {
   refused: string | null;
   /** The app registered a mover (t-1088): its pins move with each org. */
   mover: boolean;
+  /**
+   * The mover may move pins the counts leave out: the app registered no
+   * reporter, or its report failed. A move can then change something even
+   * when every count here is zero.
+   */
+  uncounted: boolean;
 }
 
 /** What {@link previewModelMove} answers. */
@@ -504,6 +510,7 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
     });
     if (preview) orgs.push(preview);
   }
+  const registered = appModelPinsRegistered();
   return {
     ...modelSummary(target),
     orgs,
@@ -513,7 +520,8 @@ export async function previewModelMove(target: MoveTarget): Promise<ModelMovePre
     app: {
       pinsUnavailable: app.report.failed,
       refused: app.verdict.allowed ? null : app.verdict.reason,
-      mover: appModelPinsRegistered().mover,
+      mover: registered.mover,
+      uncounted: registered.mover && (!registered.reporter || app.report.failed),
     },
   };
 }
@@ -778,7 +786,7 @@ function auditOrg(target: MoveTarget, writes: OrgWrites, actor: MoveActor): void
     });
   }
   const app = writes.appPins;
-  if (app && app.moved.length > 0) {
+  if (app && app.moved.length + app.left.length > 0) {
     logAdminAction({
       userId: actor.userId,
       action: 'app.model_pins_moved',
@@ -826,9 +834,17 @@ async function testOrgKey(
 
 const NO_APP_PINS = { moved: 0, left: 0 } as const;
 
+/** What the move knows of the app in one org. */
+interface OrgApp {
+  /** The app registered a mover. */
+  mover: boolean;
+  /** Pins its reporter counted in the org (0 with no reporter, or one that failed). */
+  reported: number;
+}
+
 /**
  * Move one org's agents and workflows, and the app's pins when it registered
- * a mover (`appMover`), in its scope. `keyProblem` is why its own key failed
+ * a mover (`app.mover`), in its scope. `keyProblem` is why its own key failed
  * the test against the replacement ({@link testOrgKey}), which skips it.
  */
 async function moveOrg(
@@ -836,8 +852,9 @@ async function moveOrg(
   target: MoveTarget,
   keyProblem: string | null,
   actor: MoveActor,
-  appMover: boolean
+  app: OrgApp
 ): Promise<OrgMoveResult | null> {
+  const appMover = app.mover;
   return inOrg(pass, async () => {
     const uses = await readOrgUses(pass, target);
     // With a mover the org is entered whatever the platform finds in it: the
@@ -854,6 +871,10 @@ async function moveOrg(
       return { ...base, status: 'left', agents: 0, workflows: 0 };
     }
     if (keyProblem) {
+      // Skipped orgs are those left with a use on the model: with nothing of
+      // the platform's there, only one the app's reporter counted pins in.
+      // Every org whose key failed is in the move's audit row either way.
+      if (!usesSomething(uses) && app.reported === 0) return null;
       return { ...base, status: 'skipped', reason: keyProblem, agents: 0, workflows: 0 };
     }
     let writes: OrgWrites;
@@ -964,10 +985,13 @@ export async function moveModelUses(
   actor: MoveActor
 ): Promise<ModelMoveResult> {
   // The app first: a refusal stops the move before any key is billed or any
-  // row is written. Its pins are read only for its check, which they inform.
+  // row is written. Its pins are read for its check, which they inform.
   const app = appModelPinsRegistered();
-  const verdict: AppMoveVerdict =
-    app.check || app.failed ? (await askApp(target, 'move')).verdict : { allowed: true };
+  // With a mover the report is read too, to tell a skipped org that has the
+  // app's pins in it from one with nothing on the model.
+  const asked =
+    app.check || app.failed || (app.mover && app.reporter) ? await askApp(target, 'move') : null;
+  const verdict: AppMoveVerdict = asked?.verdict ?? { allowed: true };
   if (!verdict.allowed) {
     logger.warn('Model move refused by the app', {
       providerModelId: target.model.id,
@@ -994,13 +1018,10 @@ export async function moveModelUses(
   const settings = await moveSettings(target, keyProblems.size, actor);
   const orgs: OrgMoveResult[] = [];
   for (const pass of passes) {
-    const result = await moveOrg(
-      pass,
-      target,
-      keyProblems.get(pass.orgId) ?? null,
-      actor,
-      app.mover
-    );
+    const result = await moveOrg(pass, target, keyProblems.get(pass.orgId) ?? null, actor, {
+      mover: app.mover,
+      reported: asked?.perOrg.get(pass.orgId) ?? 0,
+    });
     if (result) orgs.push(result);
   }
   const totals = {

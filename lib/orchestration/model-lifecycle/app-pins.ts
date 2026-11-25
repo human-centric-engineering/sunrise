@@ -194,12 +194,15 @@ const pinSchema = z.object({
 
 const pinsSchema = z.array(pinSchema).max(MAX_PINS_PER_ORG);
 
+/**
+ * Not capped like a report: the mover's writes have already happened in the
+ * org's transaction, so a cap would roll back a move that worked, and fail
+ * the same way on every retry. The counts are kept whole; the audit names
+ * only the first few (`move.ts`).
+ */
 const moveAnswerSchema = z.object({
-  moved: z.array(pinSchema).max(MAX_PINS_PER_ORG),
-  left: z
-    .array(pinSchema.extend({ reason: z.string().trim().min(1).max(500) }))
-    .max(MAX_PINS_PER_ORG)
-    .optional(),
+  moved: z.array(pinSchema),
+  left: z.array(pinSchema.extend({ reason: z.string().trim().min(1).max(500) })).optional(),
 });
 
 const answerSchema = z.discriminatedUnion('allow', [
