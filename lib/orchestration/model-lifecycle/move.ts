@@ -65,8 +65,8 @@
  * writes the app's pins itself. An app that registers a mover (t-1088) moves
  * them in each org's transaction, with its own code, after the org's erasure
  * locks and before any row is written: a mover that fails rolls its org back
- * like any other failure there. With a mover every org the move enters is
- * offered to it, an org with no platform use included.
+ * like any other failure there. With a mover an org with no platform use is
+ * entered for it too, unless the app's reporter counted no pins there.
  *
  * ## The audit trail
  *
@@ -838,8 +838,11 @@ const NO_APP_PINS = { moved: 0, left: 0 } as const;
 interface OrgApp {
   /** The app registered a mover. */
   mover: boolean;
-  /** Pins its reporter counted in the org (0 with no reporter, or one that failed). */
-  reported: number;
+  /**
+   * Pins its reporter counted in the org; `null` when that is not known (no
+   * reporter, or its report failed).
+   */
+  reported: number | null;
 }
 
 /**
@@ -857,9 +860,11 @@ async function moveOrg(
   const appMover = app.mover;
   return inOrg(pass, async () => {
     const uses = await readOrgUses(pass, target);
-    // With a mover the org is entered whatever the platform finds in it: the
-    // app's pins there are the mover's to find.
-    if (!usesSomething(uses) && !appMover) return null;
+    // With nothing of the platform's here, the org is entered only for the
+    // mover, and not when its reporter counted none of the app's pins here:
+    // a move enters only orgs with something to move, so its walk stays as
+    // long as the uses. With the count unknown, the mover is asked.
+    if (!usesSomething(uses) && (!appMover || app.reported === 0)) return null;
     const base = {
       orgId: pass.orgId,
       name: pass.name,
@@ -871,10 +876,8 @@ async function moveOrg(
       return { ...base, status: 'left', agents: 0, workflows: 0 };
     }
     if (keyProblem) {
-      // Skipped orgs are those left with a use on the model: with nothing of
-      // the platform's there, only one the app's reporter counted pins in.
-      // Every org whose key failed is in the move's audit row either way.
-      if (!usesSomething(uses) && app.reported === 0) return null;
+      // Listed as skipped: an org with nothing of the platform's here reaches
+      // this only when the app may have pins here (counted, or not known).
       return { ...base, status: 'skipped', reason: keyProblem, agents: 0, workflows: 0 };
     }
     let writes: OrgWrites;
@@ -987,8 +990,9 @@ export async function moveModelUses(
   // The app first: a refusal stops the move before any key is billed or any
   // row is written. Its pins are read for its check, which they inform.
   const app = appModelPinsRegistered();
-  // With a mover the report is read too, to tell a skipped org that has the
-  // app's pins in it from one with nothing on the model.
+  // With a mover the report is read too (within its own 20-second budget):
+  // an org with nothing on the model, the app's pins included, is then not
+  // entered, and not listed as skipped for its key.
   const asked =
     app.check || app.failed || (app.mover && app.reporter) ? await askApp(target, 'move') : null;
   const verdict: AppMoveVerdict = asked?.verdict ?? { allowed: true };
@@ -1020,7 +1024,7 @@ export async function moveModelUses(
   for (const pass of passes) {
     const result = await moveOrg(pass, target, keyProblems.get(pass.orgId) ?? null, actor, {
       mover: app.mover,
-      reported: asked?.perOrg.get(pass.orgId) ?? 0,
+      reported: asked && !asked.report.failed ? (asked.perOrg.get(pass.orgId) ?? 0) : null,
     });
     if (result) orgs.push(result);
   }

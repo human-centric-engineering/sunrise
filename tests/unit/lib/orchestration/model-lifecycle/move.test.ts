@@ -1520,6 +1520,33 @@ describe('the app’s mover (t-1088)', () => {
     expect(summary?.metadata).toMatchObject({ keyFailedOrgs: ['org-a'], skippedOrgs: [] });
   });
 
+  it('does not enter an org with nothing of the platform’s where the reporter counted no app pins', async () => {
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-b');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-b');
+    world.appPins = world.appPins.filter((p) => p.orgId !== 'org-b');
+    const seen = registerMover();
+    registerAppReporter();
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    // No transaction, and no mover call, for an org with nothing to move.
+    expect(seen.map((s) => s.orgId)).toEqual(['org-a']);
+    expect(result.orgs.map((o) => o.orgId)).toEqual(['org-a']);
+  });
+
+  it('lists an org skipped for its own key when the app’s pins there were not counted', async () => {
+    world.agents = world.agents.filter((a) => a.orgId !== 'org-a');
+    world.workflows = world.workflows.filter((w) => w.orgId !== 'org-a');
+    world.keyed = ['org-a'];
+    vi.mocked(testProviderKeyOnModel).mockResolvedValueOnce({ ok: false, failedAt: 'model' });
+    registerMover(); // no reporter
+
+    const result = await moveModelUses(await target(), ACTOR);
+
+    expect(result.orgs[0]).toMatchObject({ orgId: 'org-a', status: 'skipped' });
+    expect(result.totals.skipped).toBe(1);
+  });
+
   it('lists an org skipped for its own key when the reporter counts the app’s pins there', async () => {
     world.agents = world.agents.filter((a) => a.orgId !== 'org-a');
     world.workflows = world.workflows.filter((w) => w.orgId !== 'org-a');

@@ -258,6 +258,10 @@ describe('the app’s own uses (§136 t-1067)', () => {
       true
     );
     expect(modelHasMovableUses({ ...NONE, appPinsUncounted: true })).toBe(false);
+    expect(panel({ appPinsMovable: true, appPinsUncounted: true })).toHaveTextContent(
+      'Nothing Sunrise can see uses this model.'
+    );
+    cleanup();
 
     const app = column(panel(pins), 'In the app');
     expect(app).toHaveTextContent('The app moves these when the model’s uses are moved.');

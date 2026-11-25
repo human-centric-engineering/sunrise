@@ -306,7 +306,14 @@ export const DELETE = withAdminAuth<{ id: string }>(
         savedSettings: savedSettings.map((pin) => pin.slot),
         appCount,
       });
-      return errorResponse(buildInUseMessage(current.name, usage, savedSettings.length, appCount), {
+      const message = buildInUseMessage(
+        current.name,
+        usage,
+        savedSettings.length,
+        appCount,
+        usage.appPinsMovable
+      );
+      return errorResponse(message, {
         code: 'MODEL_IN_USE',
         status: 409,
         details: {
@@ -381,7 +388,9 @@ function buildInUseMessage(
   modelName: string,
   usage: ProviderModelUsage,
   savedSettings: number,
-  appUses: number = 0
+  appUses: number = 0,
+  /** The app registered a mover (t-1088): moving the model's uses moves its uses too. */
+  appMoves: boolean = false
 ): string {
   const agents = usage.agents.length + usage.otherOrgAgents;
   const workflows = usage.workflows.length + usage.otherOrgWorkflows;
@@ -397,6 +406,11 @@ function buildInUseMessage(
   if (appUses > 0) parts.push(`${appUses} use${appUses === 1 ? '' : 's'} the app reports`);
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0];
   const one = agents + workflows + savedSettings + appUses === 1;
-  const appNote = appUses > 0 ? ' The app moves its own uses itself.' : '';
+  const appNote =
+    appUses === 0
+      ? ''
+      : appMoves
+        ? ' Moving the model’s uses moves the app’s uses too.'
+        : ' The app moves its own uses itself.';
   return `Cannot delete model "${modelName}" — ${list} still reference${one ? 's' : ''} it. Re-point them to a different model first.${appNote}`;
 }

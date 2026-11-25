@@ -15,6 +15,7 @@
  *
  *   import { prisma } from '@/lib/db/client';
  *   import { formatModelPin } from '@/lib/orchestration/llm/model-pin';
+ *   import { isMultiTenant } from '@/lib/tenancy/context';
  *   import {
  *     registerModelMoveCheck,
  *     registerModelPinMover,
@@ -46,15 +47,17 @@
  *     });
  *     // Asked once per org the move enters, in its transaction: write
  *     // through `tx`, so your pins move with the org's agents or not at all.
- *     // Scope by `orgId` yourself: row isolation may not be on yet.
+ *     // At `multi` scope by `orgId` yourself (row isolation may not be on
+ *     // yet); at `single` match every row, `NULL`-org ones included.
  *     registerModelPinMover(async ({ model, replacement, orgId, tx }) => {
  *       const from = formatModelPin(model.providerSlug, model.modelId);
+ *       const org = isMultiTenant() ? { orgId } : {};
  *       const panels = await tx.appPanel.findMany({
- *         where: { orgId, judgeModel: from },
+ *         where: { ...org, judgeModel: from },
  *         select: { id: true, name: true },
  *       });
  *       await tx.appPanel.updateMany({
- *         where: { id: { in: panels.map((p) => p.id) }, orgId, judgeModel: from },
+ *         where: { id: { in: panels.map((p) => p.id) }, ...org, judgeModel: from },
  *         data: { judgeModel: formatModelPin(replacement.providerSlug, replacement.modelId) },
  *       });
  *       return { moved: panels.map((p) => ({ label: `Panel: ${p.name}`, where: 'Panels › Judge' })) };

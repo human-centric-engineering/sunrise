@@ -291,8 +291,9 @@ export function MoveModelUsesDialog({
   const refused = preview?.app?.refused ?? null;
   // The app moves its own uses with the move (t-1088).
   const appMoves = preview?.app?.mover === true;
-  // An org with only the app's own uses has nothing this move changes: it is
-  // listed apart, under the app's heading.
+  // An org with only the app's own uses is listed apart, under the app's
+  // heading: the app's mover moves them with the move (`appMoves`), else the
+  // move changes nothing there.
   const platformUse = (o: OrgPreview) =>
     o.agents +
       o.workflows +

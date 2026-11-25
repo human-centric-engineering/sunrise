@@ -241,7 +241,7 @@ export function ProviderModelUses({ retiresAt, lifecycle, uses, action }: Provid
       {nothing || !platform ? (
         nothing && (
           <p className="text-muted-foreground text-sm">
-            {uses.appPinsUnavailable
+            {uses.appPinsUnavailable || uses.appPinsUncounted
               ? 'Nothing Sunrise can see uses this model.'
               : 'Nothing uses this model.'}
           </p>

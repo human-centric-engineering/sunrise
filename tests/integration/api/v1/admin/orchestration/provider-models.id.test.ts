@@ -95,6 +95,7 @@ import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import {
   __resetAppModelPinsForTests,
+  registerModelPinMover,
   registerModelPinReporter,
 } from '@/lib/orchestration/model-lifecycle/app-pins';
 
@@ -1539,6 +1540,20 @@ describe('the app’s own uses of the model (§136 t-1067)', () => {
     expect(body.error.details.appPins).toEqual([
       { label: 'Panel: Contracts', where: 'Panels › Judge' },
     ]);
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+  });
+
+  it('with a mover, says moving the model’s uses moves the app’s too (t-1088)', async () => {
+    registerModelPinReporter(() => [{ label: 'Panel: Contracts', where: 'Panels › Judge' }]);
+    registerModelPinMover(() => ({ moved: [] }));
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ error: { message: string } }>(response);
+    expect(body.error.message).toBe(
+      'Cannot delete model "Claude Opus 4" — 1 use the app reports still references it. Re-point them to a different model first. Moving the model’s uses moves the app’s uses too.'
+    );
     expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
   });
 
