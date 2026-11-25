@@ -1644,7 +1644,7 @@
           "platformTitle": "Platform roles",
           "platformIntro": "Held on the install itself, across every organisation.",
           "orgTitle": "Organisation roles",
-          "orgIntro": "Held in one organisation, and used when the install runs multi-tenant. In a single-tenant install, platform admins are its owners and everyone else is a member.",
+          "orgIntro": "Held in one organisation, and used when the install runs multi-tenant.",
           "appTitle": "App roles",
           "appIntro": "Roles this app adds. Each opens only the pages listed for it, in the organisation where it is held.",
           "matrixTitle": "What each role can do",
