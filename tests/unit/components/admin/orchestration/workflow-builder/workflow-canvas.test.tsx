@@ -114,12 +114,13 @@ describe('WorkflowCanvas', () => {
     });
   });
 
-  // @xyflow/react 13 follows the system colour scheme unless forceColorMode
-  // is passed (12 called the prop colorMode), so the canvas must hand it the
-  // app's own theme or it ignores the theme toggle.
+  // @xyflow/react 13 renamed colorMode to forceColorMode. The prop sets the
+  // container's own .dark / .light class, which pins its color-scheme to the
+  // app's theme rather than leaving it to an ancestor class or the OS.
   describe('colour mode', () => {
     function lastBackgroundProps(): Record<string, unknown> {
       const calls = BackgroundMock.mock.calls;
+      expect(calls.length).toBeGreaterThan(0);
       return calls[calls.length - 1]?.[0] ?? {};
     }
 
@@ -134,6 +135,7 @@ describe('WorkflowCanvas', () => {
       themeState.theme = 'dark';
       render(<WorkflowCanvas {...DEFAULT_PROPS} />);
       expect(getLastRFProps().forceColorMode).toBe('dark');
+      expect(getLastRFProps()).not.toHaveProperty('colorMode');
       expect(lastBackgroundProps().color).toBe('#3f3f46');
     });
   });

@@ -3,6 +3,13 @@
 @import 'tw-animate-css';
 @plugin '@tailwindcss/typography';
 
+/* @xyflow/react 13 ships its styles in `@layer xyflow` (12's were unlayered,
+   so they beat every layer). A layer's rank is set where it is first
+   declared, and this root-layout sheet loads before the workflow page's, so
+   declaring it here, last, keeps the canvas's styles above Tailwind's
+   preflight and utilities. */
+@layer theme, base, components, utilities, xyflow;
+
 @variant dark (&:is(.dark *));
 
 @theme {
