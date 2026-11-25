@@ -473,6 +473,21 @@ describe('why a page is closed, and the names that say so', () => {
     expect(pageOf(explainer, '/admin/briefs')).toMatchObject({ opens: true, closedBy: null });
   });
 
+  it('puts a page the policy keeps closed down to the policy, not a switch the org has', () => {
+    registerAgencyApp();
+    // The org has briefs on; this policy still does not meet it for the org tier.
+    const explainer = buildAccessExplainer(
+      viewer({
+        reach: { tiers: ['org'], landing: null, switchesMet: [] },
+        orgRole: 'ADMIN',
+        switchesOn: ['briefs'],
+      }),
+      translator()
+    );
+
+    expect(pageOf(explainer, '/admin/briefs')).toMatchObject({ opens: false, closedBy: 'policy' });
+  });
+
   it('calls the switch unknown, not missing, when the org’s switches could not be read', () => {
     registerAgencyApp();
     const explainer = buildAccessExplainer(

@@ -312,6 +312,45 @@ describe('AccessExplainerView — what the route leaves out', () => {
     expect(within(panel).queryByText('designers')).not.toBeInTheDocument();
   });
 
+  it('tells a holder none of their pages’ switches are on, not that the org has none', () => {
+    render(
+      <AccessExplainerView
+        explainer={explainerFor({ ...HOLDER, switchesOn: ['briefs'] })}
+        orgName="Acme"
+      />
+    );
+
+    expect(screen.getByText('None of the switches your pages need are on.')).toBeInTheDocument();
+    expect(screen.queryByText('This organisation has no switches on.')).not.toBeInTheDocument();
+  });
+
+  it('says a page the app’s policy keeps closed is closed by its rules, not by a switch', () => {
+    const explainer = explainerFor({
+      ...ORG_OWNER,
+      reach: { tiers: ['org'], landing: null, switchesMet: [] } satisfies AdminReach,
+    });
+    render(<AccessExplainerView explainer={explainer} orgName="Acme" />);
+
+    const panel = screen.getByRole('region', { name: 'Your access in Acme' });
+    const row = within(panel).getByText('/admin/briefs').closest('li');
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getByText(/Closed to you by this app's own access rules/)
+    ).toBeInTheDocument();
+  });
+
+  it('shows an org role it has no words for as given, not a prototype property', () => {
+    const explainer = explainerFor(HOLDER);
+    render(
+      <AccessExplainerView
+        explainer={{ ...explainer, you: { ...explainer.you!, orgRole: 'constructor' } }}
+        orgName="Acme"
+      />
+    );
+
+    expect(screen.getByText('Your role here: constructor')).toBeInTheDocument();
+  });
+
   it('says nothing of a role for a viewer with none, rather than calling it support access', () => {
     render(
       <AccessExplainerView explainer={explainerFor({ ...HOLDER, orgRole: null })} orgName="Acme" />

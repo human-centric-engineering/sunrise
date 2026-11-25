@@ -1613,6 +1613,7 @@
           "tiers": "You can open the pages for:",
           "switchesOn": "Switches this organisation has on:",
           "noSwitchesOn": "This organisation has no switches on.",
+          "noNeededSwitchesOn": "None of the switches your pages need are on.",
           "switchesUnreadable": "Couldn't read this organisation's switches, so the reasons pages are locked can't be shown.",
           "closedTitle": "Pages you can't open",
           "noneClosed": "You can open every page listed for you."
@@ -1635,6 +1636,7 @@
           "needsTier": "Needs {tier}.",
           "needsSwitch": "Needs {switch}, which this organisation does not have.",
           "needsSwitchUnread": "Needs {switch}. Couldn't check whether this organisation has it.",
+          "closedByPolicy": "Closed to you by this app's own access rules.",
           "empty": "No pages are listed for you here."
         },
         "switches": {

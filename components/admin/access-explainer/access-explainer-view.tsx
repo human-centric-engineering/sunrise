@@ -87,6 +87,7 @@ function closedReason(page: AccessExplainerPage, t: Translate): string {
   if (label !== null && page.closedBy === 'unread') {
     return t('areas.needsSwitchUnread', { switch: label });
   }
+  if (page.closedBy === 'policy') return t('areas.closedByPolicy');
   return t('areas.needsTier', { tier: page.tierLabel });
 }
 
@@ -131,7 +132,12 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
 
   // From the catalogue, as the roles section words it: that section may not
   // be shown to this viewer.
-  const roleKey = you.orgRole ? ORG_ROLE_LABEL_KEYS[you.orgRole.toLowerCase()] : undefined;
+  const lower = you.orgRole?.toLowerCase();
+  // Own keys only: a role string such as `constructor` is not a label.
+  const roleKey =
+    lower !== undefined && Object.hasOwn(ORG_ROLE_LABEL_KEYS, lower)
+      ? ORG_ROLE_LABEL_KEYS[lower]
+      : undefined;
   const role = roleKey ? tRoles(roleKey) : you.orgRole;
   const closed = (explainer.areas ?? []).flatMap((area) =>
     area.pages.filter((page) => !page.opens)
@@ -173,7 +179,11 @@ function YourAccess({ explainer, orgName }: AccessExplainerViewProps) {
         ) : you.anySwitches ? (
           // Only where there are switches to have: on an install that
           // registers none, "none on" would say nothing.
-          <p>{t('you.noSwitchesOn')}</p>
+          // A holder's list is narrowed to the switches their pages need, so
+          // it says nothing of the org's others.
+          <p>
+            {explainer.audience === 'holder' ? t('you.noNeededSwitchesOn') : t('you.noSwitchesOn')}
+          </p>
         ) : null}
         {explainer.areas && (
           <div>

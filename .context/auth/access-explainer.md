@@ -109,7 +109,9 @@ Each page carries what is needed to say why it is closed, without reading
 another section: `tierLabel` and `requiresLabel` name its tier and switch, and
 `closedBy` is `'tier'` when the viewer does not hold the tier, `'switch'` when
 they do and the org lacks the switch, `'unread'` when they do and the org's
-switches could not be read, and `null` when the page opens. `you` likewise
+switches could not be read, `'policy'` when they hold the tier and the org has
+the switch (or the page needs none) but the policy still keeps it closed, and
+`null` when the page opens. `you` likewise
 carries `tierLabels`, `switchLabels`, `supportEntry` and `anySwitches`. An app
 may hide `roles` or `switches` from an audience (`setAccessSectionAudience()`),
 and the viewer's own panel still names everything in it.

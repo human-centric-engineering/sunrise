@@ -345,6 +345,9 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   '/admin/waitlist',
 ]);
 
+/** Where the access explainer lives (§143 t-1091): the sidebar and every link name it from here. */
+export const ACCESS_EXPLAINER_PAGE = '/admin/access';
+
 /**
  * Admin pages every viewer the console admits may open (§143 t-1091): a
  * platform admin, an org OWNER/ADMIN, and a holder of any of the app's named
@@ -363,7 +366,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
  * every fork, so it holds pages whose route answers each viewer for
  * themselves, and nothing else.
  */
-export const EVERY_VIEWER_ADMIN_PAGES: readonly string[] = Object.freeze(['/admin/access']);
+export const EVERY_VIEWER_ADMIN_PAGES: readonly string[] = Object.freeze([ACCESS_EXPLAINER_PAGE]);
 
 /** Is the page at this pathname one {@link EVERY_VIEWER_ADMIN_PAGES} lists? */
 export function isEveryViewerAdminPage(pathname: string | null | undefined): boolean {

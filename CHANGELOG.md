@@ -63,7 +63,7 @@ release process.
   move one to a section of your own. Put `<AccessExplainerLink />` on a named
   tier's landing page so its holders find the page from where they arrive.
   The endpoint's response gains, on each page, `tierLabel`, `requiresLabel`
-  and `closedBy` (`'tier' | 'switch' | 'unread' | null`), and on `you`,
+  and `closedBy` (`'tier' | 'switch' | 'unread' | 'policy' | null`), and on `you`,
   `supportEntry`, `tierLabels`, `switchLabels` and `anySwitches`, so the
   reasons hold when an app hides `roles` or `switches` from an audience.
   See [access-explainer.md](./.context/auth/access-explainer.md#the-page).

@@ -182,9 +182,11 @@ export interface AccessPageView {
   /**
    * Why it is closed to them: `'tier'` when they do not hold its tier,
    * `'switch'` when they do and the org lacks its switch, `'unread'` when
-   * they do and the org's switches could not be read. `null` when it opens.
+   * they do and the org's switches could not be read, `'policy'` when they
+   * hold the tier and the org has the switch (or the page needs none) and
+   * the app's access policy still keeps it closed. `null` when it opens.
    */
-  readonly closedBy: 'tier' | 'switch' | 'unread' | null;
+  readonly closedBy: 'tier' | 'switch' | 'unread' | 'policy' | null;
   /** Why it is closed to them when only a switch is missing; `null` otherwise. */
   readonly locked: {
     readonly label: string;
@@ -577,7 +579,7 @@ function areasFor(
       requires,
       requiresLabel: requires === null ? null : switchLabel(requires),
       opens,
-      closedBy: closedByOf(viewer, tier, opens),
+      closedBy: closedByOf(viewer, tier, requires, opens),
       locked: lock
         ? { label: lock.label, message: lock.message, upgradeUrl: lock.upgradeUrl }
         : null,
@@ -621,17 +623,22 @@ function areasFor(
 }
 
 /**
- * Why a page is closed to this viewer. Holding the tier leaves only the
- * switch, which is unknown rather than missing when it could not be read.
+ * Why a page is closed to this viewer. Holding the tier leaves the switch:
+ * unknown when it could not be read, missing only when the org lacks it. A
+ * page closed with the tier held and the switch on (or none needed) is the
+ * policy's own refusal, which is not put down to a switch the org has.
  */
 function closedByOf(
   viewer: AccessExplainerViewer,
   tier: DeclaredAdminTier,
+  requires: string | null,
   opens: boolean
 ): AccessPageView['closedBy'] {
   if (opens) return null;
   if (viewer.reach === 'platform' || !viewer.reach.tiers.includes(tier)) return 'tier';
-  return viewer.switchesOn === null ? 'unread' : 'switch';
+  if (requires === null) return 'policy';
+  if (viewer.switchesOn === null) return 'unread';
+  return viewer.switchesOn.includes(requires) ? 'policy' : 'switch';
 }
 
 /** `/admin/reports/[id]` → `reports`. */

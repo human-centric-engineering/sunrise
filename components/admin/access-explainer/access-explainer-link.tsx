@@ -11,10 +11,8 @@
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 
+import { ACCESS_EXPLAINER_PAGE } from '@/lib/auth/admin-tier';
 import { cn } from '@/lib/utils';
-
-/** Where the access explainer lives. One of `EVERY_VIEWER_ADMIN_PAGES`. */
-export const ACCESS_EXPLAINER_PAGE = '/admin/access';
 
 export function AccessExplainerLink({ className }: { className?: string }) {
   const t = useTranslations('admin.access.page');

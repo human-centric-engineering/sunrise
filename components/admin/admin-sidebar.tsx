@@ -59,6 +59,7 @@ import {
 } from '@/lib/admin-nav/registry';
 import { initAppNav } from '@/lib/app/admin-nav';
 import {
+  ACCESS_EXPLAINER_PAGE,
   adminPageRequirementOf,
   adminPageTierOf,
   isEveryViewerAdminPage,
@@ -153,7 +154,7 @@ export const coreNavSections: NavSection[] = [
       // No tier: its page opens to every viewer the console admits
       // (EVERY_VIEWER_ADMIN_PAGES, t-1091), and the sidebar shows it to each.
       {
-        href: '/admin/access',
+        href: ACCESS_EXPLAINER_PAGE,
         label: 'Who can do what',
         icon: UserCheck,
         description: 'Who can open each part of this console, and why',
@@ -654,7 +655,7 @@ type NavKey =
   | 'waitlistDescription';
 
 const CATALOGUE_ITEMS: Readonly<Record<string, { label: NavKey; description: NavKey }>> = {
-  '/admin/access': { label: 'access', description: 'accessDescription' },
+  [ACCESS_EXPLAINER_PAGE]: { label: 'access', description: 'accessDescription' },
   '/admin/members': { label: 'members', description: 'membersDescription' },
   '/admin/org-options': { label: 'orgOptions', description: 'orgOptionsDescription' },
   '/admin/provider-keys': { label: 'providerKeys', description: 'providerKeysDescription' },

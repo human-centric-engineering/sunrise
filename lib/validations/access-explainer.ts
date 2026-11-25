@@ -40,7 +40,7 @@ const pageSchema = z.object({
   requires: z.string().nullable(),
   requiresLabel: z.string().nullable(),
   opens: z.boolean(),
-  closedBy: z.enum(['tier', 'switch', 'unread']).nullable(),
+  closedBy: z.enum(['tier', 'switch', 'unread', 'policy']).nullable(),
   locked: z
     .object({
       label: z.string(),
