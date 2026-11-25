@@ -167,6 +167,23 @@ release process.
 
 ### Fixed
 
+- **`better-auth` is pinned exactly, and a test fails if its core splits in
+  two (t-1081).** `better-auth` had a caret range beside an exact
+  `@better-auth/core` pin. Each better-auth release depends on its own core at
+  exactly its own version, so once better-auth moved past the pin (a lock
+  refresh, `npm update`, or Dependabot moving only one of them), npm nested a
+  second core under `better-auth`. The signup hooks then read request state
+  from a different store than `lib/auth/pending-signup.ts` writes, and an
+  invited user's membership was decided without their invitation, with only a
+  log line to show for it. Both are now pinned to `1.7.27`, and
+  `tests/unit/lib/auth/better-auth-single-core.test.ts` (in
+  `ALWAYS_RUN_TESTS`) fails unless `package.json` pins the two equal and the
+  lockfile holds one core, at the root, at better-auth's version. **In a fork:**
+  when you merge `package.json`, keep `better-auth` exact and equal to
+  `@better-auth/core`, and bump the two in the same PR. If your Dependabot
+  groups them separately, or a better-auth major arrives on its own, the PR
+  fails this test until the other one is moved to match.
+
 - **A founder's signup org is set up at sign-in at `multi` (t-1084).** Its
   release and the org-created hooks' lease are raw SQL, and they ran on an
   auth hook's stack, which entered no org, so the data layer refused them: the
