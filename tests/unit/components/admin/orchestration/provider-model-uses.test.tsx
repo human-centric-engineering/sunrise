@@ -248,6 +248,17 @@ describe('the app’s own uses (§136 t-1067)', () => {
     expect(modelHasMovableUses({ ...NONE, otherOrgAppPins: 2, otherOrgAgents: 1 })).toBe(true);
   });
 
+  it('with a mover, counts the app’s uses as movable and says the move takes them (t-1088)', () => {
+    const pins = { appPins: [{ label: 'P', where: 'w' }], appPinsMovable: true };
+    expect(modelHasMovableUses({ ...NONE, ...pins })).toBe(true);
+    expect(modelHasMovableUses({ ...NONE, otherOrgAppPins: 2, appPinsMovable: true })).toBe(true);
+    expect(modelHasMovableUses({ ...NONE, appPinsMovable: true })).toBe(false);
+
+    const app = column(panel(pins), 'In the app');
+    expect(app).toHaveTextContent('The app moves these when the model’s uses are moved.');
+    expect(app).not.toHaveTextContent('does not change them');
+  });
+
   it('modelHasUses counts the app’s uses, in any org', () => {
     expect(modelHasUses({ ...NONE, appPins: [{ label: 'P', where: 'w' }] })).toBe(true);
     expect(modelHasUses({ ...NONE, otherOrgAppPins: 1 })).toBe(true);
