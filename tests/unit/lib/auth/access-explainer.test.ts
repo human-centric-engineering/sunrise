@@ -348,11 +348,54 @@ describe('each viewer’s slice', () => {
     expect(held(false)).toEqual(['admin']);
   });
 
+  it('under a support grant, says the viewer has no org role of their own', () => {
+    const you = (supportEntry: boolean) =>
+      buildAccessExplainer(
+        viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', switchesOn: [], supportEntry }),
+        translator()
+      )?.you?.orgRole;
+    expect(you(true)).toBeNull();
+    expect(you(false)).toBe('ADMIN');
+  });
+
+  it('shows an org admin a switch the org sets itself, even one the app hides while off', () => {
+    registerEntitlementSwitch({
+      key: 'beta_reports',
+      label: 'Beta reports',
+      description: 'Early reports.',
+      setBy: 'org',
+    });
+    registerOrgTierAdminPage('/admin/beta-reports', { requires: 'beta_reports' });
+    registerOrgTierAdminPage('/admin/designs/beta', {
+      tier: 'designers',
+      requires: 'beta_reports',
+    });
+
+    const org = buildAccessExplainer(
+      viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', switchesOn: [] }),
+      translator()
+    );
+    const holder = buildAccessExplainer(
+      viewer({ reach: { tiers: ['designers'], landing: null }, orgRole: 'MEMBER', switchesOn: [] }),
+      translator()
+    );
+
+    expect(org?.switches?.find((s) => s.key === 'beta_reports')).toMatchObject({
+      held: false,
+      setBy: 'org',
+    });
+    expect(pagesOf(org)).toContain('/admin/beta-reports');
+    // A holder cannot set it, so an off switch the app hides stays hidden from them.
+    expect(holder?.switches?.map((s) => s.key)).not.toContain('beta_reports');
+    expect(pagesOf(holder)).not.toContain('/admin/designs/beta');
+  });
+
   it('at single, shows the platform role alone and no org pages', () => {
     const explainer = buildAccessExplainer(viewer({ multiTenant: false }), translator());
     expect(explainer?.tenancy).toBe('single');
     expect(explainer?.roles?.map((role) => role.key)).toEqual(['platform_admin']);
-    expect(explainer?.areas).toEqual([]);
+    expect(explainer?.sections).not.toContain('areas');
+    expect(explainer?.areas).toBeUndefined();
   });
 
   it('gives only a platform admin a link to a platform-only surface', () => {

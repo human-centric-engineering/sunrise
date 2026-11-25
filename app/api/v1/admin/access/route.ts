@@ -32,6 +32,7 @@ import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { withAuth } from '@/lib/auth/guards';
 import { adminReachOf, lockedSwitchesIn } from '@/lib/auth/admin-reach';
+import { isSupportEntry } from '@/lib/auth/support-principal';
 import {
   accessAudienceOf,
   buildAccessExplainer,
@@ -70,7 +71,7 @@ export const GET = withAuth(
         switchesOn,
         locked,
         // The guard entered the org under a support grant (§121 t-824).
-        supportEntry: getTenantContext()?.source === 'support',
+        supportEntry: isSupportEntry(getTenantContext()),
         multiTenant: isMultiTenant(),
       },
       translate

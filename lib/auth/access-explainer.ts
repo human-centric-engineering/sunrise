@@ -255,8 +255,12 @@ export function buildAccessExplainer(
   const registrations = accessExplainerRegistrations();
   const text = textResolver(t);
 
-  const visible = ACCESS_EXPLAINER_SECTIONS.filter((section) =>
-    (registrations.audiences.get(section) ?? ACCESS_AUDIENCES).includes(audience)
+  const visible = ACCESS_EXPLAINER_SECTIONS.filter(
+    (section) =>
+      (registrations.audiences.get(section) ?? ACCESS_AUDIENCES).includes(audience) &&
+      // At `single` no org-tier page opens to anyone but a platform admin, so
+      // there are no areas to show and no heading to show them under.
+      (section !== 'areas' || viewer.multiTenant)
   );
   const shows = (section: AccessExplainerSection) => visible.includes(section);
 
@@ -272,7 +276,8 @@ export function buildAccessExplainer(
       ? {
           you: {
             audience,
-            orgRole: viewer.orgRole,
+            // A support entry carries a role for the policy, not a membership.
+            orgRole: viewer.supportEntry ? null : viewer.orgRole,
             tiers: viewer.reach === 'platform' ? 'platform' : viewer.reach.tiers,
             switchesOn:
               viewer.switchesOn === null
@@ -382,8 +387,10 @@ function rolesFor(
 /**
  * The switches this viewer may know about. A platform admin: every one. An
  * org admin: those the org holds, and those it lacks that the app shows
- * locked. A holder: the same, narrowed to the switches their tiers' pages
- * require. A switch the app hides stays hidden from an org that lacks it.
+ * locked, and every switch the org sets itself (`setBy: 'org'`). A holder:
+ * those the org holds or is shown locked, narrowed to the switches their
+ * tiers' pages require. A platform switch the app hides stays hidden from an
+ * org that lacks it.
  */
 function switchKeysFor(audience: AccessAudience, viewer: AccessExplainerViewer): Set<string> {
   const registered = registeredEntitlementSwitches();
@@ -391,7 +398,14 @@ function switchKeysFor(audience: AccessAudience, viewer: AccessExplainerViewer):
   const on = new Set(viewer.switchesOn ?? []);
   const lockedKeys = new Set(viewer.locked.map((l) => l.requires));
   const keys = registered
-    .filter((s) => on.has(s.key) || (s.whenLacking === 'lock' && lockedKeys.has(s.key)))
+    .filter(
+      (s) =>
+        on.has(s.key) ||
+        (s.whenLacking === 'lock' && lockedKeys.has(s.key)) ||
+        // Hiding keeps what the platform sells out of sight. It does not hide
+        // a switch from the org admin who turns it on.
+        (audience === 'org' && s.setBy === 'org')
+    )
     .map((s) => s.key);
   if (audience === 'org') return new Set(keys);
   const tiers = viewer.reach === 'platform' ? [] : viewer.reach.tiers;

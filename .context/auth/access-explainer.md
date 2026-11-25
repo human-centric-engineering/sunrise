@@ -23,19 +23,20 @@ opens or closes a page.
 
 ## What it shows, and where each part comes from
 
-| Section         | Content                                                                                                 | Derived from                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `your-access`   | the viewer's org role, the tiers they hold, their org's switches                                        | `adminReachOf()` (the policy, once per tier), `loadOrgSwitches()`                                               |
-| `roles`         | platform admin, support access, OWNER / ADMIN / MEMBER, every named tier                                | `namedAdminTiers()`, with each tier's `label` / `description` from `registerAdminTier()`                        |
-| `areas`         | every org-tier page, grouped, with the tier and switch it needs, whether it opens, and why it is locked | `orgTierAdminPages()`, `namedTierAdminPages()`, `adminPageRequirements()`, `reachesTier()`, `lockedSwitchFor()` |
-| `switches`      | each entitlement switch: label, description, held or not, the refusal and upgrade link                  | `registeredEntitlementSwitches()`                                                                               |
-| `platform-only` | what the install keeps for the platform, and why                                                        | `closedCoreOrgTierSections()`, and the app's `registerPlatformOnlySurface()`                                    |
+| Section         | Content                                                                                                                                       | Derived from                                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `your-access`   | the viewer's org role (`null` under a support grant, whose role is the policy's, not a membership), the tiers they hold, their org's switches | `adminReachOf()` (the policy, once per tier), `loadOrgSwitches()`                                               |
+| `roles`         | platform admin, support access, OWNER / ADMIN / MEMBER, every named tier                                                                      | `namedAdminTiers()`, with each tier's `label` / `description` from `registerAdminTier()`                        |
+| `areas`         | every org-tier page, grouped, with the tier and switch it needs, whether it opens, and why it is locked                                       | `orgTierAdminPages()`, `namedTierAdminPages()`, `adminPageRequirements()`, `reachesTier()`, `lockedSwitchFor()` |
+| `switches`      | each entitlement switch: label, description, held or not, the refusal and upgrade link                                                        | `registeredEntitlementSwitches()`                                                                               |
+| `platform-only` | what the install keeps for the platform, and why                                                                                              | `closedCoreOrgTierSections()`, and the app's `registerPlatformOnlySurface()`                                    |
 
 Then any sections the app registered (`appSections`).
 
 `/admin` itself is left out of the areas: it sends each viewer on and shows
-nothing. At `single` the areas are empty and the roles are the platform admin
-alone, since no org role opens the console there.
+nothing. At `single` there is no `areas` section (it is left out of
+`sections`, not sent empty) and the roles are the platform admin alone, since
+no org role opens the console there.
 
 **Areas.** Core's org-tier pages sit in core's areas (`CORE_ACCESS_AREAS`),
 grouped as the sidebar groups them; a test fails on a core org-tier page none of
@@ -64,7 +65,10 @@ Two rules hold for every audience but the platform's:
   it. The app chose not to show it, and the explainer does not undo that.
   The exception is a page the policy opens (a fork policy may grant the
   switch some other way, or the switch read may have failed): a page the
-  viewer opens is always listed.
+  viewer opens is always listed. And an org's OWNER/ADMIN sees every
+  `setBy: 'org'` switch, on or off, with the pages that need it: hiding keeps
+  what the platform sells out of sight, not a switch from the admin who turns
+  it on.
 - **The narrowing happens on the server.** The read model builds only the
   viewer's slice, so a holder's response never carries another tier's pages
   for a client to filter out.
