@@ -15,7 +15,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { canAdminister, type AuthorizationScope } from '@/lib/auth/authorization';
-import { adminReachOf, lockedSwitchesOf } from '@/lib/auth/admin-reach';
+import { adminReachOf, lockedSwitchesIn, lockedSwitchesOf } from '@/lib/auth/admin-reach';
 import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 import {
@@ -82,5 +82,39 @@ describe('lockedSwitchesOf', () => {
     await expect(
       lockedSwitchesOf({ tiers: ['designers'], landing: null }, undefined)
     ).resolves.toEqual([]);
+  });
+});
+
+describe('lockedSwitchesIn', () => {
+  const reach = { tiers: ['designers'], landing: null };
+  const orgWith = (on: string[], unreadable = false) => ({
+    nothingSet: false,
+    unreadable,
+    on,
+    atDefault: [],
+    unregistered: [],
+  });
+
+  beforeEach(() => {
+    registerEntitlementSwitch({
+      key: 'lead_gen',
+      label: 'Lead generation',
+      description: '',
+      whenLacking: 'lock',
+      upgradeUrl: '/pricing',
+    });
+  });
+
+  it('locks a lock switch the org was read for and found off', () => {
+    expect(lockedSwitchesIn(reach, orgWith([]))).toEqual([
+      expect.objectContaining({ requires: 'lead_gen', upgradeUrl: '/pricing' }),
+    ]);
+  });
+
+  it('locks nothing the org has, for no such org, or for an unreadable read', () => {
+    expect(lockedSwitchesIn(reach, orgWith(['lead_gen']))).toEqual([]);
+    expect(lockedSwitchesIn(reach, null)).toEqual([]);
+    expect(lockedSwitchesIn(reach, orgWith([], true))).toEqual([]);
+    expect(lockedSwitchesIn('platform', orgWith([]))).toEqual([]);
   });
 });

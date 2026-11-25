@@ -78,6 +78,7 @@ function viewer(overrides: Partial<AccessExplainerViewer> = {}): AccessExplainer
     orgRole: null,
     switchesOn: null,
     locked: [],
+    supportEntry: false,
     multiTenant: true,
     ...overrides,
   };
@@ -320,6 +321,30 @@ describe('each viewer’s slice', () => {
     expect(explainer?.you).toMatchObject({ switchesUnreadable: true, switchesOn: null });
   });
 
+  it('shows a page the policy opens even when the org’s switches could not be read', () => {
+    registerAgencyApp();
+    const explainer = buildAccessExplainer(
+      viewer({ reach: orgAdminReach('briefs'), orgRole: 'ADMIN', switchesOn: null }),
+      translator()
+    );
+    const briefs = explainer?.areas
+      ?.flatMap((area) => area.pages)
+      .find((page) => page.pattern === '/admin/briefs');
+    expect(briefs).toMatchObject({ requires: 'briefs', opens: true });
+    // `lead_gen` is not met and could not be explained, so its pages stay hidden.
+    expect(pagesOf(explainer)).not.toContain('/admin/leads');
+  });
+
+  it('marks the support role held for a viewer who entered under a support grant', () => {
+    const roles = (supportEntry: boolean) =>
+      buildAccessExplainer(
+        viewer({ reach: orgAdminReach(), orgRole: 'ADMIN', switchesOn: [], supportEntry }),
+        translator()
+      )?.roles?.find((role) => role.key === 'support')?.held;
+    expect(roles(true)).toBe(true);
+    expect(roles(false)).toBe(false);
+  });
+
   it('at single, shows the platform role alone and no org pages', () => {
     const explainer = buildAccessExplainer(viewer({ multiTenant: false }), translator());
     expect(explainer?.tenancy).toBe('single');
@@ -384,6 +409,24 @@ describe('the app seam (lib/app/access-explainer.ts)', () => {
     expect(team?.pages.map((page) => page.pattern)).toEqual(['/admin/members', '/admin/reports']);
   });
 
+  it('folds an unclaimed section into the area that shares its key, so area keys stay unique', () => {
+    registerOrgTierAdminPage('/admin/reports/[id]');
+    registerOrgTierAdminPage('/admin/analytics-x');
+    app.init = () =>
+      registerAccessArea({ key: 'reports', label: 'Reports', pages: ['/admin/analytics-x'] });
+
+    const areas = buildAccessExplainer(viewer(), translator())?.areas ?? [];
+    const keys = areas.map((area) => area.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(areas.find((area) => area.key === 'reports')).toMatchObject({
+      source: 'app',
+      pages: [
+        expect.objectContaining({ pattern: '/admin/reports/[id]' }),
+        expect.objectContaining({ pattern: '/admin/analytics-x' }),
+      ],
+    });
+  });
+
   it('narrows a section’s audience, and shows an app section to its audience only', () => {
     app.init = () => {
       setAccessSectionAudience('switches', ['platform']);
@@ -420,7 +463,10 @@ describe('the app seam (lib/app/access-explainer.ts)', () => {
       });
 
     const surface = buildAccessExplainer(viewer(), translator())?.platformOnly?.[0];
+    buildAccessExplainer(viewer(), translator());
     expect(surface?.label).toBe('app.access.billing');
+    // Once per key, not once per request.
+    expect(logger.warn).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       'access-explainer: a catalogue key the app named is missing',
       { key: 'app.access.billing' }

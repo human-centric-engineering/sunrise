@@ -43,6 +43,7 @@ import { parseJSON } from '@/tests/helpers/assertions';
 import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 import type { AccessExplainer } from '@/lib/auth/access-explainer';
 import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
+import { adminReachOf } from '@/lib/auth/admin-reach';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
 import {
   __resetEntitlementRegistryForTests,
@@ -186,6 +187,20 @@ describe('GET /api/v1/admin/access', () => {
 
     expect(status).toBe(200);
     expect(body.data.you).toMatchObject({ switchesUnreadable: true, switchesOn: null });
+  });
+
+  it("reads the org's switches once for what it has and what it is shown locked", async () => {
+    // What the policy reads on its own to work out the reach...
+    await adminReachOf(ORG_ADMIN, { org: ORG });
+    const policyReads = mockPrisma.org.findUnique.mock.calls.length;
+    mockPrisma.org.findUnique.mockClear();
+
+    const { body } = await call(ORG_ADMIN);
+
+    // ...and one read more by the route, not one per thing it shows.
+    expect(mockPrisma.org.findUnique).toHaveBeenCalledTimes(policyReads + 1);
+    expect(body.data.you?.switchesOn).toEqual([]);
+    expect(body.data.switches?.find((s) => s.key === 'lead_gen')).toMatchObject({ held: false });
   });
 
   it("says it could not read the org's switches rather than guess", async () => {

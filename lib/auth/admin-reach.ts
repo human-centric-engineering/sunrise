@@ -30,6 +30,7 @@ import {
   loadOrgSwitches,
   registeredEntitlementSwitches,
   switchRequiredMessage,
+  type OrgSwitches,
 } from '@/lib/tenancy/entitlements';
 
 /**
@@ -103,17 +104,9 @@ export async function lockedSwitchesOf(
   reach: AdminReach,
   orgId: string | null | undefined
 ): Promise<readonly LockedAdminSwitch[]> {
-  if (reach === 'platform' || reach.tiers.length === 0) return [];
-  const required = new Set(adminPageRequirements().map((r) => r.requires));
-  const candidates = registeredEntitlementSwitches().filter(
-    (s) =>
-      s.whenLacking === 'lock' &&
-      required.has(s.key) &&
-      reach.tiers.some((tier) => !reachesTier(reach, tier, s.key))
-  );
-  if (candidates.length === 0) return [];
+  if (lockableSwitches(reach).length === 0) return [];
   if (!orgId) return [];
-  let org: Awaited<ReturnType<typeof loadOrgSwitches>>;
+  let org: OrgSwitches | null;
   try {
     org = await loadOrgSwitches(orgId);
   } catch (error) {
@@ -123,7 +116,21 @@ export async function lockedSwitchesOf(
     });
     return [];
   }
-  if (!org || org.unreadable) return [];
+  return lockedSwitchesIn(reach, org);
+}
+
+/**
+ * {@link lockedSwitchesOf} over switches the caller has already read, for a
+ * caller that needs the org's switches for something else too and so reads
+ * them once (`GET /api/v1/admin/access`). `org` is `loadOrgSwitches()`'s
+ * answer: `null` (no such org) or an unreadable read gives nothing.
+ */
+export function lockedSwitchesIn(
+  reach: AdminReach,
+  org: OrgSwitches | null
+): readonly LockedAdminSwitch[] {
+  const candidates = lockableSwitches(reach);
+  if (candidates.length === 0 || !org || org.unreadable) return [];
   const on = new Set(org.on);
   return candidates
     .filter((s) => !on.has(s.key))
@@ -135,4 +142,16 @@ export async function lockedSwitchesOf(
         upgradeUrl: s.upgradeUrl,
       })
     );
+}
+
+/** The `whenLacking: 'lock'` switches a page requires that this reach does not meet for some tier it holds. */
+function lockableSwitches(reach: AdminReach) {
+  if (reach === 'platform' || reach.tiers.length === 0) return [];
+  const required = new Set(adminPageRequirements().map((r) => r.requires));
+  return registeredEntitlementSwitches().filter(
+    (s) =>
+      s.whenLacking === 'lock' &&
+      required.has(s.key) &&
+      reach.tiers.some((tier) => !reachesTier(reach, tier, s.key))
+  );
 }

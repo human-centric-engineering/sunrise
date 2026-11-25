@@ -503,9 +503,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/auth/access-explainer.ts',
-    holders: ['appInit'],
+    holders: ['appInit', 'warnedMissingKeys'],
     posture: 'no-tenant-data',
-    why: 'The one-shot latch on the app’s access-explainer init (§143 t-1090).',
+    why: 'The one-shot latch on the app’s access-explainer init, and a warn-once latch over the catalogue keys the app named that are missing (§143 t-1090). Message keys only; nothing about any org or person.',
   },
   {
     file: 'lib/auth/admin-tier.ts',

@@ -59,7 +59,8 @@ release process.
   `AccessExplainer` view types (`lib/auth/access-explainer.ts`); the
   reach the admin layout acts on, now callable for any principal, as
   `adminReachOf()`, `orgAdminReachOf()`, `administersPlatformIn()` and
-  `lockedSwitchesOf()` (`lib/auth/admin-reach.ts`), with
+  `lockedSwitchesOf()` (`lib/auth/admin-reach.ts`), plus
+  `lockedSwitchesIn()` for a caller that has already read the org's switches, with
   `requestAdminReach()` and `requestLockedSwitches()` unchanged on top; an
   optional `label` and `description` on `registerAdminTier()`, with the
   `AdminText` type (plain text or `{ message }`, a catalogue key); and a new

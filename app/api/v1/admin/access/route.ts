@@ -29,14 +29,14 @@ import { ForbiddenError } from '@/lib/api/errors';
 import { successResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { withAuth } from '@/lib/auth/guards';
-import { adminReachOf, lockedSwitchesOf } from '@/lib/auth/admin-reach';
+import { adminReachOf, lockedSwitchesIn } from '@/lib/auth/admin-reach';
 import {
   accessAudienceOf,
   buildAccessExplainer,
   type AccessTranslator,
 } from '@/lib/auth/access-explainer';
-import { loadOrgSwitches } from '@/lib/tenancy/entitlements';
-import { isMultiTenant } from '@/lib/tenancy/context';
+import { loadOrgSwitches, type OrgSwitches } from '@/lib/tenancy/entitlements';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 
 export const GET = withAuth(
   async (request, session) => {
@@ -50,10 +50,11 @@ export const GET = withAuth(
     }
 
     const orgId = reach === 'platform' ? undefined : principal.orgId;
-    const [locked, switchesOn] = await Promise.all([
-      lockedSwitchesOf(reach, orgId),
-      orgSwitchesOn(orgId, log),
-    ]);
+    // One read of the org's switches, so what the org has and what it is
+    // shown locked come from the same answer.
+    const org = await readOrgSwitches(orgId, log);
+    const locked = org === 'failed' ? [] : lockedSwitchesIn(reach, org);
+    const switchesOn = switchesOnOf(org);
 
     const t = await getTranslations();
     const translate: AccessTranslator = Object.assign(
@@ -66,6 +67,8 @@ export const GET = withAuth(
         orgRole: principal.orgRole ?? null,
         switchesOn,
         locked,
+        // The guard entered the org under a support grant (§121 t-824).
+        supportEntry: getTenantContext()?.source === 'support',
         multiTenant: isMultiTenant(),
       },
       translate
@@ -74,6 +77,9 @@ export const GET = withAuth(
     return successResponse(explainer);
   },
   {
+    // A key reaches it only with the `admin` scope: the explainer maps the
+    // org's admin console, which a key minted for chat or capture should not.
+    scope: 'admin',
     ownership: {
       decidedBy: 'self',
       because:
@@ -83,23 +89,32 @@ export const GET = withAuth(
 );
 
 /**
- * The switches the org has, or `null` outside an org or when they could not
- * be read: the explainer then says it could not explain a locked page,
- * rather than guess.
+ * The org's switches: `null` outside an org or for an org that does not
+ * exist, `'failed'` when the read threw (logged here).
  */
-async function orgSwitchesOn(
+async function readOrgSwitches(
   orgId: string | undefined,
   log: Awaited<ReturnType<typeof getRouteLogger>>
-): Promise<readonly string[] | null> {
+): Promise<OrgSwitches | null | 'failed'> {
   if (!orgId) return null;
   try {
-    const org = await loadOrgSwitches(orgId);
-    return org && !org.unreadable ? org.on : null;
+    return await loadOrgSwitches(orgId);
   } catch (error) {
     log.error("access explainer: could not read the org's switches", {
       orgId,
       error: error instanceof Error ? error.message : String(error),
     });
-    return null;
+    return 'failed';
   }
+}
+
+/**
+ * The switches the org has, or `null` outside an org or when they could not
+ * be read: the explainer then says it could not explain a locked page,
+ * rather than guess. An org whose row has gone while the session still names
+ * it counts as unread, not as an org with no switches: the two disagree, and
+ * "none" would be a guess.
+ */
+function switchesOnOf(org: OrgSwitches | null | 'failed'): readonly string[] | null {
+  return org === null || org === 'failed' || org.unreadable ? null : org.on;
 }

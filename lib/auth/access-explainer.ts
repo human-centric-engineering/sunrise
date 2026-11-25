@@ -88,7 +88,14 @@ export function accessExplainerRegistrations(): AccessExplainerRegistrations {
 export function __resetAccessExplainerForTests(): void {
   restoreAccessExplainerRegistry(EMPTY_ACCESS_EXPLAINER_REGISTRY);
   appInit.reset();
+  warnedMissingKeys.clear();
 }
+
+/**
+ * Catalogue keys the app named that were found missing, each warned once:
+ * the explainer is built per request, and the same missing key is one fix.
+ */
+const warnedMissingKeys = new Set<string>();
 
 /**
  * Turns a catalogue key into the viewer's words. The route passes next-intl's
@@ -110,8 +117,10 @@ export interface AccessExplainerViewer {
    * `null` when they entered none or the org's switches could not be read.
    */
   readonly switchesOn: readonly string[] | null;
-  /** What `lockedSwitchesOf()` returned for them. */
+  /** What `lockedSwitchesOf()` (or `lockedSwitchesIn()`) returned for them. */
   readonly locked: readonly LockedAdminSwitch[];
+  /** Whether they entered the org under a support grant (§121 t-824). */
+  readonly supportEntry: boolean;
   /** Whether the install runs at `multi`. */
   readonly multiTenant: boolean;
 }
@@ -249,7 +258,7 @@ export function buildAccessExplainer(
   const switchesUnreadable = audience !== 'platform' && viewer.switchesOn === null;
   const visibleSwitchKeys = switchKeysFor(audience, viewer);
 
-  const areas = areasFor(audience, viewer, registrations, text);
+  const areas = areasFor(audience, viewer, registrations, text, visibleSwitchKeys);
   return {
     audience,
     tenancy: viewer.multiTenant ? 'multi' : 'single',
@@ -291,9 +300,12 @@ function textResolver(t: AccessTranslator): (value: AdminText) => string {
     if (t.has(value.message)) return t(value.message);
     // Shown as the key rather than failing the page: the fork named a string
     // its catalogue does not have, and the key is what to go and add.
-    logger.warn('access-explainer: a catalogue key the app named is missing', {
-      key: value.message,
-    });
+    if (!warnedMissingKeys.has(value.message)) {
+      warnedMissingKeys.add(value.message);
+      logger.warn('access-explainer: a catalogue key the app named is missing', {
+        key: value.message,
+      });
+    }
     return value.message;
   };
 }
@@ -347,7 +359,7 @@ function rolesFor(
   if (!viewer.multiTenant) return [platform];
   return [
     platform,
-    role('support', 'support', 'support', false),
+    role('support', 'support', 'support', viewer.supportEntry),
     // Each org role's words are `admin.access.roles.<role, lower case>`.
     ...ORG_ROLES.map((orgRole) =>
       role(orgRole.toLowerCase(), 'org-role', orgRole.toLowerCase(), viewer.orgRole === orgRole)
@@ -423,7 +435,8 @@ function areasFor(
   audience: AccessAudience,
   viewer: AccessExplainerViewer,
   registrations: AccessExplainerRegistrations,
-  text: (value: AdminText) => string
+  text: (value: AdminText) => string,
+  visibleSwitches: ReadonlySet<string>
 ): AccessAreaView[] {
   // At `single` no org-tier page opens to anyone but a platform admin, so
   // there is nothing of the org's to show.
@@ -431,8 +444,6 @@ function areasFor(
   const tiers = viewer.reach === 'platform' ? null : viewer.reach.tiers;
   const tierOf = new Map(namedTierAdminPages().map((p) => [p.pattern, p.tier]));
   const requiresOf = new Map(adminPageRequirements().map((r) => [r.pattern, r.requires]));
-  const visibleSwitches = switchKeysFor(audience, viewer);
-
   const candidates: AreaCandidate[] = [
     // The app's first: on a tie of equal length its area wins.
     ...[...registrations.areas.values()].map((area): AreaCandidate => ({
@@ -459,10 +470,13 @@ function areasFor(
     const requires = requiresOf.get(pattern) ?? null;
     // A holder sees their tiers' pages, not the org admin's.
     if (tiers !== null && audience === 'holder' && !tiers.includes(tier)) continue;
-    // A page whose switch the app hides from an org lacking it stays hidden.
-    if (requires !== null && audience !== 'platform' && !visibleSwitches.has(requires)) continue;
-
     const opens = reachesTier(viewer.reach, tier, requires);
+    // A page whose switch the app hides from an org lacking it stays hidden,
+    // unless the policy opens it: a page the viewer opens is always shown,
+    // however the switch read went.
+    if (requires !== null && !opens && audience !== 'platform' && !visibleSwitches.has(requires)) {
+      continue;
+    }
     const lock = opens ? null : lockedSwitchFor(viewer.reach, tier, requires, viewer.locked);
     const page: AccessPageView = {
       pattern,
@@ -483,10 +497,12 @@ function areasFor(
         }
       }
     }
-    const key = best
-      ? `${best.candidate.source}:${best.candidate.key}`
-      : `section:${firstSegment(pattern)}`;
-    const group = grouped.get(key) ?? { candidate: best?.candidate ?? null, pages: [] };
+    // An unclaimed page whose section shares a key with an area joins that
+    // area, so no two areas in one response have the same key.
+    const owner =
+      best?.candidate ?? candidates.find((c) => c.key === firstSegment(pattern)) ?? null;
+    const key = owner ? `${owner.source}:${owner.key}` : `section:${firstSegment(pattern)}`;
+    const group = grouped.get(key) ?? { candidate: owner, pages: [] };
     group.pages.push(page);
     grouped.set(key, group);
   }

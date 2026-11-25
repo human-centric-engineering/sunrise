@@ -12,14 +12,14 @@ It **decides nothing**. It reads the registrations and the policy's answer, so
 it cannot disagree with what the guards enforce, and nothing registered for it
 opens or closes a page.
 
-| Piece                 | Where                                                                                               |
-| --------------------- | --------------------------------------------------------------------------------------------------- |
-| Read model            | [`lib/auth/access-explainer.ts`](../../lib/auth/access-explainer.ts) — `buildAccessExplainer()`     |
-| The viewer's reach    | [`lib/auth/admin-reach.ts`](../../lib/auth/admin-reach.ts) — `adminReachOf()`, `lockedSwitchesOf()` |
-| Endpoint              | `GET /api/v1/admin/access` ([route](../../app/api/v1/admin/access/route.ts))                        |
-| App seam (registrars) | [`lib/auth/access-explainer-registry.ts`](../../lib/auth/access-explainer-registry.ts)              |
-| App seam (scaffold)   | [`lib/app/access-explainer.ts`](../../lib/app/access-explainer.ts) — `initAppAccessExplainer()`     |
-| Sunrise's words       | `admin.access` in [`lib/i18n/messages/en.json`](../../lib/i18n/messages/en.json)                    |
+| Piece                 | Where                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Read model            | [`lib/auth/access-explainer.ts`](../../lib/auth/access-explainer.ts) — `buildAccessExplainer()`                           |
+| The viewer's reach    | [`lib/auth/admin-reach.ts`](../../lib/auth/admin-reach.ts) — `adminReachOf()`, `lockedSwitchesOf()`, `lockedSwitchesIn()` |
+| Endpoint              | `GET /api/v1/admin/access` ([route](../../app/api/v1/admin/access/route.ts))                                              |
+| App seam (registrars) | [`lib/auth/access-explainer-registry.ts`](../../lib/auth/access-explainer-registry.ts)                                    |
+| App seam (scaffold)   | [`lib/app/access-explainer.ts`](../../lib/app/access-explainer.ts) — `initAppAccessExplainer()`                           |
+| Sunrise's words       | `admin.access` in [`lib/i18n/messages/en.json`](../../lib/i18n/messages/en.json)                                          |
 
 ## What it shows, and where each part comes from
 
@@ -41,7 +41,9 @@ alone, since no org role opens the console there.
 grouped as the sidebar groups them; a test fails on a core org-tier page none of
 them claims. An area claims a page by path prefix, the longest claim wins, and
 an app's area wins a tie with core's. A page nobody claims is shown under its
-first segment (`/admin/reports/[id]` → "Reports"). The grouping is not read
+first segment (`/admin/reports/[id]` → "Reports"), unless an area already has
+that key, in which case it joins that area, so no two areas in one response
+share a key. The grouping is not read
 from the sidebar: core's sections live in a client component and an app's nav
 registers in the browser only, so the server cannot see either.
 
@@ -60,12 +62,19 @@ Two rules hold for every audience but the platform's:
 - **A switch the app hides stays hidden.** A switch registered `whenLacking:
 'hide'` that the org lacks is not listed, and neither is a page that needs
   it. The app chose not to show it, and the explainer does not undo that.
+  The exception is a page the policy opens (a fork policy may grant the
+  switch some other way, or the switch read may have failed): a page the
+  viewer opens is always listed.
 - **The narrowing happens on the server.** The read model builds only the
   viewer's slice, so a holder's response never carries another tier's pages
   for a client to filter out.
 
 If the org's switches cannot be read, `you.switchesUnreadable` is `true` and
-`switchesOn` is `null`, so a locked page is not explained with a guess.
+`switchesOn` is `null`, so a locked page is not explained with a guess. That
+includes an org whose row has gone while the session still names it. The route
+reads the org's switches once, and works out both what the org has and what
+it is shown locked (`lockedSwitchesIn()`) from that one read, so the two cannot
+disagree.
 
 ## The endpoint
 
@@ -77,7 +86,11 @@ audiences, so the handler asks the policy for the caller's whole reach
 (`adminReachOf()`, the same function behind the admin layout's
 `requestAdminReach()`) and refuses an empty one. An API key is judged as the
 policy judges it: an `admin`-scoped key held by a platform admin is the platform's, and a key never takes
-the org or named-tier arm, so any other key is refused.
+the org or named-tier arm, so any other key is refused. The route also sets
+`scope: 'admin'`, so the guard refuses any other key before the policy is asked.
+
+A role's `held` says whether the viewer holds it where they are now: support
+access is held when the guard entered the org under a support grant.
 
 ## The app seam
 
