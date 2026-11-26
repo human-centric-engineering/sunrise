@@ -33,6 +33,7 @@ vi.mock('@/lib/api/client', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
   unstable_rethrow: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
@@ -60,6 +61,7 @@ const USAGE_PATH = `/api/v1/admin/orchestration/costs/orgs?orgId=${ID}`;
 const PRIVACY_PATH = `/api/v1/admin/orgs/${ID}/privacy`;
 const ENTITLEMENTS_PATH = `/api/v1/admin/orgs/${ID}/entitlements`;
 const METERS_PATH = `/api/v1/admin/orgs/${ID}/meters`;
+const PLAN_PATH = `/api/v1/admin/orgs/${ID}/plan`;
 
 /** An org that has never saved its privacy settings (§127 t-1010). */
 const PRIVACY = {
@@ -103,11 +105,24 @@ const SEATS_ONLY = {
   unregistered: {},
 };
 
+/** An install whose app registers no plan, as vanilla Sunrise (§139 t-1093). */
+const NO_PLANS = {
+  orgId: ID,
+  enabled: false,
+  multiTenant: false,
+  registrationFailed: false,
+  mayChange: true,
+  plans: [],
+  fallbackPlanKey: null,
+  subscription: null,
+};
+
 /** What each path answers when a test does not name it. */
 const DEFAULTS: Record<string, unknown> = {
   [PRIVACY_PATH]: PRIVACY,
   [ENTITLEMENTS_PATH]: NO_SWITCHES,
   [METERS_PATH]: SEATS_ONLY,
+  [PLAN_PATH]: NO_PLANS,
 };
 
 /**
@@ -542,6 +557,85 @@ describe('OrgPage', () => {
         screen.getByText('The limits could not be loaded. Reload the page to try again.')
       ).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Save limits' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Plan (§139 t-1093)', () => {
+    const PLANS = {
+      ...NO_PLANS,
+      enabled: true,
+      multiTenant: true,
+      plans: [
+        {
+          key: 'pro',
+          label: 'Pro',
+          description: 'Reports, and room for a team.',
+          priced: false,
+          switches: { reports: true },
+          meterLimits: { seats: 25 },
+          aiBudgetUsd: 100,
+          decidesAiBudget: true,
+        },
+      ],
+    };
+
+    it('shows nothing new when plans do not apply', async () => {
+      serve({ [ORG_PATH]: ORG, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
+
+      render(await OrgPage({ params }));
+
+      // Asked the API rather than reading the registry from the page.
+      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).toContain(PLAN_PATH);
+      expect(screen.queryByRole('heading', { name: 'Plan' })).not.toBeInTheDocument();
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('offers the plans, and what each decides, when they apply', async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [PLAN_PATH]: PLANS,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+      expect(screen.getByRole('radio', { name: /Pro/ })).not.toBeChecked();
+      expect(screen.getByRole('radio', { name: /No plan/ })).toBeChecked();
+      expect(screen.getByTestId('plan-summary-pro')).toHaveTextContent(
+        'reports on · seats 25 · AI budget $100'
+      );
+    });
+
+    it("says the app's plans failed to register, rather than show nothing", async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [PLAN_PATH]: { ...NO_PLANS, registrationFailed: true },
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+      expect(screen.getByText(/plans could not be registered/)).toBeInTheDocument();
+    });
+
+    it('says the plan could not be loaded rather than offer a form to save over it', async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [PLAN_PATH]: 500,
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(
+        screen.getByText('The plan could not be loaded. Reload the page to try again.')
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Save plan' })).not.toBeInTheDocument();
     });
   });
 });
