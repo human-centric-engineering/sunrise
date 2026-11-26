@@ -21,8 +21,9 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { join, matchesGlob } from 'node:path';
+import { join } from 'node:path';
 
+import picomatch from 'picomatch';
 import { describe, expect, it } from 'vitest';
 
 import config from '@/vitest.config';
@@ -38,13 +39,13 @@ function triggers(): string[] {
 
 /** Whether vitest would treat a change to this repo-relative file as "run everything". */
 function forcesFullRun(relativePath: string): boolean {
-  // Vitest matches the changed files' ABSOLUTE paths, so this must too: a glob
+  // The same call vitest makes on `--changed` (`picomatch(forceRerunTriggers,
+  // { dot: true })`, in its CLI API), against the same ABSOLUTE paths: a glob
   // without `**/` would pass a relative-path check and never fire in a real
-  // run. A fixed root stands in for the checkout, because `matchesGlob` will
-  // not let `**` cross a dot-directory (a worktree under `.claude/`, say),
-  // where vitest's own matcher runs with `dot: true`.
-  const absolute = `/checkout/${relativePath}`;
-  return triggers().some((glob) => matchesGlob(absolute, glob));
+  // run. Node's `path.matchesGlob` agrees on simple globs but not on extglobs,
+  // dot segments or every brace form, so a trigger checked with it could pass
+  // here and never fire in vitest, or the reverse.
+  return picomatch(triggers(), { dot: true })(join(ROOT, relativePath));
 }
 
 describe('forceRerunTriggers', () => {
