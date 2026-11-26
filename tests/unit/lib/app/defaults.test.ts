@@ -130,6 +130,12 @@ import {
   __resetEntitlementRegistryForTests,
 } from '@/lib/tenancy/entitlements';
 import { allMeters } from '@/lib/tenancy/meters';
+import {
+  billingPlansEnabled,
+  fallbackPlan,
+  registeredPlans,
+  __resetBillingPlansForTests,
+} from '@/lib/billing/plans';
 import { appLocaleTags, catalogueFor, __resetAppMessagesForTests } from '@/lib/i18n/registry';
 import { supportedLocales } from '@/lib/i18n/locales';
 import enMessages from '@/lib/i18n/messages/en.json';
@@ -181,6 +187,7 @@ vi.mock('@/lib/app/signup-org', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/model-pins', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/entitlements', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/access-explainer', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/billing', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -670,6 +677,18 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     },
   },
   {
+    seam: 'lib/app/billing.ts',
+    risk: 'a stray plan would appear on every org page at multi, and assigning it would rewrite that org’s switches, limits and AI budget; a stray fallback plan would be applied to every org whose paid subscription ended',
+    assert: () => {
+      __resetBillingPlansForTests();
+      // The read triggers the lazy init, so this exercises the REAL seam.
+      expect(registeredPlans()).toEqual([]);
+      expect(fallbackPlan()).toBeNull();
+      // …so plans do not apply, at either tenancy mode.
+      expect(billingPlansEnabled()).toBe(false);
+    },
+  },
+  {
     seam: 'lib/app/admin-tier.ts',
     risk: 'a stray pattern would open that admin page to every org OWNER/ADMIN on every install — the page only, since its API routes declare their own tier, but a page core meant for platform admins alone; a stray closeCoreOrgTierSection() would shut orchestration to every org admin on every install',
     assert: () => {
@@ -838,6 +857,7 @@ describe('lib/app/ seams ship empty', () => {
     ['signup-org', 'signup-org', [PINS]],
     ['model-pins', 'model-pins', [PINS]],
     ['entitlements', 'entitlements', [ROSTER, PINS]],
+    ['billing', 'billing', [PINS]],
     ['erasure', 'erasure', [STALE, PINS]],
   ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so

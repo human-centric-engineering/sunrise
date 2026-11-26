@@ -656,6 +656,62 @@ export async function writeOrgQuotas(
   return { previous: readOrgQuotas(replaced.settings, { orgId }), stored: stored ?? {} };
 }
 
+/**
+ * Set or clear the named caps on an org, leaving every other cap, and the
+ * meter limits beside them, as they are (§139 t-1093).
+ *
+ * {@link writeOrgQuotas} replaces the caps whole, which suits a form showing
+ * every cap. A plan decides only some of them (its AI budget, not the
+ * request rate staff set by hand), so it names what it decides, as
+ * {@link writeOrgMeterLimits} does for limits. `change` maps a cap to its new
+ * value, or `null` to remove it. An out-of-range value throws a `ZodError`
+ * and nothing is written. A change that leaves the stored caps as they are
+ * writes nothing and says `changed: false`.
+ *
+ * It decides nothing about who may, and the spend gate and request counter
+ * caches need `forgetOrgCap()` / `forgetOrgRequestCap()` after it, exactly as
+ * for {@link writeOrgQuotas}. A clash with a concurrent settings write throws
+ * `P2034` ({@link isSettingsWriteConflict}).
+ *
+ * @returns the caps before and after, and whether this changed them, or
+ *   `null` when the org does not exist.
+ */
+export async function updateOrgQuotas(
+  orgId: string,
+  change: Readonly<Partial<Record<(typeof ORG_QUOTA_KEYS)[number], number | null>>>,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<{ previous: OrgQuotas; stored: OrgQuotas; changed: boolean } | null> {
+  // A cleared key is checked too: the parse below sees only the ones set.
+  z.array(z.enum(ORG_QUOTA_KEYS)).parse(Object.keys(change));
+  const setting = orgQuotasSchema.parse(
+    Object.fromEntries(Object.entries(change).filter(([, value]) => value !== null))
+  );
+  let previous: OrgQuotas = {};
+  let stored: OrgQuotas = {};
+  const replaced = await updateSettingsSlice(
+    orgId,
+    ORG_QUOTAS_KEY,
+    (settings) => {
+      const slice = isJsonObject(settings) ? settings[ORG_QUOTAS_KEY] : undefined;
+      previous = readOrgQuotas(settings, { orgId });
+      // Every cap as stored, so one this read could not use is carried, not
+      // dropped: only the named caps change.
+      const next: Record<string, unknown> = isJsonObject(slice) ? { ...slice } : {};
+      delete next[ORG_METER_LIMITS_KEY];
+      for (const [key, value] of Object.entries(change)) {
+        // Named as undefined is not named: only null removes a cap.
+        if (value === undefined) continue;
+        if (value === null) delete next[key];
+        else next[key] = setting[key as keyof OrgQuotas];
+      }
+      stored = readOrgQuotas({ [ORG_QUOTAS_KEY]: next });
+      return withMeterLimitsOf(slice, Object.keys(next).length === 0 ? null : next);
+    },
+    db
+  );
+  return replaced === null ? null : { previous, stored, changed: replaced.written };
+}
+
 /** Where an org's meter limits live inside its `quotas` slice (§135 t-1035). */
 export const ORG_METER_LIMITS_KEY = 'meters';
 
@@ -1058,7 +1114,10 @@ export async function writeOrgEntitlements(
       const value =
         keys === null || (keys.on.length === 0 && keys.off.length === 0)
           ? null
-          : orgEntitlementsSchema.parse({ on: [...keys.on], off: [...keys.off] });
+          : // Sorted, as a read returns them: one set has one stored form, so a
+            // writer that builds the same set in another order (a plan applied
+            // again, §139 t-1093) compares equal and writes nothing.
+            orgEntitlementsSchema.parse({ on: [...keys.on].sort(), off: [...keys.off].sort() });
       stored = value === null ? NOTHING_SET : { on: value.on, off: value.off, unreadable: false };
       return value;
     },

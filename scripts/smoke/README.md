@@ -21,6 +21,7 @@ npm run smoke:tenancy               # the install-org invariant, org lifecycle, 
 npm run smoke:delivery-destination  # webhook/hook deliveries record their destination and outlive their sender (CI: `smoke`)
 npm run smoke:tenancy-isolation     # two orgs at TENANCY_MODE=multi as the restricted role — THROWAWAY DB only (CI: `smoke-multi`)
 npm run smoke:model-move            # §136 model move: two orgs at TENANCY_MODE=multi, each moved in its own scope (dev DB or throwaway)
+npm run smoke:billing-plans         # §139 billing plans: a plan sets exactly what it names on a real org, and re-assigning writes nothing (TENANCY_MODE=multi)
 ```
 
 Or directly:

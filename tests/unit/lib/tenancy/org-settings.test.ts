@@ -59,6 +59,7 @@ import {
   writeOrgProviderPolicy,
   writeOrgQuotas,
   writePlatformAgentsMarker,
+  updateOrgQuotas,
 } from '@/lib/tenancy/org-settings';
 
 const ORG_A = 'cmorg00000000000000000orga';
@@ -1401,6 +1402,137 @@ describe('the org meter limits (§135 t-1035)', () => {
       expect(applyOrgSettingsPatch(current, { retention: null })).toEqual({
         quotas: { meters: { seats: 3 } },
       });
+    });
+  });
+});
+
+describe('writeOrgEntitlements stores one set one way (§139 t-1093)', () => {
+  function txOver(settings: unknown) {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({ settings }),
+        update: vi.fn(),
+      },
+    };
+    const db = { $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)) };
+    return { tx, db: db as never };
+  }
+
+  it('stores the keys sorted, so the same set in another order writes nothing', async () => {
+    const { tx, db } = txOver({ entitlements: { on: ['a', 'b'], off: ['c'] } });
+
+    const written = await writeOrgEntitlements(ORG_A, () => ({ on: ['b', 'a'], off: ['c'] }), db);
+
+    expect(written?.changed).toBe(false);
+    expect(tx.org.update).not.toHaveBeenCalled();
+  });
+
+  it('rewrites a set stored out of order once, sorted', async () => {
+    const { tx, db } = txOver({ entitlements: { on: ['b', 'a'], off: [] } });
+
+    await writeOrgEntitlements(ORG_A, () => ({ on: ['b', 'a'], off: [] }), db);
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { entitlements: { on: ['a', 'b'], off: [] } } },
+    });
+  });
+});
+
+describe('updateOrgQuotas (§139 t-1093)', () => {
+  /** A `$transaction` over one org row holding `settings` (`undefined` = no such org). */
+  function txOver(settings: unknown) {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue(settings === undefined ? null : { settings }),
+        update: vi.fn(),
+      },
+    };
+    const db = { $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)) };
+    return { tx, db: db as never };
+  }
+
+  it('sets the named cap, keeping the other caps, the meter limits and other slices', async () => {
+    const { tx, db } = txOver({
+      providers: { approved: ['a'] },
+      quotas: { requestsPerMinute: 60, meters: { seats: 3 } },
+    });
+
+    const written = await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: 100 }, db);
+
+    expect(written).toEqual({
+      previous: { requestsPerMinute: 60 },
+      stored: { requestsPerMinute: 60, monthlyBudgetUsd: 100 },
+      changed: true,
+    });
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: {
+        settings: {
+          providers: { approved: ['a'] },
+          quotas: { requestsPerMinute: 60, monthlyBudgetUsd: 100, meters: { seats: 3 } },
+        },
+      },
+    });
+  });
+
+  it('removes a cap named with null, and the slice with it when nothing is left', async () => {
+    const { tx, db } = txOver({ quotas: { monthlyBudgetUsd: 5 }, retention: {} });
+
+    const written = await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: null }, db);
+
+    expect(written).toEqual({ previous: { monthlyBudgetUsd: 5 }, stored: {}, changed: true });
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { retention: {} } },
+    });
+  });
+
+  it('writes nothing when the cap already holds that value', async () => {
+    const { tx, db } = txOver({ quotas: { monthlyBudgetUsd: 100, requestsPerMinute: 60 } });
+
+    const written = await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: 100 }, db);
+
+    expect(written?.changed).toBe(false);
+    expect(tx.org.update).not.toHaveBeenCalled();
+  });
+
+  it('carries a cap it could not read rather than dropping it', async () => {
+    const { tx, db } = txOver({ quotas: { requestsPerMinute: 'sixty' } });
+
+    await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: 1 }, db);
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { quotas: { requestsPerMinute: 'sixty', monthlyBudgetUsd: 1 } } },
+    });
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ['a value out of range', { monthlyBudgetUsd: -1 }],
+    ['a key that is not a cap', { monthlyBudget: 5 }],
+    ['a key that is not a cap, cleared', { monthlyBudget: null }],
+  ])('refuses %s, writing nothing', async (_name, change) => {
+    const { tx, db } = txOver({ quotas: { monthlyBudgetUsd: 5 } });
+
+    await expect(updateOrgQuotas(ORG_A, change as never, db)).rejects.toThrow();
+    expect(tx.org.update).not.toHaveBeenCalled();
+  });
+
+  it('is null for an org that does not exist', async () => {
+    const { db } = txOver(undefined);
+
+    expect(await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: 5 }, db)).toBeNull();
+  });
+
+  it('leaves a cap named as undefined as it is: only null removes one', async () => {
+    const { tx, db } = txOver({ quotas: { monthlyBudgetUsd: 5, requestsPerMinute: 60 } });
+
+    await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: 10, requestsPerMinute: undefined }, db);
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { quotas: { monthlyBudgetUsd: 10, requestsPerMinute: 60 } } },
     });
   });
 });

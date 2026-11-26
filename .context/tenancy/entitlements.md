@@ -39,6 +39,7 @@ item (t-1034) and how a surface looks to an org without it (t-1053), and
 | May this org add one more?         | `checkMeterQuota(orgId, key)`, `lib/tenancy/meters.ts` → `{ allowed, used, limit, label, window }`                                            |
 | Set limits from your own code      | `writeOrgMeterLimits(orgId, { key: n \| null })`, `lib/tenancy/org-settings.ts`                                                               |
 | Read / set limits over HTTP        | `GET` / `PATCH /api/v1/admin/orgs/[id]/meters`; the **Limits** section on `/admin/orgs/[id]`                                                  |
+| Name a set of them (a plan)        | `registerPlan()` in `lib/app/billing.ts`; see [Billing](../billing/billing.md#plans)                                                          |
 
 ### Anti-patterns
 
@@ -515,7 +516,10 @@ names, not personal data.
   org-created hook, registered from `lib/app/org-created.ts` with
   `registerOrgCreatedHook()` (`lib/tenancy/org-created-hooks.ts`, §134), which runs for every new org however it is made, by calling
   `setOrgSwitches()`.
-- **Billing.** Plans that write these switches, and payment, are §139:
+- **Plans and billing.** A plan, registered in `lib/app/billing.ts`, names a
+  set of these switches, limits and an AI budget, and assigning one writes
+  them through `setOrgSwitches()`, `writeOrgMeterLimits()` and
+  `updateOrgQuotas()` (§139 t-1093). Payment is the rest of §139:
   [`../billing/billing.md`](../billing/billing.md).
 
 ## Related

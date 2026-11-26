@@ -42,6 +42,7 @@ the per-admin export sub-cap noted below.
 | `GET/PUT /api/v1/admin/orgs/[id]/privacy`   | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH/DELETE …/orgs/[id]/entitlements` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH …/orgs/[id]/meters`              | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PATCH …/orgs/[id]/plan`                | `withAdminAuth` | Platform admins.                                                                                                                                       |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
@@ -661,6 +662,40 @@ write from a customer's org at `multi`, with
 `details.reason: shared_settings_install_org_only`) · `404 ORG_NOT_FOUND` ·
 `409 CONFLICT` (another write to the org's settings landed at the same time;
 nothing was written, so retry).
+
+### An org's billing plan
+
+```
+GET   /api/v1/admin/orgs/[id]/plan
+PATCH /api/v1/admin/orgs/[id]/plan
+```
+
+The plans the app registers in `lib/app/billing.ts`, and which one the org is
+on (§139 t-1093, [Billing](../billing/billing.md#plans)). A `PATCH` takes
+`{ planKey: string | null }`: a plan key puts the org on that plan and writes
+what the plan decides to its switches, meter limits and AI budget; `null`
+takes it off its hand-assigned plan and leaves those as they are. Assigning a
+plan that is fully applied writes nothing. Each assignment that changes
+something writes an `org.plan.assign` audit row with the plan before and
+after, and each slice the plan changed (`switches`, `meterLimits`,
+`monthlyBudgetUsd`) before and after. At `multi` the write comes only from the
+install org or an unbound admin API key, as for the switches.
+
+Both return `{ orgId, enabled, multiTenant, registrationFailed, mayChange,
+plans, fallbackPlanKey, subscription }`. `enabled` is true at `multi` with at
+least one plan registered. Each plan is `{ key, label, description, priced,
+switches, meterLimits, aiBudgetUsd, decidesAiBudget }`. `subscription` is
+`null` or `{ planKey, provider, providerManaged, status, periodStart,
+periodEnd, planAppliedAt, updatedAt }`; `planAppliedAt` is `null` when the
+plan's write did not finish, which assigning it again finishes.
+
+**Error Responses**: `400 VALIDATION_ERROR` (a malformed body, or a plan key
+nothing registers) · `403 FORBIDDEN` (a write from a customer's org at
+`multi`, with `details.reason: shared_settings_install_org_only`) ·
+`404 ORG_NOT_FOUND` · `409 CONFLICT` (`details.reason: billing_off` when plans
+do not apply on this install; `provider_managed` when a provider subscription
+that has not ended decides the org's plan; or, with no reason, another write
+to the org's settings landed at the same time, so assign the plan again).
 
 ### Erase an org
 

@@ -18,6 +18,25 @@ release process.
 
 ### Added
 
+- **Billing plans, and each org's plan (§139 t-1093).** A new seam,
+  `lib/app/billing.ts` → `initAppBilling()`, shipped empty: an app registers
+  plans with `registerPlan()` (every switch the plan decides, on or off; meter
+  limits; an AI budget; an optional price lookup key) and names a free
+  fallback plan with `setFallbackPlan()` (`lib/billing/plans.ts`). Platform
+  staff assign a plan on `/admin/orgs/[id]` or with
+  `PATCH /api/v1/admin/orgs/[id]/plan`, which writes only what the plan
+  decides (`applyPlan()`) in one transaction under the org's billing lock
+  (`billingLockKey()`), is audited as `org.plan.assign`, and writes nothing
+  when re-assigned. Plans apply only at `TENANCY_MODE=multi` with a plan
+  registered; no payment provider is needed. New published model
+  `OrgBillingSubscription` (one per org, org-owned, in the org export) with
+  enum `BillingSubscriptionStatus`, and a new named-only caps writer
+  `updateOrgQuotas()` in `lib/tenancy/org-settings.ts`. `setOrgSwitches()` now stores `on`
+  and `off` sorted, as a read returns them, so one set has one stored form. **A fork's tests**:
+  `tests/setup.ts` now pins `initAppBilling` to a no-op, as it does
+  `initAppEntitlements`; a fork that fills the seam pins its new row in
+  `tests/unit/lib/app/defaults.test.ts`. See
+  [`.context/billing/billing.md`](./.context/billing/billing.md#plans).
 - **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
   0-based place in its document, written whenever chunks are (upload, rechunk,
   the patterns seeder). Knowledge search returns it on each chunk, and

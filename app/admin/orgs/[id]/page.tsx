@@ -11,6 +11,7 @@ import {
   type OrgEntitlementsView,
 } from '@/components/admin/orgs/org-entitlements-form';
 import { OrgMetersForm, type OrgMetersView } from '@/components/admin/orgs/org-meters-form';
+import { OrgPlanForm, type OrgPlanView } from '@/components/admin/orgs/org-plan-form';
 import { OrgPrivacyForm, type OrgPrivacyView } from '@/components/admin/orgs/org-privacy-form';
 import { OrgUsageSummary } from '@/components/admin/orgs/org-usage-summary';
 import { Badge } from '@/components/ui/badge';
@@ -102,11 +103,15 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
  * t-1010), the provider list and its usage this month against its cap
  * (`GET /api/v1/admin/orchestration/costs/orgs?orgId=`) and its entitlement
  * switches (`GET …/entitlements`, §135 t-1033) and its meters against their
- * limits (`GET …/meters`, §135 t-1035), in parallel. Seats is always a meter,
+ * limits (`GET …/meters`, §135 t-1035) and its billing plan (`GET …/plan`,
+ * §139 t-1093), in parallel. Seats is always a meter,
  * so the limits section always shows. The switches
  * section shows only when the API reports at least one registered switch, or
  * that the app's registration failed, so vanilla Sunrise shows nothing new; a
- * failed load says so, since the page cannot tell whether there were any. The approved providers, the privacy
+ * failed load says so, since the page cannot tell whether there were any. The
+ * plan section follows the same rule: it shows when the app registers a plan
+ * (saying so when they do not apply at `single`), when the app's plans failed
+ * to register, or when the load failed, so vanilla Sunrise shows nothing new. The approved providers, the privacy
  * settings, the switches and the limits are editable here; rename, suspend and members
  * stay API-only. A
  * missing org is a 404, and any other failure to load it goes to the error
@@ -115,7 +120,7 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
  */
 export default async function OrgPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [org, policy, privacy, providers, usage, entitlements, meters] = await Promise.all([
+  const [org, policy, privacy, providers, usage, entitlements, meters, plan] = await Promise.all([
     getOrg(id),
     loadOrNull<OrgProviderPolicyView>(API.ADMIN.orgProviders(id)),
     loadOrNull<OrgPrivacyView>(API.ADMIN.orgPrivacy(id)),
@@ -123,11 +128,22 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
     getOrgUsage(id),
     loadOrNull<OrgEntitlementsView>(API.ADMIN.orgEntitlements(id)),
     loadOrNull<OrgMetersView>(API.ADMIN.orgMeters(id)),
+    loadOrNull<OrgPlanView>(API.ADMIN.orgPlan(id)),
   ]);
   // No app switch registered: nothing to show, as on vanilla Sunrise. A
   // registration that failed is shown, since every org has lost its switches.
   const showSwitches =
     entitlements === null || entitlements.switches.length > 0 || entitlements.registrationFailed;
+  // No plan registered: nothing to show, as on vanilla Sunrise. Plans
+  // registered at `single` are shown with why they do not apply, and a
+  // registration that failed is shown, since no plan can be assigned.
+  const showPlan =
+    plan === null || plan.enabled || plan.registrationFailed || plan.plans.length > 0;
+  // The switches and limits forms hold what they loaded in client state, so
+  // after a plan is assigned (which writes both, then refreshes this page)
+  // they are remounted on the new values rather than left showing the old.
+  // The record's `updatedAt` moves on every assignment that changed anything.
+  const planVersion = plan?.subscription?.updatedAt ?? 'no-plan';
 
   return (
     <div className="space-y-6">
@@ -170,11 +186,24 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
         )}
       </section>
 
+      {showPlan && (
+        <section className="space-y-3 rounded-md border p-4">
+          <h2 className="text-lg font-medium">Plan</h2>
+          {plan ? (
+            <OrgPlanForm orgId={org.id} plan={plan} />
+          ) : (
+            <p className="text-destructive text-sm">
+              The plan could not be loaded. Reload the page to try again.
+            </p>
+          )}
+        </section>
+      )}
+
       {showSwitches && (
         <section className="space-y-3 rounded-md border p-4">
           <h2 className="text-lg font-medium">Entitlements</h2>
           {entitlements ? (
-            <OrgEntitlementsForm orgId={org.id} entitlements={entitlements} />
+            <OrgEntitlementsForm key={planVersion} orgId={org.id} entitlements={entitlements} />
           ) : (
             <p className="text-destructive text-sm">
               The switches could not be loaded. Reload the page to try again.
@@ -186,7 +215,7 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
       <section className="space-y-3 rounded-md border p-4">
         <h2 className="text-lg font-medium">Limits</h2>
         {meters ? (
-          <OrgMetersForm orgId={org.id} meters={meters} />
+          <OrgMetersForm key={planVersion} orgId={org.id} meters={meters} />
         ) : (
           <p className="text-destructive text-sm">
             The limits could not be loaded. Reload the page to try again.
