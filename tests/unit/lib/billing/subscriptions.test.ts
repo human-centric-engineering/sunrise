@@ -88,10 +88,12 @@ const mockPrisma = vi.hoisted(() => {
           where,
           create,
           update,
+          select,
         }: {
           where: { orgId: string };
           create: Partial<SubscriptionRow>;
           update: Partial<SubscriptionRow>;
+          select?: Record<string, boolean>;
         }) => {
           const existing = store.subscriptions.get(where.orgId);
           const row: SubscriptionRow = existing
@@ -110,7 +112,7 @@ const mockPrisma = vi.hoisted(() => {
                 updatedAt: new Date(),
               };
           store.subscriptions.set(where.orgId, row);
-          return row;
+          return pick({ ...row }, select);
         }
       ),
       update: vi.fn(
@@ -134,11 +136,30 @@ const mockPrisma = vi.hoisted(() => {
         store.subscriptions.delete(where.orgId);
       }),
     },
+    $executeRaw: vi.fn(async () => 0),
     $transaction: vi.fn(),
   };
-  db.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(db));
   return db;
 });
+
+/**
+ * The outer transaction as Postgres runs it, for what matters here: a throw
+ * rolls the org row and the record back. The settings writers run inside it
+ * (`assignPlan()` hands them a client bound to it), so they never reach this.
+ */
+function transactionRollsBack() {
+  mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+    const orgs = structuredClone([...store.orgs]);
+    const subscriptions = structuredClone([...store.subscriptions]);
+    try {
+      return await fn(mockPrisma);
+    } catch (error) {
+      store.orgs = new Map(orgs);
+      store.subscriptions = new Map(subscriptions);
+      throw error;
+    }
+  });
+}
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 
 vi.mock('@/lib/app/billing', () => ({ initAppBilling: vi.fn() }));
@@ -184,7 +205,7 @@ beforeEach(() => {
   store.orgs.clear();
   store.subscriptions.clear();
   store.orgs.set(ORG, { settings: structuredClone(HAND_SET) });
-  mockPrisma.$transaction.mockImplementation((fn: (tx: unknown) => unknown) => fn(mockPrisma));
+  transactionRollsBack();
 
   __resetEntitlementRegistryForTests();
   __resetBillingPlansForTests();
@@ -258,6 +279,7 @@ describe('assignPlan', () => {
 
   it('puts back what the plan decides when it has drifted, without a second record row', async () => {
     await assignPlan(ORG, 'pro');
+    const firstApplied = store.subscriptions.get(ORG)?.planAppliedAt;
     // Staff changed a limit by hand since.
     const drifted = settings();
     (drifted.quotas as { meters: Record<string, number> }).meters.seats = 3;
@@ -269,7 +291,11 @@ describe('assignPlan', () => {
     expect(again.applied?.meterLimits).toEqual({ from: { seats: 3 }, to: { seats: 25 } });
     expect(again.applied?.switches).toBeNull();
     expect(again.applied?.aiBudgetUsd).toBeNull();
-    expect(mockPrisma.orgBillingSubscription.upsert).toHaveBeenCalledTimes(1);
+    // Still one record, stamped as applied again.
+    expect(store.subscriptions.size).toBe(1);
+    expect(store.subscriptions.get(ORG)?.planAppliedAt?.getTime()).toBeGreaterThanOrEqual(
+      firstApplied!.getTime()
+    );
   });
 
   it('decides only what it names: a plan with switches alone leaves limits and budget', async () => {
@@ -279,24 +305,54 @@ describe('assignPlan', () => {
     expect(mockForgetOrgCap).not.toHaveBeenCalled();
   });
 
-  it('finishes a write that did not finish, by assigning the plan again', async () => {
-    // The switches write clashes with a concurrent settings write.
+  it('writes nothing when a write fails part-way: the record and the settings roll back together', async () => {
     const conflict = new Prisma.PrismaClientKnownRequestError('clash', {
       code: 'P2034',
       clientVersion: 'test',
     });
-    mockPrisma.$transaction.mockRejectedValueOnce(conflict);
+    // The switches land, then the limits write clashes.
+    const real = mockPrisma.org.update.getMockImplementation()!;
+    mockPrisma.org.update.mockImplementationOnce(real).mockRejectedValueOnce(conflict);
 
     await expect(assignPlan(ORG, 'pro')).rejects.toBe(conflict);
-    // The record names the plan, and says it is not applied.
-    expect(store.subscriptions.get(ORG)).toMatchObject({ planKey: 'pro', planAppliedAt: null });
-    expect((await loadOrgSubscription(ORG))?.planAppliedAt).toBeNull();
 
-    const again = await assignPlan(ORG, 'pro');
+    expect(settings()).toEqual(HAND_SET);
+    expect(store.subscriptions.has(ORG)).toBe(false);
+    expect(mockForgetOrgCap).not.toHaveBeenCalled();
+  });
 
-    expect(again.changed).toBe(true);
+  it('takes the org billing lock before it reads the record', async () => {
+    await assignPlan(ORG, 'pro');
+
+    expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, key] = mockPrisma.$executeRaw.mock.calls[0] as unknown as [string[], string];
+    expect(sql.join('?')).toContain('pg_advisory_xact_lock');
+    expect(key).toBe(`billing:${ORG}`);
+    expect(mockPrisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPrisma.orgBillingSubscription.findUnique.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('writes the settings of a plan its record names but does not mark applied', async () => {
+    store.subscriptions.set(ORG, {
+      orgId: ORG,
+      planKey: 'pro',
+      provider: null,
+      customerRef: null,
+      subscriptionRef: null,
+      status: 'ACTIVE',
+      periodStart: null,
+      periodEnd: null,
+      planAppliedAt: null,
+      updatedAt: new Date(),
+    });
+
+    const result = await assignPlan(ORG, 'pro');
+
+    expect(result.changed).toBe(true);
     expect(store.subscriptions.get(ORG)?.planAppliedAt).toEqual(expect.any(Date));
     expect(settings().entitlements).toEqual({ on: ['beta', 'reports'], off: ['leads'] });
+    expect((await loadOrgSubscription(ORG))?.planAppliedAt).toEqual(expect.any(Date));
   });
 
   it('runs its record reads and writes as the org', async () => {
@@ -377,6 +433,36 @@ describe('assignPlan', () => {
       periodStart: null,
       periodEnd: null,
     });
+  });
+
+  it('keeps the customer of an ended subscription when the org is taken off its plan', async () => {
+    store.subscriptions.set(ORG, {
+      orgId: ORG,
+      planKey: 'pro',
+      provider: 'stripe',
+      customerRef: 'cus_1',
+      subscriptionRef: 'sub_1',
+      status: 'ENDED',
+      periodStart: new Date('2026-10-01'),
+      periodEnd: new Date('2026-11-01'),
+      planAppliedAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await assignPlan(ORG, null);
+
+    expect(result).toMatchObject({ previousPlanKey: 'pro', planKey: null, changed: true });
+    expect(store.subscriptions.get(ORG)).toMatchObject({
+      planKey: null,
+      provider: 'stripe',
+      customerRef: 'cus_1',
+      subscriptionRef: null,
+      planAppliedAt: null,
+    });
+    expect(mockPrisma.orgBillingSubscription.delete).not.toHaveBeenCalled();
+
+    // …and a second "no plan" has nothing left to change.
+    expect((await assignPlan(ORG, null)).changed).toBe(false);
   });
 
   it.each<[string, () => void, string]>([

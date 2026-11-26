@@ -88,6 +88,13 @@ async function main(): Promise<void> {
   });
   registerEntitlementSwitch({ key: 'smoke_beta', label: 'Smoke beta', description: '' });
   registerPlan({
+    key: 'smoke_free',
+    label: 'Smoke Free',
+    switches: { smoke_reports: false, smoke_leads: true },
+    meterLimits: { seats: 3 },
+    aiBudgetUsd: 5,
+  });
+  registerPlan({
     key: 'smoke_pro',
     label: 'Smoke Pro',
     switches: { smoke_reports: true, smoke_leads: false },
@@ -141,6 +148,22 @@ async function main(): Promise<void> {
     check(
       rowsAfter.length === 1 && rowsAfter[0]?.updatedAt.getTime() === rows[0]?.updatedAt.getTime(),
       'the subscription record was not written'
+    );
+
+    console.log('\nTwo assignments at once');
+    // Under the org's billing lock they run one after the other, so whichever
+    // committed last decides both the record and the settings.
+    await Promise.all([assignPlan(orgId, 'smoke_free'), assignPlan(orgId, 'smoke_pro')]);
+    const raced = await record(orgId);
+    const racedSettings = (await orgRow(orgId)).settings as {
+      quotas?: { meters?: { seats?: number } };
+    };
+    const seats = racedSettings.quotas?.meters?.seats;
+    check(raced.length === 1, 'still one record');
+    check(
+      (raced[0]?.planKey === 'smoke_pro' && seats === 25) ||
+        (raced[0]?.planKey === 'smoke_free' && seats === 3),
+      `the record and the settings name the same plan (${raced[0]?.planKey}, seats ${seats})`
     );
 
     console.log('\nPrivacy');

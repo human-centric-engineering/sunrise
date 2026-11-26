@@ -190,6 +190,36 @@ describe('OrgPlanForm', () => {
     expect(screen.queryByRole('button', { name: 'Save plan' })).not.toBeInTheDocument();
   });
 
+  it('does not ask staff to finish a provider’s record it will not let them save', () => {
+    render(
+      <OrgPlanForm
+        orgId={ORG}
+        plan={view({
+          subscription: {
+            ...onPlan('pro', null),
+            provider: 'stripe',
+            providerManaged: true,
+            status: 'INCOMPLETE',
+          },
+        })}
+      />
+    );
+
+    expect(screen.queryByText(/were not all written/)).not.toBeInTheDocument();
+  });
+
+  it('names a plan the app no longer registers, rather than show nothing chosen', async () => {
+    const user = userEvent.setup();
+    render(<OrgPlanForm orgId={ORG} plan={view({ subscription: onPlan('legacy') })} />);
+
+    expect(screen.getByText(/which the\s+app no longer registers/)).toHaveTextContent('legacy');
+    expect(save()).toBeDisabled();
+
+    // Another plan can still be chosen.
+    await user.click(screen.getByRole('radio', { name: /Free/ }));
+    expect(save()).toBeEnabled();
+  });
+
   it("says the app's plans failed to register", () => {
     render(
       <OrgPlanForm

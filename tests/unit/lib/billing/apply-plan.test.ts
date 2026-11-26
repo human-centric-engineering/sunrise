@@ -19,10 +19,10 @@ vi.mock('@/lib/tenancy/org-settings', () => ({
   writeOrgMeterLimits: mockWriteOrgMeterLimits,
   updateOrgQuotas: mockUpdateOrgQuotas,
 }));
-const mockForgetOrgCap = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/orchestration/llm/spend-caps', () => ({ forgetOrgCap: mockForgetOrgCap }));
+vi.mock('@/lib/db/client', () => ({ prisma: { $transaction: vi.fn() } }));
 
 import { applyPlan } from '@/lib/billing/apply-plan';
+import { prisma } from '@/lib/db/client';
 import type { RegisteredPlan } from '@/lib/billing/plans';
 
 const ORG = 'cmorg000000000000000other';
@@ -62,9 +62,24 @@ describe('applyPlan', () => {
   it('names each switch on or off, each limit, and only the budget among the caps', async () => {
     await applyPlan(ORG, plan());
 
-    expect(mockSetOrgSwitches).toHaveBeenCalledWith(ORG, { on: ['reports'], off: ['leads'] });
-    expect(mockWriteOrgMeterLimits).toHaveBeenCalledWith(ORG, { seats: 25 });
-    expect(mockUpdateOrgQuotas).toHaveBeenCalledWith(ORG, { monthlyBudgetUsd: 100 });
+    // On the shared client when none is given: three transactions of their own.
+    expect(mockSetOrgSwitches).toHaveBeenCalledWith(
+      ORG,
+      { on: ['reports'], off: ['leads'] },
+      prisma
+    );
+    expect(mockWriteOrgMeterLimits).toHaveBeenCalledWith(ORG, { seats: 25 }, prisma);
+    expect(mockUpdateOrgQuotas).toHaveBeenCalledWith(ORG, { monthlyBudgetUsd: 100 }, prisma);
+  });
+
+  it('hands every writer the client it is given, so a caller can make it one transaction', async () => {
+    const db = { $transaction: vi.fn() };
+
+    await applyPlan(ORG, plan(), db);
+
+    for (const writer of [mockSetOrgSwitches, mockWriteOrgMeterLimits, mockUpdateOrgQuotas]) {
+      expect(writer.mock.calls[0]?.at(-1)).toBe(db);
+    }
   });
 
   it('skips a writer for what the plan does not decide', async () => {
@@ -93,12 +108,11 @@ describe('applyPlan', () => {
 
     const result = await applyPlan(ORG, plan({ aiBudgetUsd: null }));
 
-    expect(mockUpdateOrgQuotas).toHaveBeenCalledWith(ORG, { monthlyBudgetUsd: null });
+    expect(mockUpdateOrgQuotas).toHaveBeenCalledWith(ORG, { monthlyBudgetUsd: null }, prisma);
     expect(result?.aiBudgetUsd).toEqual({ from: 5, to: null });
-    expect(mockForgetOrgCap).toHaveBeenCalledWith(ORG);
   });
 
-  it('reports no change, and forgets no cap, when every writer wrote nothing', async () => {
+  it('reports no change when every writer wrote nothing', async () => {
     const result = await applyPlan(ORG, plan());
 
     expect(result).toEqual({
@@ -107,7 +121,6 @@ describe('applyPlan', () => {
       meterLimits: null,
       aiBudgetUsd: null,
     });
-    expect(mockForgetOrgCap).not.toHaveBeenCalled();
   });
 
   it.each([

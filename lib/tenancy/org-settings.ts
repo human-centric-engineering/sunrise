@@ -699,7 +699,9 @@ export async function updateOrgQuotas(
       const next: Record<string, unknown> = isJsonObject(slice) ? { ...slice } : {};
       delete next[ORG_METER_LIMITS_KEY];
       for (const [key, value] of Object.entries(change)) {
-        if (value === null || value === undefined) delete next[key];
+        // Named as undefined is not named: only null removes a cap.
+        if (value === undefined) continue;
+        if (value === null) delete next[key];
         else next[key] = setting[key as keyof OrgQuotas];
       }
       stored = readOrgQuotas({ [ORG_QUOTAS_KEY]: next });

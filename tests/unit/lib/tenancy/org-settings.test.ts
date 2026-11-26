@@ -1491,4 +1491,15 @@ describe('updateOrgQuotas (§139 t-1093)', () => {
 
     expect(await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: 5 }, db)).toBeNull();
   });
+
+  it('leaves a cap named as undefined as it is: only null removes one', async () => {
+    const { tx, db } = txOver({ quotas: { monthlyBudgetUsd: 5, requestsPerMinute: 60 } });
+
+    await updateOrgQuotas(ORG_A, { monthlyBudgetUsd: 10, requestsPerMinute: undefined }, db);
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { quotas: { monthlyBudgetUsd: 10, requestsPerMinute: 60 } } },
+    });
+  });
 });

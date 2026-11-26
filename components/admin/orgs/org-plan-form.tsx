@@ -106,7 +106,17 @@ export function OrgPlanForm({ orgId, plan: initial }: OrgPlanFormProps) {
   });
 
   const subscription = view.subscription;
-  const unfinished = subscription !== null && subscription.planAppliedAt === null;
+  // Only a plan staff can save again: a provider's record is not theirs to finish.
+  const unfinished =
+    subscription !== null &&
+    subscription.planKey !== null &&
+    !subscription.providerManaged &&
+    subscription.planAppliedAt === null;
+  // A key the app no longer registers: no option shows it, so say it here.
+  const unregisteredPlan =
+    subscription?.planKey && !view.plans.some((p) => p.key === subscription.planKey)
+      ? subscription.planKey
+      : null;
   const locked = !view.mayChange || subscription?.providerManaged === true || !view.enabled;
   // Saving the current plan again is how an unfinished write is finished.
   const canSave = chosen !== current || (unfinished && chosen !== NO_PLAN);
@@ -151,7 +161,14 @@ export function OrgPlanForm({ orgId, plan: initial }: OrgPlanFormProps) {
           that subscription and cannot be changed here.
         </p>
       )}
-      {unfinished && (
+      {unregisteredPlan && (
+        <p className="text-muted-foreground text-sm">
+          This organisation is on <span className="font-mono">{unregisteredPlan}</span>, which the
+          app no longer registers. Its switches, limits and budget stay as that plan left them until
+          another plan is assigned.
+        </p>
+      )}
+      {unfinished && !unregisteredPlan && (
         <p className="text-destructive text-sm">
           The plan&apos;s settings were not all written to this organisation. Save the plan again to
           finish.

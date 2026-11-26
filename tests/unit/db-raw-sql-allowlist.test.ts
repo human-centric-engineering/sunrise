@@ -96,6 +96,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'knowledge-graph adjacency aggregation',
   },
   {
+    file: 'lib/billing/subscriptions.ts',
+    calls: 1,
+    why: 'the per-org billing lock (§139 t-1093): `pg_advisory_xact_lock(hashtextextended(key, 0))`, taken at the start of a plan assignment so two at once run one after the other, and t-1094’s webhook takes the same key. Prisma has no call for it, and it touches no table, so RLS has nothing to filter',
+  },
+  {
     file: 'lib/db/drift-probes.ts',
     calls: 6,
     why: 'catalog queries (pg_indexes/pg_constraint/pg_class/pg_policies/information_schema) — reads system catalogs, never tenant rows',

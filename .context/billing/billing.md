@@ -125,17 +125,21 @@ the current state, and that must be a no-op, not a fresh audit row.
 - **The budget is written through `updateOrgQuotas()`**, which sets only the
   caps it names. `writeOrgQuotas()` replaces every cap, which would clear a
   request-rate cap staff set by hand.
-- **The record is written before the plan is applied, and marked applied
-  after.** The switches, limits and caps are three serializable writes, not
-  one. If one fails, the record names the plan with `planAppliedAt` null, the
-  admin page says the plan was not all written, and assigning it again
-  finishes it.
+- **An assignment is one transaction under the org's billing lock.** The
+  record and the switches, limits and caps commit together, serializable,
+  after `pg_advisory_xact_lock` on `billing:<orgId>` (`billingLockKey()`).
+  Two assignments at once run one after the other, so the record never names
+  one plan over another plan's settings, and a failure writes nothing.
+  `applyPlan()` takes the client to write on, so t-1094's webhook joins its
+  own transaction the same way, under the same key. The caller forgets the
+  cached AI budget after its commit (`forgetOrgCap()`).
 - **Staff do not override a provider.** While the record holds a provider
   subscription that has not ended, a hand assignment is refused
   (`provider_managed`). Over an ended one, the provider and customer
   references are kept, so erasure still finds the customer.
-- **"No plan" removes the hand-assigned record and leaves the settings.** The
-  org keeps what the plan gave until someone changes it.
+- **"No plan" clears the plan and leaves the settings.** The org keeps what
+  the plan gave until someone changes it. The record is deleted, unless it
+  holds a provider or customer reference, which stays for erasure.
 - **Not in t-1093:** metered items and overage rules (t-1097), the provider
   adapter and the lapsed-subscription rule (t-1094), and config health's
   warning for a missing fallback plan, which applies once a provider is on

@@ -25,7 +25,8 @@ release process.
   fallback plan with `setFallbackPlan()` (`lib/billing/plans.ts`). Platform
   staff assign a plan on `/admin/orgs/[id]` or with
   `PATCH /api/v1/admin/orgs/[id]/plan`, which writes only what the plan
-  decides (`applyPlan()`), is audited as `org.plan.assign`, and writes nothing
+  decides (`applyPlan()`) in one transaction under the org's billing lock
+  (`billingLockKey()`), is audited as `org.plan.assign`, and writes nothing
   when re-assigned. Plans apply only at `TENANCY_MODE=multi` with a plan
   registered; no payment provider is needed. New published model
   `OrgBillingSubscription` (one per org, org-owned, in the org export) with

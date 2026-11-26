@@ -14,11 +14,12 @@
  * the provider and customer references are kept, so a later erasure still
  * finds the customer.
  *
- * **Order of writes.** The record is written with `planAppliedAt` cleared,
- * then the plan is applied, then `planAppliedAt` is set. A failure between
- * leaves the record naming the plan with `planAppliedAt` null, which the
- * admin page shows, and assigning it again finishes the write. Re-assigning
- * a plan that is fully applied writes nothing at all.
+ * **All or nothing.** An assignment writes the record and the plan's settings
+ * in one transaction under the org's billing lock ({@link assignPlan}).
+ * Re-assigning a plan that is fully applied writes nothing at all. A record
+ * with `planAppliedAt` null names a plan whose settings are not known to be
+ * written (a provider's `INCOMPLETE` subscription, from t-1094); assigning
+ * the plan by hand writes them.
  *
  * Every read and write of the record runs as the org (`runAsOrg`), since the
  * table is tenant-owned and the caller is usually a platform admin acting
@@ -28,11 +29,12 @@
  * @see .context/billing/billing.md
  */
 
-import type { BillingSubscriptionStatus } from '@prisma/client';
+import { Prisma, type BillingSubscriptionStatus, type PrismaClient } from '@prisma/client';
 
 import { applyPlan, type PlanApplied } from '@/lib/billing/apply-plan';
 import { billingPlansEnabled, planOf } from '@/lib/billing/plans';
 import { prisma } from '@/lib/db/client';
+import { forgetOrgCap } from '@/lib/orchestration/llm/spend-caps';
 import { runAsOrg } from '@/lib/tenancy/context';
 
 /** The org's subscription record, as the platform reads it. */
@@ -67,6 +69,7 @@ export class BillingPlanError extends Error {
 const SUBSCRIPTION_SELECT = {
   planKey: true,
   provider: true,
+  customerRef: true,
   subscriptionRef: true,
   status: true,
   periodStart: true,
@@ -78,6 +81,7 @@ const SUBSCRIPTION_SELECT = {
 type SubscriptionRow = {
   planKey: string | null;
   provider: string | null;
+  customerRef: string | null;
   subscriptionRef: string | null;
   status: BillingSubscriptionStatus;
   periodStart: Date | null;
@@ -122,19 +126,42 @@ export interface AssignPlanResult {
   subscription: OrgSubscriptionView | null;
 }
 
+/** Per-org lock key for billing writes; t-1094's webhook takes the same one. */
+export function billingLockKey(orgId: string): string {
+  return `billing:${orgId}`;
+}
+
+/**
+ * A client for the settings writers that runs them on an open transaction.
+ * Each writer opens its own transaction when given the shared client; given
+ * this, its work joins ours, so the record and every slice the plan writes
+ * commit together or not at all.
+ */
+function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, '$transaction'> {
+  const run = (fn: (client: Prisma.TransactionClient) => Promise<unknown>) => fn(tx);
+  return { $transaction: run as PrismaClient['$transaction'] };
+}
+
 /**
  * Put an org on a plan by hand, or take it off one (`planKey: null`).
  *
- * Taking an org off its plan deletes the hand-assigned record and leaves its
+ * **One transaction, under the org's billing lock.** The record and every
+ * slice the plan writes commit together, serializable, after a Postgres
+ * advisory lock on {@link billingLockKey}. So two assignments at once run one
+ * after the other, and neither can leave the record naming one plan over the
+ * other plan's settings; a failure writes nothing.
+ *
+ * Taking an org off its plan clears the plan from the record and leaves its
  * switches, limits and budget as they are: the plan stops being named, and
- * what it gave stays until someone changes it. It decides nothing about who
- * may: the route asks `mayChangeOrgCommercialSettings()` first.
+ * what it gave stays until someone changes it. A record holding nothing else
+ * is deleted; one holding a provider or customer reference is kept, so a
+ * later erasure still finds that customer. It decides nothing about who may:
+ * the route asks `mayChangeOrgCommercialSettings()` first.
  *
  * @throws {BillingPlanError} `BILLING_OFF` when plans do not apply on this
  *   install, `UNKNOWN_PLAN`, `PROVIDER_MANAGED`, or `ORG_NOT_FOUND`.
  *   A clash with a concurrent settings write throws `P2034`
- *   (`isSettingsWriteConflict`), after the record was written: assigning
- *   again finishes it.
+ *   (`isSettingsWriteConflict`), with nothing written.
  */
 export async function assignPlan(orgId: string, planKey: string | null): Promise<AssignPlanResult> {
   if (!billingPlansEnabled()) {
@@ -151,83 +178,104 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
   const org = await prisma.org.findUnique({ where: { id: orgId }, select: { id: true } });
   if (!org) throw new BillingPlanError('ORG_NOT_FOUND', 'Organisation not found');
 
-  return runAsOrg(orgId, async () => {
-    const current = await prisma.orgBillingSubscription.findUnique({
-      where: { orgId },
-      select: SUBSCRIPTION_SELECT,
-    });
-    if (current && isProviderManaged(current)) {
-      throw new BillingPlanError(
-        'PROVIDER_MANAGED',
-        `This organisation pays for its plan through ${current.provider ?? 'a payment provider'}, so its plan follows that subscription. Change it there.`
-      );
-    }
-    const previousPlanKey = current?.planKey ?? null;
+  const result = await runAsOrg(orgId, () =>
+    prisma.$transaction(
+      async (tx): Promise<AssignPlanResult> => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${billingLockKey(orgId)}, 0))`;
+        const current = await tx.orgBillingSubscription.findUnique({
+          where: { orgId },
+          select: SUBSCRIPTION_SELECT,
+        });
+        if (current && isProviderManaged(current)) {
+          throw new BillingPlanError(
+            'PROVIDER_MANAGED',
+            `This organisation pays for its plan through ${current.provider ?? 'a payment provider'}, so its plan follows that subscription. Change it there.`
+          );
+        }
+        const previousPlanKey = current?.planKey ?? null;
 
-    if (plan === null) {
-      if (!current) {
+        if (plan === null) {
+          const unchanged = { previousPlanKey, planKey: null, applied: null };
+          if (!current || (current.planKey === null && current.subscriptionRef === null)) {
+            return {
+              ...unchanged,
+              changed: false,
+              subscription: current ? toView(current) : null,
+            };
+          }
+          if (current.provider === null && current.customerRef === null) {
+            await tx.orgBillingSubscription.delete({ where: { orgId } });
+            return { ...unchanged, changed: true, subscription: null };
+          }
+          // The provider's customer stays, for erasure to find.
+          const row = await tx.orgBillingSubscription.update({
+            where: { orgId },
+            data: {
+              planKey: null,
+              subscriptionRef: null,
+              periodStart: null,
+              periodEnd: null,
+              planAppliedAt: null,
+            },
+            select: SUBSCRIPTION_SELECT,
+          });
+          return { ...unchanged, changed: true, subscription: toView(row) };
+        }
+
+        const applied = await applyPlan(orgId, plan, onTransaction(tx));
+        if (applied === null) {
+          throw new BillingPlanError('ORG_NOT_FOUND', 'Organisation not found');
+        }
+
+        // A record already naming this plan, by hand and fully applied, is
+        // left untouched unless applying changed something.
+        const recordMatches =
+          current !== null &&
+          current.planKey === plan.key &&
+          current.subscriptionRef === null &&
+          current.status === 'ACTIVE' &&
+          current.planAppliedAt !== null;
+        if (recordMatches && !applied.changed) {
+          return {
+            previousPlanKey,
+            planKey: plan.key,
+            changed: false,
+            applied,
+            subscription: toView(current),
+          };
+        }
+
+        // The provider and customer stay, so an ended subscription's customer
+        // is still found at erasure; the subscription and its period go.
+        const handAssigned = {
+          planKey: plan.key,
+          subscriptionRef: null,
+          status: 'ACTIVE' as const,
+          periodStart: null,
+          periodEnd: null,
+          planAppliedAt: new Date(),
+        };
+        const row = await tx.orgBillingSubscription.upsert({
+          where: { orgId },
+          create: { orgId, ...handAssigned },
+          update: handAssigned,
+          select: SUBSCRIPTION_SELECT,
+        });
         return {
           previousPlanKey,
-          planKey: null,
-          changed: false,
-          applied: null,
-          subscription: null,
+          planKey: plan.key,
+          changed: true,
+          applied,
+          subscription: toView(row),
         };
-      }
-      await prisma.orgBillingSubscription.delete({ where: { orgId } });
-      return { previousPlanKey, planKey: null, changed: true, applied: null, subscription: null };
-    }
-
-    // A record already naming this plan, by hand and fully applied, is left
-    // untouched unless applying finds something to change.
-    const recordMatches =
-      current !== null &&
-      current.planKey === plan.key &&
-      current.subscriptionRef === null &&
-      current.status === 'ACTIVE' &&
-      current.planAppliedAt !== null;
-
-    if (!recordMatches) {
-      // The provider and customer stay, so an ended subscription's customer
-      // is still found at erasure; the subscription and its period go.
-      const handAssigned = {
-        planKey: plan.key,
-        subscriptionRef: null,
-        status: 'ACTIVE' as const,
-        periodStart: null,
-        periodEnd: null,
-        planAppliedAt: null,
-      };
-      await prisma.orgBillingSubscription.upsert({
-        where: { orgId },
-        create: { orgId, ...handAssigned },
-        update: handAssigned,
-      });
-    }
-
-    const applied = await applyPlan(orgId, plan);
-    if (applied === null) throw new BillingPlanError('ORG_NOT_FOUND', 'Organisation not found');
-
-    if (recordMatches && !applied.changed) {
-      return {
-        previousPlanKey,
-        planKey: plan.key,
-        changed: false,
-        applied,
-        subscription: toView(current),
-      };
-    }
-    const row = await prisma.orgBillingSubscription.update({
-      where: { orgId },
-      data: { planAppliedAt: new Date() },
-      select: SUBSCRIPTION_SELECT,
-    });
-    return {
-      previousPlanKey,
-      planKey: plan.key,
-      changed: true,
-      applied,
-      subscription: toView(row),
-    };
-  });
+      },
+      // The settings writers ask for serializable on their own; joined to
+      // this transaction, this is where they get it. The lock is held across
+      // a handful of row writes, so the default timeout is ample.
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    )
+  );
+  // After the commit, so a re-read cannot fetch the budget it replaced.
+  if (result.applied?.aiBudgetUsd) forgetOrgCap(orgId);
+  return result;
 }
