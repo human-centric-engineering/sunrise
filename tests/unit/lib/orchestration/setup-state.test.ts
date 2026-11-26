@@ -176,6 +176,18 @@ describe('getSetupState', () => {
     });
   });
 
+  it('at single with no org entered, counts agents unscoped (the install org)', async () => {
+    vi.mocked(requestPrincipal).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
+    vi.mocked(prisma.aiAgent.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+    const state = await getSetupState();
+
+    expect(prisma.aiAgent.count).toHaveBeenCalledWith({ where: { isSystem: false } });
+    expect(state.hasAgent).toBe(false);
+  });
+
   describe('at TENANCY_MODE=multi (#1295)', () => {
     beforeEach(() => {
       mockEnv.TENANCY_MODE = 'multi';
@@ -210,6 +222,34 @@ describe('getSetupState', () => {
       expect(state.hasAgent).toBe(true);
       // The scope does not leak out of the probe.
       expect(getTenantContext()).toBeNull();
+    });
+
+    it('enters a support session as support, carrying its grant', async () => {
+      const support = {
+        grantId: 'grant_1',
+        level: 'ADMIN' as const,
+        expiresAt: new Date('2027-01-01'),
+      };
+      vi.mocked(requestPrincipal).mockResolvedValue({
+        ...(enteredOrg('org_b') as NonNullable<Entry>),
+        support,
+      });
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
+      let contextAtCount: ReturnType<typeof getTenantContext> = null;
+      vi.mocked(prisma.aiAgent.count).mockImplementation((() => {
+        contextAtCount = getTenantContext();
+        return Promise.resolve(0);
+      }) as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      await getSetupState();
+
+      expect(contextAtCount).toEqual({
+        orgId: 'org_b',
+        source: 'support',
+        role: undefined,
+        support,
+      });
     });
 
     it('with no org entered, skips the agent count and still answers the platform-wide probes', async () => {
