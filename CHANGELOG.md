@@ -16,6 +16,97 @@ release process.
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-11-26
+
+> **Alpha release.** Twenty-eighth tagged Sunrise release. **MINOR bump**: one
+> new fork seam and new public API, and no migrations. The headline is **roles
+> and access** (§143): `/admin/access` shows Sunrise's role model as tables,
+> and shows each viewer what they can open and, for what they can't, why.
+> Also in this release:
+>
+> - At `multi`, a platform admin who is a member of a customer org acts there
+>   as their org role (t-1032). Platform work on a customer org is done from
+>   the install org, now including force-fail and bulk conversation clear
+>   with `?orgId=` (t-1083).
+> - An app can move its own model pins as part of a model move (t-1088).
+> - Two workflow engine fixes: a step where branches meet again no longer
+>   deadlocks when one of them was not taken (t-1077), and a failed-status
+>   notification that can't be sent now fails the run (t-1078).
+> - At `multi`, a founder's signup org is set up at sign-in (t-1084).
+> - `better-auth` is pinned exactly beside `@better-auth/core` (t-1081), and
+>   the workflow builder canvas moves to `@xyflow/react` 13 (t-1099).
+>
+> Measured against `v0.20.0`: 10 PRs merged, no direct commits, 5 issues
+> closed as fixed; the suite is __FILES__ files and __TESTS__ tests.
+>
+> ## What a fork has to do
+>
+> **No migrations, no seed changes and no new env vars.**
+>
+> **Run `npm install`.** It brings `@xyflow/react` 13, `@testing-library/jest-dom`
+> 8 and minor and patch bumps. **When you merge `package.json`:**
+>
+> - keep `better-auth` exact and equal to `@better-auth/core` (both `1.7.27`),
+>   bump the two in the same PR, and name neither in `overrides`.
+>   `better-auth-single-core.test.ts` fails otherwise;
+> - drop the `@typescript-eslint/typescript-estree@8` → `minimatch` override
+>   and its `overrideReasons` entry, which Sunrise removed;
+> - keep your own `version`, in `package.json` and the lockfile, if you set one.
+>
+> **One new fork-owned scaffold** ships empty: `lib/app/access-explainer.ts`
+> (`initAppAccessExplainer()`). Take it as it is. If your authorization policy
+> changes who may manage members, owners, settings or support access, restate
+> those rows there with `setAccessPermission()`, or the page shows a role
+> model your policy doesn't enforce.
+>
+> **At `multi`, a platform admin is a platform admin only in the install org.**
+> In any other org they are a member of, they get the default user role and
+> their membership's org role. Nothing changes at `single`. Check:
+>
+> - a handler that needs the account's own platform role reads `User.role`
+>   from the row, not the session;
+> - a policy written as `isPlatformAdmin(viewer)` now admits nothing in a
+>   customer org;
+> - platform work on a customer org is done from the install org, with
+>   `?orgId=` where a route takes one.
+>
+> **Conflicts to expect,** each resolved by taking Sunrise's version unless
+> said otherwise:
+>
+> - **`app/globals.css`:** Sunrise added
+>   `@layer theme, base, components, utilities, xyflow;`. If your fork replaced
+>   the file, add that line to yours, or Tailwind's preflight overrides the
+>   canvas's styles.
+> - **`lib/app/model-pins.ts`:** its header comment gained a mover example.
+>   Keep your registrations and take the new comment.
+> - **`tests/setup.ts`:** two new seam pins, for `lib/app/entitlements` and
+>   `lib/app/access-explainer`. Keep your own pins and take both.
+> - **`lib/i18n/messages/en.json`:** new keys under `admin.access` and
+>   `admin.nav.access`.
+> - **A fork page under `/admin/access/`:** `access` is now a core admin
+>   section, so `registerOrgTierAdminPage()` refuses it at init. Move it.
+> - **`tests/unit/app/(public)/static-pages.test.tsx`:** if you edited it to
+>   pass with a shimmed or deleted marketing page, take Sunrise's version; it
+>   now skips those pages in a fork (t-1085).
+>
+> **Your tests will flag:**
+>
+> - `defaults.test.ts`: it gains the new scaffold's row. Pin it; don't delete
+>   it.
+> - React Flow code of your own: `@xyflow/react` 13's breaking changes, listed
+>   under Changed below.
+>
+> **Changes a build will not catch:**
+>
+> - A `send_notification` step with `terminalStatus: 'failed'` whose send
+>   fails now ends the run failed, under `errorStrategy: 'skip'` too, where it
+>   used to be recorded completed.
+> - A step where several branches meet again now runs as soon as the branches
+>   that were taken have finished, rather than waiting on ones that weren't.
+> - An app check in `lib/app/model-pins.ts` that refuses a move while its pins
+>   remain can now register a mover and let the check allow those pins.
+
+
 ### Changed
 
 - **A platform admin acts in a customer org as their org role there (t-1032,
@@ -170,6 +261,15 @@ release process.
   (`tests/unit/lib/tenancy/founder-release-sites.test.ts`); a fork that needs a
   system scope elsewhere uses `runAsSystem`.
 
+- **`OrgEntitlementsForm` tells its host when a save lands (t-1087,
+  #1325).** An optional `onSaved(view)` on
+  `components/admin/orgs/org-entitlements-form.tsx` gets what the server
+  stored after every save and clear that lands, and isn't called when one
+  fails. A host that shows the switches elsewhere can update from it instead
+  of reading them again, which could reach the server before the write
+  committed. An error thrown by `onSaved` isn't shown as a failed save. With
+  no `onSaved` the form behaves as before.
+
 - **A banner with the way back to the install org (t-1032).** A platform admin
   acting in a customer org as a member sees `MemberPlatformAdminBanner`
   (`components/layouts/member-platform-admin-banner.tsx`) in the admin console
@@ -205,6 +305,39 @@ release process.
   verification, the release in `runAsFounderRelease` and the setup inside the
   new org, so a fork's org-created hooks fire then, with the new org as their
   context.
+
+- **A step where branches meet again no longer deadlocks the run when one of
+  them wasn't taken (t-1077).** The engine waited for every edge into a step,
+  so a step reachable from two guards' fail edges never ran when one guard gave
+  up and the other never ran: "Workflow deadlocked: steps [...] have unmet
+  dependencies". The Provider Model Audit template's
+  `report_validation_failure` hit this. The engine now marks the steps a run
+  will not reach as untaken, and a step counts an untaken predecessor as done.
+  A step after a parallel step still waits for every branch. Retries and
+  resumes (from an approval or a crash) rebuild the set; a walk position saved
+  before this release still parses.
+
+- **A run whose failure notification can't be sent is recorded failed
+  (t-1078).** A `send_notification` step with `terminalStatus: 'failed'` failed
+  the run only after a send that worked. Under `errorStrategy: 'skip'`, a
+  refused, timed-out or thrown send was skipped and the run recorded
+  completed, though it had stopped at a validation gate. It now ends failed
+  with the step's reason, and the trace keeps the delivery error. A cancelled
+  run still ends cancelled.
+
+- **The static-pages test passes in a fork that has shimmed or deleted a
+  marketing page (t-1085, #1317).** In a fork (once `lib/app/reserved-tiers.ts`
+  declares a fork tier), `tests/unit/app/(public)/static-pages.test.tsx` skips
+  the about, contact, privacy or terms page when it is a one-line re-export of
+  `default` from a fork tier, or missing, since its copy is the fork's. Upstream
+  nothing is skipped. See CUSTOMIZATION.md §6.
+
+- **A fork's entitlement switches no longer fail core tests (t-1086, #1324).**
+  `tests/setup.ts` now pins `initAppEntitlements` (and
+  `initAppAccessExplainer`) to a no-op like the other seam inits, so a fork's
+  switch with the same key as a core fixture no longer lands over it.
+  `tests/unit/setup-seam-pins.test.ts` fails if a pinned init stops being
+  replaced.
 
 
 ## [0.20.0] — 2026-11-21
@@ -12807,7 +12940,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.17.1...v0.18.0
