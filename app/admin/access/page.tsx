@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 /**
- * Admin — who can do what (§143 t-1091).
+ * Admin — roles and access (§143 t-1091).
  *
  * Open to every viewer the console admits (`EVERY_VIEWER_ADMIN_PAGES`): a
  * platform admin, an org's OWNER/ADMIN and a holder of any of the app's named

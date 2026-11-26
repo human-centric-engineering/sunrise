@@ -245,7 +245,7 @@ describe('AdminTierGate on a page that requires a switch (t-1034)', () => {
       'https://example.com/plans'
     );
     // Where the viewer finds out who can open what, and why (t-1091).
-    expect(screen.getByRole('link', { name: 'See who can do what' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'See roles and access' })).toHaveAttribute(
       'href',
       '/admin/access'
     );

@@ -1,4 +1,4 @@
-# The access explainer: who can do what (§143)
+# The access explainer: roles and access (§143)
 
 Once an install runs at `multi`, several things decide who may open what in the
 admin console at once: the platform role, support access, the org role
@@ -24,20 +24,21 @@ opens or closes a page.
 
 ## What it shows, and where each part comes from
 
-| Section         | Content                                                                                                                                       | Derived from                                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `your-access`   | the viewer's org role (`null` under a support grant, whose role is the policy's, not a membership), the tiers they hold, their org's switches | `adminReachOf()` (the policy, once per tier), `loadOrgSwitches()`                                               |
-| `roles`         | platform admin, support access, OWNER / ADMIN / MEMBER, every named tier                                                                      | `namedAdminTiers()`, with each tier's `label` / `description` from `registerAdminTier()`                        |
-| `areas`         | every org-tier page, grouped, with the tier and switch it needs, whether it opens, and why it is locked                                       | `orgTierAdminPages()`, `namedTierAdminPages()`, `adminPageRequirements()`, `reachesTier()`, `lockedSwitchFor()` |
-| `switches`      | each entitlement switch: label, description, held or not, the refusal and upgrade link                                                        | `registeredEntitlementSwitches()`                                                                               |
-| `platform-only` | what the install keeps for the platform, and why                                                                                              | `closedCoreOrgTierSections()`, and the app's `registerPlatformOnlySurface()`                                    |
+| Section         | Content                                                                                                                                       | Derived from                                                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `your-access`   | the viewer's org role (`null` under a support grant, whose role is the policy's, not a membership), the tiers they hold, their org's switches | `adminReachOf()` (the policy, once per tier), `loadOrgSwitches()`                                                                              |
+| `roles`         | platform admin, support access, OWNER / ADMIN / MEMBER, every named tier; and `model`, the role model's tables (below)                        | `namedAdminTiers()`, with each tier's `label` / `description` from `registerAdminTier()`; `CORE_ACCESS_PERMISSIONS` and the app's restatements |
+| `areas`         | every org-tier page, grouped, with the tier and switch it needs, whether it opens, and why it is locked                                       | `orgTierAdminPages()`, `namedTierAdminPages()`, `adminPageRequirements()`, `reachesTier()`, `lockedSwitchFor()`                                |
+| `switches`      | each entitlement switch: label, description, held or not, the refusal and upgrade link                                                        | `registeredEntitlementSwitches()`                                                                                                              |
+| `platform-only` | what the install keeps for the platform, and why                                                                                              | `closedCoreOrgTierSections()`, and the app's `registerPlatformOnlySurface()`                                                                   |
 
 Then any sections the app registered (`appSections`).
 
 `/admin` itself is left out of the areas: it sends each viewer on and shows
 nothing. At `single` there is no `areas` section (it is left out of
-`sections`, not sent empty) and the roles are the platform admin alone, since
-no org role opens the console there. Leaving out the areas is deliberate: the
+`sections`, not sent empty) and `roles` is the platform admin alone, since
+no org role opens the console there (`model` still describes every role, with
+`tenancy` saying they are not in force). Leaving out the areas is deliberate: the
 platform admin is the only reader, every page opens to them, and their sidebar
 already lists every page.
 
@@ -118,13 +119,13 @@ and the viewer's own panel still names everything in it.
 
 ## The page
 
-`/admin/access` ("Who can do what") is a shell over the endpoint: it reads
+`/admin/access` ("Roles and access") is a shell over the endpoint: it reads
 `GET /api/v1/admin/access` through `loadServerData`, checks the response with
 `accessExplainerResponseSchema` (`lib/validations/access-explainer.ts`), and
 renders the sections the response names, in its order, then the app's own
 (`AccessExplainerView`). It decides nothing and filters nothing: a section
 missing from the response is one this viewer does not get. A failed load, or a
-response the schema rejects, shows "Couldn't load who can do what" and is
+response the schema rejects, shows "Couldn't load roles and access" and is
 logged, never an empty page.
 
 | Viewer                        | What the page shows                                                                                                                                                |
@@ -133,6 +134,40 @@ logged, never an empty page.
 | An org OWNER/ADMIN            | **Your access in _org_**: their role, the tiers they open, the org's switches, and each page they cannot open with the reason (the app's refusal and upgrade link) |
 | A named-tier holder           | the same panel for their tiers only, and only their tiers' pages and those pages' switches                                                                         |
 | A MEMBER, or no one signed in | nothing: the admin layout turns them away                                                                                                                          |
+
+**The role model (RBAC).** With the `roles` section, the route sends `model`
+(`AccessRoleModelView`) to every audience but a named-tier holder: the platform
+roles (User, Platform admin, Support access), the organisation roles (Owner,
+Admin, Member), the permission table's columns, and its rows: what each role
+may do for an organisation. Every core role is sent whatever the tenancy mode,
+because it describes the model, not who holds what; each carries `held` for the
+viewer. The page draws these as tables, then the app's named tiers as **App
+roles**; a holder gets the App roles table only. The rows are
+`CORE_ACCESS_PERMISSIONS` (`lib/auth/access-explainer-registry.ts`), words under
+`admin.access.permissions.<key>`. They restate rules the routes and
+`lib/tenancy/lifecycle.ts` enforce under the default policy (only an OWNER
+grants support access; only an OWNER or a platform admin confers, changes or
+removes OWNER), and `tests/unit/lib/auth/access-explainer.test.ts` pins every
+cell, so change both together. **A fork whose policy answers differently says
+so** with `setAccessPermission(key, cells | null)`, so the table never claims
+what its guards do not do, and adds its own rows with
+`registerAccessPermission()`. The platform admin's column is what they do from the install
+org: at `multi`, inside a customer's org the platform role is withheld
+(`withholdsPlatformRole()`) and they act as the role that org gave them, which
+the table's intro says. Areas, switches and what the platform keeps are tables
+too. An empty switches or platform-only section is left out, since a line saying
+an install has none was noise the page was rewritten to remove; an empty areas
+section says that no pages are listed for the viewer, since there the gap is
+about them. At `single` (the response's `tenancy`) the organisation-roles table
+carries a note that only platform admins open the console and there is no
+support access, so the model is described without claiming it is in force. The
+User row is marked "You" for anyone who is neither a platform admin nor in
+under support access, from the route's `held` like every other row.
+
+If the app's explainer init throws, everything it registered is rolled back,
+its permission restatements included, so `model.permissions` is `null` rather
+than core's cells, which may claim what its policy does not do. The page says
+the table could not be loaded; the role tables still show.
 
 **Who reaches it.** The page is in its own class, `EVERY_VIEWER_ADMIN_PAGES`
 (`lib/auth/admin-tier.ts`): open to every viewer the console admits, which no
@@ -145,7 +180,7 @@ page under it, and the roster test (`tests/unit/scripts/ci/admin-tier-roster.tes
 pins the list and fails on a fork page in its section. The route stays the
 boundary; the page-level gate only decides who is shown the shell.
 
-**Where viewers find it.** A sidebar item, "Who can do what", under
+**Where viewers find it.** A sidebar item, "Roles and access", under
 Management, shown to every viewer the console admits. `AccessExplainerLink`
 (`components/admin/access-explainer/access-explainer-link.tsx`) on the overview
 (a platform admin's landing), the orchestration dashboard and Members (an org
@@ -173,6 +208,8 @@ and the ships-empty row in `tests/unit/lib/app/defaults.test.ts`).
 | Say what you keep for the platform, and why         | `registerPlatformOnlySurface({ key, label, reason, href? })`                          |
 | Choose who sees one of the built-in sections        | `setAccessSectionAudience(section, audiences)` (an empty list hides it from everyone) |
 | Add a section of your own                           | `registerAccessSection({ key, title, body, audience })`                               |
+| Restate a permission row your policy changes        | `setAccessPermission(key, { platform_admin, owner, admin, member } \| null)`          |
+| Add a permission row of your own                    | `registerAccessPermission({ key, label, allowed })`                                   |
 | Reword Sunrise's own text                           | `overridePlatformMessages()` on `admin.access.*` (`lib/app/messages.ts`)              |
 
 Text is plain, or `{ message: 'app.…' }` naming a key in the app's catalogue,

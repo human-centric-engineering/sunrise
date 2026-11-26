@@ -1,6 +1,6 @@
 /**
- * A line pointing to the access explainer (§143 t-1091): "Who can open what
- * in this console? See who can do what."
+ * A line pointing to the access explainer (§143 t-1091): "What can each role
+ * do? See roles and access."
  *
  * On the dashboard each viewer lands on (the overview, the orchestration
  * dashboard, Members) and on a locked page. A fork whose named tier lands on

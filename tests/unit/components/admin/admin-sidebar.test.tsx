@@ -640,7 +640,7 @@ describe('sectionsForViewer — a page open to every admin viewer (t-1091)', () 
 
   it('is in core’s sidebar, so every viewer finds it', () => {
     render(<AdminSidebar reach={{ tiers: ['page_designs'], landing: null }} orgTierPages={[]} />);
-    expect(screen.getByRole('link', { name: /Who can do what/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Roles and access/ })).toHaveAttribute(
       'href',
       '/admin/access'
     );

@@ -9,7 +9,11 @@
  */
 import { z } from 'zod';
 
-import { ACCESS_AUDIENCES, ACCESS_EXPLAINER_SECTIONS } from '@/lib/auth/access-explainer-registry';
+import {
+  ACCESS_AUDIENCES,
+  ACCESS_EXPLAINER_SECTIONS,
+  ACCESS_PERMISSION_ROLES,
+} from '@/lib/auth/access-explainer-registry';
 
 const audienceSchema = z.enum(ACCESS_AUDIENCES);
 
@@ -19,6 +23,36 @@ const roleSchema = z.object({
   label: z.string(),
   description: z.string(),
   held: z.boolean(),
+});
+
+const modelRoleSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  description: z.string(),
+  held: z.boolean(),
+});
+
+const permissionRoleSchema = z.enum(ACCESS_PERMISSION_ROLES);
+
+const modelSchema = z.object({
+  platformRoles: z.array(modelRoleSchema),
+  orgRoles: z.array(modelRoleSchema),
+  columns: z.array(z.object({ key: permissionRoleSchema, label: z.string() })),
+  permissions: z
+    .array(
+      z.object({
+        key: z.string(),
+        label: z.string(),
+        allowed: z.object({
+          platform_admin: z.boolean(),
+          owner: z.boolean(),
+          admin: z.boolean(),
+          member: z.boolean(),
+        }),
+        source: z.enum(['core', 'app']),
+      })
+    )
+    .nullable(),
 });
 
 const switchSchema = z.object({
@@ -83,6 +117,7 @@ export const accessExplainerResponseSchema = z.object({
   sections: z.array(z.enum(ACCESS_EXPLAINER_SECTIONS)),
   you: youSchema.optional(),
   roles: z.array(roleSchema).optional(),
+  model: modelSchema.optional(),
   areas: z.array(areaSchema).optional(),
   switches: z.array(switchSchema).optional(),
   platformOnly: z.array(platformOnlySchema).optional(),

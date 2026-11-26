@@ -497,9 +497,18 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/auth/access-explainer-registry.ts',
-    holders: ['CORE_AREA_KEYS', 'areas', 'platformOnly', 'sections', 'audiences'],
+    holders: [
+      'CORE_AREA_KEYS',
+      'CORE_PERMISSION_KEYS',
+      'areas',
+      'platformOnly',
+      'sections',
+      'audiences',
+      'permissions',
+      'permissionOverrides',
+    ],
     posture: 'no-tenant-data',
-    why: 'The words and grouping an app registers for the access explainer from code (§143 t-1090): areas by key, platform-only surfaces, section audiences and its own sections, plus the set of core area keys built once from a constant. Text and admin paths only; nothing about any org or person.',
+    why: 'The words and grouping an app registers for the access explainer from code (§143 t-1090, t-1100): areas by key, platform-only surfaces, section audiences and its own sections, the permission rows it adds and the core rows it changes, plus the sets of core area and permission keys built once from constants. Text, admin paths and which roles may do what; nothing about any org or person.',
   },
   {
     file: 'lib/auth/access-explainer.ts',

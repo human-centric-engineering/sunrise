@@ -1142,8 +1142,8 @@
       "supportAccessDescription": "Let platform support into this organisation",
       "waitlist": "Waitlist",
       "waitlistDescription": "People waiting to be let in",
-      "access": "Who can do what",
-      "accessDescription": "Who can open each part of this console, and why"
+      "access": "Roles and access",
+      "accessDescription": "The roles, and what each one can do"
     },
     "members": {
       "metaTitle": "Members",
@@ -1531,13 +1531,17 @@
     },
     "access": {
       "roles": {
+        "user": {
+          "label": "User",
+          "description": "Everyone with an account. Has no platform powers: what they can do inside an organisation comes from their organisation role."
+        },
         "platformAdmin": {
           "label": "Platform admin",
-          "description": "Runs this install for every organisation. Opens every admin page, including the ones kept for the platform, and is not limited by an organisation's switches."
+          "description": "Runs this install for every organisation, from the install org. There it opens every admin page, including the ones kept for the platform, and is not limited by an organisation's switches. Inside a customer's organisation it has only the role that organisation gave it."
         },
         "support": {
           "label": "Support access",
-          "description": "A platform admin let into one organisation for a limited time, because that organisation agreed. An owner or admin grants it from Support access, at full admin or read-only level, and can end it at any time."
+          "description": "A platform admin let into one organisation for a limited time, because its owner agreed. Only an owner can grant it, at full admin or read-only level; an owner or admin can end it at any time."
         },
         "owner": {
           "label": "Owner",
@@ -1545,7 +1549,7 @@
         },
         "admin": {
           "label": "Admin",
-          "description": "Helps run the organisation. Opens the same admin pages as an owner."
+          "description": "Helps run the organisation. Opens the same admin pages as an owner, but cannot make anyone an owner, change or remove an owner, or grant support access."
         },
         "member": {
           "label": "Member",
@@ -1554,6 +1558,18 @@
         "namedTier": {
           "description": "A role this app adds. Opens only the pages listed for it, in the organisation where it is held."
         }
+      },
+      "permissions": {
+        "useProduct": "Use the product",
+        "openConsole": "Open the admin console",
+        "manageMembers": "Invite people, and change or remove members and admins",
+        "manageOwners": "Make someone an owner, or change or remove an owner",
+        "orgSettings": "Change the organisation's language, AI keys and the switches it sets",
+        "grantSupport": "Grant support access",
+        "endSupport": "End support access",
+        "switchesOff": "Open pages the organisation's switches have turned off",
+        "platformPages": "Open the pages kept for the platform team",
+        "manageOrgs": "Create, suspend or erase organisations"
       },
       "areas": {
         "members": {
@@ -1596,18 +1612,18 @@
         }
       },
       "page": {
-        "metaTitle": "Who can do what",
-        "metaDescription": "Who can open each part of the admin console, and what decides it.",
-        "title": "Who can do what",
-        "intro": "Who can open each part of this admin console, and what decides it. This page shows the parts that apply to you.",
-        "loadFailed": "Couldn't load who can do what. Reload the page to try again.",
+        "metaTitle": "Roles and access",
+        "metaDescription": "The roles in this install and what each one can do.",
+        "title": "Roles and access",
+        "intro": "How this install decides who can do what: each person holds a role, and the role decides what they can open and change.",
+        "loadFailed": "Couldn't load roles and access. Reload the page to try again.",
         "tierOrg": "Owners and admins",
-        "linkText": "Who can open what in this console?",
-        "linkAction": "See who can do what",
+        "linkText": "What can each role do?",
+        "linkAction": "See roles and access",
         "you": {
           "title": "Your access",
           "titleIn": "Your access in {org}",
-          "platform": "You are a platform admin. You can open every page in this console, and an organisation's switches do not limit you.",
+          "platform": "You are a platform admin. Every page in this console opens to you, and an organisation's switches do not limit you.",
           "role": "Your role here: {role}",
           "supportEntry": "You are here under support access, not as a member of this organisation.",
           "tiers": "You can open the pages for:",
@@ -1619,9 +1635,23 @@
           "noneClosed": "You can open every page listed for you."
         },
         "roles": {
-          "title": "Roles",
-          "intro": "The role someone holds in an organisation decides which pages they can open there.",
-          "held": "You"
+          "held": "You",
+          "colRole": "Role",
+          "colMeans": "What it means",
+          "colPermission": "Permission",
+          "yes": "Yes",
+          "no": "No",
+          "platformTitle": "Platform roles",
+          "platformIntro": "Held on the install itself, across every organisation.",
+          "orgTitle": "Organisation roles",
+          "orgIntro": "Held in one organisation, and used when the install runs multi-tenant.",
+          "appTitle": "App roles",
+          "appIntro": "Roles this app adds. Each opens only the pages listed for it, in the organisation where it is held.",
+          "matrixTitle": "What each role can do",
+          "matrixIntro": "For one organisation, when the install runs multi-tenant. A platform admin does these for customer organisations from the install org; inside a customer's organisation they have only the role it gave them. Roles in the install org itself follow the platform role.",
+          "singleTenant": "This install runs single-tenant: only platform admins open the admin console, and there is no support access. These roles take effect when it runs multi-tenant.",
+          "matrixAppRoles": "A member who also holds an app role opens that role's pages.",
+          "matrixUnavailable": "Couldn't load this app's access settings, so the table of what each role can do isn't shown. The roles above still apply."
         },
         "areas": {
           "title": "Pages by area",
@@ -1649,12 +1679,16 @@
           "on": "On",
           "off": "Off",
           "getIt": "How to get it",
-          "empty": "This install has no switches."
+          "colSwitch": "Switch",
+          "colSetBy": "Set by",
+          "colWhenOff": "When off",
+          "colHere": "Here"
         },
         "platformOnly": {
           "title": "Kept for the platform team",
           "intro": "Parts of this install that only platform admins can open.",
-          "empty": "Nothing is kept for the platform team beyond its own pages."
+          "colArea": "Area",
+          "colWhy": "Why"
         }
       }
     }

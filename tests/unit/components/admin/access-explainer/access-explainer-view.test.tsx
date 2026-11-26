@@ -133,9 +133,24 @@ afterEach(() => {
 
 describe('AccessExplainerView — a platform admin', () => {
   it('shows every section, with what the platform keeps, and says switches do not limit them', () => {
+    app.init = () => {
+      registerPlatformOnlySurface({
+        key: 'billing',
+        label: 'Billing',
+        reason: 'Invoices are handled by the platform team.',
+      });
+    };
     render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
 
-    for (const name of ['Your access', 'Roles', 'Pages by area', 'Switches']) {
+    for (const name of [
+      'Your access',
+      'Platform roles',
+      'Organisation roles',
+      'What each role can do',
+      'App roles',
+      'Pages by area',
+      'Switches',
+    ]) {
       expect(heading(name)).toBeInTheDocument();
     }
     expect(heading('Kept for the platform team')).toBeInTheDocument();
@@ -306,7 +321,7 @@ describe('AccessExplainerView — what the route leaves out', () => {
     };
     render(<AccessExplainerView explainer={explainerFor(HOLDER)} orgName="Acme" />);
 
-    expect(heading('Roles')).not.toBeInTheDocument();
+    expect(heading('App roles')).not.toBeInTheDocument();
     const panel = screen.getByRole('region', { name: 'Your access in Acme' });
     expect(within(panel).getByText('Agency designers')).toBeInTheDocument();
     expect(within(panel).queryByText('designers')).not.toBeInTheDocument();
@@ -385,5 +400,146 @@ describe('AccessExplainerView — what the route leaves out', () => {
 
     expect(screen.getByText(/under support access/)).toBeInTheDocument();
     expect(screen.queryByText(/Your role here/)).not.toBeInTheDocument();
+  });
+});
+
+describe('AccessExplainerView — the role reference (RBAC)', () => {
+  it('lays out every platform and organisation role in tables, marking the viewer’s own', () => {
+    render(<AccessExplainerView explainer={explainerFor(ORG_OWNER)} orgName="Acme" />);
+
+    const platform = screen.getByRole('region', { name: 'Platform roles' });
+    const org = screen.getByRole('region', { name: 'Organisation roles' });
+    for (const role of ['User', 'Platform admin', 'Support access']) {
+      expect(
+        within(platform).getByRole('cell', { name: new RegExp(`^${role}`) })
+      ).toBeInTheDocument();
+    }
+    for (const role of ['Owner', 'Admin', 'Member']) {
+      expect(within(org).getByRole('cell', { name: new RegExp(`^${role}`) })).toBeInTheDocument();
+    }
+    // From the response's `held`: an org owner is a User on the platform and the Owner here.
+    expect(within(platform).getByRole('cell', { name: 'User You' })).toBeInTheDocument();
+    expect(within(org).getByRole('cell', { name: 'Owner You' })).toBeInTheDocument();
+    expect(within(org).getByRole('cell', { name: 'Admin' })).toBeInTheDocument();
+  });
+
+  it('shows every org role at single too, since it describes the model, not this install', () => {
+    render(<AccessExplainerView explainer={explainerFor({ multiTenant: false })} orgName={null} />);
+
+    const org = screen.getByRole('region', { name: 'Organisation roles' });
+    expect(within(org).getByRole('cell', { name: 'Member' })).toBeInTheDocument();
+    const platform = screen.getByRole('region', { name: 'Platform roles' });
+    expect(within(platform).getByRole('cell', { name: 'Platform admin You' })).toBeInTheDocument();
+    // …and says the org roles are not in force on this install.
+    expect(within(org).getByRole('note')).toHaveTextContent(
+      'This install runs single-tenant: only platform admins open the admin console'
+    );
+  });
+
+  it('says nothing of single-tenant at multi', () => {
+    render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
+
+    expect(screen.queryByText(/This install runs single-tenant/)).not.toBeInTheDocument();
+  });
+
+  it('notes under the matrix that an app role opens its pages to a member', () => {
+    render(<AccessExplainerView explainer={explainerFor(ORG_OWNER)} orgName="Acme" />);
+
+    const table = screen.getByRole('region', { name: 'What each role can do' });
+    expect(
+      within(table).getByText("A member who also holds an app role opens that role's pages.")
+    ).toBeInTheDocument();
+  });
+
+  it('states every rule the routes enforce, column by column: platform admin, owner, admin, member', () => {
+    render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
+
+    const table = screen.getByRole('region', { name: 'What each role can do' });
+    const rows = within(table).getAllByRole('row').slice(1);
+    const matrix = Object.fromEntries(
+      rows.map((row) => {
+        const [permission, ...cells] = within(row).getAllByRole('cell');
+        return [
+          permission.textContent,
+          cells.map((cell) => within(cell).getByRole('img').getAttribute('aria-label')),
+        ];
+      })
+    );
+    expect(matrix).toEqual({
+      'Use the product': ['Yes', 'Yes', 'Yes', 'Yes'],
+      // An org MEMBER is refused by the admin layout.
+      'Open the admin console': ['Yes', 'Yes', 'Yes', 'No'],
+      'Invite people, and change or remove members and admins': ['Yes', 'Yes', 'Yes', 'No'],
+      // Only an OWNER, or a platform admin, confers or touches OWNER (lib/tenancy/lifecycle.ts).
+      'Make someone an owner, or change or remove an owner': ['Yes', 'Yes', 'No', 'No'],
+      // Retention and privacy are platform-only (withAdminAuth), so the row names what is not.
+      "Change the organisation's language, AI keys and the switches it sets": [
+        'Yes',
+        'Yes',
+        'Yes',
+        'No',
+      ],
+      // Only an org's own OWNER grants support access (lib/tenancy/support-grants.ts).
+      'Grant support access': ['No', 'Yes', 'No', 'No'],
+      // Anyone the policy admits may end it.
+      'End support access': ['Yes', 'Yes', 'Yes', 'No'],
+      "Open pages the organisation's switches have turned off": ['Yes', 'No', 'No', 'No'],
+      'Open the pages kept for the platform team': ['Yes', 'No', 'No', 'No'],
+      'Create, suspend or erase organisations': ['Yes', 'No', 'No', 'No'],
+    });
+    // The platform admin's column is from the install org, and the table says so.
+    expect(within(table).getByText(/inside a customer's organisation/)).toBeInTheDocument();
+  });
+
+  it('does not mark a core role as theirs because a named tier shares its key', () => {
+    registerAdminTier('support', { holds: () => true, label: 'Agency support' });
+    render(<AccessExplainerView explainer={explainerFor({})} orgName={null} />);
+
+    const platform = screen.getByRole('region', { name: 'Platform roles' });
+    expect(within(platform).getByRole('cell', { name: 'Support access' })).toBeInTheDocument();
+    const appRoles = screen.getByRole('region', { name: 'App roles' });
+    expect(within(appRoles).getByRole('cell', { name: 'Agency support You' })).toBeInTheDocument();
+  });
+
+  it('says the permission table could not be loaded rather than guessing its cells', () => {
+    const explainer = explainerFor({});
+    render(
+      <AccessExplainerView
+        explainer={{ ...explainer, model: { ...explainer.model!, permissions: null } }}
+        orgName={null}
+      />
+    );
+
+    const section = screen.getByRole('region', { name: 'What each role can do' });
+    expect(within(section).getByRole('alert')).toHaveTextContent(
+      "Couldn't load this app's access settings"
+    );
+    expect(within(section).queryByRole('table')).not.toBeInTheDocument();
+    expect(heading('Organisation roles')).toBeInTheDocument();
+  });
+
+  it('shows a named-tier holder only their own tiers, not who else may do what', () => {
+    render(<AccessExplainerView explainer={explainerFor(HOLDER)} orgName="Acme" />);
+
+    expect(heading('App roles')).toBeInTheDocument();
+    expect(heading('Platform roles')).not.toBeInTheDocument();
+    expect(heading('Organisation roles')).not.toBeInTheDocument();
+    expect(heading('What each role can do')).not.toBeInTheDocument();
+  });
+
+  it('leaves out an empty switches or platform-only section, and says why areas list nothing', () => {
+    __resetEntitlementRegistryForTests();
+    render(
+      <AccessExplainerView
+        explainer={{ ...explainerFor({}), switches: [], platformOnly: [], areas: [] }}
+        orgName={null}
+      />
+    );
+
+    expect(heading('Switches')).not.toBeInTheDocument();
+    expect(heading('Kept for the platform team')).not.toBeInTheDocument();
+    // The route sent areas, so the empty section says so rather than vanishing.
+    expect(heading('Pages by area')).toBeInTheDocument();
+    expect(screen.getByText('No pages are listed for you here.')).toBeInTheDocument();
   });
 });

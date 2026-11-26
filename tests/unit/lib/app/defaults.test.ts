@@ -689,7 +689,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/access-explainer.ts',
-    risk: "a stray area, platform-only surface or section would show every install's admins words about access that are not theirs, and a stray audience would hide one of the explainer's own sections from them; it opens and closes nothing",
+    risk: "a stray area, platform-only surface or section would show every install's admins words about access that are not theirs, a stray audience would hide one of the explainer's own sections from them, and a stray permission row or restated cell would publish a role model the install's policy does not enforce; it opens and closes nothing",
     assert: () => {
       __resetAccessExplainerForTests();
       // The read triggers the lazy init, so this exercises the REAL seam.
@@ -698,6 +698,8 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect([...registered.platformOnly.keys()]).toEqual([]);
       expect([...registered.sections.keys()]).toEqual([]);
       expect([...registered.audiences.keys()]).toEqual([]);
+      expect([...registered.permissions.keys()]).toEqual([]);
+      expect([...registered.permissionOverrides.keys()]).toEqual([]);
     },
   },
   {

@@ -70,8 +70,10 @@ describe('the access explainer under the pseudo-locale', () => {
       );
 
       expect(container.textContent).not.toMatch(/admin\.access\./);
-      expect(screen.getByRole('heading', { level: 2, name: pseudo('Roles') })).toBeInTheDocument();
-      expect(screen.queryByText('Roles')).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { level: 2, name: pseudo('Platform roles') })
+      ).toBeInTheDocument();
+      expect(screen.queryByText('Platform roles')).not.toBeInTheDocument();
     }
   );
 
@@ -86,6 +88,6 @@ describe('the access explainer under the pseudo-locale', () => {
     );
 
     expect(container.textContent).not.toMatch(/admin\.access\./);
-    expect(screen.getAllByRole('link', { name: pseudo('See who can do what') })).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: pseudo('See roles and access') })).toHaveLength(2);
   });
 });
