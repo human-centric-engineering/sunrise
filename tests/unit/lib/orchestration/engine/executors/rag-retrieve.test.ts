@@ -84,6 +84,7 @@ describe('executeRagRetrieve', () => {
           id: 'chunk1',
           orgId: null,
           chunkKey: 'doc1_chunk1',
+          position: null,
           content: 'doc1',
           documentId: 'd1',
           chunkType: 'text',

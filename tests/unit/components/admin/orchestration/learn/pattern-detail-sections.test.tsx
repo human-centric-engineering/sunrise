@@ -27,6 +27,7 @@ function makeChunk(overrides: Partial<AiKnowledgeChunk> = {}): AiKnowledgeChunk 
     orgId: null,
     id: 'chunk-1',
     chunkKey: 'key-1',
+    position: null,
     documentId: 'doc-1',
     content: 'Some content here.',
     chunkType: 'pattern_section',

@@ -14,6 +14,7 @@ function makeChunk(content: string, patternNumber = 1): AiKnowledgeChunk {
     orgId: null,
     id: 'chunk-1',
     chunkKey: 'test-chunk',
+    position: null,
     documentId: 'doc-1',
     content,
     embedding: null,
