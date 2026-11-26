@@ -662,6 +662,34 @@ describe('rechunkDocument', () => {
     );
   });
 
+  it("keeps an old multi-section document's sections together when re-chunking it", async () => {
+    // -N restarts per section; sorting on it alone would interleave a and b,
+    // and the re-chunk would then store that blend as the new positions.
+    vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue({
+      ...makeDocument({ id: 'doc-rechunk', name: 'My Doc', status: 'ready' }),
+      chunks: [
+        { chunkKey: 'doc-a-0', content: 'A0', position: null },
+        { chunkKey: 'doc-a-1', content: 'A1', position: null },
+        { chunkKey: 'doc-a-2', content: 'A2', position: null },
+        { chunkKey: 'doc-b-0', content: 'B0', position: null },
+        { chunkKey: 'doc-b-1', content: 'B1', position: null },
+      ],
+    } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
+    vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 5 });
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+
+    await rechunkDocument('doc-rechunk');
+
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(
+      ['A0', 'A1', 'A2', 'B0', 'B1'].join('\n\n---\n\n'),
+      'My Doc',
+      'doc-rechunk'
+    );
+  });
+
   it('loads existing document with chunks, reconstructs content, and re-processes successfully', async () => {
     const existingDoc = {
       ...makeDocument({ id: 'doc-rechunk', name: 'My Doc', status: 'ready' }),

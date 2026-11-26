@@ -3,9 +3,9 @@
  *
  * A finished document no longer stores its own text — originalContent and
  * processedContent are cleared on finalise — so the chunk rows are the only
- * surviving copy. Ordering is the whole risk here: document order lives in the
- * numeric suffix of chunkKey, and the lexicographic sort used elsewhere in the
- * codebase would scramble it.
+ * surviving copy. Ordering is the whole risk here: document order lives in
+ * `position` (t-1106); rows without it fall back to the chunkKey, which the
+ * lexicographic sort used elsewhere in the codebase would scramble.
  *
  * @see lib/orchestration/knowledge/document-text.ts
  */
@@ -54,13 +54,12 @@ describe('rebuildTextFromChunks', () => {
     expect((await rebuildTextFromChunks('doc-1')).text).toBe('first\n\nsecond');
   });
 
-  it('orders chunks by the numeric suffix, not lexicographically', async () => {
-    // Lexicographic order would put -10 before -2 AND sort by the section
-    // slug first — either one scrambles the document.
+  it('orders a section by its numeric suffix, not lexicographically', async () => {
+    // A plain chunkKey sort puts -10 before -2.
     mockChunkFindMany.mockResolvedValue([
-      { chunkKey: 'doc-zebra-section-10', content: 'eleventh' },
-      { chunkKey: 'doc-apple-section-2', content: 'third' },
-      { chunkKey: 'doc-middle-section-0', content: 'first' },
+      { chunkKey: 'doc-intro-10', content: 'eleventh' },
+      { chunkKey: 'doc-intro-2', content: 'third' },
+      { chunkKey: 'doc-intro-0', content: 'first' },
     ]);
 
     const result = await rebuildTextFromChunks('doc-1');
@@ -69,16 +68,29 @@ describe('rebuildTextFromChunks', () => {
     expect(result.chunkCount).toBe(3);
   });
 
-  it('reads the index through a repeated-heading ~N suffix (#1215)', async () => {
-    // The chunker appends `~N` to a repeated id; the index before it still
-    // decides the order, rather than the chunk sorting last as an unindexed key.
+  it('keeps each section together instead of mixing them on the restarting index', async () => {
+    // -N restarts per section, so sorting on N alone would give a-0, b-0, a-1.
     mockChunkFindMany.mockResolvedValue([
-      { chunkKey: 'doc-legacy-key', content: 'no index' },
-      { chunkKey: 'doc-notes-1~2', content: 'second' },
-      { chunkKey: 'doc-intro-0', content: 'first' },
+      { chunkKey: 'doc-beta-0', content: 'b0' },
+      { chunkKey: 'doc-alpha-1', content: 'a1' },
+      { chunkKey: 'doc-alpha-0', content: 'a0' },
+      { chunkKey: 'doc-beta-1', content: 'b1' },
     ]);
 
-    expect((await rebuildTextFromChunks('doc-1')).text).toBe('first\n\nsecond\n\nno index');
+    expect((await rebuildTextFromChunks('doc-1')).text).toBe('a0\n\na1\n\nb0\n\nb1');
+  });
+
+  it('treats a repeated heading (~N, #1215) as its own section, in index order', async () => {
+    mockChunkFindMany.mockResolvedValue([
+      { chunkKey: 'doc-notes-1~2', content: 'repeat two' },
+      { chunkKey: 'doc-notes-1', content: 'notes two' },
+      { chunkKey: 'doc-notes-0~2', content: 'repeat one' },
+      { chunkKey: 'doc-notes-0', content: 'notes one' },
+    ]);
+
+    expect((await rebuildTextFromChunks('doc-1')).text).toBe(
+      'notes one\n\nnotes two\n\nrepeat one\n\nrepeat two'
+    );
   });
 
   it('joins chunks with a blank line', async () => {
@@ -90,18 +102,15 @@ describe('rebuildTextFromChunks', () => {
     expect((await rebuildTextFromChunks('doc-1')).text).toBe('one\n\ntwo');
   });
 
-  it('sorts a key with no numeric suffix last rather than to position zero', async () => {
-    // A legacy or hand-seeded key landing at index 0 would silently prepend
-    // itself to the document.
+  it('places a single-chunk section (no suffix) among the sections by slug', async () => {
+    // With no -N it is a section of its own, not an index of MAX or 0.
     mockChunkFindMany.mockResolvedValue([
-      { chunkKey: 'doc-legacy-key', content: 'no index' },
-      { chunkKey: 'doc-a-0', content: 'first' },
-      { chunkKey: 'doc-b-1', content: 'second' },
+      { chunkKey: 'doc-zeta-0', content: 'z0' },
+      { chunkKey: 'doc-middle', content: 'only' },
+      { chunkKey: 'doc-alpha-0', content: 'a0' },
     ]);
 
-    const result = await rebuildTextFromChunks('doc-1');
-
-    expect(result.text).toBe('first\n\nsecond\n\nno index');
+    expect((await rebuildTextFromChunks('doc-1')).text).toBe('a0\n\nonly\n\nz0');
   });
 
   it('breaks an index tie on the chunk key, so the order is stable', async () => {

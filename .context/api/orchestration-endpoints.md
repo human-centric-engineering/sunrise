@@ -863,14 +863,13 @@ of the text. `rebuildTextFromChunks`
 (`lib/orchestration/knowledge/document-text.ts`) orders them by
 `AiKnowledgeChunk.position`, each chunk's place in the document, written when
 the chunks are (t-1106). Neither `chunkKey` order works for a whole document:
-the lexicographic sort used everywhere else sorts by section slug and puts
-`-10` before `-2`, and the numeric `-N` suffix restarts in each section. A
-document whose rows predate `position` falls back to that suffix, which is in
-order only for a document of one section or one chunk per section.
+the lexicographic sort used everywhere else puts `-10` before `-2`, and the
+numeric `-N` suffix restarts in each section. A document whose rows predate
+`position` falls back to `sortByKeySections`: each section's chunks together in
+numeric order, sections in slug order, since their true order was never stored.
 Re-chunking writes every row's position: in true order when the document still
-holds `metadata.rawContent`, otherwise in the order of the rows it replaces
-(`position` when they have it, the numeric key suffix when they do not — the
-order a download of them shows).
+holds `metadata.rawContent`, otherwise in the order a download of the old rows
+shows.
 
 The rebuild is the **ingested** text, not the source file — the chunker can
 drop a fragment that fits no chunk, which is what the Coverage column reports.

@@ -22,10 +22,10 @@ release process.
   0-based place in its document, written whenever chunks are (upload, rechunk,
   the patterns seeder). Knowledge search returns it on each chunk, and
   `rebuildTextFromChunks` orders a document by it, so a multi-section document
-  downloads in document order. Rows written before the migration are null and
-  fall back to the `chunkKey` suffix order. **A fork that inserts chunk rows
-  itself** should write `position`; a document with any null row is ordered by
-  the suffix.
+  downloads in document order. Rows written before the migration are null; such
+  a document is rebuilt with each section's chunks together in numeric order
+  and its sections in slug order. **A fork that inserts chunk rows itself**
+  should write `position`; a document with any null row falls back.
 
 ### Fixed
 

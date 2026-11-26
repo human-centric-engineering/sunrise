@@ -14,13 +14,11 @@ import { prisma } from '@/lib/db/client';
  * document: it restarts in each section, so sorting by it puts every
  * section's first chunk before any section's second.
  *
- * A row written before `position` existed has none. Its document falls back
- * to that suffix, parsed and sorted numerically (the lexicographic sort the
- * rest of the codebase uses puts `-10` before `-2`), with the key itself as a
- * stable tie-break. That is document order for a document with one chunk per
- * section or a single section. Re-chunking writes every row's position, in
- * true order when the document still holds its raw content; without it the
- * old rows' order is all there is, and that is what gets stored.
+ * A row written before `position` existed has none, and its document's
+ * section order is not stored anywhere: see {@link sortByKeySections} for the
+ * best order those rows give. Re-chunking writes every row's position, in true
+ * order when the document still holds its raw content; without it that best
+ * order is all there is, and that is what gets stored.
  *
  * FIDELITY. This is the INGESTED text, not the source file: the chunker can
  * drop a fragment that fits no chunk, which is exactly what the Coverage
@@ -35,7 +33,7 @@ export async function rebuildTextFromChunks(
     select: { chunkKey: true, content: true, position: true },
   });
 
-  const ordered = byPosition(chunks) ?? sortByKeySuffix(chunks);
+  const ordered = byPosition(chunks) ?? sortByKeySections(chunks);
 
   return {
     text: ordered.map((c) => c.content).join('\n\n'),
@@ -55,18 +53,34 @@ export function byPosition<T extends { position: number | null }>(chunks: T[]): 
   return [...chunks].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 }
 
-/** The pre-t-1106 order: the numeric `-N` suffix of each `chunkKey`. */
-export function sortByKeySuffix<T extends { chunkKey: string }>(chunks: T[]): T[] {
-  const indexed = chunks.map((chunk) => {
-    // A repeated heading's chunk carries a `~N` dedupe suffix after its index
-    // (chunker `dedupeChunkIds`, #1215); read the index through it.
-    const match = /-(\d+)(?:~\d+)?$/.exec(chunk.chunkKey);
-    // No trailing index (a hand-seeded or legacy key) sorts last rather than
-    // silently landing at position 0 and corrupting the order of the rest.
-    return { order: match ? Number.parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER, chunk };
+/**
+ * The best order rows without `position` give: each section's chunks together,
+ * in numeric `-N` order, with the sections in `chunkKey` order.
+ *
+ * A key is `<document>-<section>` for a section that fit one chunk and
+ * `<document>-<section>-<N>` for one split into several, plus a `~N` dedupe
+ * suffix on a repeated heading (#1215). The section is the key without its
+ * `-N`, so `-10` follows `-2` within it (a plain `chunkKey` sort puts it first)
+ * and sections are not mixed together (sorting on `N` alone gives every
+ * section's `-0` before any `-1`, since `N` restarts in each).
+ *
+ * The order of the sections themselves is not recoverable from the keys. They
+ * come in `chunkKey` order, by section slug, as rows were always read before
+ * t-1106. A slug ending in digits (`april-1-2026`) reads as a section with an
+ * index, which only moves it among sections already in slug order.
+ */
+export function sortByKeySections<T extends { chunkKey: string }>(chunks: T[]): T[] {
+  const keyed = chunks.map((chunk) => {
+    const match = /^(.*)-(\d+)(~\d+)?$/.exec(chunk.chunkKey);
+    return match
+      ? { section: match[1] + (match[3] ?? ''), index: Number.parseInt(match[2], 10), chunk }
+      : { section: chunk.chunkKey, index: -1, chunk };
   });
-  indexed.sort((a, b) =>
-    a.order !== b.order ? a.order - b.order : a.chunk.chunkKey.localeCompare(b.chunk.chunkKey)
+  keyed.sort(
+    (a, b) =>
+      a.section.localeCompare(b.section) ||
+      a.index - b.index ||
+      a.chunk.chunkKey.localeCompare(b.chunk.chunkKey)
   );
-  return indexed.map((entry) => entry.chunk);
+  return keyed.map((entry) => entry.chunk);
 }

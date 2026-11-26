@@ -35,7 +35,7 @@ import {
 import type { AiKnowledgeDocument } from '@/types/prisma';
 import { requireOrgId } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { byPosition, sortByKeySuffix } from '@/lib/orchestration/knowledge/document-text';
+import { byPosition, sortByKeySections } from '@/lib/orchestration/knowledge/document-text';
 
 /**
  * Default knowledge base id used as the FK target for every uploaded
@@ -1253,14 +1253,14 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
 
   // Prefer stored original content; fall back to lossy chunk reconstruction.
   // The rebuilt text is re-chunked and its order saved as each new row's
-  // `position`, so it has to be the best order known (t-1106): the query's
-  // lexicographic `chunkKey` order puts `-10` before `-2`, and whatever order
-  // is used here is then stored as if it were true. So it is the order a
-  // download of the same rows shows: `position`, else the numeric key suffix.
+  // `position`, so it has to be the best order known (t-1106), since whatever
+  // order is used here is then stored as if it were true. It is the order a
+  // download of the same rows shows: `position`, else each section's chunks
+  // in numeric order (the query's `chunkKey` order puts `-10` before `-2`).
   const meta = parseDocumentMetadata(document.metadata);
   const content = meta?.rawContent?.trim()
     ? meta.rawContent
-    : (byPosition(document.chunks) ?? sortByKeySuffix(document.chunks))
+    : (byPosition(document.chunks) ?? sortByKeySections(document.chunks))
         .map((c) => c.content)
         .join('\n\n---\n\n');
 
