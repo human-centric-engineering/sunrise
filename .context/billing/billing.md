@@ -146,10 +146,26 @@ interface BillingProvider {
   /** The subscription as the provider holds it now. null if it does not exist. */
   fetchSubscription(subscriptionRef: string): Promise<ProviderSubscription | null>;
 
-  /** Every subscription the customer has that has not ended. Org erasure calls this. */
+  /**
+   * Every subscription of the customer that is `live` (see ProviderSubscription).
+   * The webhook calls it when the stored subscription ends; erasure calls it.
+   */
   listLiveSubscriptions(customerRef: string): Promise<ProviderSubscription[]>;
 
-  /** One closed period's billed quantity for one metered item. Safe to resend. */
+  /**
+   * Every customer whose metadata names the org: Stripe's customer search,
+   * which can lag a new customer by about a minute. Erasure calls it, to find
+   * a customer whose reference was never stored.
+   */
+  findCustomerRefs(orgId: string): Promise<string[]>;
+
+  /**
+   * A period's quantity for one metered item. A later report for the same
+   * meter and period replaces an earlier one, so it is safe to resend.
+   * `final: false` is a running total sent during the period's last days (see
+   * The last period). An adapter whose provider can only add a charge per
+   * report, not replace one, sends only final reports and ignores the rest.
+   */
   reportUsage(input: {
     customerRef: string;
     subscriptionRef: string;
@@ -157,13 +173,15 @@ interface BillingProvider {
     quantity: number; // a whole number
     periodStart: Date;
     periodEnd: Date;
-    identifier: string; // the usage report's id, stable across resends
+    final: boolean;
+    at: Date; // when the provider places it: periodEnd − 1s if final, else now
+    identifier: string; // stable across resends of one send, new for each running total
   }): Promise<void>;
 
   /**
    * End it now, without a refund decision, invoicing what is owed so far.
-   * Called by org erasure, and by a checkout replacing an `incomplete`
-   * subscription. A subscription that has already ended, or that the provider
+   * Called by org erasure, and by a checkout replacing an `incomplete` or
+   * paused subscription. A subscription that has already ended, or that the provider
    * does not have, counts as success: the outcome the caller needs is true.
    */
   cancelSubscription(subscriptionRef: string): Promise<void>;
@@ -187,19 +205,26 @@ interface ProviderSubscription {
   periodEnd: Date;
   cancelAtPeriodEnd: boolean;
   endedAt: Date | null; // Stripe's `ended_at`; null while it has not ended
+  live: boolean; // the provider can still charge or resume it: not `canceled` or `incomplete_expired`
   orgId: string | null; // the org id createCheckout wrote into its metadata
 }
 ```
 
 **Stripe's statuses, mapped:**
 
-| Stripe                         | Neutral      | Why                                                        |
-| ------------------------------ | ------------ | ---------------------------------------------------------- |
-| `trialing`, `active`           | `active`     | The org has what it chose                                  |
-| `past_due`                     | `past_due`   | A payment failed and Stripe is still retrying              |
-| `incomplete`                   | `incomplete` | The first payment has not gone through; nothing is applied |
-| `canceled`, `unpaid`           | `ended`      | Stripe has stopped trying; access should stop              |
-| `incomplete_expired`, `paused` | `ended`      | Never paid, or a trial ended with no card                  |
+| Stripe               | Neutral      | Why                                                        |
+| -------------------- | ------------ | ---------------------------------------------------------- |
+| `trialing`, `active` | `active`     | The org has what it chose                                  |
+| `past_due`           | `past_due`   | A payment failed and Stripe is still retrying              |
+| `incomplete`         | `incomplete` | The first payment has not gone through; nothing is applied |
+| `canceled`, `unpaid` | `ended`      | Stripe has stopped trying; access should stop              |
+| `incomplete_expired` | `ended`      | Never paid                                                 |
+| `paused`             | `ended`      | A trial ended with no card. It can resume, so it is `live` |
+
+`status` is about access: `ended` means the org loses what the plan gave it.
+`live` is about money: whether the provider could still charge for it. An
+`unpaid` or `paused` subscription is `ended` and `live`, and erasure cancels
+it.
 
 **Why it is shaped like this:**
 
@@ -213,11 +238,12 @@ interface ProviderSubscription {
   `stripe-mock`, which serves the one OpenAPI spec it was built with and
   ignores `Stripe-Version`. So the check is only as current as the build: run
   it with a `stripe-mock` released after that API version.
-- **`reportUsage` takes a closed period's total, once.** That is the lowest
-  common denominator: Stripe has meters, while a provider without them (Paddle
-  Billing, which bills usage as a one-off charge on the subscription) can still
-  implement it as a single charge. A provider with meters does not need
-  anything finer.
+- **`reportUsage` takes a period's total, not individual events.** That is the
+  lowest common denominator: Stripe has meters, while a provider without them
+  (Paddle Billing, which bills usage as a one-off charge on the subscription)
+  can still implement a final report as a single charge. Such a provider cannot
+  replace a charge, so it ignores running totals, and the last period of a
+  subscription cancelling at period end goes uncollected there.
 - **Checkout and portal return a URL.** Both Stripe's hosted pages and a
   merchant of record's overlay start from one, so card data never reaches the
   platform. This matters for VAT: a merchant of record (Paddle, or similar)
@@ -225,7 +251,7 @@ interface ProviderSubscription {
   fits this interface lets an app choose one. Stripe Tax, if the operator uses
   it, is a checkout setting in the Stripe adapter, not a platform concept.
 - **`cancelSubscription` is the platform's, not an org admin's.** Erasure calls
-  it, and so does a checkout replacing an `incomplete` subscription. An org
+  it, and so does a checkout replacing an `incomplete` or paused subscription. An org
   changes or cancels its own plan in the portal.
 
 ## Webhooks
@@ -256,12 +282,15 @@ retries for up to three days in live mode. So:
    subscription record (a system read, since the org is not known yet). If no
    org holds that customer, fall back to the `orgId` that `createCheckout`
    writes into the metadata of the customer, the session and the subscription
-   (and the session's `client_reference_id`). The adapter returns it as
-   `orgId` on the fetched subscription. This covers a checkout whose provider
-   customer was created but whose local write of the reference failed or has
-   not committed. The fallback only names the org; linking it to the customer
-   happens in step 5, under the lock. Only an event that names no org either
-   way is answered `200`, logged, and not stored. It changes
+   (and the session's `client_reference_id`). To read it, step 1 makes its
+   own `fetchSubscription`, outside any lock, and uses only `orgId` from it;
+   the fetch whose state is applied is step 4's. This covers a checkout whose
+   provider customer was created but whose local write of the reference failed
+   or has not committed. The fallback only names the org; linking it to the
+   customer happens in step 5, under the lock. An event that names no org
+   either way, or names one that no longer exists (an erased org's
+   cancellation arrives after its rows are gone), is answered `200`, logged,
+   and not stored. It changes
    nothing, so a replay of it changes nothing either. It also cannot be
    written to the ledger, which is org-owned and refuses a row with no org at
    `multi`.
@@ -275,9 +304,12 @@ retries for up to three days in live mode. So:
 4. **Fetch the subscription from the provider** (`fetchSubscription`), inside
    the lock.
 5. **Apply that state**: link the org to the customer if step 1 found it by
-   the fallback (re-checking, under the lock, that the org holds no other
-   customer reference), then the status, the period, and the plan its price
-   names, under the lapsed-subscription rule. Applying is idempotent.
+   the fallback, re-checking under the lock that the org holds no other
+   customer reference. If it holds a different one, the customer is not
+   linked, nothing is applied, and the ledger row commits with a warning:
+   retrying would not change the answer, and erasure finds that customer by
+   its metadata. Then the status, the period, and the plan its price names,
+   under the lapsed-subscription rule. Applying is idempotent.
 6. **Commit the ledger row and the change together**, then answer `200`. On any
    failure, roll back and answer `500`, so the provider retries.
 
@@ -304,21 +336,32 @@ version on the provider's object, is not available: a Stripe subscription
 carries no version.
 
 **One subscription per org.** The org's record holds one subscription
-reference. Checkout is refused while that subscription is `active` or
-`past_due`, or paused at the provider (a paused subscription reads as `ended`
-but can resume), and the owner is sent to the portal instead. While it is
-`incomplete` (a first payment that failed or awaits authentication), a new
-checkout takes the same per-org lock as the webhook, fetches it again, and
-cancels it only if it is still `incomplete`. If it has become `active`
-meanwhile, the checkout is refused like any other. So the org never has two
-live subscriptions.
+reference. A checkout takes the same per-org lock as the webhook and fetches
+the stored subscription before deciding, since the local record holds only
+the neutral status:
+
+- `active` or `past_due`: refused, and the owner is sent to the portal.
+- `incomplete` (a first payment that failed or awaits authentication), or
+  `paused` (a trial ended with no card): cancelled at the provider, then the
+  checkout goes ahead. Stripe's portal may not offer to resume a paused
+  subscription, so replacing it is the one path that always works.
+- `ended` and not `live`, or none: the checkout goes ahead.
+
+So the org never has two live subscriptions.
 
 An event for a subscription other than the stored one replaces the stored
-reference when the fetched subscription has not ended and the org has none,
-or its stored one is `ended` or `incomplete`. That is how an org that
-resubscribes after its subscription ended gets its new plan. A late event for
-an old subscription that has ended never replaces a live one. Otherwise the event is recorded in the ledger and not applied, with a
-warning.
+reference when the fetched subscription's status is not `ended` and the org
+has none, or its stored one is `ended` or `incomplete`. That is how an org
+that resubscribes after its subscription ended gets its new plan. A late event
+for an old subscription that has ended never replaces a live one. Otherwise
+the event is recorded in the ledger and not applied, with a warning.
+
+The two can arrive in either order. So when an applied event leaves the stored
+subscription `ended`, the webhook also calls `listLiveSubscriptions` for the
+customer and, if one is not `ended`, adopts it as the stored reference and
+applies its state in the same transaction. A new subscription recorded before
+the old one's cancellation therefore takes effect when the cancellation
+arrives, not at its next renewal.
 
 **Events Stripe should send:** `customer.subscription.created`, `.updated`,
 `.deleted`, `.paused` and `.resumed`, `checkout.session.completed` and
@@ -375,14 +418,17 @@ So usage is counted once per closed period and sent once (t-1097):
    counted.
 3. **Count once and keep the answer.** Each billed meter's `count` runs for
    `[periodStart, periodEnd)`, as the org and across its owners, and the
-   result goes into the report row. It is never counted again. Rows erased or
+   result goes into the report row. A closed period is never counted again.
+   (Running totals in a last period count an open one; they are not this
+   row.) Rows erased or
    purged after the period closed must not change what was billed.
 4. **Record before sending.** One `BillingUsageReport` per (org, meter, period
    start), unique. The insert happens before the send. A second instance or a
    retried tick that loses the insert reads the existing row and sends only if
    it is not marked sent.
-5. **Send with the report's id as the identifier**, timestamped one second
-   before the period's end, so the provider places it in that period.
+5. **Send with the report's id as the identifier**, `final: true`,
+   timestamped one second before the period's end, so the provider places it
+   in that period.
 
 **Stripe meters must use the `last` aggregation**, and the report is the
 period's total. Stripe deduplicates on `identifier` only within a rolling 24
@@ -441,16 +487,22 @@ after the end, is always too late. So:
 
 - **Cancelling at period end** (the portal's default): while
   `cancelAtPeriodEnd` is set, each maintenance tick reports the period's
-  running total, each send with its own identifier (the report's id and a
-  sequence number), since Stripe would drop a repeated identifier within 24
-  hours. A `last` meter bills the latest one, so only usage in the minutes
-  after the last tick before the end goes unbilled.
+  running total with `final: false`, timestamped at the send (Stripe refuses a
+  meter event timestamped more than a few minutes ahead). Each send has its
+  own identifier: the report row's id and a send count kept on that row,
+  since Stripe drops a repeated identifier within 24 hours. A `last` meter
+  bills the latest one, so only usage in the minutes after the last tick
+  before the end goes unbilled. The final count at close is still recorded,
+  and marked late.
 - **Cancelled by the platform** (erasure, or replacing an `incomplete`
-  subscription): the open period's total is reported first, then the
-  subscription is cancelled with its usage invoiced (Stripe's `invoice_now`).
+  subscription): the open period's total is reported first (`final: true`,
+  timestamped now), then the subscription is cancelled with its usage
+  invoiced (Stripe's `invoice_now`).
 - **Ended by the provider at once** (an immediate cancellation in the portal,
   or retries exhausted): the last period's excess is not collected. It is
-  closed at `endedAt` and recorded as late, so the loss is visible. The setup
+  closed at `endedAt`, or at the period's end when `endedAt` is null (an
+  `unpaid` subscription has not ended at Stripe), and recorded as late, so the
+  loss is visible. The setup
   steps will recommend configuring the portal to cancel at period end.
 
 ## Who may do what
@@ -475,12 +527,19 @@ Decided at planning:
   provider's pages.
 - **Erasing an org cancels its subscriptions at the provider first**, then
   deletes the local rows. Otherwise the provider keeps charging a card for an
-  org that no longer exists. It cancels every live subscription of the org's
-  customer (`listLiveSubscriptions`, then `cancelSubscription` on each), not
-  only the stored one, so one that was recorded but not applied is ended too.
-  A subscription that has already ended, or that the provider no longer has,
-  counts as cancelled, so a lapsed org's erasure is not stuck retrying. Any other refusal fails the
-  erasure step, which is retried. It does not go on without it.
+  org that no longer exists. It finds every customer of the org: the stored
+  reference, and any whose metadata names the org (`findCustomerRefs`), which
+  covers a customer whose reference was never stored. Then it cancels every
+  `live` subscription of each (`listLiveSubscriptions`, then
+  `cancelSubscription`), not only the stored one. So one that was recorded but
+  not applied, and an `unpaid` or `paused` one, are ended too. A subscription
+  that has already ended, or that the provider no longer has, counts as
+  cancelled, so a lapsed org's erasure is not stuck retrying. Any other
+  refusal fails the erasure step, which is retried. It does not go on without
+  it. A checkout started a minute before erasure may not be in the search yet;
+  its webhook then names an org that no longer exists and is dropped, so that
+  subscription has to be cancelled by hand at the provider. Erasure logs the
+  customer search's result so the gap can be checked.
 - **The provider's own records stay with the provider**: the customer, its
   invoices and payments, under the provider's retention and the tax rules on
   keeping invoices. The org export includes the provider's customer reference,
@@ -497,14 +556,14 @@ stripe-mock &                                                    # go install gi
 STRIPE_MOCK_URL=http://localhost:12111 npx tsx scripts/spikes/billing-webhook-convergence.ts
 ```
 
-| Part | Shows                                                                                                                                                                    |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A    | Each request the adapter will send is valid against Stripe's OpenAPI spec: price by lookup key, customer, checkout, portal, subscription with items, meter event, cancel |
-| B    | Signature verification refuses a re-serialised body, the wrong secret, a stale timestamp and a header with no `v1`                                                       |
-| C    | Replayed and reordered deliveries end on the provider's state with ledger + fetch, and on stale state with the two rejected rules                                        |
-| D    | Two deliveries at once: fetching outside the lock ends stale, inside it ends current                                                                                     |
-| E    | A crash after the ledger row commits loses the last change. Committing both together lets the retry apply it                                                             |
-| F    | Two instances and a retried tick bill a period once. A late resend double-bills a `sum` meter and not a `last` one                                                       |
+| Part | Shows                                                                                                                                                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | Each request the adapter will send is valid against Stripe's OpenAPI spec: price by lookup key, customer, customer search, checkout, portal, subscription with items, live subscriptions by customer, meter event, cancel with usage invoiced |
+| B    | Signature verification refuses a re-serialised body, the wrong secret, a stale timestamp and a header with no `v1`                                                                                                                            |
+| C    | Replayed and reordered deliveries end on the provider's state with ledger + fetch, and on stale state with the two rejected rules                                                                                                             |
+| D    | Two deliveries at once: fetching outside the lock ends stale, inside it ends current                                                                                                                                                          |
+| E    | A crash after the ledger row commits loses the last change. Committing both together lets the retry apply it                                                                                                                                  |
+| F    | Two instances and a retried tick bill a period once. A late resend double-bills a `sum` meter and not a `last` one                                                                                                                            |
 
 **What stripe-mock cannot show.** It keeps no state and sends no webhooks:
 cancelling a subscription still answers `active`. So parts C to F run against a

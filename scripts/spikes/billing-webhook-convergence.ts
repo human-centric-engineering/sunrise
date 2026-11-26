@@ -135,8 +135,26 @@ async function partA(): Promise<void> {
   });
   expect('a meter event with an identifier and timestamp is accepted', meterEvent.status === 200);
 
-  const cancel = await call('DELETE', '/v1/subscriptions/sub_123');
-  expect('an immediate cancel (org erasure) is accepted', cancel.status === 200);
+  // Erasure finds customers whose reference was never stored by metadata...
+  const search = await call(
+    'GET',
+    `/v1/customers/search?query=${encodeURIComponent("metadata['orgId']:'org_a'")}`
+  );
+  expect('customers are found by the org id in their metadata', search.status === 200);
+
+  // ...and lists every subscription of each customer. Stripe's `status=all`
+  // includes ended ones; the adapter keeps those it calls live.
+  const list = await call('GET', '/v1/subscriptions?customer=cus_123&status=all');
+  expect(
+    'a customer’s subscriptions are listed',
+    list.status === 200 && Array.isArray(list.json.data)
+  );
+
+  const cancel = await call('DELETE', '/v1/subscriptions/sub_123', { invoice_now: 'true' });
+  expect(
+    'an immediate cancel with usage invoiced (org erasure) is accepted',
+    cancel.status === 200
+  );
   console.log(
     `  note: the cancelled subscription answers status "${String(cancel.json.status)}": stripe-mock keeps no state`
   );
