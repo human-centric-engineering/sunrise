@@ -34,10 +34,15 @@ release process.
   `ProviderError` (code `structured_output_invalid`) whose `usage` is the
   tokens both attempts were billed, and `onFinalFailure` receives that usage
   as `(usage?: LlmUsage) => Error`. An existing `() => Error` still fits. When
-  the retry throws a `ProviderError`, the same instance is rethrown with the
-  first attempt's tokens added to its `usage`. Any other retry error is
-  wrapped in a `ProviderError` (code `structured_retry_failed`, original as
-  `cause`) when the first attempt was billed. The evaluation summary now logs
+  the retry throws a `ProviderError`, a copy with the same prototype is
+  thrown, so a subclass still matches `instanceof`, with the first attempt's
+  tokens added to its `usage`; the caught instance is left as it was, so one
+  thrown again is not billed twice (t-1109). Any other retry error is wrapped
+  as the adapters wrap it (`toProviderError`: code, HTTP status and
+  `retriable` from the error, the original as `cause`) when the first attempt
+  was billed, and keeps its `name` and stack, so a check for
+  `err.name === 'TimeoutError'` or a retry on a 429 still matches (t-1109).
+  The evaluation summary now logs
   that cost on failure. **A fork caller that logs cost** should read
   `err instanceof ProviderError ? err.usage : undefined` on its error path, as
   `completeEvaluationSession` does.

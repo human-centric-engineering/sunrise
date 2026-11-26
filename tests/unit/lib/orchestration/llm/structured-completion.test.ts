@@ -421,7 +421,7 @@ describe('runStructuredCompletion', () => {
         (e: unknown) => e
       );
 
-      expect(err).toBe(retryError);
+      expect(err).not.toBe(retryError);
       expect(err).toBeInstanceOf(RefusalError);
       expect((err as RefusalError).name).toBe('RefusalError');
       expect((err as RefusalError).reason).toBe('cap');
@@ -532,12 +532,59 @@ describe('runStructuredCompletion', () => {
         (e: unknown) => e
       );
 
-      expect(err).toBe(retryError);
+      // A copy, so the caught instance is left as it was thrown.
+      expect(err).not.toBe(retryError);
+      expect(err).toBeInstanceOf(ProviderError);
+      expect((err as ProviderError).code).toBe('timeout');
+      expect((err as ProviderError).message).toBe('timed out');
       expect((err as ProviderError).usage).toEqual({
         inputTokens: 107,
         outputTokens: 43,
         reasoningTokens: 2,
       });
+      expect(retryError.usage).toEqual({
+        inputTokens: 7,
+        outputTokens: 3,
+        serviceTier: 'flex',
+        reasoningTokens: 2,
+      });
+    });
+
+    it('adds the first attempt once when the same error instance is thrown on two calls', async () => {
+      // A memoised refusal or a breaker-held error is one instance thrown
+      // again and again. Editing it in place would stack the first attempt's
+      // tokens on every pass (t-1109).
+      class HeldRefusal extends ProviderError {}
+      const shared = new HeldRefusal('circuit open', {
+        code: 'circuit_open',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      });
+      const makeProvider = () =>
+        ({
+          chat: vi
+            .fn()
+            .mockResolvedValueOnce({
+              content: 'no',
+              usage: { inputTokens: 100, outputTokens: 40 },
+              finishReason: 'stop',
+            })
+            .mockRejectedValueOnce(shared),
+        }) as unknown as Parameters<typeof runStructuredCompletion>[0]['provider'];
+
+      const first: unknown = await runStructuredCompletion<DummyShape>({
+        ...base,
+        provider: makeProvider(),
+      }).catch((e: unknown) => e);
+      const second: unknown = await runStructuredCompletion<DummyShape>({
+        ...base,
+        provider: makeProvider(),
+      }).catch((e: unknown) => e);
+
+      expect(first).toBeInstanceOf(HeldRefusal);
+      expect(second).toBeInstanceOf(HeldRefusal);
+      expect((first as ProviderError).usage).toEqual({ inputTokens: 101, outputTokens: 41 });
+      expect((second as ProviderError).usage).toEqual({ inputTokens: 101, outputTokens: 41 });
+      expect(shared.usage).toEqual({ inputTokens: 1, outputTokens: 1 });
     });
 
     it("wraps a non-provider retry error so the first attempt's tokens survive", async () => {
@@ -560,8 +607,50 @@ describe('runStructuredCompletion', () => {
 
       expect(err).toBeInstanceOf(ProviderError);
       const pe = err as ProviderError;
-      expect(pe.code).toBe('structured_retry_failed');
+      // Wrapped the way an adapter wraps it, and still named as thrown, so a
+      // caller's `err.name === 'TimeoutError'` matches whichever attempt
+      // failed (t-1109).
+      expect(pe.name).toBe('TimeoutError');
+      expect(pe.code).toBe('provider_error');
+      expect(pe.retriable).toBe(false);
       expect(pe.message).toBe('The operation timed out.');
+      expect(pe.cause).toBe(retryError);
+      expect(pe.stack).toBe(retryError.stack);
+      expect(pe.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
+    });
+
+    it('keeps a rate-limited retry’s status and retriable flag when carrying its usage', async () => {
+      // An SDK error with a status, as `@anthropic-ai/sdk` and `openai` throw.
+      class RateLimitError extends Error {
+        readonly status = 429;
+        constructor() {
+          super('Rate limit reached');
+          this.name = 'RateLimitError';
+        }
+      }
+      const retryError = new RateLimitError();
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(ProviderError);
+      const pe = err as ProviderError;
+      expect(pe.status).toBe(429);
+      expect(pe.retriable).toBe(true);
+      expect(pe.code).toBe('http_429');
+      expect(pe.name).toBe('RateLimitError');
       expect(pe.cause).toBe(retryError);
       expect(pe.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
     });

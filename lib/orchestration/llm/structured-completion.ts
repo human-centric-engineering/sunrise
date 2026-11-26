@@ -48,7 +48,7 @@
  */
 
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
-import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { ProviderError, toProviderErrorWithUsage } from '@/lib/orchestration/llm/provider';
 import type {
   LlmFinishReason,
   LlmMessage,
@@ -476,28 +476,34 @@ function billedOrUndefined(usage: LlmUsage): LlmUsage | undefined {
 
 /**
  * `err`, carrying the tokens `earlier` attempts were billed for on top of its
- * own. A `ProviderError` keeps its identity — the same instance comes back, so
- * a subclass (`SpendCapExceededError`, `PrivacyRefusedError`, …) still matches
- * the caller's `instanceof` — with its `usage` replaced by the sum.
+ * own.
+ *
+ * A `ProviderError` comes back as a copy with the same prototype, so a
+ * subclass (`SpendCapExceededError`, `PrivacyRefusedError`, …) still matches
+ * the caller's `instanceof`, with `usage` set to the sum. It is a copy, not
+ * the caught instance edited in place, because an instance can be thrown more
+ * than once (a memoised refusal, an error a breaker holds): editing it would
+ * add the first attempt's tokens again on every pass (t-1109).
  *
  * Any other error has nowhere to carry usage, so when the earlier attempts
- * were billed it is wrapped in a `ProviderError` (code
- * `structured_retry_failed`, the original as `cause`, same message) rather
- * than dropping that bill (#1260). With nothing billed it is returned as it
- * is, so the caller sees exactly what was thrown.
+ * were billed it is wrapped the way an adapter wraps it (`toProviderError`:
+ * code, HTTP status and `retriable` read from the error, the original as
+ * `cause`) rather than dropping that bill (#1260). The wrapper keeps the
+ * original's `name` and stack, so a caller testing `err.name === 'TimeoutError'`
+ * or retrying a 429 still matches whichever attempt failed (t-1109). With
+ * nothing billed it is returned as it is, so the caller sees exactly what was
+ * thrown.
  */
 function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown {
   if (!(err instanceof ProviderError)) {
     const usage = billedOrUndefined(sumUsage(earlier));
     if (!usage) return err;
-    const wrapped = new ProviderError(err instanceof Error ? err.message : String(err), {
-      code: 'structured_retry_failed',
-      retriable: false,
-      cause: err,
-      usage,
-    });
-    if (err instanceof Error && err.stack) wrapped.stack = err.stack;
-    return wrapped;
+    const base = toProviderErrorWithUsage(err, String(err), usage);
+    if (err instanceof Error) {
+      if (err.name) base.name = err.name;
+      if (err.stack) base.stack = err.stack;
+    }
+    return base;
   }
   const summed = billedOrUndefined(sumUsage([...earlier, err.usage ?? null]));
   if (!summed) return err;
@@ -508,14 +514,28 @@ function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown
   // survive the spread, and a retry served at flex would price the standard
   // first attempt at flex too.
   if (!summed.serviceTier) delete usage.serviceTier;
-  // `usage` is readonly to callers; this is the one place that extends it.
-  Object.defineProperty(err, 'usage', {
+  // Copy every own property (message, stack, name, code, a subclass's own
+  // fields) onto an object with the same prototype, then set `usage` on the
+  // copy. `usage` is readonly to callers; this is the one place that sets it.
+  const copy = Object.create(
+    Object.getPrototypeOf(err) as object,
+    Object.getOwnPropertyDescriptors(err)
+  ) as ProviderError;
+  // V8 keeps `stack` behind an accessor that reads the original's internal
+  // slot, so the copied accessor reads nothing. Set it as a plain value.
+  Object.defineProperty(copy, 'stack', {
+    value: err.stack,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(copy, 'usage', {
     value: usage,
     enumerable: true,
     configurable: true,
     writable: false,
   });
-  return err;
+  return copy;
 }
 
 /** `tokenUsage` and `costUsd` for the attempts a result was billed for. */
