@@ -608,6 +608,41 @@ describe('OrgPage', () => {
       );
     });
 
+    it('shows the switches a plan wrote once the page refreshes, not what the form first loaded', async () => {
+      const SWITCH = { key: 'reports', label: 'Reports', description: '', whenNothingSet: false };
+      const switchesWith = (on: boolean) => ({
+        ...NO_SWITCHES,
+        nothingSet: false,
+        switches: [{ ...SWITCH, on, atDefault: false }],
+      });
+      const onPro = (updatedAt: string) => ({
+        ...PLANS,
+        subscription: {
+          planKey: 'pro',
+          provider: null,
+          providerManaged: false,
+          status: 'ACTIVE',
+          planAppliedAt: updatedAt,
+          updatedAt,
+        },
+      });
+      const base = { [ORG_PATH]: ORG, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS };
+      serve({ ...base, [ENTITLEMENTS_PATH]: switchesWith(false), [PLAN_PATH]: PLANS });
+      const { rerender } = render(await OrgPage({ params }));
+      expect(screen.getByRole('checkbox', { name: /Reports/ })).not.toBeChecked();
+
+      // The plan form saved and refreshed the page: the server now reports
+      // the plan's switches, and the record has moved on.
+      serve({
+        ...base,
+        [ENTITLEMENTS_PATH]: switchesWith(true),
+        [PLAN_PATH]: onPro('2026-11-26T10:00:00.000Z'),
+      });
+      rerender(await OrgPage({ params }));
+
+      expect(screen.getByRole('checkbox', { name: /Reports/ })).toBeChecked();
+    });
+
     it("says the app's plans failed to register, rather than show nothing", async () => {
       serve({
         [ORG_PATH]: ORG,

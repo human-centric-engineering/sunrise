@@ -137,6 +137,11 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
   // No plan registered, or not at `multi`: nothing to show, as on vanilla
   // Sunrise. A registration that failed is shown, since no plan can be assigned.
   const showPlan = plan === null || plan.enabled || plan.registrationFailed;
+  // The switches and limits forms hold what they loaded in client state, so
+  // after a plan is assigned (which writes both, then refreshes this page)
+  // they are remounted on the new values rather than left showing the old.
+  // The record's `updatedAt` moves on every assignment that changed anything.
+  const planVersion = plan?.subscription?.updatedAt ?? 'no-plan';
 
   return (
     <div className="space-y-6">
@@ -196,7 +201,7 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
         <section className="space-y-3 rounded-md border p-4">
           <h2 className="text-lg font-medium">Entitlements</h2>
           {entitlements ? (
-            <OrgEntitlementsForm orgId={org.id} entitlements={entitlements} />
+            <OrgEntitlementsForm key={planVersion} orgId={org.id} entitlements={entitlements} />
           ) : (
             <p className="text-destructive text-sm">
               The switches could not be loaded. Reload the page to try again.
@@ -208,7 +213,7 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
       <section className="space-y-3 rounded-md border p-4">
         <h2 className="text-lg font-medium">Limits</h2>
         {meters ? (
-          <OrgMetersForm orgId={org.id} meters={meters} />
+          <OrgMetersForm key={planVersion} orgId={org.id} meters={meters} />
         ) : (
           <p className="text-destructive text-sm">
             The limits could not be loaded. Reload the page to try again.
