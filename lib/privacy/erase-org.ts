@@ -39,6 +39,11 @@
  * rolls the whole erasure back: the org either exists with every row, or is
  * gone with every row.
  *
+ * **Subscriptions at the payment provider are cancelled first** (§139
+ * t-1094, `lib/billing/erase.ts`), before the transaction, since the billing
+ * rows it deletes are the platform's only link to the org's customer. A
+ * refusal stops the erasure with nothing deleted.
+ *
  * **The storage sweep is not, and runs after the commit** (§109 t-736). The
  * org's objects live under `orgs/{orgId}/` (`lib/storage/org-keys.ts`), and an
  * object store cannot join a database transaction. Deleting first would leave
@@ -65,6 +70,7 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 import { orgKeyPrefix } from '@/lib/storage/org-keys';
+import { cancelOrgSubscriptionsAtProvider } from '@/lib/billing/erase';
 
 export interface EraseOrgParams {
   /** Id of the org to erase. */
@@ -87,6 +93,11 @@ export interface EraseOrgResult {
    * when no storage is configured. See the module header.
    */
   storageSwept: boolean | null;
+  /**
+   * Subscriptions cancelled at the payment provider before anything was
+   * deleted (§139 t-1094); 0 when billing is off or the org paid for nothing.
+   */
+  subscriptionsCancelled: number;
 }
 
 /**
@@ -95,6 +106,9 @@ export interface EraseOrgResult {
  * @throws {OrgLifecycleError} `INSTALL_ORG_IMMUTABLE` for the install org,
  *   `ORG_NOT_FOUND` when no row matches — the same errors the lifecycle
  *   module throws, so the admin route maps all of them one way.
+ * @throws {BillingErasureError} when the org may still be paying at a
+ *   provider that is not switched on; and whatever the provider throws when
+ *   it refuses a cancellation. Either way nothing is deleted.
  */
 export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> {
   const { orgId, actorUserId } = params;
@@ -105,6 +119,16 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
       'The install organisation cannot be deleted'
     );
   }
+
+  // `Org` is a system model, so this read needs no tenant scope. Asked first
+  // so an org that does not exist never reaches the payment provider.
+  const exists = await prisma.org.findUnique({ where: { id: orgId }, select: { id: true } });
+  if (!exists) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
+
+  // Before anything is deleted: the billing rows are the only link to the
+  // org's customer at the provider, and with them gone it would go on
+  // charging. A throw here stops the erasure with nothing deleted.
+  const billing = await cancelOrgSubscriptionsAtProvider(orgId);
 
   const result = await prisma.$transaction(async (tx) => {
     const org = await tx.org.findUnique({
@@ -139,9 +163,20 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
 
   const erasedAt = new Date();
   const storageSwept = await sweepOrgStorage(orgId);
-  logger.info('Org erased', { orgId, actorUserId, ...result, storageSwept });
+  logger.info('Org erased', {
+    orgId,
+    actorUserId,
+    ...result,
+    storageSwept,
+    subscriptionsCancelled: billing?.cancelled ?? [],
+  });
 
-  return { erasedAt, ...result, storageSwept };
+  return {
+    erasedAt,
+    ...result,
+    storageSwept,
+    subscriptionsCancelled: billing?.cancelled.length ?? 0,
+  };
 }
 
 /**

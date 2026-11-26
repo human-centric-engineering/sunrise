@@ -90,6 +90,7 @@ model Org {
   waitlistConfirmTokens             WaitlistConfirmToken[]
   aiOrgProviderKeys                 AiOrgProviderKey[]
   billingSubscription               OrgBillingSubscription?
+  billingWebhookEvents              BillingWebhookEvent[]
 
   // Fork zones (sunrise#859). Prisma relations are two-sided, so a fork model
   // with an `org` relation needs its back-relation line here. Each tier writes

@@ -115,6 +115,30 @@ const serverEnvSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
 
+  // Billing (see .context/billing/billing.md). Unset: billing is off.
+  BILLING_PROVIDER: z
+    .string()
+    .regex(/^[a-z][a-z0-9_-]{0,39}$/, 'a provider key: lower-case letters, digits, _ and -')
+    .optional()
+    .describe(
+      'The payment provider: "stripe", or the key of a provider the app registers in ' +
+        'lib/app/billing.ts. Unset: billing is off. Applies only at TENANCY_MODE=multi.'
+    ),
+  STRIPE_SECRET_KEY: z
+    .string()
+    .regex(/^(sk|rk)_(test|live)_/, 'a Stripe secret or restricted key: sk_test_..., sk_live_...')
+    .optional()
+    .describe(
+      'Stripe secret key (sk_test_... or sk_live_...). Required when BILLING_PROVIDER=stripe.'
+    ),
+  STRIPE_WEBHOOK_SECRET: z
+    .string()
+    .regex(/^whsec_/, "the webhook endpoint's signing secret: whsec_...")
+    .optional()
+    .describe(
+      "The Stripe webhook endpoint's signing secret (whsec_...). Required when BILLING_PROVIDER=stripe."
+    ),
+
   // Email (optional for Phase 1, required in Phase 3)
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().email().optional(),

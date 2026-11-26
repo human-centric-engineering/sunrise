@@ -339,6 +339,12 @@ export type OrgEntitlementsInput = z.infer<typeof orgEntitlementsInputSchema>;
 export const orgPlanInputSchema = z.object({ planKey: entitlementKeySchema.nullable() }).strict();
 
 /**
+ * `POST /api/v1/orgs/[id]/billing/checkout` (§139 t-1094): the plan the org's
+ * owner is buying, by key.
+ */
+export const billingCheckoutInputSchema = z.object({ planKey: entitlementKeySchema }).strict();
+
+/**
  * A meter's key (§135 t-1035): the same spelling as a switch key, such as
  * `completed_conversations`. It is what an org's limit is stored under, so it
  * must not change once orgs hold a limit for it.

@@ -169,6 +169,32 @@ describe('rate-limit-policy', () => {
       expect(rule?.key).toBe('ip');
     });
 
+    it("the billing webhook path uses the 'api' tier with 'ip' keying", () => {
+      // Arrange — the payment provider calls it server-to-server (§139 t-1094):
+      // no session and no API key; the signature over the body is the control.
+      const pathname = '/api/v1/billing/webhook/stripe';
+
+      // Act
+      const rule = findRateLimitRule(pathname);
+
+      // Assert
+      expect(rule).not.toBeNull();
+      expect(rule?.tier).toBe('api');
+      expect(rule?.key).toBe('ip');
+    });
+
+    it('the org billing routes keep the default session-user keying', () => {
+      // Arrange — checkout and portal are an owner's browser requests, so only
+      // the webhook path is IP-keyed.
+      const pathname = '/api/v1/orgs/org_1/billing/checkout';
+
+      // Act
+      const rule = findRateLimitRule(pathname);
+
+      // Assert
+      expect(rule?.key).toBe('session-user');
+    });
+
     it("the contact form path uses the 'api' tier with 'ip' keying", () => {
       // Arrange — contact form is unauthenticated public submission. The
       // per-flow contactLimiter (5/hour) provides the real protection inside
@@ -248,6 +274,7 @@ describe('rate-limit-policy', () => {
         ['/api/v1/webhooks/trigger', 'api-key'],
         ['/api/v1/embed/chat', 'embed-token'],
         ['/api/v1/inbound/slack/agent-slug', 'ip'],
+        ['/api/v1/billing/webhook/stripe', 'ip'],
         ['/api/v1/contact', 'ip'],
         ['/api/v1/waitlist', 'ip'],
         ['/api/v1/waitlist/confirm', 'ip'],
@@ -290,16 +317,17 @@ describe('rate-limit-policy', () => {
       expect(RATE_LIMIT_POLICY[6]).toMatchObject({ tier: 'api', key: 'api-key' }); // webhooks
       expect(RATE_LIMIT_POLICY[7]).toMatchObject({ tier: 'api', key: 'embed-token' }); // embed
       expect(RATE_LIMIT_POLICY[8]).toMatchObject({ tier: 'api', key: 'ip' }); // inbound
-      expect(RATE_LIMIT_POLICY[9]).toMatchObject({ tier: 'api', key: 'ip' }); // contact
-      expect(RATE_LIMIT_POLICY[10]).toMatchObject({ tier: 'api', key: 'ip' }); // waitlist
+      expect(RATE_LIMIT_POLICY[9]).toMatchObject({ tier: 'api', key: 'ip' }); // billing webhook
+      expect(RATE_LIMIT_POLICY[10]).toMatchObject({ tier: 'api', key: 'ip' }); // contact
+      expect(RATE_LIMIT_POLICY[11]).toMatchObject({ tier: 'api', key: 'ip' }); // waitlist
       // Catch-all — must remain LAST so the consumer rules above it have a chance to match.
-      expect(RATE_LIMIT_POLICY[11]).toMatchObject({ tier: 'api', key: 'session-user' });
+      expect(RATE_LIMIT_POLICY[12]).toMatchObject({ tier: 'api', key: 'session-user' });
     });
 
-    it('has exactly 12 rules (catches unintended additions or deletions)', () => {
+    it('has exactly 13 rules (catches unintended additions or deletions)', () => {
       // A length change is a signal that the policy changed. This test surfaces
       // that signal without being prescriptive about what was added/removed.
-      expect(RATE_LIMIT_POLICY).toHaveLength(12);
+      expect(RATE_LIMIT_POLICY).toHaveLength(13);
     });
   });
 

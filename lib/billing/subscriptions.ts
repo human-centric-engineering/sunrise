@@ -48,6 +48,10 @@ export interface OrgSubscriptionView {
   /** Whether a provider subscription that has not ended decides the plan. */
   providerManaged: boolean;
   status: BillingSubscriptionStatus;
+  /** The provider's own word for it (`unpaid`, `trialing`); `null` when assigned by hand. */
+  providerStatus: string | null;
+  /** Whether a provider subscription ends when its current period does. */
+  cancelAtPeriodEnd: boolean;
   periodStart: Date | null;
   periodEnd: Date | null;
   /** When the plan was last written to the org; `null` while a write has not finished. */
@@ -75,6 +79,8 @@ const SUBSCRIPTION_SELECT = {
   customerRef: true,
   subscriptionRef: true,
   status: true,
+  providerStatus: true,
+  cancelAtPeriodEnd: true,
   periodStart: true,
   periodEnd: true,
   planAppliedAt: true,
@@ -87,6 +93,8 @@ type SubscriptionRow = {
   customerRef: string | null;
   subscriptionRef: string | null;
   status: BillingSubscriptionStatus;
+  providerStatus: string | null;
+  cancelAtPeriodEnd: boolean;
   periodStart: Date | null;
   periodEnd: Date | null;
   planAppliedAt: Date | null;
@@ -103,6 +111,8 @@ function toView(row: SubscriptionRow): OrgSubscriptionView {
     provider: row.provider,
     providerManaged: isProviderManaged(row),
     status: row.status,
+    providerStatus: row.providerStatus,
+    cancelAtPeriodEnd: row.cancelAtPeriodEnd,
     periodStart: row.periodStart,
     periodEnd: row.periodEnd,
     planAppliedAt: row.planAppliedAt,
@@ -147,9 +157,30 @@ export function billingLockKey(orgId: string): string {
  * this, its work joins ours, so the record and every slice the plan writes
  * commit together or not at all.
  */
-function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, '$transaction'> {
+export function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, '$transaction'> {
   const run = (fn: (client: Prisma.TransactionClient) => Promise<unknown>) => fn(tx);
   return { $transaction: run as PrismaClient['$transaction'] };
+}
+
+/**
+ * Take the org's billing locks inside an open transaction: the advisory lock
+ * on {@link billingLockKey}, so every billing write for the org (a hand
+ * assignment, a checkout, a webhook delivery) runs one after the other, then
+ * the org row `FOR UPDATE`, so a settings write from another route waits for
+ * the plan's read-modify-write. Every billing transaction takes both, in this
+ * order, so two of them cannot deadlock on each other.
+ *
+ * @returns `false` when the org row does not exist (deleted, or erased).
+ */
+export async function lockOrgBilling(
+  tx: Prisma.TransactionClient,
+  orgId: string
+): Promise<boolean> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${billingLockKey(orgId)}, 0))`;
+  const locked = await tx.$queryRaw<
+    { id: string }[]
+  >`SELECT "id" FROM "org" WHERE "id" = ${orgId} FOR UPDATE`;
+  return locked.length > 0;
 }
 
 /**
@@ -197,13 +228,7 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
   const attempt = () =>
     prisma.$transaction(
       async (tx): Promise<AssignPlanResult> => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${billingLockKey(orgId)}, 0))`;
-        // The org row, so the settings it holds cannot change under the plan's
-        // read-modify-write; a settings writer from another route waits here.
-        const locked = await tx.$queryRaw<
-          { id: string }[]
-        >`SELECT "id" FROM "org" WHERE "id" = ${orgId} FOR UPDATE`;
-        if (locked.length === 0) {
+        if (!(await lockOrgBilling(tx, orgId))) {
           throw new BillingPlanError('ORG_NOT_FOUND', 'Organisation not found');
         }
         const current = await tx.orgBillingSubscription.findUnique({
@@ -237,6 +262,8 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
             data: {
               planKey: null,
               subscriptionRef: null,
+              providerStatus: null,
+              cancelAtPeriodEnd: false,
               periodStart: null,
               periodEnd: null,
               planAppliedAt: null,
@@ -275,6 +302,8 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
           planKey: plan.key,
           subscriptionRef: null,
           status: 'ACTIVE' as const,
+          providerStatus: null,
+          cancelAtPeriodEnd: false,
           periodStart: null,
           periodEnd: null,
           planAppliedAt: new Date(),

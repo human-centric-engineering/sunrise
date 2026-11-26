@@ -285,6 +285,16 @@ export const RATE_LIMIT_POLICY: readonly RateLimitRule[] = [
     tier: 'api',
     key: 'ip',
   },
+  // The billing webhook (§139 t-1094) is the payment provider calling,
+  // server-to-server: no session, no API key, the signature over the raw
+  // body is the control. Keyed on the remote IP, as the inbound triggers
+  // are. Stripe publishes the ranges it sends from, but they change, so they
+  // are not allow-listed.
+  {
+    match: /^\/api\/v1\/billing\/webhook\//,
+    tier: 'api',
+    key: 'ip',
+  },
   // Contact form is unauthenticated public submission. Per-flow
   // contactLimiter inside the handler enforces the tight 5/hour cap;
   // the section tier here is a defense-in-depth upper bound.
