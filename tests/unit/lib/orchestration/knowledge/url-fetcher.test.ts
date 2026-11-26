@@ -332,6 +332,37 @@ describe('fetchDocumentFromUrl', () => {
     expect(result.fileName).toBe('guide.md');
   });
 
+  // #1214 — a dot in the last path segment is not a file extension
+  it('derives .html from text/html when the last path segment contains a dot', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeFetchResponse({ contentType: 'text/html' }) as unknown as Response
+    );
+
+    const result = await fetchDocumentFromUrl('https://example.com/docs/phones.agentMessages');
+
+    expect(result.fileName).toBe('phones.agentMessages.html');
+  });
+
+  it('derives .html from text/html for a version-style segment such as /v2.1', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeFetchResponse({ contentType: 'text/html' }) as unknown as Response
+    );
+
+    const result = await fetchDocumentFromUrl('https://example.com/api/v2.1');
+
+    expect(result.fileName).toBe('v2.1.html');
+  });
+
+  it('keeps a supported URL extension even when the content-type maps elsewhere', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeFetchResponse({ contentType: 'text/html' }) as unknown as Response
+    );
+
+    const result = await fetchDocumentFromUrl('https://example.com/notes/guide.md');
+
+    expect(result.fileName).toBe('guide.md');
+  });
+
   // ── Unsupported extension / type ────────────────────────────────────────
 
   it('throws when URL has unsupported extension (.exe)', async () => {

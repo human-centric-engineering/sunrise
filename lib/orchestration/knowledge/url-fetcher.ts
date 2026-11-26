@@ -190,9 +190,12 @@ export async function fetchDocumentFromUrl(url: string): Promise<FetchedDocument
   let fileName = decodeURIComponent(basename(new URL(url).pathname)) || 'document';
   let ext = extname(fileName).toLowerCase();
 
-  // If no extension from URL, derive from content-type
-  if (!ext && contentType && CONTENT_TYPE_TO_EXT[contentType]) {
-    ext = CONTENT_TYPE_TO_EXT[contentType];
+  // A supported extension in the URL wins. Otherwise derive one from the
+  // content-type — including when the last path segment merely contains a dot
+  // (`/phones.agentMessages`, `/v2.1`), which is not a file extension (#1214).
+  const typeExt = contentType ? CONTENT_TYPE_TO_EXT[contentType] : undefined;
+  if (!ALLOWED_EXTENSIONS.has(ext) && typeExt) {
+    ext = typeExt;
     fileName = `${fileName}${ext}`;
   }
 
