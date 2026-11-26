@@ -27,6 +27,26 @@ release process.
   and its sections in slug order. **A fork that inserts chunk rows itself**
   should write `position`; a document with any null row falls back.
 
+### Changed
+
+- **Chunk keys for a repeated heading get a `~N` suffix (t-1102, #1215;
+  recorded by t-1112).** `chunkMarkdownDocument` makes every chunk id unique
+  within its document: the first chunk keeps its id, a later chunk with the
+  same id becomes `…~2`, `…~3`, and so on. These ids are stored as
+  `AiKnowledgeChunk.chunkKey`. Before this, a document with a heading repeated
+  in it failed to upload on the unique key. **A fork that matches or parses
+  chunk keys** should allow a trailing `~N`, after the `-N` index when there
+  is one (`sortByKeySections` in `lib/orchestration/knowledge/document-text.ts`
+  reads both).
+- **Chunk keys carry the whole document id (t-1110).** They used its first 8
+  characters, which for a `cuid()` are `c` plus the high digits of its
+  timestamp, so two same-named documents created within a few tens of
+  milliseconds (a bulk upload, a script, a fork's importer) got the same keys
+  and the second one's upload failed. New keys are
+  `<name-slug>-<document id>-<section>…`; stored keys keep the 8-character
+  form until the document is rechunked. **A fork that builds or parses chunk
+  keys** should not assume an 8-character id segment.
+
 ### Fixed
 
 - **`runStructuredCompletion` keeps the cost of a call that fails (t-1105,
@@ -46,6 +66,21 @@ release process.
   that cost on failure. **A fork caller that logs cost** should read
   `err instanceof ProviderError ? err.usage : undefined` on its error path, as
   `completeEvaluationSession` does.
+- **URL import lets the server's content type decide when the address's last
+  segment has an unsupported extension (t-1101, #1214; recorded by t-1113).**
+  `fetchDocumentFromUrl` treated any dot in the last path segment as a file
+  extension, so `/docs/phones.agentMessages` was refused. A supported
+  extension in the URL still wins. Otherwise the content type maps to one
+  (`text/html` → `phones.agentMessages.html`), and an unmapped `text/*` falls
+  back to `.txt`. This widens what imports: `/payload.js` served as
+  `text/plain`, refused before as `Unsupported file type ".js"`, now imports
+  as `payload.js.txt` and is read as plain text.
+- **The admin chunk viewer lists a document's chunks in document order
+  (t-1111).** `GET /api/v1/admin/orchestration/knowledge/documents/:id/chunks`
+  sorted by `chunkKey`, which is lexicographic, so a 12-chunk section listed
+  as `-0, -1, -10, -11, -2, …`. It now uses the order a download rebuilds the
+  text in: `position`, else each section's chunks in numeric order. The
+  response shape is unchanged.
 - **`runStructuredCompletion`'s `tokenUsage.serviceTier` is set when the
   attempts were served at different tiers (t-1108).** It was left off, so a
   caller re-pricing the summed tokens with `logCost` priced a priority attempt
