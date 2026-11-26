@@ -59,6 +59,22 @@ export function slugify(text: string): string {
     .slice(0, 60);
 }
 
+/**
+ * The start of every chunk key a document's chunks get: its name's slug, then
+ * its whole id. `chunkKey` is unique per org, so the id is what keeps two
+ * documents with the same name apart.
+ *
+ * The whole id, not a prefix of it (t-1110). The first 8 characters of a
+ * `cuid()` are `c` plus the high digits of its timestamp, so two same-named
+ * documents created within a few tens of milliseconds (a bulk upload, a
+ * script, a fork's importer) used to share a prefix, and the second one's
+ * insert failed on the unique key. Keys stored before this keep their old
+ * form; only chunking from now on uses the whole id.
+ */
+function chunkKeyPrefix(documentName: string, documentId?: string): string {
+  return documentId ? `${slugify(documentName)}-${documentId}` : slugify(documentName);
+}
+
 /** Strip all fenced code blocks (not useful for embeddings, and prevents
  *  false heading detection on `###` lines inside code examples). */
 function stripCodeBlocks(content: string): string {
@@ -538,7 +554,7 @@ function dedupeChunkIds(chunks: Chunk[]): void {
  *
  * @param content - Raw markdown content
  * @param documentName - Name of the document (used for chunk IDs)
- * @param documentId - Unique document ID (first 8 chars used in chunk keys to prevent collisions)
+ * @param documentId - Unique document ID (in every chunk key, so two documents' keys never collide)
  * @returns Array of structured chunks ready for embedding. Chunk ids are
  *   unique within the document: a repeated id gets a `~N` suffix.
  */
@@ -547,8 +563,7 @@ export async function chunkMarkdownDocument(
   documentName: string,
   documentId?: string
 ): Promise<Chunk[]> {
-  const idPrefix = documentId ? documentId.slice(0, 8) : '';
-  const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
+  const documentSlug = chunkKeyPrefix(documentName, documentId);
   const cleaned = stripCodeBlocks(content);
   const globalMetadata = parseMetadataComments(cleaned);
 
@@ -634,8 +649,7 @@ export function chunkCsvDocument(
   documentName: string,
   documentId?: string
 ): Chunk[] {
-  const idPrefix = documentId ? documentId.slice(0, 8) : '';
-  const documentSlug = idPrefix ? `${slugify(documentName)}-${idPrefix}` : slugify(documentName);
+  const documentSlug = chunkKeyPrefix(documentName, documentId);
 
   const chunks: Chunk[] = [];
   const totalRows = parsed.sections.length;
