@@ -722,6 +722,16 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
         orderBy: byCreatedAt,
       }),
   },
+  {
+    model: 'OrgBillingSubscription',
+    section: 'billingSubscription',
+    disposition: 'export',
+    description:
+      'Which plan the organisation is on, and the payment provider’s customer and subscription references behind it, so the organisation can ask the provider for its invoices.',
+    // One row per org, and `orgId` is required, so there is no NULL-org row.
+    // It names no person (t-1093); the admin audit log records who assigned it.
+    fetch: ({ orgId }) => prisma.orgBillingSubscription.findMany({ where: { orgId } }),
+  },
 ];
 
 /**

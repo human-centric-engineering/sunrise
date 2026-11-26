@@ -167,6 +167,11 @@ export const OWNER_CLASSIFICATION = {
   },
 
   // ── platform ──────────────────────────────────────────────────────────────
+  OrgBillingSubscription: {
+    kind: 'not-personal',
+    because:
+      'Which plan an org is on and the provider subscription behind it. It names no person; the admin audit row records who assigned the plan.',
+  },
   FeatureFlag: {
     kind: 'not-personal',
     because: 'Global config shared by every org; createdBy is authorship.',

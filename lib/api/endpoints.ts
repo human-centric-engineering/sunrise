@@ -106,6 +106,8 @@ export const API = {
     orgEntitlements: (id: string): string => `/api/v1/admin/orgs/${id}/entitlements`,
     /** An org's meters and their limits (§135) */
     orgMeters: (id: string): string => `/api/v1/admin/orgs/${id}/meters`,
+    /** An org's billing plan, assigned by hand (§139) */
+    orgPlan: (id: string): string => `/api/v1/admin/orgs/${id}/plan`,
     /**
      * Delete invitation by email. With `orgId` (`null` for the install org)
      * only that org's invitation goes; without it, every org's (#1199).

@@ -333,6 +333,12 @@ export const orgEntitlementsInputSchema = z
 export type OrgEntitlementsInput = z.infer<typeof orgEntitlementsInputSchema>;
 
 /**
+ * `PATCH /api/v1/admin/orgs/[id]/plan` (§139 t-1093): the plan to put the org
+ * on, by key, or `null` to take it off its hand-assigned plan.
+ */
+export const orgPlanInputSchema = z.object({ planKey: entitlementKeySchema.nullable() }).strict();
+
+/**
  * A meter's key (§135 t-1035): the same spelling as a switch key, such as
  * `completed_conversations`. It is what an org's limit is stored under, so it
  * must not change once orgs hold a limit for it.

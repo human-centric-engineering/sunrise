@@ -213,3 +213,47 @@ model WaitlistListState {
   @@index([changedById])
   @@map("waitlist_list_state")
 }
+
+/// Which plan an org is on, and the provider subscription behind it (§139
+/// t-1093, `.context/billing/billing.md`). One per org. A plan staff assign by
+/// hand, or give away, has no provider and no references; t-1094's webhook
+/// fills them for a paid one.
+///
+/// It records the plan, not what the plan gave: the switches, meter limits and
+/// AI budget live in `Org.settings`, written by `applyPlan()`. Org-owned and
+/// holds no `userId`: the admin audit row records who assigned it.
+model OrgBillingSubscription {
+  id              String                    @id @default(cuid())
+  /// The app's plan key (`lib/app/billing.ts`). Never renamed once orgs hold it.
+  planKey         String?
+  /// The `BILLING_PROVIDER` key that holds the subscription; null when assigned by hand.
+  provider        String?
+  /// The provider's customer and subscription ids; null when assigned by hand.
+  customerRef     String?
+  subscriptionRef String?
+  status          BillingSubscriptionStatus @default(ACTIVE)
+  /// The provider's billing period; null when assigned by hand.
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  /// When `planKey`'s entitlements were last written to the org. null while
+  /// a write has not finished, which re-assigning the plan heals.
+  planAppliedAt   DateTime?
+
+  orgId String @unique
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("org_billing_subscription")
+}
+
+/// A subscription's state as it bears on access (`.context/billing/billing.md#the-adapter`).
+/// ACTIVE and PAST_DUE keep the plan; INCOMPLETE has applied nothing yet;
+/// ENDED moves the org to the app's fallback plan.
+enum BillingSubscriptionStatus {
+  INCOMPLETE
+  ACTIVE
+  PAST_DUE
+  ENDED
+}
