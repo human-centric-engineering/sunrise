@@ -860,10 +860,14 @@ slug. Which text exists depends on lifecycle stage:
 reclaim storage — a cleanup document otherwise holds two full copies of itself
 forever — so for a finished document the chunk rows are the only surviving copy
 of the text. `rebuildTextFromChunks`
-(`lib/orchestration/knowledge/document-text.ts`) orders them by the numeric
-suffix of `chunkKey`, NOT the lexicographic `chunkKey` sort used everywhere
-else: that sorts by the section slug first and puts `-10` before `-2`, which
-would scramble the document.
+(`lib/orchestration/knowledge/document-text.ts`) orders them by
+`AiKnowledgeChunk.position`, each chunk's place in the document, written when
+the chunks are (t-1106). Neither `chunkKey` order works for a whole document:
+the lexicographic sort used everywhere else sorts by section slug and puts
+`-10` before `-2`, and the numeric `-N` suffix restarts in each section. A
+document whose rows predate `position` falls back to that suffix, which is in
+order only for a document of one section or one chunk per section; re-chunking
+it writes every row's position.
 
 The rebuild is the **ingested** text, not the source file — the chunker can
 drop a fragment that fits no chunk, which is what the Coverage column reports.
