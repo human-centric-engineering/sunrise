@@ -45,6 +45,10 @@ function expect(label: string, ok: boolean, detail = ''): void {
 
 // ─── A: the adapter's requests, against stripe-mock ──────────────────────────
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 async function partA(): Promise<void> {
   console.log('\nA  The adapter’s requests, against stripe-mock');
   const base = process.env.STRIPE_MOCK_URL;
@@ -60,8 +64,8 @@ async function partA(): Promise<void> {
   async function call(method: string, path: string, form?: Record<string, string>) {
     const body = form ? new URLSearchParams(form).toString() : undefined;
     const res = await fetch(`${base}${path}`, { method, headers, body });
-    const json = (await res.json()) as Record<string, unknown>;
-    return { status: res.status, json };
+    const parsed: unknown = await res.json();
+    return { status: res.status, json: isRecord(parsed) ? parsed : {} };
   }
 
   // Plans name a price by lookup key, which is the same in test and live mode;
@@ -101,12 +105,13 @@ async function partA(): Promise<void> {
   );
 
   const sub = await call('GET', '/v1/subscriptions/sub_123?expand[]=items.data.price');
-  const items = (sub.json.items as { data?: Array<Record<string, unknown>> } | undefined)?.data;
+  const itemList = isRecord(sub.json.items) ? sub.json.items.data : undefined;
+  const firstItem = Array.isArray(itemList) && isRecord(itemList[0]) ? itemList[0] : undefined;
   expect(
     'the billing period is on each subscription item, not the subscription (API 2025-03-31.basil)',
     sub.status === 200 &&
       sub.json.current_period_end === undefined &&
-      typeof items?.[0]?.current_period_end === 'number'
+      typeof firstItem?.current_period_end === 'number'
   );
 
   const meterEvent = await call('POST', '/v1/billing/meter_events', {
@@ -143,7 +148,10 @@ function sign(rawBody: string, secret: string, t: number): string {
 
 /** What the adapter does before anything is parsed, read or written. */
 function verify(rawBody: string, header: string, secret: string, now: number): boolean {
-  const parts = header.split(',').map((p) => p.split('=') as [string, string]);
+  const parts = header.split(',').map((p): [string, string] => {
+    const at = p.indexOf('=');
+    return at === -1 ? [p, ''] : [p.slice(0, at), p.slice(at + 1)];
+  });
   const t = Number(parts.find(([k]) => k === 't')?.[1]);
   const v1s = parts.filter(([k]) => k === 'v1').map(([, v]) => v); // ignore v0 and others
   if (!Number.isFinite(t) || v1s.length === 0) return false;
