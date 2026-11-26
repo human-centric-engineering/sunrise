@@ -31,7 +31,8 @@ release process.
   registered; no payment provider is needed. New published model
   `OrgBillingSubscription` (one per org, org-owned, in the org export) with
   enum `BillingSubscriptionStatus`, and a new named-only caps writer
-  `updateOrgQuotas()` in `lib/tenancy/org-settings.ts`. **A fork's tests**:
+  `updateOrgQuotas()` in `lib/tenancy/org-settings.ts`. `setOrgSwitches()` now stores `on`
+  and `off` sorted, as a read returns them, so one set has one stored form. **A fork's tests**:
   `tests/setup.ts` now pins `initAppBilling` to a no-op, as it does
   `initAppEntitlements`; a fork that fills the seam pins its new row in
   `tests/unit/lib/app/defaults.test.ts`. See

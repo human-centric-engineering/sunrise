@@ -15,11 +15,9 @@
  * finds the customer.
  *
  * **All or nothing.** An assignment writes the record and the plan's settings
- * in one transaction under the org's billing lock ({@link assignPlan}).
- * Re-assigning a plan that is fully applied writes nothing at all. A record
- * with `planAppliedAt` null names a plan whose settings are not known to be
- * written (a provider's `INCOMPLETE` subscription, from t-1094); assigning
- * the plan by hand writes them.
+ * in one transaction under the org's locks ({@link assignPlan}), and sets
+ * `planAppliedAt` in it, so a hand-assigned record is never left half-applied.
+ * Re-assigning a plan that is fully applied writes nothing at all.
  *
  * Every read and write of the record runs as the org (`runAsOrg`), since the
  * table is tenant-owned and the caller is usually a platform admin acting
@@ -41,7 +39,11 @@ import { runAsOrg } from '@/lib/tenancy/context';
 /** The org's subscription record, as the platform reads it. */
 export interface OrgSubscriptionView {
   planKey: string | null;
-  /** The provider holding the subscription; `null` when assigned by hand. */
+  /**
+   * The provider of the org's last paid subscription; `null` when it never
+   * had one. It stays after that subscription ends and staff assign a plan
+   * by hand, so read {@link providerManaged} for "paid through a provider".
+   */
   provider: string | null;
   /** Whether a provider subscription that has not ended decides the plan. */
   providerManaged: boolean;
@@ -128,10 +130,9 @@ export interface AssignPlanResult {
 }
 
 /**
- * How many times {@link assignPlan} runs its transaction when it loses a
- * serialization conflict: to another assignment it waited behind, or to a
- * settings write from another route. Past this the conflict is the caller's
- * (the route answers 409, assign again).
+ * How many times {@link assignPlan} runs its transaction when Postgres fails
+ * it with a write conflict or a deadlock (`P2034`). The locks below make that
+ * rare; past this it is the caller's (the route answers 409, assign again).
  */
 const MAX_ATTEMPTS = 3;
 
@@ -154,13 +155,16 @@ function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, '$trans
 /**
  * Put an org on a plan by hand, or take it off one (`planKey: null`).
  *
- * **One transaction, under the org's billing lock.** The record and every
- * slice the plan writes commit together, serializable, after a Postgres
- * advisory lock on {@link billingLockKey}. A failure writes nothing, and
- * neither of two assignments at once can leave the record naming one plan
- * over the other's settings. The one that waited on the lock fails its
- * serializable snapshot and is run again, up to {@link MAX_ATTEMPTS} times,
- * so in practice they apply one after the other.
+ * **One transaction, under the org's billing lock and its row lock.** The
+ * record and every slice the plan writes commit together, or not at all. It
+ * first takes a Postgres advisory lock on {@link billingLockKey}, so two
+ * assignments (and t-1094's webhook) run one after the other, then the org
+ * row `FOR UPDATE`, so a settings write from another route waits for it.
+ * At READ COMMITTED every read after those locks sees what committed before
+ * them. Serializable would not: its snapshot is taken at the first
+ * statement, before the lock is granted, so an assignment that waited could
+ * read the record and settings as they were and, with nothing to write,
+ * report success over another's plan (review round 3).
  *
  * Taking an org off its plan clears the plan from the record and leaves its
  * switches, limits and budget as they are: the plan stops being named, and
@@ -171,7 +175,7 @@ function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, '$trans
  *
  * @throws {BillingPlanError} `BILLING_OFF` when plans do not apply on this
  *   install, `UNKNOWN_PLAN`, `PROVIDER_MANAGED`, or `ORG_NOT_FOUND`.
- *   A clash that outlasts the retries throws `P2034`
+ *   A write conflict or deadlock that outlasts the retries throws `P2034`
  *   (`isSettingsWriteConflict`), and a lock wait past the timeout `P2028`;
  *   either way nothing was written.
  */
@@ -194,6 +198,14 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
     prisma.$transaction(
       async (tx): Promise<AssignPlanResult> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${billingLockKey(orgId)}, 0))`;
+        // The org row, so the settings it holds cannot change under the plan's
+        // read-modify-write; a settings writer from another route waits here.
+        const locked = await tx.$queryRaw<
+          { id: string }[]
+        >`SELECT "id" FROM "org" WHERE "id" = ${orgId} FOR UPDATE`;
+        if (locked.length === 0) {
+          throw new BillingPlanError('ORG_NOT_FOUND', 'Organisation not found');
+        }
         const current = await tx.orgBillingSubscription.findUnique({
           where: { orgId },
           select: SUBSCRIPTION_SELECT,
@@ -281,20 +293,18 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
           subscription: toView(row),
         };
       },
-      // The settings writers ask for serializable on their own; joined to
-      // this transaction, this is where they get it. The timeout covers a
-      // wait on the lock behind another assignment as well as the writes.
+      // READ COMMITTED, not the serializable the settings writers ask for on
+      // their own: the two locks above serialize what matters, and reads after
+      // them see the latest commit (see the docblock). The timeout covers a
+      // wait on the locks behind another assignment as well as the writes.
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
         maxWait: 5_000,
         timeout: 15_000,
       }
     );
   const result = await runAsOrg(orgId, async () => {
-    // The snapshot is taken at the transaction's first statement, before the
-    // lock is granted, so an assignment that waited behind another fails
-    // with a serialization conflict when it writes. Run again, it starts
-    // after the first committed and reads what that one wrote.
+    // A deadlock or write conflict Postgres resolved by failing this one.
     for (let tries = 1; ; tries++) {
       try {
         return await attempt();

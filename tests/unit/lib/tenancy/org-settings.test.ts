@@ -1406,6 +1406,39 @@ describe('the org meter limits (§135 t-1035)', () => {
   });
 });
 
+describe('writeOrgEntitlements stores one set one way (§139 t-1093)', () => {
+  function txOver(settings: unknown) {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({ settings }),
+        update: vi.fn(),
+      },
+    };
+    const db = { $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)) };
+    return { tx, db: db as never };
+  }
+
+  it('stores the keys sorted, so the same set in another order writes nothing', async () => {
+    const { tx, db } = txOver({ entitlements: { on: ['a', 'b'], off: ['c'] } });
+
+    const written = await writeOrgEntitlements(ORG_A, () => ({ on: ['b', 'a'], off: ['c'] }), db);
+
+    expect(written?.changed).toBe(false);
+    expect(tx.org.update).not.toHaveBeenCalled();
+  });
+
+  it('rewrites a set stored out of order once, sorted', async () => {
+    const { tx, db } = txOver({ entitlements: { on: ['b', 'a'], off: [] } });
+
+    await writeOrgEntitlements(ORG_A, () => ({ on: ['b', 'a'], off: [] }), db);
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: { settings: { entitlements: { on: ['a', 'b'], off: [] } } },
+    });
+  });
+});
+
 describe('updateOrgQuotas (§139 t-1093)', () => {
   /** A `$transaction` over one org row holding `settings` (`undefined` = no such org). */
   function txOver(settings: unknown) {

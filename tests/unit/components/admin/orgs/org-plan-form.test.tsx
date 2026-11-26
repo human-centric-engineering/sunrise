@@ -132,20 +132,6 @@ describe('OrgPlanForm', () => {
     expect(await screen.findByText('Plan removed')).toBeInTheDocument();
   });
 
-  it('offers to finish a plan whose write did not finish, by saving it again', async () => {
-    const user = userEvent.setup();
-    vi.mocked(apiClient.patch).mockResolvedValue(view({ subscription: onPlan('pro') }));
-    render(<OrgPlanForm orgId={ORG} plan={view({ subscription: onPlan('pro', null) })} />);
-
-    expect(screen.getByText(/were not all written to this organisation/)).toBeInTheDocument();
-    expect(save()).toBeEnabled();
-
-    await user.click(save());
-
-    expect(apiClient.patch).toHaveBeenCalledWith(PATH, { body: { planKey: 'pro' } });
-    expect(screen.queryByText(/were not all written/)).not.toBeInTheDocument();
-  });
-
   it('shows a refused save beside Save, and keeps the choice', async () => {
     const user = userEvent.setup();
     vi.mocked(apiClient.patch).mockRejectedValue(
@@ -190,22 +176,17 @@ describe('OrgPlanForm', () => {
     expect(screen.queryByRole('button', { name: 'Save plan' })).not.toBeInTheDocument();
   });
 
-  it('does not ask staff to finish a provider’s record it will not let them save', () => {
+  it('names the provider when it is known, and says "a payment provider" when it is not', () => {
     render(
       <OrgPlanForm
         orgId={ORG}
         plan={view({
-          subscription: {
-            ...onPlan('pro', null),
-            provider: 'stripe',
-            providerManaged: true,
-            status: 'INCOMPLETE',
-          },
+          subscription: { ...onPlan('pro'), provider: null, providerManaged: true },
         })}
       />
     );
 
-    expect(screen.queryByText(/were not all written/)).not.toBeInTheDocument();
+    expect(screen.getByText(/pays for its plan through a payment provider,/)).toBeInTheDocument();
   });
 
   it('names a plan the app no longer registers, rather than show nothing chosen', async () => {
@@ -215,14 +196,9 @@ describe('OrgPlanForm', () => {
     expect(screen.getByText(/which the\s+app no longer registers/)).toHaveTextContent('legacy');
     expect(save()).toBeDisabled();
 
-    // …even when its write never finished: saving it again could only fail.
-    render(<OrgPlanForm orgId={ORG} plan={view({ subscription: onPlan('legacy', null) })} />);
-    expect(screen.getAllByRole('button', { name: 'Save plan' }).at(-1)).toBeDisabled();
-    expect(screen.queryByText(/were not all written/)).not.toBeInTheDocument();
-
     // Another plan can still be chosen.
-    await user.click(screen.getAllByRole('radio', { name: /Free/ })[0]);
-    expect(screen.getAllByRole('button', { name: 'Save plan' })[0]).toBeEnabled();
+    await user.click(screen.getByRole('radio', { name: /Free/ }));
+    expect(save()).toBeEnabled();
   });
 
   it("says the app's plans failed to register", () => {

@@ -125,14 +125,15 @@ the current state, and that must be a no-op, not a fresh audit row.
 - **The budget is written through `updateOrgQuotas()`**, which sets only the
   caps it names. `writeOrgQuotas()` replaces every cap, which would clear a
   request-rate cap staff set by hand.
-- **An assignment is one transaction under the org's billing lock.** The
-  record and the switches, limits and caps commit together, serializable,
-  after `pg_advisory_xact_lock` on `billing:<orgId>` (`billingLockKey()`).
-  A failure writes nothing, and the record never names one plan over
-  another plan's settings. Because the serializable snapshot is taken before
-  the lock is granted, an assignment that waited behind another fails its
-  write with a serialization conflict; it is run again, up to three times, so
-  in practice they apply one after the other.
+- **An assignment is one transaction under the org's locks.** The record
+  and the switches, limits and caps commit together, or not at all. It takes
+  `pg_advisory_xact_lock` on `billing:<orgId>` (`billingLockKey()`), so two
+  assignments run one after the other, then the org row `FOR UPDATE`, so a
+  settings write from another route waits for it. It runs at READ COMMITTED,
+  so reads after those locks see the latest commit. Serializable was tried
+  and rejected in review: its snapshot is taken before the lock is granted,
+  so an assignment that waited could read stale state and, with nothing to
+  write, report success over another's plan.
   `applyPlan()` takes the client to write on, so t-1094's webhook joins its
   own transaction the same way, under the same key. The caller forgets the
   cached AI budget after its commit (`forgetOrgCap()`).
@@ -140,6 +141,9 @@ the current state, and that must be a no-op, not a fresh audit row.
   subscription that has not ended, a hand assignment is refused
   (`provider_managed`). Over an ended one, the provider and customer
   references are kept, so erasure still finds the customer.
+- **Switch keys are stored sorted** (`writeOrgEntitlements()`), as a read
+  returns them, so re-applying a plan whose switches staff saved in another
+  order writes nothing.
 - **"No plan" clears the plan and leaves the settings.** The org keeps what
   the plan gave until someone changes it. The record is deleted, unless it
   holds a provider or customer reference, which stays for erasure.

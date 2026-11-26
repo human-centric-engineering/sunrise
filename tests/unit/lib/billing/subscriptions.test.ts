@@ -137,6 +137,10 @@ const mockPrisma = vi.hoisted(() => {
       }),
     },
     $executeRaw: vi.fn(async () => 0),
+    // The org row `FOR UPDATE`: the row when the org exists.
+    $queryRaw: vi.fn(async (_sql: TemplateStringsArray, id: string) =>
+      store.orgs.has(id) ? [{ id }] : []
+    ),
     $transaction: vi.fn(),
   };
   return db;
@@ -327,9 +331,8 @@ describe('assignPlan', () => {
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
-  it('runs again after losing a serialization conflict, and applies the plan', async () => {
-    // The assignment that waited on the lock behind another: its snapshot is
-    // older than the other's commit, so its write fails, and nothing of it stays.
+  it('runs again after Postgres fails it with a write conflict or deadlock, and applies the plan', async () => {
+    // Nothing of the failed run stays.
     const real = mockPrisma.org.update.getMockImplementation()!;
     mockPrisma.org.update.mockImplementationOnce(real).mockRejectedValueOnce(conflict());
 
@@ -355,16 +358,32 @@ describe('assignPlan', () => {
     expect(store.subscriptions.has(ORG)).toBe(false);
   });
 
-  it('takes the org billing lock before it reads the record', async () => {
+  it('takes the billing lock, then the org row, before it reads the record', async () => {
     await assignPlan(ORG, 'pro');
 
     expect(mockPrisma.$executeRaw).toHaveBeenCalledTimes(1);
-    const [sql, key] = mockPrisma.$executeRaw.mock.calls[0] as unknown as [string[], string];
-    expect(sql.join('?')).toContain('pg_advisory_xact_lock');
+    const [lockSql, key] = mockPrisma.$executeRaw.mock.calls[0] as unknown as [string[], string];
+    expect(lockSql.join('?')).toContain('pg_advisory_xact_lock');
     expect(key).toBe(`billing:${ORG}`);
-    expect(mockPrisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      mockPrisma.orgBillingSubscription.findUnique.mock.invocationCallOrder[0]
-    );
+    const [rowSql, id] = mockPrisma.$queryRaw.mock.calls[0] as unknown as [string[], string];
+    expect(rowSql.join('?')).toMatch(/FROM "org" WHERE "id" = \? FOR UPDATE/);
+    expect(id).toBe(ORG);
+    const lock = mockPrisma.$executeRaw.mock.invocationCallOrder[0];
+    const row = mockPrisma.$queryRaw.mock.invocationCallOrder[0];
+    const read = mockPrisma.orgBillingSubscription.findUnique.mock.invocationCallOrder[0];
+    expect(lock).toBeLessThan(row);
+    expect(row).toBeLessThan(read);
+    // READ COMMITTED, so the reads after the locks see the latest commit.
+    expect(mockPrisma.$transaction.mock.calls[0]?.[1]).toMatchObject({
+      isolationLevel: 'ReadCommitted',
+    });
+  });
+
+  it('refuses, writing nothing, when the org is gone by the time it is locked', async () => {
+    mockPrisma.$queryRaw.mockResolvedValueOnce([]);
+
+    await expect(assignPlan(ORG, 'pro')).rejects.toMatchObject({ code: 'ORG_NOT_FOUND' });
+    expect(writes()).toEqual({ org: 0, record: 0 });
   });
 
   it('writes the settings of a plan its record names but does not mark applied', async () => {

@@ -97,8 +97,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/billing/subscriptions.ts',
-    calls: 1,
-    why: 'the per-org billing lock (§139 t-1093): `pg_advisory_xact_lock(hashtextextended(key, 0))`, taken at the start of a plan assignment so two at once run one after the other, and t-1094’s webhook takes the same key. Prisma has no call for it, and it touches no table, so RLS has nothing to filter',
+    calls: 2,
+    why: 'a plan assignment’s two locks (§139 t-1093): the per-org billing lock, `pg_advisory_xact_lock(hashtextextended(key, 0))`, so two assignments (and t-1094’s webhook, on the same key) run one after the other, which touches no table; and the org row `SELECT "id" FROM "org" WHERE "id" = $1 FOR UPDATE`, so another route’s settings write waits for it. Prisma has no call for either. `org` is a system table with no RLS policy, and the read is by the one id being assigned',
   },
   {
     file: 'lib/db/drift-probes.ts',

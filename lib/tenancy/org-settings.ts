@@ -1114,7 +1114,10 @@ export async function writeOrgEntitlements(
       const value =
         keys === null || (keys.on.length === 0 && keys.off.length === 0)
           ? null
-          : orgEntitlementsSchema.parse({ on: [...keys.on], off: [...keys.off] });
+          : // Sorted, as a read returns them: one set has one stored form, so a
+            // writer that builds the same set in another order (a plan applied
+            // again, §139 t-1093) compares equal and writes nothing.
+            orgEntitlementsSchema.parse({ on: [...keys.on].sort(), off: [...keys.off].sort() });
       stored = value === null ? NOTHING_SET : { on: value.on, off: value.off, unreadable: false };
       return value;
     },

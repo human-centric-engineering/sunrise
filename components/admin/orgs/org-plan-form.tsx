@@ -10,8 +10,6 @@
  * below show what the plan wrote.
  *
  * What it says rather than hides:
- *  - **Not fully applied**: the record names a plan whose write did not
- *    finish. Saving the same plan again finishes it.
  *  - **Paid through a provider**: the plan follows that subscription and
  *    cannot be changed here.
  *  - **Cannot change here**: at `multi`, from a customer's org, the plan is
@@ -106,20 +104,13 @@ export function OrgPlanForm({ orgId, plan: initial }: OrgPlanFormProps) {
   });
 
   const subscription = view.subscription;
-  // Only a plan staff can save again: a provider's record is not theirs to finish.
-  const unfinished =
-    subscription !== null &&
-    subscription.planKey !== null &&
-    !subscription.providerManaged &&
-    subscription.planAppliedAt === null;
   // A key the app no longer registers: no option shows it, so say it here.
   const unregisteredPlan =
     subscription?.planKey && !view.plans.some((p) => p.key === subscription.planKey)
       ? subscription.planKey
       : null;
   const locked = !view.mayChange || subscription?.providerManaged === true || !view.enabled;
-  // Saving the current plan again is how an unfinished write is finished.
-  const canSave = chosen !== current || (unfinished && !unregisteredPlan && chosen !== NO_PLAN);
+  const canSave = chosen !== current;
 
   const save = async () => {
     saveFailure.clear();
@@ -157,8 +148,9 @@ export function OrgPlanForm({ orgId, plan: initial }: OrgPlanFormProps) {
       {!view.mayChange && <SharedSettingsReadOnlyNotice reason={PLAN_READ_ONLY} />}
       {subscription?.providerManaged && (
         <p className="text-muted-foreground text-sm">
-          This organisation pays for its plan through {subscription.provider}, so its plan follows
-          that subscription and cannot be changed here.
+          This organisation pays for its plan through{' '}
+          {subscription.provider ?? 'a payment provider'}, so its plan follows that subscription and
+          cannot be changed here.
         </p>
       )}
       {unregisteredPlan && (
@@ -166,12 +158,6 @@ export function OrgPlanForm({ orgId, plan: initial }: OrgPlanFormProps) {
           This organisation is on <span className="font-mono">{unregisteredPlan}</span>, which the
           app no longer registers. Its switches, limits and budget stay as that plan left them until
           another plan is assigned.
-        </p>
-      )}
-      {unfinished && !unregisteredPlan && (
-        <p className="text-destructive text-sm">
-          The plan&apos;s settings were not all written to this organisation. Save the plan again to
-          finish.
         </p>
       )}
 
