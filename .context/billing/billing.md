@@ -121,7 +121,8 @@ interface BillingProvider {
   /**
    * A hosted checkout for one plan. Creates the org's customer on first use.
    * Writes the org id into the metadata of the customer, the session and the
-   * subscription, so a webhook can find the org before the reference is stored.
+   * subscription, so a webhook can find the org before the reference is stored
+   * (it comes back as ProviderSubscription.orgId).
    */
   createCheckout(input: {
     orgId: string;
@@ -145,6 +146,9 @@ interface BillingProvider {
   /** The subscription as the provider holds it now. null if it does not exist. */
   fetchSubscription(subscriptionRef: string): Promise<ProviderSubscription | null>;
 
+  /** Every subscription the customer has that has not ended. Org erasure calls this. */
+  listLiveSubscriptions(customerRef: string): Promise<ProviderSubscription[]>;
+
   /** One closed period's billed quantity for one metered item. Safe to resend. */
   reportUsage(input: {
     customerRef: string;
@@ -157,9 +161,10 @@ interface BillingProvider {
   }): Promise<void>;
 
   /**
-   * End it now, without a refund decision. Org erasure calls this. A
-   * subscription that has already ended, or that the provider does not have,
-   * counts as success: the outcome erasure needs is already true.
+   * End it now, without a refund decision, invoicing what is owed so far.
+   * Called by org erasure, and by a checkout replacing an `incomplete`
+   * subscription. A subscription that has already ended, or that the provider
+   * does not have, counts as success: the outcome the caller needs is true.
    */
   cancelSubscription(subscriptionRef: string): Promise<void>;
 }
@@ -181,6 +186,8 @@ interface ProviderSubscription {
   periodStart: Date;
   periodEnd: Date;
   cancelAtPeriodEnd: boolean;
+  endedAt: Date | null; // Stripe's `ended_at`; null while it has not ended
+  orgId: string | null; // the org id createCheckout wrote into its metadata
 }
 ```
 
@@ -203,7 +210,9 @@ interface ProviderSubscription {
 - **The billing period is read from the subscription items**. Since API
   version `2025-03-31.basil`, `current_period_start` and `current_period_end`
   are no longer on the Stripe subscription. The spike checks this against
-  `stripe-mock`.
+  `stripe-mock`, which serves the one OpenAPI spec it was built with and
+  ignores `Stripe-Version`. So the check is only as current as the build: run
+  it with a `stripe-mock` released after that API version.
 - **`reportUsage` takes a closed period's total, once.** That is the lowest
   common denominator: Stripe has meters, while a provider without them (Paddle
   Billing, which bills usage as a one-off charge on the subscription) can still
@@ -215,7 +224,8 @@ interface ProviderSubscription {
   sells to the org and handles UK and EU VAT itself, and only an adapter that
   fits this interface lets an app choose one. Stripe Tax, if the operator uses
   it, is a checkout setting in the Stripe adapter, not a platform concept.
-- **`cancelSubscription` exists for erasure**, not for an org admin. An org
+- **`cancelSubscription` is the platform's, not an org admin's.** Erasure calls
+  it, and so does a checkout replacing an `incomplete` subscription. An org
   changes or cancels its own plan in the portal.
 
 ## Webhooks
@@ -246,22 +256,28 @@ retries for up to three days in live mode. So:
    subscription record (a system read, since the org is not known yet). If no
    org holds that customer, fall back to the `orgId` that `createCheckout`
    writes into the metadata of the customer, the session and the subscription
-   (and the session's `client_reference_id`). This covers a checkout whose
-   provider customer was created but whose local write of the reference failed
-   or has not committed: the org is linked to the customer here, provided it
-   exists and holds no other customer reference. Only an event that names no
-   org either way is answered `200`, logged, and not stored. It changes
+   (and the session's `client_reference_id`). The adapter returns it as
+   `orgId` on the fetched subscription. This covers a checkout whose provider
+   customer was created but whose local write of the reference failed or has
+   not committed. The fallback only names the org; linking it to the customer
+   happens in step 5, under the lock. Only an event that names no org either
+   way is answered `200`, logged, and not stored. It changes
    nothing, so a replay of it changes nothing either. It also cannot be
    written to the ledger, which is org-owned and refuses a row with no org at
    `multi`.
 2. **Take a per-org lock**: a Postgres advisory transaction lock keyed on the
    org, inside a transaction run as that org (`runAsOrg`).
-3. **Insert the event id into the ledger**, unique on (provider, event id). If
-   it is already there, this is a replay: commit nothing and answer `200`.
+3. **Insert the event id into the ledger**, unique on (provider, event id),
+   with `ON CONFLICT DO NOTHING`, and read the affected row count. A plain
+   insert that hits the unique key aborts the Postgres transaction, so catching
+   the error is not enough. No row inserted means a replay: commit nothing and
+   answer `200`.
 4. **Fetch the subscription from the provider** (`fetchSubscription`), inside
    the lock.
-5. **Apply that state**: the status, the period, and the plan its price names,
-   under the lapsed-subscription rule. Applying is idempotent.
+5. **Apply that state**: link the org to the customer if step 1 found it by
+   the fallback (re-checking, under the lock, that the org holds no other
+   customer reference), then the status, the period, and the plan its price
+   names, under the lapsed-subscription rule. Applying is idempotent.
 6. **Commit the ledger row and the change together**, then answer `200`. On any
    failure, roll back and answer `500`, so the provider retries.
 
@@ -289,15 +305,19 @@ carries no version.
 
 **One subscription per org.** The org's record holds one subscription
 reference. Checkout is refused while that subscription is `active` or
-`past_due`, and the owner is sent to the portal instead. While it is
+`past_due`, or paused at the provider (a paused subscription reads as `ended`
+but can resume), and the owner is sent to the portal instead. While it is
 `incomplete` (a first payment that failed or awaits authentication), a new
-checkout first cancels it at the provider, so the org never has two live
-subscriptions.
+checkout takes the same per-org lock as the webhook, fetches it again, and
+cancels it only if it is still `incomplete`. If it has become `active`
+meanwhile, the checkout is refused like any other. So the org never has two
+live subscriptions.
 
 An event for a subscription other than the stored one replaces the stored
-reference when the org has none, or its stored one is `ended` or `incomplete`.
-That is how an org that resubscribes after its subscription ended gets its new
-plan. Otherwise the event is recorded in the ledger and not applied, with a
+reference when the fetched subscription has not ended and the org has none,
+or its stored one is `ended` or `incomplete`. That is how an org that
+resubscribes after its subscription ended gets its new plan. A late event for
+an old subscription that has ended never replaces a live one. Otherwise the event is recorded in the ledger and not applied, with a
 warning.
 
 **Events Stripe should send:** `customer.subscription.created`, `.updated`,
@@ -347,10 +367,9 @@ So usage is counted once per closed period and sent once (t-1097):
 1. **The period is the provider's**, read from the subscription items and
    stored on the org's subscription record at each sync. It is not the meter's
    own `period`, and not the UTC month of §110's budget. When a sync sees the
-   period move on, the one before it is closed. When a sync sees the
-   subscription become `ended`, the current period is closed too, at the
-   earlier of its end and the moment it ended. There is no next period to move
-   on to, and without this the last period's usage would never be reported.
+   period move on, the one before it is closed. A subscription's last period
+   has no next one, so it is handled apart: see
+   [The last period](#the-last-period).
 2. **Wait for it to settle.** The maintenance tick picks up a closed period a
    few minutes after its end, so rows committed just before the boundary are
    counted.
@@ -405,14 +424,34 @@ not build up per call. Any markup is the app's price per cent at the provider.
 closing tick picks the period up, a few minutes after it ends, not the count
 at the boundary itself. A seat added or removed in those minutes moves the
 closed period's bill. That is accepted: catching the boundary exactly would
-need a sync at that second. Billing seats as a subscription quantity, changed as members
-join, is not in this feature.
+need a sync at that second. Billing seats as a subscription quantity, changed
+as members join, is not in this feature.
 
 **Not verified:** Stripe's documentation now recommends Metronome over Billing
 Meters for new usage-based integrations, and calls Billing Meters appropriate
 when already in use. Billing Meters is the only usage API in Stripe's core
 billing that this adapter can use without a second vendor. If Stripe retires
 it, the adapter's `reportUsage` is the one method that changes.
+
+### The last period
+
+Stripe makes a subscription's final invoice when it ends, so usage reported
+after that lands on no invoice. A report sent by the closing tick, minutes
+after the end, is always too late. So:
+
+- **Cancelling at period end** (the portal's default): while
+  `cancelAtPeriodEnd` is set, each maintenance tick reports the period's
+  running total, each send with its own identifier (the report's id and a
+  sequence number), since Stripe would drop a repeated identifier within 24
+  hours. A `last` meter bills the latest one, so only usage in the minutes
+  after the last tick before the end goes unbilled.
+- **Cancelled by the platform** (erasure, or replacing an `incomplete`
+  subscription): the open period's total is reported first, then the
+  subscription is cancelled with its usage invoiced (Stripe's `invoice_now`).
+- **Ended by the provider at once** (an immediate cancellation in the portal,
+  or retries exhausted): the last period's excess is not collected. It is
+  closed at `endedAt` and recorded as late, so the loss is visible. The setup
+  steps will recommend configuring the portal to cancel at period end.
 
 ## Who may do what
 
@@ -434,11 +473,13 @@ Decided at planning:
   who acted, so the per-person manifest is unchanged.
 - **Card details never reach the platform.** Checkout and the portal are the
   provider's pages.
-- **Erasing an org cancels its subscription at the provider first**
-  (`cancelSubscription`), then deletes the local rows. Otherwise the provider
-  keeps charging a card for an org that no longer exists. A subscription that
-  has already ended, or that the provider no longer has, counts as cancelled,
-  so a lapsed org's erasure is not stuck retrying. Any other refusal fails the
+- **Erasing an org cancels its subscriptions at the provider first**, then
+  deletes the local rows. Otherwise the provider keeps charging a card for an
+  org that no longer exists. It cancels every live subscription of the org's
+  customer (`listLiveSubscriptions`, then `cancelSubscription` on each), not
+  only the stored one, so one that was recorded but not applied is ended too.
+  A subscription that has already ended, or that the provider no longer has,
+  counts as cancelled, so a lapsed org's erasure is not stuck retrying. Any other refusal fails the
   erasure step, which is retried. It does not go on without it.
 - **The provider's own records stay with the provider**: the customer, its
   invoices and payments, under the provider's retention and the tax rules on

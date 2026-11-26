@@ -56,8 +56,9 @@ async function partA(): Promise<void> {
     console.log('  skipped: set STRIPE_MOCK_URL (e.g. http://localhost:12111)');
     return;
   }
-  // The adapter pins the API version, so the shape checked below is that
-  // version's, not whichever default the installed stripe-mock has.
+  // Sent because the adapter pins it. stripe-mock ignores the header and
+  // serves the OpenAPI spec it was built with, so the period check below is
+  // only as current as the build: use one released after 2025-03-31.
   const baseHeaders: Record<string, string> = {
     Authorization: 'Bearer sk_test_123',
     'Content-Type': 'application/x-www-form-urlencoded',
