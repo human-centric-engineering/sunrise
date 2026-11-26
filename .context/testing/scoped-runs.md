@@ -185,19 +185,33 @@ the default (`full`), `test-full` runs the whole suite 4-way sharded on every PR
 and every push to `main`, and the claim above holds. Set it to `changed` and
 `test-full` is skipped on PRs (`ci.yml`: `test_scope != 'changed' || event_name
 == 'push'`) — the whole suite then runs only _after_ merge, on the push to
-`main`. The `test-changed` job that replaces it runs a bare
-`npx vitest run --changed`, **without the `ALWAYS_RUN_TESTS` union**, so on such
-a fork a PR adding a model with a user FK passes CI while
-`export-sources.test.ts` never runs.
+`main`. The `test-changed` job that replaces it runs this same scoped runner
+(`npx tsx scripts/ci/run-scoped-tests.ts --base <PR base sha> --no-fetch`), so
+the `ALWAYS_RUN_TESTS` union applies on the PR (#1351). Before that it ran a bare
+`npx vitest run --changed`, and a PR adding a model with a user FK could pass CI
+without `export-sources.test.ts` ever running.
+`tests/unit/vitest-rerun-triggers.test.ts` holds the job on the runner.
 
-Closing that is a one-line change to the `test-changed` job:
+What still lands only after merge on such a fork is anything the selection and
+the always-run list both miss. That includes the rarer `package.json` edits
+that can affect every test: a `type`/`imports`/`exports` change, or an
+`overrides` change that leaves the lockfile unchanged. `package.json` is not a
+rerun trigger (see below), so these get a scoped run on the PR.
 
-```yaml
-- run: npx tsx scripts/ci/run-scoped-tests.ts --base ${{ github.event.pull_request.base.sha }} --no-fetch
-```
+### What forces a full run
 
-Sunrise itself leaves `CI_TEST_SCOPE` at `full`, so the job is inert upstream
-and the change is left to the forks that actually switch it on.
+`vitest.config.ts` sets `forceRerunTriggers` explicitly (#1331). A change to
+any of these makes `--changed` select every test, in place of tracing the module
+graph:
+
+- `package-lock.json`, so a dependency bump still runs everything
+- `{vitest,vite}.config.*`
+- `tests/setup.ts` and `tsconfig.json`, which reach every test but are imported
+  by none
+
+`package.json` is left out because almost every edit to it is a script line,
+which no test imports. The tests that read it as text are in `ALWAYS_RUN_TESTS`.
+If you add a test that reads `package.json` from disk, add it there too.
 
 Run the full suite locally when:
 
