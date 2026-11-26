@@ -428,16 +428,22 @@ export async function runStructuredCompletion<T>(
 
 /**
  * The attempts' usage added together; an attempt with none counts as zero.
- * `serviceTier` is kept when every attempt that reported usage agrees on it,
- * so a failure exit's cost row is priced at the tier that served it.
+ *
+ * A summed row has one tier. When every attempt that reported usage agrees,
+ * that tier is kept, so a failure exit's cost row is priced at the tier that
+ * served it. When they disagree (`auto` serving one at priority and the next
+ * at standard), the dearer reading wins — priority if any attempt was, else
+ * standard — so the failure exit's count errs over, never under, as the tier
+ * multiplier itself does. (The success path prices each attempt separately in
+ * {@link billing} and needs neither rule.)
  */
 function sumUsage(attempts: Array<LlmUsage | null>): LlmUsage {
   const total: LlmUsage = { inputTokens: 0, outputTokens: 0 };
   const tiers = new Set(
     attempts.filter((a): a is LlmUsage => a !== null).map((a) => a.serviceTier)
   );
-  const onlyTier = tiers.size === 1 ? [...tiers][0] : undefined;
-  if (onlyTier) total.serviceTier = onlyTier;
+  if (tiers.has('priority')) total.serviceTier = 'priority';
+  else if (tiers.size === 1 && tiers.has('flex')) total.serviceTier = 'flex';
   for (const usage of attempts) {
     if (!usage) continue;
     total.inputTokens += usage.inputTokens;
@@ -465,12 +471,27 @@ function billedOrUndefined(usage: LlmUsage): LlmUsage | undefined {
  * `err`, carrying the tokens `earlier` attempts were billed for on top of its
  * own. A `ProviderError` keeps its identity — the same instance comes back, so
  * a subclass (`SpendCapExceededError`, `PrivacyRefusedError`, …) still matches
- * the caller's `instanceof` — with its `usage` replaced by the sum. Anything
- * else is returned as it is: wrapping it would change the error type a caller
- * catches, and only a `ProviderError` has a place to carry usage.
+ * the caller's `instanceof` — with its `usage` replaced by the sum.
+ *
+ * Any other error has nowhere to carry usage, so when the earlier attempts
+ * were billed it is wrapped in a `ProviderError` (code
+ * `structured_retry_failed`, the original as `cause`, same message) rather
+ * than dropping that bill (#1260). With nothing billed it is returned as it
+ * is, so the caller sees exactly what was thrown.
  */
 function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown {
-  if (!(err instanceof ProviderError)) return err;
+  if (!(err instanceof ProviderError)) {
+    const usage = billedOrUndefined(sumUsage(earlier));
+    if (!usage) return err;
+    const wrapped = new ProviderError(err instanceof Error ? err.message : String(err), {
+      code: 'structured_retry_failed',
+      retriable: false,
+      cause: err,
+      usage,
+    });
+    if (err instanceof Error && err.stack) wrapped.stack = err.stack;
+    return wrapped;
+  }
   const usage = billedOrUndefined(sumUsage([...earlier, err.usage ?? null]));
   if (!usage) return err;
   // `usage` is readonly to callers; this is the one place that extends it.

@@ -456,7 +456,7 @@ describe('runStructuredCompletion', () => {
       });
     });
 
-    it('leaves the service tier off when the attempts were served at different tiers', async () => {
+    it('prices mixed tiers at priority when any attempt was served at it', async () => {
       const chat = vi
         .fn()
         .mockResolvedValueOnce({
@@ -466,7 +466,35 @@ describe('runStructuredCompletion', () => {
         })
         .mockResolvedValueOnce({
           content: 'still no',
-          usage: { inputTokens: 120, outputTokens: 30, serviceTier: 'standard' },
+          usage: { inputTokens: 120, outputTokens: 30 },
+          finishReason: 'stop',
+        });
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect((err as ProviderError).usage).toEqual({
+        inputTokens: 220,
+        outputTokens: 70,
+        serviceTier: 'priority',
+      });
+    });
+
+    it('prices a flex-and-standard mix at standard', async () => {
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40, serviceTier: 'flex' },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: 'still no',
+          usage: { inputTokens: 120, outputTokens: 30 },
           finishReason: 'stop',
         });
       const provider = { chat } as unknown as Parameters<
@@ -480,13 +508,39 @@ describe('runStructuredCompletion', () => {
       expect((err as ProviderError).usage).toEqual({ inputTokens: 220, outputTokens: 70 });
     });
 
-    it('rethrows a non-provider retry error unchanged', async () => {
-      const retryError = new TypeError('parse blew up');
+    it("wraps a non-provider retry error so the first attempt's tokens survive", async () => {
+      const retryError = new DOMException('The operation timed out.', 'TimeoutError');
       const chat = vi
         .fn()
         .mockResolvedValueOnce({
           content: 'no',
           usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(ProviderError);
+      const pe = err as ProviderError;
+      expect(pe.code).toBe('structured_retry_failed');
+      expect(pe.message).toBe('The operation timed out.');
+      expect(pe.cause).toBe(retryError);
+      expect(pe.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
+    });
+
+    it('rethrows a non-provider retry error unchanged when nothing was billed', async () => {
+      const retryError = new TypeError('parse blew up');
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 0, outputTokens: 0 },
           finishReason: 'stop',
         })
         .mockRejectedValueOnce(retryError);

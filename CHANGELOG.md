@@ -23,11 +23,13 @@ release process.
   `ProviderError` (code `structured_output_invalid`) whose `usage` is the
   tokens both attempts were billed, and `onFinalFailure` receives that usage
   as `(usage?: LlmUsage) => Error`. An existing `() => Error` still fits. When
-  the retry throws a `ProviderError`, it is rethrown with the first attempt's
-  tokens added to its `usage`. The evaluation summary now logs that cost on
-  failure. **A fork caller that logs cost** should read
+  the retry throws a `ProviderError`, the same instance is rethrown with the
+  first attempt's tokens added to its `usage`. Any other retry error is
+  wrapped in a `ProviderError` (code `structured_retry_failed`, original as
+  `cause`) when the first attempt was billed. The evaluation summary now logs
+  that cost on failure. **A fork caller that logs cost** should read
   `err instanceof ProviderError ? err.usage : undefined` on its error path, as
-  the engine's callers do.
+  `completeEvaluationSession` does.
 
 ## [0.21.0] — 2026-11-26
 
