@@ -610,6 +610,33 @@ describe('deleteDocument', () => {
 describe('rechunkDocument', () => {
   beforeEach(() => vi.resetAllMocks());
 
+  it('rebuilds a document with no raw content in position order, not chunkKey order (t-1106)', async () => {
+    // The query returns chunkKey order, so `alpha` comes before `zeta`; the
+    // document put `zeta` first, and only position records that.
+    vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue({
+      ...makeDocument({ id: 'doc-rechunk', name: 'My Doc', status: 'ready' }),
+      chunks: [
+        { chunkKey: 'doc-alpha-0', content: 'Second', position: 1 },
+        { chunkKey: 'doc-zeta-0', content: 'First', position: 0 },
+      ],
+    } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
+    vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 2 });
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+
+    await rechunkDocument('doc-rechunk');
+
+    // Re-chunking saves this order as the new rows' positions, so a chunkKey
+    // order here would be stored as if it were the document's.
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(
+      'First\n\n---\n\nSecond',
+      'My Doc',
+      'doc-rechunk'
+    );
+  });
+
   it('loads existing document with chunks, reconstructs content, and re-processes successfully', async () => {
     const existingDoc = {
       ...makeDocument({ id: 'doc-rechunk', name: 'My Doc', status: 'ready' }),

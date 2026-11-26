@@ -504,6 +504,10 @@ function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown
   // Start from the error's own usage so counters `sumUsage` does not add
   // (reasoning tokens, server-tool calls) survive; the summed fields win.
   const usage: LlmUsage = { ...err.usage, ...summed };
+  // No tier on the sum means standard. Left alone, the error's own tier would
+  // survive the spread, and a retry served at flex would price the standard
+  // first attempt at flex too.
+  if (!summed.serviceTier) delete usage.serviceTier;
   // `usage` is readonly to callers; this is the one place that extends it.
   Object.defineProperty(err, 'usage', {
     value: usage,

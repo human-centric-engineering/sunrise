@@ -18,8 +18,9 @@ import { prisma } from '@/lib/db/client';
  * to that suffix, parsed and sorted numerically (the lexicographic sort the
  * rest of the codebase uses puts `-10` before `-2`), with the key itself as a
  * stable tie-break. That is document order for a document with one chunk per
- * section or a single section; a multi-section one is in document order once
- * it is re-chunked.
+ * section or a single section. Re-chunking writes every row's position, in
+ * true order when the document still holds its raw content; without it the
+ * old rows' order is all there is, and that is what gets stored.
  *
  * FIDELITY. This is the INGESTED text, not the source file: the chunker can
  * drop a fragment that fits no chunk, which is exactly what the Coverage
@@ -34,16 +35,24 @@ export async function rebuildTextFromChunks(
     select: { chunkKey: true, content: true, position: true },
   });
 
-  // All or nothing: a document's chunks are replaced together, so a mix means
-  // something wrote rows by hand, and the suffix is the only order every row has.
-  const ordered = chunks.every((chunk) => typeof chunk.position === 'number')
-    ? [...chunks].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-    : sortByKeySuffix(chunks);
+  const ordered = byPosition(chunks) ?? sortByKeySuffix(chunks);
 
   return {
     text: ordered.map((c) => c.content).join('\n\n'),
     chunkCount: ordered.length,
   };
+}
+
+/**
+ * A document's chunks in document order, or `null` when any row has no
+ * `position` (written before t-1106) and so the true order is not stored.
+ *
+ * All or nothing: a document's chunks are replaced together, so a mix means
+ * something wrote rows by hand, and no single order covers every row.
+ */
+export function byPosition<T extends { position: number | null }>(chunks: T[]): T[] | null {
+  if (!chunks.every((chunk) => typeof chunk.position === 'number')) return null;
+  return [...chunks].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 }
 
 /** The pre-t-1106 order: the numeric `-N` suffix of each `chunkKey`. */

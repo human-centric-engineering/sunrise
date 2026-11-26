@@ -35,6 +35,7 @@ import {
 import type { AiKnowledgeDocument } from '@/types/prisma';
 import { requireOrgId } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { byPosition } from '@/lib/orchestration/knowledge/document-text';
 
 /**
  * Default knowledge base id used as the FK target for every uploaded
@@ -1250,11 +1251,15 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
     return rest;
   }
 
-  // Prefer stored original content; fall back to lossy chunk reconstruction
+  // Prefer stored original content; fall back to lossy chunk reconstruction.
+  // The rebuilt text is re-chunked and its order saved as each new row's
+  // `position`, so it has to be document order when that is known (t-1106):
+  // `chunkKey` order would scramble it, and the scramble would then be stored
+  // as if it were true. Rows that predate `position` keep `chunkKey` order.
   const meta = parseDocumentMetadata(document.metadata);
   const content = meta?.rawContent?.trim()
     ? meta.rawContent
-    : document.chunks.map((c) => c.content).join('\n\n---\n\n');
+    : (byPosition(document.chunks) ?? document.chunks).map((c) => c.content).join('\n\n---\n\n');
 
   // Set status to processing
   await prisma.aiKnowledgeDocument.update({

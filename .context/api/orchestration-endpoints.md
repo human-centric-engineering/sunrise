@@ -866,8 +866,10 @@ the chunks are (t-1106). Neither `chunkKey` order works for a whole document:
 the lexicographic sort used everywhere else sorts by section slug and puts
 `-10` before `-2`, and the numeric `-N` suffix restarts in each section. A
 document whose rows predate `position` falls back to that suffix, which is in
-order only for a document of one section or one chunk per section; re-chunking
-it writes every row's position.
+order only for a document of one section or one chunk per section.
+Re-chunking writes every row's position: in true order when the document still
+holds `metadata.rawContent`, otherwise in the order of the rows it replaces
+(`position` when they have it, `chunkKey` when they do not).
 
 The rebuild is the **ingested** text, not the source file — the chunker can
 drop a fragment that fits no chunk, which is what the Coverage column reports.
