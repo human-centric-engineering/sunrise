@@ -3,7 +3,8 @@
  *
  * GET /api/v1/admin/orchestration/knowledge/documents/:id/chunks
  *
- * Returns all chunks for a given document, ordered by creation.
+ * Returns all chunks for a given document, in document order: the order a
+ * download rebuilds the text in (`byPosition`, else `sortByKeySections`).
  *
  * Authentication: Admin role required.
  */
@@ -15,6 +16,7 @@ import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
+import { byPosition, sortByKeySections } from '@/lib/orchestration/knowledge/document-text';
 
 const documentMetaSchema = z
   .object({
@@ -44,11 +46,12 @@ export const GET = withAdminAuth<{ id: string }>(
     const document = await prisma.aiKnowledgeDocument.findUnique({ where: { id } });
     if (!document) throw new NotFoundError(`Document ${id} not found`);
 
-    const chunks = await prisma.aiKnowledgeChunk.findMany({
+    const rows = await prisma.aiKnowledgeChunk.findMany({
       where: { documentId: id },
-      orderBy: { chunkKey: 'asc' },
       select: {
         id: true,
+        chunkKey: true,
+        position: true,
         content: true,
         chunkType: true,
         patternNumber: true,
@@ -58,6 +61,13 @@ export const GET = withAdminAuth<{ id: string }>(
         estimatedTokens: true,
       },
     });
+    // Document order, the same order a download rebuilds the text in. A
+    // `chunkKey` sort is lexicographic: it puts `-10` before `-2` and orders
+    // sections by slug (t-1111). `chunkKey` and `position` are read only to
+    // sort, and left out of the response.
+    const chunks = (byPosition(rows) ?? sortByKeySections(rows)).map(
+      ({ chunkKey: _chunkKey, position: _position, ...chunk }) => chunk
+    );
 
     // Surface the coverage metric + warnings the chunk pipeline wrote into
     // `document.metadata` (see lib/orchestration/knowledge/coverage.ts). The

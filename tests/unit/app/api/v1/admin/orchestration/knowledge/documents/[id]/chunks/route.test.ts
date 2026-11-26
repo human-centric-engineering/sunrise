@@ -12,6 +12,7 @@
  * - Unauthenticated request → 401
  * - Non-admin user → 403
  * - Empty chunks array → 200
+ * - Document order, not lexicographic chunkKey order (t-1111)
  *
  * @see app/api/v1/admin/orchestration/knowledge/documents/[id]/chunks/route.ts
  */
@@ -75,6 +76,8 @@ describe('GET /knowledge/documents/:id/chunks', () => {
     const mockChunks = [
       {
         id: 'chunk-1',
+        chunkKey: 'cot-overview',
+        position: 0,
         content: 'First chunk content',
         chunkType: 'pattern_overview',
         patternNumber: 1,
@@ -86,6 +89,8 @@ describe('GET /knowledge/documents/:id/chunks', () => {
       },
       {
         id: 'chunk-2',
+        chunkKey: 'cot-implementation',
+        position: 1,
         content: 'Second chunk content',
         chunkType: 'pattern_section',
         patternNumber: 1,
@@ -111,6 +116,58 @@ describe('GET /knowledge/documents/:id/chunks', () => {
     expect(body.data.chunks).toHaveLength(2);
     expect(body.data.chunks[0].content).toBe('First chunk content');
     expect(body.data.chunks[1].chunkType).toBe('pattern_section');
+  });
+
+  describe('document order (t-1111)', () => {
+    // 12 chunks of one section, as the database hands them back sorted by
+    // chunkKey: lexicographic, so -10 and -11 sit between -1 and -2.
+    const lexicographic = [0, 1, 10, 11, 2, 3, 4, 5, 6, 7, 8, 9];
+    const row = (n: number, position: number | null) => ({
+      id: `chunk-${n}`,
+      chunkKey: `handbook-${VALID_CUID}-overview-${n}`,
+      position,
+      content: `part ${n}`,
+      chunkType: 'text',
+      patternNumber: null,
+      patternName: null,
+      section: 'Overview',
+      category: null,
+      keywords: null,
+      estimatedTokens: 10,
+    });
+
+    beforeEach(() => {
+      vi.mocked(prisma.aiKnowledgeDocument.findUnique).mockResolvedValue({
+        id: VALID_CUID,
+      } as never);
+    });
+
+    it('lists a 12-chunk section 0 to 11 by position', async () => {
+      vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue(
+        lexicographic.map((n) => row(n, n)) as never
+      );
+
+      const body = await (await callGET(VALID_CUID)).json();
+
+      expect(body.data.chunks.map((c: { content: string }) => c.content)).toEqual(
+        Array.from({ length: 12 }, (_, n) => `part ${n}`)
+      );
+      // Read only to sort: the response shape is unchanged.
+      expect(body.data.chunks[0]).not.toHaveProperty('chunkKey');
+      expect(body.data.chunks[0]).not.toHaveProperty('position');
+    });
+
+    it('lists rows written before position existed in numeric -N order', async () => {
+      vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue(
+        lexicographic.map((n) => row(n, null)) as never
+      );
+
+      const body = await (await callGET(VALID_CUID)).json();
+
+      expect(body.data.chunks.map((c: { content: string }) => c.content)).toEqual(
+        Array.from({ length: 12 }, (_, n) => `part ${n}`)
+      );
+    });
   });
 
   it('returns 404 when document does not exist', async () => {

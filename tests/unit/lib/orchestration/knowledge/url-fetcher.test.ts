@@ -373,6 +373,19 @@ describe('fetchDocumentFromUrl', () => {
     expect(result.fileName).toBe('guide.md');
   });
 
+  it('imports an unsupported extension served as text/plain as text (widened by #1214)', async () => {
+    // Before #1214 this was refused as `Unsupported file type ".js"`. The
+    // content type now decides, and the file is read as plain text: nothing
+    // executes it, it is chunked like any other .txt.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeFetchResponse({ contentType: 'text/plain' }) as unknown as Response
+    );
+
+    const result = await fetchDocumentFromUrl('https://example.com/static/payload.js');
+
+    expect(result.fileName).toBe('payload.js.txt');
+  });
+
   // ── Unsupported extension / type ────────────────────────────────────────
 
   it('throws when URL has unsupported extension (.exe)', async () => {

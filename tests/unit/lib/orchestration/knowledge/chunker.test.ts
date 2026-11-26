@@ -681,6 +681,46 @@ function csvParsed(rowCount: number): ParsedDocument {
   };
 }
 
+describe('chunk keys across two same-named documents (t-1110)', () => {
+  // Two cuid()s minted in the same millisecond: same `c` + timestamp head,
+  // different counter and random tail. The first 8 characters match, which is
+  // all the keys used to carry, so the second document's insert hit
+  // @@unique([orgId, chunkKey]) and the upload failed.
+  const FIRST_ID = 'cmwxg2j1e000h08jnieouin0h';
+  const SECOND_ID = 'cmwxg2j1e000i08jnk3vq9z2p';
+
+  it('gives the two documents disjoint markdown chunk keys', async () => {
+    expect(FIRST_ID.slice(0, 8)).toBe(SECOND_ID.slice(0, 8));
+    const content = `
+## Overview
+
+The overview section has enough words in it to meet the minimum token threshold for a chunk.
+
+## Details
+
+The details section also has enough words in it to meet the minimum token threshold.
+`.trim();
+
+    const first = await chunkMarkdownDocument(content, 'Handbook', FIRST_ID);
+    const second = await chunkMarkdownDocument(content, 'Handbook', SECOND_ID);
+
+    expect(first.length).toBeGreaterThan(0);
+    const firstKeys = new Set(first.map((c) => c.id));
+    expect(second.filter((c) => firstKeys.has(c.id))).toEqual([]);
+    expect(first[0].id.startsWith(`handbook-${FIRST_ID}-`)).toBe(true);
+  });
+
+  it('gives the two documents disjoint CSV chunk keys', () => {
+    const parsed = csvParsed(3);
+
+    const first = chunkCsvDocument(parsed, 'spending', FIRST_ID);
+    const second = chunkCsvDocument(parsed, 'spending', SECOND_ID);
+
+    const firstKeys = new Set(first.map((c) => c.id));
+    expect(second.filter((c) => firstKeys.has(c.id))).toEqual([]);
+  });
+});
+
 describe('chunkCsvDocument', () => {
   it('emits one chunk per row when row count is at or below the batch threshold', async () => {
     const parsed = csvParsed(50);

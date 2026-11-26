@@ -53,6 +53,8 @@ const INVALID_ID = 'not-a-cuid';
 const MOCK_CHUNKS = [
   {
     id: 'chunk-1',
+    chunkKey: 'cot-doc-overview',
+    position: 0,
     content: 'First chunk content',
     chunkType: 'pattern_overview',
     patternNumber: 1,
@@ -64,6 +66,8 @@ const MOCK_CHUNKS = [
   },
   {
     id: 'chunk-2',
+    chunkKey: 'cot-doc-implementation',
+    position: 1,
     content: 'Second chunk content',
     chunkType: 'pattern_section',
     patternNumber: 1,

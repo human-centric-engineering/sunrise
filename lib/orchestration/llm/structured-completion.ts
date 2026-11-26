@@ -48,7 +48,7 @@
  */
 
 import { calculateCost } from '@/lib/orchestration/llm/cost-tracker';
-import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { ProviderError, toProviderErrorWithUsage } from '@/lib/orchestration/llm/provider';
 import type {
   LlmFinishReason,
   LlmMessage,
@@ -476,28 +476,49 @@ function billedOrUndefined(usage: LlmUsage): LlmUsage | undefined {
 
 /**
  * `err`, carrying the tokens `earlier` attempts were billed for on top of its
- * own. A `ProviderError` keeps its identity — the same instance comes back, so
- * a subclass (`SpendCapExceededError`, `PrivacyRefusedError`, …) still matches
- * the caller's `instanceof` — with its `usage` replaced by the sum.
+ * own.
+ *
+ * A `ProviderError` comes back as a copy with the same prototype, so a
+ * subclass (`SpendCapExceededError`, `PrivacyRefusedError`, …) still matches
+ * the caller's `instanceof`, with `usage` set to the sum. It is a copy, not
+ * the caught instance edited in place, because an instance can be thrown more
+ * than once (a memoised refusal, an error a breaker holds): editing it would
+ * add the first attempt's tokens again on every pass (t-1109).
+ * The subclass constructor does not run on the copy, so a subclass must keep
+ * its state in own properties: a `#private` field or WeakMap-keyed state
+ * would not survive the copy.
  *
  * Any other error has nowhere to carry usage, so when the earlier attempts
- * were billed it is wrapped in a `ProviderError` (code
- * `structured_retry_failed`, the original as `cause`, same message) rather
- * than dropping that bill (#1260). With nothing billed it is returned as it
- * is, so the caller sees exactly what was thrown.
+ * were billed it is wrapped the way an adapter wraps it (`toProviderError`:
+ * code, HTTP status and `retriable` read from the error, the original as
+ * `cause`) rather than dropping that bill (#1260). The wrapper keeps the
+ * original's `name` and stack, so a caller testing `err.name === 'TimeoutError'`
+ * or retrying a 429 still matches whichever attempt failed (t-1109). With
+ * nothing billed it is returned as it is, so the caller sees exactly what was
+ * thrown.
  */
 function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown {
   if (!(err instanceof ProviderError)) {
     const usage = billedOrUndefined(sumUsage(earlier));
     if (!usage) return err;
-    const wrapped = new ProviderError(err instanceof Error ? err.message : String(err), {
-      code: 'structured_retry_failed',
-      retriable: false,
-      cause: err,
-      usage,
-    });
-    if (err instanceof Error && err.stack) wrapped.stack = err.stack;
-    return wrapped;
+    // A cancel is wrapped with code 'aborted', as the adapters raise one, so a
+    // classifier that reads a ProviderError's code before its name still sees
+    // a cancel rather than a provider failure.
+    const base =
+      err instanceof Error && err.name === 'AbortError'
+        ? new ProviderError(err.message || 'request aborted', {
+            code: 'aborted',
+            retriable: false,
+            cause: err,
+            usage,
+          })
+        : toProviderErrorWithUsage(err, String(err), usage);
+    if (err instanceof Error) {
+      // The default 'Error' says nothing; keep the wrapper's own name then.
+      if (err.name && err.name !== 'Error') base.name = err.name;
+      if (err.stack) base.stack = err.stack;
+    }
+    return base;
   }
   const summed = billedOrUndefined(sumUsage([...earlier, err.usage ?? null]));
   if (!summed) return err;
@@ -508,14 +529,29 @@ function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown
   // survive the spread, and a retry served at flex would price the standard
   // first attempt at flex too.
   if (!summed.serviceTier) delete usage.serviceTier;
-  // `usage` is readonly to callers; this is the one place that extends it.
-  Object.defineProperty(err, 'usage', {
+  // Build a real Error with the same prototype (so it keeps the native error
+  // slot that `util.types.isNativeError`, `Error.isError` and structuredClone
+  // look for) without running the subclass constructor, whose arguments vary.
+  // Then copy every own property (message, name, code, a subclass's own
+  // fields) and set `usage` on the copy. `usage` is readonly to callers; this
+  // is the one place that sets it.
+  const copy = Reflect.construct(Error, [err.message], err.constructor) as ProviderError;
+  Object.defineProperties(copy, Object.getOwnPropertyDescriptors(err));
+  // V8 keeps `stack` behind an accessor that reads the original's internal
+  // slot, so a copied accessor reads the wrong one. Set it as a plain value.
+  Object.defineProperty(copy, 'stack', {
+    value: err.stack,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(copy, 'usage', {
     value: usage,
     enumerable: true,
     configurable: true,
     writable: false,
   });
-  return err;
+  return copy;
 }
 
 /** `tokenUsage` and `costUsd` for the attempts a result was billed for. */
