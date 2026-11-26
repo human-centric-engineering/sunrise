@@ -94,7 +94,13 @@ Every PR in the programme is reviewed against these.
    opt-in and off by default: what an org has (entitlement switches, quotas
    and budgets), meters, and self-serve signup into an org of one's own
    (decision of 2026-11-16; switches shipped in §135, see
-   [`entitlements.md`](../tenancy/entitlements.md)). Plans, prices, what an
+   [`entitlements.md`](../tenancy/entitlements.md)). **Billing is part of
+   that mechanism (D1, 2026-11-16; §139):** the plan registry and applying a
+   plan to an org, a payment-provider adapter with Stripe in core behind
+   `BILLING_PROVIDER`, checkout, the customer portal, the signed webhook and
+   its idempotency, lapsed subscriptions, and reporting each period's usage.
+   See [`billing.md`](../billing/billing.md). The plans themselves (what each
+   decides), prices, which meters are billed and their overage rule, what an
    app counts, org branding, signup UX, and any team/workspace layer beneath
    the org are fork-owned.
 
@@ -465,7 +471,9 @@ A fork owns:
 - **The product layer** — plans, prices, what it counts, signup UX, org
   branding, and any team/workspace layer beneath the org. What an org has
   is not the fork's to store: it registers its switches in
-  `lib/app/entitlements.ts` (principle 8, §135).
+  `lib/app/entitlements.ts` (principle 8, §135). Taking payment is not the
+  fork's to build either: it registers its plans in `lib/app/billing.ts`
+  ([`billing.md`](../billing/billing.md), §139).
 - **Tenant arrival beyond the session** — a subdomain or path scheme via
   `lib/app/tenant-resolver.ts`, with the cookie/CORS/CSP consequences that
   choice carries.
@@ -503,5 +511,5 @@ included, stays global. A per-org monthly budget cap held in `Org.settings`
 (`quotas`) is a different thing and **is** in scope: §110 t-788 shipped it,
 beneath the global cap · per-tenant storage
 backends or databases (rungs 4/6 — a dedicated deployment is the answer) ·
-plans, invoicing, payments (fork product) · schema-per-tenant and cell
-tooling.
+schema-per-tenant and cell tooling. (Plans and payments were listed here as
+fork product until D1 moved the mechanism into the platform: see principle 8.)

@@ -511,9 +511,12 @@ names, not personal data.
 
 - **Metering what was used.** A meter counts on demand from the app's own
   tables; nothing records usage events, and nothing resets at a period's end.
-- **A new org's starting switches.** No hook runs when an org is created yet;
-  that is §134's org-created seam.
-- **Billing.** Plans that write these switches, and payment, are §139.
+- **A new org's starting switches.** Not set here. An app sets them from an
+  org-created hook (`registerOrgCreatedHook()` in `lib/app/org-created.ts`,
+  §134), which runs for every new org however it is made, by calling
+  `setOrgSwitches()`.
+- **Billing.** Plans that write these switches, and payment, are §139:
+  [`../billing/billing.md`](../billing/billing.md).
 
 ## Related
 
