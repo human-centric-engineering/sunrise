@@ -586,8 +586,9 @@ jobs:
       # (`scripts/ci/scoped-tests.ts`) — the tests that read the tree as text,
       # which no import chain reaches (#1351). A bare `vitest --changed` here
       # skipped them, so a PR adding a model with a user FK passed CI without
-      # `export-sources.test.ts` ever running. `--no-fetch` because the base is
-      # given and checkout already fetched full history.
+      # `export-sources.test.ts` ever running. `--no-fetch` is for clarity only:
+      # the runner already skips the fetch when `--base` is given, and checkout
+      # fetched full history.
       #
       # --passWithNoTests is forwarded to vitest. The always-run list keeps the
       # run non-empty, but it is kept so a fork that empties the list still

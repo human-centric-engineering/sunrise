@@ -153,7 +153,8 @@ another before opening the PR moves those files out of the floor's reach — a
 clean merge of your own branch resolves nothing, so it authors nothing. That is
 deliberate evasion rather than an accident, but be clear that nothing downstream
 catches it: **no CI job runs coverage.** `test-full` is `vitest run --shard`,
-`test-changed` is `vitest run --changed`, and neither passes `--coverage`. This
+`test-changed` runs the scoped runner (`scripts/ci/run-scoped-tests.ts`), and
+neither passes `--coverage`. This
 local floor is the only place the per-file rule is applied, so what it skips is
 skipped. The alternative was a gate that is wrong for every fork on every sync.
 
@@ -206,8 +207,11 @@ graph:
 
 - `package-lock.json`, so a dependency bump still runs everything
 - `{vitest,vite}.config.*`
-- `tests/setup.ts` and `tsconfig.json`, which reach every test but are imported
-  by none
+- `tsconfig.json`, which reaches every test but is imported by none, so an edit
+  to it selected no tests at all
+- `tests/setup.ts`. Vitest already reruns everything when a `setupFiles` entry
+  changes, so this one is belt-and-braces: it keeps the rule explicit and
+  covers the `recordDependencies` resolver too
 
 `package.json` is left out because almost every edit to it is a script line,
 which no test imports. The tests that read it as text are in `ALWAYS_RUN_TESTS`.

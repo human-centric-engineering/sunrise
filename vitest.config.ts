@@ -168,8 +168,11 @@ export default defineConfig({
     //   - the lockfile, so a dependency bump still runs everything. It is what
     //     kept bumps on the full run before, by way of their `package.json`
     //     edit; without it a bump would go scoped.
-    //   - `tests/setup.ts` and `tsconfig.json`, which reach every test but are
-    //     imported by none, so an edit to either selected no tests at all.
+    //   - `tsconfig.json`, which reaches every test but is imported by none,
+    //     so an edit to it selected no tests at all.
+    //   - `tests/setup.ts`. Vitest already reruns everything when a
+    //     `setupFiles` entry changes, so this is belt-and-braces: it keeps the
+    //     rule explicit and also covers the `recordDependencies` resolver.
     //
     // Vitest matches these against absolute paths, so each needs the `**/`.
     // `tests/unit/vitest-rerun-triggers.test.ts` pins the list.

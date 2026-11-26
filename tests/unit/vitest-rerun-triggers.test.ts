@@ -75,11 +75,16 @@ describe('forceRerunTriggers', () => {
   });
 });
 
-describe('the tests that read package.json as text always run', () => {
+describe('the known package.json readers are in ALWAYS_RUN_TESTS', () => {
   // With `package.json` off the trigger list, these are reached on a script
   // edit only through `ALWAYS_RUN_TESTS`. Each reads the repo's own
   // `package.json` from disk; tests that mock `fs` or write a fixture do not
   // belong here.
+  //
+  // This pins the readers known when the trigger was dropped (#1331). It does
+  // not find new ones: the list is written, not derived, for the reasons in
+  // the header of `scripts/ci/scoped-tests.ts`. A new reader has to be added
+  // to `ALWAYS_RUN_TESTS` (or `lib/app/ci.ts` in a fork) by hand.
   it.each([
     'tests/unit/scripts/run-capped.test.ts',
     'tests/unit/scripts/ci/validate-changed.test.ts',
