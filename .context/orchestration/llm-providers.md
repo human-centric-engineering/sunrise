@@ -786,6 +786,13 @@ Because the adapters raise `truncated_no_output` before returning, the runner tr
 
 The caller's `onFinalFailure` hook is deliberately **not** consulted on a truncation, because that hook exists to phrase "the model broke my contract" and on a truncation that premise is false.
 
+The other two failure exits keep the bill too (#1260):
+
+- **Neither attempt parses.** The default error is a `ProviderError` with code `structured_output_invalid` and `usage` set to both attempts' tokens. `onFinalFailure` receives the same usage (`(usage?: LlmUsage) => Error`), so a caller's own error can carry it.
+- **The retry throws.** A `ProviderError` is rethrown with the first attempt's tokens added to its own `usage`. Its message, code, status, retriability, cause and stack are kept. Any other error is rethrown unchanged, because only a `ProviderError` has somewhere to carry usage.
+
+In each case `usage` is left off, not zeroed, when the host reported none. A caller that logs cost reads `err instanceof ProviderError ? err.usage : undefined` on its error path, as the evaluation summary in `complete-session.ts` does.
+
 `StructuredCompletionResult.finishReason` carries the finish reason of the attempt that produced the value. Check it for `'length'` even on success: a lenient `parse` can accept content that happened to be well-formed where it was cut — a truncated array of results reads as a complete short one. Caveat: on an Anthropic model that takes the extraction tool, a `responseSchema` call can never read `'length'`, because that adapter reports `'stop'` for a structured extraction (having already thrown on the truncating case).
 
 ### Reasoning-token observability
