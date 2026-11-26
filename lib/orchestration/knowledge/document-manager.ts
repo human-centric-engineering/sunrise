@@ -504,12 +504,14 @@ async function insertChunks(
         id, "chunkKey", "documentId", content, embedding,
         "chunkType", "patternNumber", "patternName",
         section, keywords, "estimatedTokens", metadata,
-        "embeddingModel", "embeddingProvider", "embeddingDimension", "embeddedAt", "orgId"
+        "embeddingModel", "embeddingProvider", "embeddingDimension", "embeddedAt", "orgId",
+        position
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3, $4::vector,
         $5, $6, $7, $8, $9, $10, $11::jsonb,
         $12, $13, $14, $15,
-        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
+        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2),
+        $16
       )`,
       chunk.id,
       documentId,
@@ -525,7 +527,10 @@ async function insertChunks(
       provenance.model,
       provenance.provider,
       provenance.dimensions,
-      provenance.embeddedAt
+      provenance.embeddedAt,
+      // Every caller passes the whole document's chunk list in order, so the
+      // index is the chunk's place in the document (t-1106).
+      i
     );
   }
 }

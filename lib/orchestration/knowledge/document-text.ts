@@ -8,13 +8,18 @@ import { prisma } from '@/lib/db/client';
  * full copies of itself forever — so the chunk rows are the only surviving
  * copy of the text of a finished document.
  *
- * ORDERING. Chunks have no index column; document order lives in the numeric
- * suffix of `chunkKey` (`…-my-section-12`). The rest of the codebase sorts by
- * `chunkKey` lexicographically, which is fine for a list but is NOT document
- * order — it sorts by the section slug first, and `-10` before `-2`. Rebuilding
- * text needs true order, so the suffix is parsed and sorted numerically, with
- * the lexicographic key as a stable tie-break for any row whose key does not
- * end in a number.
+ * ORDERING. A chunk written since t-1106 carries `position`, its place in the
+ * document's chunk list, and a document whose rows all carry it is rebuilt in
+ * that order. The `chunkKey` suffix (`…-my-section-12`) cannot order a whole
+ * document: it restarts in each section, so sorting by it puts every
+ * section's first chunk before any section's second.
+ *
+ * A row written before `position` existed has none. Its document falls back
+ * to that suffix, parsed and sorted numerically (the lexicographic sort the
+ * rest of the codebase uses puts `-10` before `-2`), with the key itself as a
+ * stable tie-break. That is document order for a document with one chunk per
+ * section or a single section; a multi-section one is in document order once
+ * it is re-chunked.
  *
  * FIDELITY. This is the INGESTED text, not the source file: the chunker can
  * drop a fragment that fits no chunk, which is exactly what the Coverage
@@ -26,27 +31,33 @@ export async function rebuildTextFromChunks(
 ): Promise<{ text: string; chunkCount: number }> {
   const chunks = await prisma.aiKnowledgeChunk.findMany({
     where: { documentId },
-    select: { chunkKey: true, content: true },
+    select: { chunkKey: true, content: true, position: true },
   });
 
+  // All or nothing: a document's chunks are replaced together, so a mix means
+  // something wrote rows by hand, and the suffix is the only order every row has.
+  const ordered = chunks.every((chunk) => typeof chunk.position === 'number')
+    ? [...chunks].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    : sortByKeySuffix(chunks);
+
+  return {
+    text: ordered.map((c) => c.content).join('\n\n'),
+    chunkCount: ordered.length,
+  };
+}
+
+/** The pre-t-1106 order: the numeric `-N` suffix of each `chunkKey`. */
+function sortByKeySuffix<T extends { chunkKey: string }>(chunks: T[]): T[] {
   const indexed = chunks.map((chunk) => {
     // A repeated heading's chunk carries a `~N` dedupe suffix after its index
     // (chunker `dedupeChunkIds`, #1215); read the index through it.
     const match = /-(\d+)(?:~\d+)?$/.exec(chunk.chunkKey);
-    return {
-      // No trailing index (a hand-seeded or legacy key) sorts last rather than
-      // silently landing at position 0 and corrupting the order of the rest.
-      order: match ? Number.parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER,
-      chunkKey: chunk.chunkKey,
-      content: chunk.content,
-    };
+    // No trailing index (a hand-seeded or legacy key) sorts last rather than
+    // silently landing at position 0 and corrupting the order of the rest.
+    return { order: match ? Number.parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER, chunk };
   });
   indexed.sort((a, b) =>
-    a.order !== b.order ? a.order - b.order : a.chunkKey.localeCompare(b.chunkKey)
+    a.order !== b.order ? a.order - b.order : a.chunk.chunkKey.localeCompare(b.chunk.chunkKey)
   );
-
-  return {
-    text: indexed.map((c) => c.content).join('\n\n'),
-    chunkCount: indexed.length,
-  };
+  return indexed.map((entry) => entry.chunk);
 }

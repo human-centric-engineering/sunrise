@@ -406,6 +406,32 @@ describe('uploadDocument', () => {
     expect(sql).toContain('(SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)');
   });
 
+  it('writes each chunk its place in the document as position (t-1106)', async () => {
+    const chunks = [makeChunk({ id: 'c1' }), makeChunk({ id: 'c2' }), makeChunk({ id: 'c3' })];
+    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(
+      makeDocument({ status: 'processing' }) as never
+    );
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue(chunks);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1], [0.2], [0.3]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(
+      makeDocument({ status: 'ready', chunkCount: 3 }) as never
+    );
+
+    await uploadDocument('# Doc', 'doc.md', 'user-001');
+
+    const calls = vi.mocked(prisma.$executeRawUnsafe).mock.calls as unknown as Array<
+      [string, ...unknown[]]
+    >;
+    expect(calls[0][0]).toMatch(/"orgId",\s*position\s*\)/);
+    // $16 is the 16th bind value; the chunker's list order is document order.
+    expect(calls.map((call) => [call[1], call[16]])).toEqual([
+      ['c1', 0],
+      ['c2', 1],
+      ['c3', 2],
+    ]);
+  });
+
   it('updates document to status ready with correct chunkCount after successful upload', async () => {
     const chunks = [makeChunk({ id: 'c1' }), makeChunk({ id: 'c2' })];
     const createdDoc = makeDocument({ id: 'doc-123', status: 'processing' });

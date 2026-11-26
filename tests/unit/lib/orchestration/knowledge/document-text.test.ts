@@ -25,6 +25,35 @@ describe('rebuildTextFromChunks', () => {
     vi.clearAllMocks();
   });
 
+  it('rebuilds a multi-section document in document order from position (t-1106)', async () => {
+    // What the chunker writes for "# Doc / ## Alpha / ## Beta", two chunks a
+    // section. The key suffix restarts per section, so sorting by it would
+    // give alpha-0, beta-0, alpha-1, beta-1 with the preamble last.
+    mockChunkFindMany.mockResolvedValue([
+      { chunkKey: 'doc-x-beta-1', content: 'beta two', position: 4 },
+      { chunkKey: 'doc-x-alpha-0', content: 'alpha one', position: 1 },
+      { chunkKey: 'doc-x-doc', content: 'preamble', position: 0 },
+      { chunkKey: 'doc-x-beta-0', content: 'beta one', position: 3 },
+      { chunkKey: 'doc-x-alpha-1', content: 'alpha two', position: 2 },
+    ]);
+
+    expect((await rebuildTextFromChunks('doc-1')).text).toBe(
+      'preamble\n\nalpha one\n\nalpha two\n\nbeta one\n\nbeta two'
+    );
+    expect(mockChunkFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ position: true }) })
+    );
+  });
+
+  it('falls back to the key suffix when any row predates position', async () => {
+    mockChunkFindMany.mockResolvedValue([
+      { chunkKey: 'doc-a-1', content: 'second', position: 0 },
+      { chunkKey: 'doc-a-0', content: 'first', position: null },
+    ]);
+
+    expect((await rebuildTextFromChunks('doc-1')).text).toBe('first\n\nsecond');
+  });
+
   it('orders chunks by the numeric suffix, not lexicographically', async () => {
     // Lexicographic order would put -10 before -2 AND sort by the section
     // slug first — either one scrambles the document.
