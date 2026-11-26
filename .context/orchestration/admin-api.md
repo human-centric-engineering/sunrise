@@ -1010,7 +1010,7 @@ Returns a summary of every distinct pattern in the knowledge base with pattern n
 curl /api/v1/admin/orchestration/knowledge/documents/<id>/chunks
 ```
 
-Returns all chunks for a document ordered by `chunkKey`. Each chunk includes `content`, `chunkType`, `patternNumber`, `patternName`, `section`, `category`, `keywords`, `estimatedTokens`. No pagination — documents are typically bounded to a few hundred chunks. 404 if document missing, 400 if malformed CUID.
+Returns all chunks for a document in document order (by `position`, else numeric `-N` within each section; see `document-ingestion.md`). Each chunk includes `content`, `chunkType`, `patternNumber`, `patternName`, `section`, `category`, `keywords`, `estimatedTokens`. No pagination — documents are typically bounded to a few hundred chunks. 404 if document missing, 400 if malformed CUID.
 
 ### Confirm preview
 
