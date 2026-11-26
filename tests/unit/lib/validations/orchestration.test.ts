@@ -3569,18 +3569,25 @@ describe('provider model capability validation', () => {
   }
 
   describe('createProviderModelSchema.capabilities', () => {
-    it.each(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation'] as const)(
-      'accepts %s as a matrix capability',
-      (capability) => {
-        const result = createProviderModelSchema.safeParse(
-          baseModel({ capabilities: [capability] })
-        );
-        expect(result.success).toBe(true);
-        if (result.success) {
-          expect(result.data.capabilities).toEqual([capability]);
-        }
+    // Every value the model form offers, written out rather than read from
+    // MODEL_CAPABILITIES so a schema that drifts from the form fails here
+    // (#1276: `vision` and `documents` were once refused).
+    it.each([
+      'chat',
+      'reasoning',
+      'embedding',
+      'audio',
+      'image',
+      'moderation',
+      'vision',
+      'documents',
+    ] as const)('accepts %s as a matrix capability', (capability) => {
+      const result = createProviderModelSchema.safeParse(baseModel({ capabilities: [capability] }));
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.capabilities).toEqual([capability]);
       }
-    );
+    });
 
     it("rejects 'unknown' — catalogue-only placeholder", () => {
       // 'unknown' is returned by inferCapability when a model id can't
@@ -3613,6 +3620,16 @@ describe('provider model capability validation', () => {
     it('accepts a widened capability on PATCH', () => {
       const result = updateProviderModelSchema.safeParse({ capabilities: ['reasoning'] });
       expect(result.success).toBe(true);
+    });
+
+    it('accepts vision and documents on PATCH (#1276)', () => {
+      const result = updateProviderModelSchema.safeParse({
+        capabilities: ['chat', 'vision', 'documents'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.capabilities).toEqual(['chat', 'vision', 'documents']);
+      }
     });
 
     it("rejects 'unknown' on PATCH", () => {
