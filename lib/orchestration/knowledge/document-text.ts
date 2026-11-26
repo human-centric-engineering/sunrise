@@ -30,7 +30,9 @@ export async function rebuildTextFromChunks(
   });
 
   const indexed = chunks.map((chunk) => {
-    const match = /-(\d+)$/.exec(chunk.chunkKey);
+    // A repeated heading's chunk carries a `~N` dedupe suffix after its index
+    // (chunker `dedupeChunkIds`, #1215); read the index through it.
+    const match = /-(\d+)(?:~\d+)?$/.exec(chunk.chunkKey);
     return {
       // No trailing index (a hand-seeded or legacy key) sorts last rather than
       // silently landing at position 0 and corrupting the order of the rest.

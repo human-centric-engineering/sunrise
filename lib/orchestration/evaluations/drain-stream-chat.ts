@@ -80,6 +80,11 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
       case 'capability_result':
         if (event.trace) toolCalls.push(event.trace);
         break;
+      case 'capability_results':
+        // A turn that calls several tools at once reports them in one batch
+        // frame; each entry carries its own trace (#1220).
+        for (const r of event.results) if (r.trace) toolCalls.push(r.trace);
+        break;
       case 'citations':
         if (Array.isArray(event.citations)) citations = event.citations;
         break;

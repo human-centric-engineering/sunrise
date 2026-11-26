@@ -227,6 +227,39 @@ describe('drainStreamChat', () => {
     expect(result.toolCalls[0]).toEqual(trace);
   });
 
+  it('accumulates every trace from a parallel capability_results batch (#1220)', async () => {
+    const traceA: ToolCallTrace = {
+      slug: 'search_knowledge_base',
+      arguments: { query: 'a' },
+      latencyMs: 10,
+      success: true,
+    };
+    const traceB: ToolCallTrace = {
+      slug: 'lookup_order',
+      arguments: { id: '42' },
+      latencyMs: 20,
+      success: false,
+    };
+    const single: ToolCallTrace = { slug: 'single', arguments: {}, latencyMs: 5, success: true };
+
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([
+        { type: 'capability_result', capabilitySlug: 'single', result: {}, trace: single },
+        {
+          type: 'capability_results',
+          results: [
+            { capabilitySlug: 'search_knowledge_base', result: {}, trace: traceA },
+            { capabilitySlug: 'untraced', result: {} },
+            { capabilitySlug: 'lookup_order', result: {}, trace: traceB },
+          ],
+        },
+      ])
+    );
+
+    const result = await drainStreamChat(baseRequest);
+    expect(result.toolCalls).toEqual([single, traceA, traceB]);
+  });
+
   it('captures tokenUsage and costUsd from the `done` event', async () => {
     mockedStreamChat.mockReturnValueOnce(
       fromEvents([

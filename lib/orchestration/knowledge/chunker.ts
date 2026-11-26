@@ -506,6 +506,24 @@ async function chunkGenericSection(
 }
 
 /**
+ * Make every chunk id in the list unique, in place. Ids come from headings, so
+ * two `## April 1, 2026` sections (or two `### Notes` under different parents)
+ * collide, and the chunk key is unique per org — the second insert would fail
+ * the whole upload (#1215). The first occurrence keeps its id; each repeat
+ * becomes `${id}~2`, `~3`, … `slugify` never emits `~`, so a suffixed id
+ * cannot clash with a natural one. Runs over the finished list so it also
+ * catches a `-i` sub-chunk suffix that clashes with a natural slug.
+ */
+function dedupeChunkIds(chunks: Chunk[]): void {
+  const seen = new Map<string, number>();
+  for (const chunk of chunks) {
+    const count = (seen.get(chunk.id) ?? 0) + 1;
+    seen.set(chunk.id, count);
+    if (count > 1) chunk.id = `${chunk.id}~${count}`;
+  }
+}
+
+/**
  * Split a markdown document into embeddable chunks.
  *
  * Handles pattern documents (with ## N. Pattern Name sections) and
@@ -521,7 +539,8 @@ async function chunkGenericSection(
  * @param content - Raw markdown content
  * @param documentName - Name of the document (used for chunk IDs)
  * @param documentId - Unique document ID (first 8 chars used in chunk keys to prevent collisions)
- * @returns Array of structured chunks ready for embedding
+ * @returns Array of structured chunks ready for embedding. Chunk ids are
+ *   unique within the document: a repeated id gets a `~N` suffix.
  */
 export async function chunkMarkdownDocument(
   content: string,
@@ -564,6 +583,8 @@ export async function chunkMarkdownDocument(
       chunks.push(...generic);
     }
   }
+
+  dedupeChunkIds(chunks);
 
   logger.info('Document chunked', {
     document: documentName,

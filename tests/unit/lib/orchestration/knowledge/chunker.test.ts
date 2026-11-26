@@ -68,6 +68,34 @@ function makeWords(tokens: number): string {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('chunkMarkdownDocument', () => {
+  // ── Repeated headings (#1215) ───────────────────────────────────────────
+
+  it('gives a repeated ## heading a unique id, keeping the first unchanged', async () => {
+    const body =
+      'Meeting notes for the day with enough words in them to stand on their own as a chunk of text.';
+    const content = `## April 1, 2026\n\n${body} First.\n\n## April 1, 2026\n\n${body} Second.\n\n## April 1, 2026\n\n${body} Third.`;
+
+    const chunks = await chunkMarkdownDocument(content, 'diary');
+    const ids = chunks.map((c) => c.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(['diary-april-1-2026', 'diary-april-1-2026~2', 'diary-april-1-2026~3']);
+    expect(chunks[1].content).toContain('Second.');
+  });
+
+  it('gives a repeated ### heading under different ## parents unique ids', async () => {
+    const body =
+      'Notes written under this heading with enough words in them to stand on their own as a chunk.';
+    const content = `## Alpha\n\n### Notes\n\n${body} A.\n\n## Beta\n\n### Notes\n\n${body} B.`;
+
+    const chunks = await chunkMarkdownDocument(content, 'doc');
+    const ids = chunks.map((c) => c.id);
+
+    expect(new Set(ids).size).toBe(ids.length);
+    const repeated = ids.filter((id) => id.includes('~'));
+    expect(repeated.length).toBeGreaterThan(0);
+  });
+
   // ── Happy-path: standard pattern document ───────────────────────────────
 
   it('should parse pattern number and name from ## N. Pattern Name header', async () => {
