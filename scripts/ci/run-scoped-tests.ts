@@ -180,8 +180,8 @@ export function changedPaths(base: string, cwd: string): { paths: string[]; fail
  * before opening the PR moves those files out of the floor's reach, because a
  * clean merge of your own branch resolves nothing. That is deliberate evasion
  * rather than something anyone does by accident — but note it is not caught
- * downstream either: no CI job runs coverage (`test-full` and `test-changed`
- * both run plain `vitest run`), so this floor is the only thing that applies
+ * downstream either: no CI job runs coverage (`test-full` runs plain `vitest
+ * run`, `test-changed` runs this runner, and neither passes `--coverage`), so this floor is the only thing that applies
  * it, and what it skips is skipped. The alternative was a gate that is wrong
  * for every fork on every sync, which is a cost paid constantly by people who
  * did nothing wrong.
@@ -252,13 +252,28 @@ export function selectChangedTests(
   // so vitest still exits 0. Existence is the property that actually matters
   // here — these strings are about to become file filters — and it is the one
   // that does not have to track vitest's glob.
-  const files: string[] = [];
+  //
+  // The `[name] ` prefix is stripped when what follows names a file, and the
+  // result de-duplicated (a file in two projects is listed twice). Before CI's
+  // `test-changed` ran this runner (#1351), refusing a prefixed line only cost
+  // a `projects` fork its local pre-flight; now it would fail every PR on a
+  // `CI_TEST_SCOPE=changed` fork. A prefixed line whose remainder is not a
+  // file is still unrecognised, so the fail-closed rule is unchanged.
+  const files = new Set<string>();
   const unrecognised: string[] = [];
   for (const line of lines(result.stdout)) {
-    if (existsSync(resolve(cwd, line))) files.push(line);
-    else unrecognised.push(line);
+    const path = existsSync(resolve(cwd, line)) ? line : withoutProjectPrefix(line, cwd);
+    if (path === null) unrecognised.push(line);
+    else files.add(path);
   }
-  return { files, failed: false, stderr: '', unrecognised };
+  return { files: [...files], failed: false, stderr: '', unrecognised };
+}
+
+/** `[name] path` → `path`, when the config declares `projects` and `path` exists. */
+function withoutProjectPrefix(line: string, cwd: string): string | null {
+  const match = /^\[[^\]]+\] (.+)$/.exec(line);
+  if (match === null) return null;
+  return existsSync(resolve(cwd, match[1])) ? match[1] : null;
 }
 
 /** Flags this runner consumes. Anything else is vitest's. */
@@ -401,8 +416,8 @@ export function main(
       `\`vitest list\` printed ${selection.unrecognised.length} line(s) that are not files in this tree:`
     );
     for (const line of selection.unrecognised) console.error(`  ${JSON.stringify(line)}`);
-    console.error('The selection cannot be trusted, so nothing was run. A `projects` config');
-    console.error('prefixes each line with `[name] `; a newline in a filename splits one.');
+    console.error('The selection cannot be trusted, so nothing was run. The listed path is');
+    console.error('not in the tree (a stale project path), or a newline in a filename split one.');
     return 1;
   }
 

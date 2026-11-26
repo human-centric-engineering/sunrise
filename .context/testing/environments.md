@@ -112,12 +112,11 @@ constraint instead.
 ## Why a docblock and not a glob
 
 `environmentMatchGlobs` was removed in vitest 3 and is absent from 4 and 5. Its
-replacement is `test.projects`, which would work — except that a projects config
-makes `vitest list --filesOnly` prefix every line with `[name] ` (re-checked on
-5.0.1), and
-`scripts/ci/run-scoped-tests.ts` (the `npm run test:changed` gate) resolves its
-selection from exactly that output and refuses a line it cannot resolve to a
-file. Adopting projects here would have broken the gate.
+replacement is `test.projects`, which would work. When this was chosen, a
+projects config's `[name] ` prefix on `vitest list --filesOnly` lines broke
+`scripts/ci/run-scoped-tests.ts` (the `npm run test:changed` gate). The runner
+strips that prefix now (t-1089), so that reason no longer holds; the docblocks
+stay because they work and moving would mean a sweep of every DOM test.
 
 A directory rule would not have worked either: 51 files under `tests/unit/lib/`
 need a DOM, so where a test lives never predicted what it needs.

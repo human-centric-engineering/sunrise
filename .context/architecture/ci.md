@@ -646,8 +646,9 @@ let a fork believe it had fixed its OOM and then meet the identical failure.
 
 The ceiling on `test-full` (per shard) and `test-changed`, in minutes. Unset,
 `test-full` gets **30** and `test-changed` **60**: a Sunrise shard takes 2–4
-minutes, and `test-changed` runs the whole suite unsharded when a lockfile or
-vitest-config change makes `--changed` select everything (~14 minutes on
+minutes, and `test-changed` runs the whole suite unsharded when a change to a
+`forceRerunTriggers` file (the lockfile, the vitest config, `tests/setup.ts`,
+`tsconfig.json`) makes `--changed` select everything (~14 minutes on
 Sunrise). Both leave room for a much larger fork's suite while turning a
 deadlocked worker into a cancelled job within the hour rather than six hours
 (#843). Setting the variable sets both jobs to the same value, so size it for
@@ -1082,10 +1083,18 @@ paragraph is untangling — but treat that as house style, not as a gate.
 
 ## Two gotchas worth knowing
 
-- **`vitest --changed` runs the full suite when the diff touches
-  `package.json`/config.** This is correct — a root-manifest change can affect
-  anything — but it means dependency-bumping PRs don't get the fast path even in
-  `changed` mode.
+- **What makes `vitest --changed` run the full suite is set in
+  `vitest.config.ts` (`forceRerunTriggers`), and `package.json` is not on it
+  (#1331).** The triggers are `package-lock.json`, `{vitest,vite}.config.*`,
+  `tests/setup.ts` and `tsconfig.json`. A dependency bump changes the lockfile,
+  so it still runs everything (unsharded, in `test-changed`). A script-only
+  `package.json` edit now gets a scoped run: what the module graph selects, plus
+  `ALWAYS_RUN_TESTS`, which holds the tests that read `package.json` as text.
+  Two rarer `package.json` edits also go scoped on the PR, though they can
+  affect any test: a `type`/`imports`/`exports` change, and an `overrides`
+  change that leaves the lockfile unchanged. The full suite on push to `main`
+  is what catches those. The list replaces Vitest's default, so re-check it on
+  a Vitest major.
 - **GitHub scopes Actions caches by branch** (a branch reads its own cache, then
   its base, then the default branch). Sibling feature branches don't share
   caches, so the warm-cache speedup only fully lands once a change is on the

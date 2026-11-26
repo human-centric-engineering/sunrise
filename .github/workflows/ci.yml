@@ -557,8 +557,9 @@ jobs:
       needs.config.outputs.test_scope == 'changed' &&
       github.event_name == 'pull_request'
     # Capped for the same reason as `test-full` (#843), at twice the default:
-    # a lockfile or vitest-config change makes `--changed` select the whole
-    # suite, unsharded, in this one job.
+    # a change to any `forceRerunTriggers` file (vitest.config.ts: the
+    # lockfile, the vitest config, tests/setup.ts, tsconfig.json) makes
+    # `--changed` select the whole suite, unsharded, in this one job.
     timeout-minutes: ${{ fromJSON(vars.CI_TEST_TIMEOUT_MINUTES || '60') }}
     # No Postgres service — see the note on `test-full`. DATABASE_URL is kept
     # for prisma generate (postinstall), which does not connect.
@@ -581,9 +582,15 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
-      # --passWithNoTests: a diff that touches no test-reachable code (e.g. CI
-      # config) is a valid pass, not a failure.
-      - run: npx vitest run --changed ${{ github.event.pull_request.base.sha }} --passWithNoTests
+      # The same scoped runner as the local `npm run test:changed` gate: what
+      # `vitest --changed` selects, plus `ALWAYS_RUN_TESTS`
+      # (`scripts/ci/scoped-tests.ts`) — the tests that read the tree as text,
+      # which no import chain reaches (#1351). A bare `vitest --changed` here
+      # skipped them, so a PR adding a model with a user FK passed CI without
+      # `export-sources.test.ts` ever running. `--no-fetch` is for clarity only:
+      # the runner already skips the fetch when `--base` is given, and checkout
+      # fetched full history.
+      - run: npx tsx scripts/ci/run-scoped-tests.ts --base ${{ github.event.pull_request.base.sha }} --no-fetch
 
   # ---- Real-DB invariants the Prisma-mocked vitest suite can't cover: the
   # DB-enforced erasure behavior, plus a drift check for the raw-SQL objects

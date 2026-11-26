@@ -145,8 +145,10 @@ export interface AppAlwaysRunTest {
  * **A scoped run is a pre-flight, not the last gate.** CI's `test-full` job runs
  * the whole suite on every PR while `CI_TEST_SCOPE` is `full` (the default), so
  * a list one entry short costs a local run that misses something CI then
- * catches. On a fork that sets `CI_TEST_SCOPE=changed` that net has a hole —
- * see `.context/testing/scoped-runs.md`.
+ * catches. On a fork that sets `CI_TEST_SCOPE=changed`, CI's `test-changed` job
+ * runs the same scoped runner on PRs, so these entries run there too, but the
+ * whole suite runs only on push to `main` — a list one entry short ships the
+ * miss to `main` rather than to a PR. See `.context/testing/scoped-runs.md`.
  *
  * @example
  * ```ts

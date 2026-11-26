@@ -29,6 +29,21 @@ release process.
 
 ### Changed
 
+- **A `package.json` script edit no longer runs the whole suite under
+  `vitest --changed`, and CI's `test-changed` job runs `ALWAYS_RUN_TESTS`
+  (t-1089, #1331, #1351).** `vitest.config.ts` now sets `forceRerunTriggers`
+  to `package-lock.json`, `{vitest,vite}.config.*`, `tests/setup.ts` and
+  `tsconfig.json`, which replaces Vitest's default (`package.json` and the
+  config). A dependency bump still runs everything, by way of the lockfile.
+  The `test-changed` job (forks on `CI_TEST_SCOPE=changed`) now calls
+  `scripts/ci/run-scoped-tests.ts`, so the tests in `ALWAYS_RUN_TESTS`, and a
+  fork's own in `lib/app/ci.ts`, run on PRs as well as locally. The runner
+  now strips the `[name] ` prefix `vitest list` adds under a `projects`
+  config, which it used to refuse. **A fork that
+  has edited `ci.yml` to make this change itself** will see a conflict on that
+  step and can take Sunrise's. **A fork with a test that reads `package.json`
+  from disk** should declare it in `lib/app/ci.ts`, or a script edit that
+  breaks it passes the PR. See `.context/testing/scoped-runs.md`.
 - **Chunk keys for a repeated heading get a `~N` suffix (t-1102, #1215;
   recorded by t-1112).** `chunkMarkdownDocument` makes every chunk id unique
   within its document: the first chunk keeps its id, a later chunk with the
