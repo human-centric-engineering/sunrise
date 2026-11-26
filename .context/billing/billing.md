@@ -24,7 +24,7 @@ table says what exists.
 | Part                                                                          | Task   | State         |
 | ----------------------------------------------------------------------------- | ------ | ------------- |
 | This spec, and the spike                                                      | t-1092 | **Built**     |
-| Plans as bundles of entitlements; the org's subscription record; staff assign | t-1093 | Not built yet |
+| Plans as bundles of entitlements; the org's subscription record; staff assign | t-1093 | **Built**     |
 | The provider adapter, Stripe, checkout, portal, the webhook, lapsed handling  | t-1094 | Not built yet |
 | The billing page in the org-admin console                                     | t-1095 | Not built yet |
 | Choosing a plan at signup                                                     | t-1096 | Not built yet |
@@ -101,6 +101,45 @@ the shape it must hold:
 **Applying a plan is idempotent**: it compares and writes only what changed, so
 re-applying one writes nothing. The webhook relies on this. A replay re-applies
 the current state, and that must be a no-op, not a fresh audit row.
+
+### What t-1093 built
+
+| Need                            | Where                                                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Register plans and the fallback | `initAppBilling()` in `lib/app/billing.ts` → `registerPlan()`, `setFallbackPlan()` (`lib/billing/plans.ts`) |
+| Do plans apply here?            | `billingPlansEnabled()`: `TENANCY_MODE=multi` and at least one plan. No provider needed                     |
+| Write a plan to an org          | `applyPlan(orgId, plan)`, `lib/billing/apply-plan.ts`                                                       |
+| Put an org on a plan by hand    | `assignPlan(orgId, key \| null)`, `lib/billing/subscriptions.ts`; `PATCH /api/v1/admin/orgs/[id]/plan`      |
+| See it                          | the **Plan** section on `/admin/orgs/[id]`, shown only when plans apply                                     |
+| The record                      | `OrgBillingSubscription` (`prisma/schema/platform.prisma`), one per org                                     |
+| The audit row                   | `org.plan.assign`, with the plan and each slice it changed, before and after                                |
+| Check it on a real database     | `npm run smoke:billing-plans`                                                                               |
+
+- **A plan is checked against the entitlement registry as it registers.** A
+  switch or meter nothing registers, a priced fallback, or two plans on one
+  price throws, and the init gate rolls back every plan the app registered.
+  So `setFallbackPlan()` comes after the plan it names.
+- **Plans work with no provider.** `billingPlansEnabled()` needs only `multi`
+  and a plan, so a plan given away or invoiced offline works on its own.
+  Staff may assign a priced plan by hand too, which is how one is given away.
+- **The budget is written through `updateOrgQuotas()`**, which sets only the
+  caps it names. `writeOrgQuotas()` replaces every cap, which would clear a
+  request-rate cap staff set by hand.
+- **The record is written before the plan is applied, and marked applied
+  after.** The switches, limits and caps are three serializable writes, not
+  one. If one fails, the record names the plan with `planAppliedAt` null, the
+  admin page says the plan was not all written, and assigning it again
+  finishes it.
+- **Staff do not override a provider.** While the record holds a provider
+  subscription that has not ended, a hand assignment is refused
+  (`provider_managed`). Over an ended one, the provider and customer
+  references are kept, so erasure still finds the customer.
+- **"No plan" removes the hand-assigned record and leaves the settings.** The
+  org keeps what the plan gave until someone changes it.
+- **Not in t-1093:** metered items and overage rules (t-1097), the provider
+  adapter and the lapsed-subscription rule (t-1094), and config health's
+  warning for a missing fallback plan, which applies once a provider is on
+  (t-1094).
 
 **Which plan an org is on comes from the provider's subscription, not from the
 checkout.** The adapter reads the subscription's price lookup keys and the
@@ -575,8 +614,10 @@ any task's done-when.
 ## Not decided here
 
 - **Seats as a subscription quantity** rather than a metered item.
-- **Trials** beyond reading `trialing` as active: whether a plan can offer one
-  is t-1093's to decide.
+- **Trials** beyond reading `trialing` as active. t-1093 gave a plan no trial
+  field: a trial is a setting on the provider's price or checkout, and the
+  platform reads the result as `active`. A plan that needs one is a later
+  change.
 - **Proration and mid-period plan changes** are the provider's (Stripe prorates
   in the portal). Stripe leaves usage reported in the grace period off the
   invoice made by a mid-period price change. That is noted for t-1097, not
