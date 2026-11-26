@@ -37,7 +37,7 @@ release process.
 >   the workflow builder canvas moves to `@xyflow/react` 13 (t-1099).
 >
 > Measured against `v0.20.0`: 10 PRs merged, no direct commits, 5 issues
-> closed as fixed; the suite is __FILES__ files and __TESTS__ tests.
+> closed as fixed; the suite is 1,684 files and 35,904 tests.
 >
 > ## What a fork has to do
 >
