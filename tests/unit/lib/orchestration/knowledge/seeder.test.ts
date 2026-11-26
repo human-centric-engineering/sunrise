@@ -400,6 +400,7 @@ describe('materialisePatternsKnowledge', () => {
         {
           chunkKey: chunk.id,
           documentId: 'doc-b',
+          position: 0,
           content: chunk.content,
           chunkType: chunk.metadata.type,
           patternNumber: chunk.metadata.pattern_number,

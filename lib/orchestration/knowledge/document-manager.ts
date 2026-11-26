@@ -35,6 +35,7 @@ import {
 import type { AiKnowledgeDocument } from '@/types/prisma';
 import { requireOrgId } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { byPosition, sortByKeySections } from '@/lib/orchestration/knowledge/document-text';
 
 /**
  * Default knowledge base id used as the FK target for every uploaded
@@ -504,12 +505,14 @@ async function insertChunks(
         id, "chunkKey", "documentId", content, embedding,
         "chunkType", "patternNumber", "patternName",
         section, keywords, "estimatedTokens", metadata,
-        "embeddingModel", "embeddingProvider", "embeddingDimension", "embeddedAt", "orgId"
+        "embeddingModel", "embeddingProvider", "embeddingDimension", "embeddedAt", "orgId",
+        position
       ) VALUES (
         gen_random_uuid()::text, $1, $2, $3, $4::vector,
         $5, $6, $7, $8, $9, $10, $11::jsonb,
         $12, $13, $14, $15,
-        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
+        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2),
+        $16
       )`,
       chunk.id,
       documentId,
@@ -525,7 +528,10 @@ async function insertChunks(
       provenance.model,
       provenance.provider,
       provenance.dimensions,
-      provenance.embeddedAt
+      provenance.embeddedAt,
+      // Every caller passes the whole document's chunk list in order, so the
+      // index is the chunk's place in the document (t-1106).
+      i
     );
   }
 }
@@ -1245,11 +1251,18 @@ export async function rechunkDocument(documentId: string): Promise<AiKnowledgeDo
     return rest;
   }
 
-  // Prefer stored original content; fall back to lossy chunk reconstruction
+  // Prefer stored original content; fall back to lossy chunk reconstruction.
+  // The rebuilt text is re-chunked and its order saved as each new row's
+  // `position`, so it has to be the best order known (t-1106), since whatever
+  // order is used here is then stored as if it were true. It is the order a
+  // download of the same rows shows: `position`, else each section's chunks
+  // in numeric order (the query's `chunkKey` order puts `-10` before `-2`).
   const meta = parseDocumentMetadata(document.metadata);
   const content = meta?.rawContent?.trim()
     ? meta.rawContent
-    : document.chunks.map((c) => c.content).join('\n\n---\n\n');
+    : (byPosition(document.chunks) ?? sortByKeySections(document.chunks))
+        .map((c) => c.content)
+        .join('\n\n---\n\n');
 
   // Set status to processing
   await prisma.aiKnowledgeDocument.update({

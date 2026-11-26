@@ -220,6 +220,10 @@ model AiKnowledgeChunk {
   id                 String                       @id @default(cuid())
   chunkKey           String // unique per org (§116 t-726) — @@unique([orgId, chunkKey]) below; the seeded patterns keys are fixed, and any org that loads a copy holds them
   documentId         String
+  // 0-based place in the document's chunk list, i.e. document order (t-1106). The chunkKey's
+  // `-N` suffix restarts in each section, so it cannot order a whole document. Null on rows
+  // written before the column; `rebuildTextFromChunks` then falls back to that suffix.
+  position           Int?
   content            String                       @db.Text
   embedding          Unsupported("vector(1536)")?
   // GENERATED ALWAYS AS (to_tsvector('english', content || keywords)) STORED — managed by migration, populated by Postgres.

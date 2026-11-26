@@ -106,6 +106,18 @@ describe('searchKnowledge', () => {
     expect(results[0].similarity).toBeCloseTo(0.85);
   });
 
+  it("selects and returns each chunk's position (t-1106)", async () => {
+    // Raw SQL bypasses the typed client: a column it does not select comes
+    // back undefined on a chunk typed as having it.
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([makeRawRow({ position: 4 })] as never);
+
+    const results = await searchKnowledge('what is chain of thought');
+
+    const sql = vi.mocked(prisma.$queryRawUnsafe).mock.calls[0][0];
+    expect(sql).toContain('c.position');
+    expect(results[0].chunk.position).toBe(4);
+  });
+
   it('should return empty array when no rows are returned', async () => {
     vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
 
@@ -154,6 +166,7 @@ describe('searchKnowledge', () => {
     // the current column name (fileHash) and the alias (documentContentHash) that the
     // downstream Citation plumbing depends on.
     expect(sql).toContain('d."fileHash" AS "documentContentHash"');
+    expect(sql).toContain('c.position'); // t-1106
   });
 
   it('should add patternNumber filter when provided', async () => {

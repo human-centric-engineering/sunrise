@@ -16,6 +16,17 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
+  0-based place in its document, written whenever chunks are (upload, rechunk,
+  the patterns seeder). Knowledge search returns it on each chunk, and
+  `rebuildTextFromChunks` orders a document by it, so a multi-section document
+  downloads in document order. Rows written before the migration are null; such
+  a document is rebuilt with each section's chunks together in numeric order
+  and its sections in slug order. **A fork that inserts chunk rows itself**
+  should write `position`; a document with any null row falls back.
+
 ### Fixed
 
 - **`runStructuredCompletion` keeps the cost of a call that fails (t-1105,
@@ -30,6 +41,12 @@ release process.
   that cost on failure. **A fork caller that logs cost** should read
   `err instanceof ProviderError ? err.usage : undefined` on its error path, as
   `completeEvaluationSession` does.
+- **`runStructuredCompletion`'s `tokenUsage.serviceTier` is set when the
+  attempts were served at different tiers (t-1108).** It was left off, so a
+  caller re-pricing the summed tokens with `logCost` priced a priority attempt
+  at standard. It is now `'priority'` if any attempt was, else standard (no
+  tier), the same rule the failure exits use. `costUsd` is unchanged: it still
+  prices each attempt at its own tier.
 
 ## [0.21.0] — 2026-11-26
 

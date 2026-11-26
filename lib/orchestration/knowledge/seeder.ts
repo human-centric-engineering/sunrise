@@ -207,9 +207,10 @@ export async function materialisePatternsKnowledge(
       // One statement, stamped with the org by the chokepoint. No embedding
       // is written, so nothing here needs the raw `::vector` INSERT uploads use.
       await tx.aiKnowledgeChunk.createMany({
-        data: chunks.map((chunk) => ({
+        data: chunks.map((chunk, position) => ({
           chunkKey: chunk.id,
           documentId: document.id,
+          position,
           content: chunk.content,
           chunkType: chunk.metadata.type,
           patternNumber: chunk.metadata.pattern_number ?? null,

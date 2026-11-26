@@ -119,6 +119,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/patterns/:number', () => {
           id: 'c1',
           orgId: null,
           chunkKey: 'p1-overview',
+          position: null,
           documentId: 'doc-1',
           content: 'Overview content',
           chunkType: 'pattern_overview',

@@ -38,6 +38,7 @@ function makeSearchResult(
       id: 'chunk-1',
       orgId: null,
       chunkKey: 'chunk-key-1',
+      position: null,
       documentId: 'doc-1',
       section: null,
       keywords: null,

@@ -113,6 +113,45 @@ describe('drainStreamChat', () => {
     expect(result.assistantText).toBe('Hello, world!');
   });
 
+  it('drops the text streamed before a content_reset, keeping only what follows (t-1107)', async () => {
+    const trace: ToolCallTrace = {
+      slug: 'lookup',
+      arguments: {},
+      success: true,
+      latencyMs: 1,
+    };
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([
+        { type: 'capability_result', capabilitySlug: 'lookup', result: { ok: true }, trace },
+        { type: 'content', delta: 'Partial answer from the fir' },
+        { type: 'content_reset', reason: 'provider_fallback' },
+        { type: 'content', delta: 'Full answer ' },
+        { type: 'content', delta: 'from the fallback.' },
+      ])
+    );
+
+    const result = await drainStreamChat(baseRequest);
+
+    expect(result.assistantText).toBe('Full answer from the fallback.');
+    // The tool ran before the reset; discarding text does not un-run it.
+    expect(result.toolCalls).toEqual([trace]);
+  });
+
+  it('ends with empty text when a content_reset is the last content event', async () => {
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([
+        { type: 'content', delta: '{"score": 0.' },
+        { type: 'content_reset', reason: 'request_fault' },
+        { type: 'error', code: 'output_truncated', message: 'cut off' },
+      ])
+    );
+
+    const result = await drainStreamChat(baseRequest);
+
+    expect(result.assistantText).toBe('');
+    expect(result.errorCode).toBe('output_truncated');
+  });
+
   it('ignores reasoning events — they never leak into the assistant text (t-953)', async () => {
     // The eval runner opts into includeTrace, so it does receive these.
     mockedStreamChat.mockReturnValueOnce(

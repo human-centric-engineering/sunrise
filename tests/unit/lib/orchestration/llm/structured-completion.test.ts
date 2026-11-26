@@ -509,6 +509,37 @@ describe('runStructuredCompletion', () => {
       expect((err as ProviderError).usage).toEqual({ inputTokens: 220, outputTokens: 70 });
     });
 
+    it('drops a flex retry error’s own tier when the first attempt was standard', async () => {
+      // The sum names no tier (standard); the error's `flex` must not survive
+      // the merge and price the standard attempt at half rate.
+      const retryError = new ProviderError('timed out', {
+        code: 'timeout',
+        usage: { inputTokens: 7, outputTokens: 3, serviceTier: 'flex', reasoningTokens: 2 },
+      });
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBe(retryError);
+      expect((err as ProviderError).usage).toEqual({
+        inputTokens: 107,
+        outputTokens: 43,
+        reasoningTokens: 2,
+      });
+    });
+
     it("wraps a non-provider retry error so the first attempt's tokens survive", async () => {
       const retryError = new DOMException('The operation timed out.', 'TimeoutError');
       const chat = vi
@@ -962,8 +993,16 @@ describe('runStructuredCompletion — cache and tier billing (t-909, t-911)', ()
       retryUserMessage: 'try again',
     });
 
-    // The attempts disagreed on tier, so the summary names none.
-    expect(result.tokenUsage).toEqual({ input: 200, output: 10, cacheRead: 150, cacheWrite: 10 });
+    // The attempts disagreed on tier. A caller re-pricing the summed tokens
+    // must not price the priority attempt at standard, so the summary takes
+    // the dearer reading (t-1108).
+    expect(result.tokenUsage).toEqual({
+      input: 200,
+      output: 10,
+      cacheRead: 150,
+      cacheWrite: 10,
+      serviceTier: 'priority',
+    });
     expect(vi.mocked(calculateCost)).toHaveBeenCalledWith('gpt-5', 100, 5, first);
     expect(vi.mocked(calculateCost)).toHaveBeenCalledWith('gpt-5', 100, 5, retry);
     // The mocked calculateCost returns 0.003 per call.
@@ -981,5 +1020,23 @@ describe('runStructuredCompletion — cache and tier billing (t-909, t-911)', ()
     });
 
     expect(result.tokenUsage.serviceTier).toBe('flex');
+  });
+
+  it('names no tier (standard) when flex and standard attempts are mixed', async () => {
+    const provider = makeProvider([
+      { content: 'not json', usage: { inputTokens: 10, outputTokens: 5, serviceTier: 'flex' } },
+      { content: '{"ok":true}', usage: { inputTokens: 10, outputTokens: 5 } },
+    ] as never);
+
+    const result = await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'gpt-5',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'try again',
+    });
+
+    // Flex is the cheaper rate, so a mix with standard re-prices at standard.
+    expect(result.tokenUsage.serviceTier).toBeUndefined();
   });
 });
