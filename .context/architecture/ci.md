@@ -646,8 +646,9 @@ let a fork believe it had fixed its OOM and then meet the identical failure.
 
 The ceiling on `test-full` (per shard) and `test-changed`, in minutes. Unset,
 `test-full` gets **30** and `test-changed` **60**: a Sunrise shard takes 2–4
-minutes, and `test-changed` runs the whole suite unsharded when a lockfile or
-vitest-config change makes `--changed` select everything (~14 minutes on
+minutes, and `test-changed` runs the whole suite unsharded when a change to a
+`forceRerunTriggers` file (the lockfile, the vitest config, `tests/setup.ts`,
+`tsconfig.json`) makes `--changed` select everything (~14 minutes on
 Sunrise). Both leave room for a much larger fork's suite while turning a
 deadlocked worker into a cancelled job within the hour rather than six hours
 (#843). Setting the variable sets both jobs to the same value, so size it for

@@ -557,8 +557,9 @@ jobs:
       needs.config.outputs.test_scope == 'changed' &&
       github.event_name == 'pull_request'
     # Capped for the same reason as `test-full` (#843), at twice the default:
-    # a lockfile or vitest-config change makes `--changed` select the whole
-    # suite, unsharded, in this one job.
+    # a change to any `forceRerunTriggers` file (vitest.config.ts: the
+    # lockfile, the vitest config, tests/setup.ts, tsconfig.json) makes
+    # `--changed` select the whole suite, unsharded, in this one job.
     timeout-minutes: ${{ fromJSON(vars.CI_TEST_TIMEOUT_MINUTES || '60') }}
     # No Postgres service — see the note on `test-full`. DATABASE_URL is kept
     # for prisma generate (postinstall), which does not connect.
@@ -589,11 +590,7 @@ jobs:
       # `export-sources.test.ts` ever running. `--no-fetch` is for clarity only:
       # the runner already skips the fetch when `--base` is given, and checkout
       # fetched full history.
-      #
-      # --passWithNoTests is forwarded to vitest. The always-run list keeps the
-      # run non-empty, but it is kept so a fork that empties the list still
-      # passes a diff that touches no test-reachable code.
-      - run: npx tsx scripts/ci/run-scoped-tests.ts --base ${{ github.event.pull_request.base.sha }} --no-fetch --passWithNoTests
+      - run: npx tsx scripts/ci/run-scoped-tests.ts --base ${{ github.event.pull_request.base.sha }} --no-fetch
 
   # ---- Real-DB invariants the Prisma-mocked vitest suite can't cover: the
   # DB-enforced erasure behavior, plus a drift check for the raw-SQL objects

@@ -238,14 +238,23 @@ describe('selectChangedTests', () => {
   });
 
   it('collects a listed line that is not a file rather than dropping it', () => {
-    // A `projects` config prefixes each line with `[name] `, and a newline in a
-    // filename splits one line into two. Both still looked like test paths to
+    // A newline in a filename splits one line into two, and a prefixed line
+    // can name a file that is not there. Both still looked like test paths to
     // the old extension filter, or vanished from it — either way the run got
     // shorter with nothing said.
+    process.env.SCOPED_STUB_EXTRA = '[unit] tests/unit/no-such.test.ts';
+    const result = selectChangedTests(vitestEntry(repo) as string, head(), repo);
+    expect(result.files).toEqual(['tests/unit/stub-a.test.ts', 'tests/unit/stub-b.test.ts']);
+    expect(result.unrecognised).toEqual(['[unit] tests/unit/no-such.test.ts']);
+  });
+
+  it("strips a `projects` config's `[name] ` prefix and lists each file once", () => {
+    // CI's `test-changed` runs this runner (#1351), so refusing the prefix
+    // would fail every PR on a `projects` fork with `CI_TEST_SCOPE=changed`.
     process.env.SCOPED_STUB_EXTRA = '[unit] tests/unit/stub-a.test.ts';
     const result = selectChangedTests(vitestEntry(repo) as string, head(), repo);
     expect(result.files).toEqual(['tests/unit/stub-a.test.ts', 'tests/unit/stub-b.test.ts']);
-    expect(result.unrecognised).toEqual(['[unit] tests/unit/stub-a.test.ts']);
+    expect(result.unrecognised).toEqual([]);
   });
 
   it('keeps a .spec.ts file, which the old extension filter silently dropped', () => {

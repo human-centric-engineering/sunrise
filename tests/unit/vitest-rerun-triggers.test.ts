@@ -48,13 +48,17 @@ function forcesFullRun(relativePath: string): boolean {
 }
 
 describe('forceRerunTriggers', () => {
-  it('is exactly the lockfile, the vitest/vite config, tests/setup.ts and tsconfig.json', () => {
-    expect(triggers()).toEqual([
-      '**/package-lock.json',
-      '**/{vitest,vite}.config.*',
-      '**/tests/setup.ts',
-      '**/tsconfig.json',
-    ]);
+  it('includes the lockfile, the vitest/vite config, tests/setup.ts and tsconfig.json', () => {
+    // Containment, not equality: a fork may add a trigger of its own without
+    // editing this platform-owned test.
+    expect(triggers()).toEqual(
+      expect.arrayContaining([
+        '**/package-lock.json',
+        '**/{vitest,vite}.config.*',
+        '**/tests/setup.ts',
+        '**/tsconfig.json',
+      ])
+    );
   });
 
   it.each(['package-lock.json', 'vitest.config.ts', 'tests/setup.ts', 'tsconfig.json'])(
@@ -114,7 +118,7 @@ describe("CI's test-changed job", () => {
   it('runs the scoped runner, so the always-run union applies', () => {
     const runs = runLines(testChangedJob());
     expect(runs).toContain(
-      'npx tsx scripts/ci/run-scoped-tests.ts --base ${{ github.event.pull_request.base.sha }} --no-fetch --passWithNoTests'
+      'npx tsx scripts/ci/run-scoped-tests.ts --base ${{ github.event.pull_request.base.sha }} --no-fetch'
     );
   });
 

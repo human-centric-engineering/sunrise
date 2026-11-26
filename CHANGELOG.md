@@ -37,7 +37,9 @@ release process.
   config). A dependency bump still runs everything, by way of the lockfile.
   The `test-changed` job (forks on `CI_TEST_SCOPE=changed`) now calls
   `scripts/ci/run-scoped-tests.ts`, so the tests in `ALWAYS_RUN_TESTS`, and a
-  fork's own in `lib/app/ci.ts`, run on PRs as well as locally. **A fork that
+  fork's own in `lib/app/ci.ts`, run on PRs as well as locally. The runner
+  now strips the `[name] ` prefix `vitest list` adds under a `projects`
+  config, which it used to refuse. **A fork that
   has edited `ci.yml` to make this change itself** will see a conflict on that
   step and can take Sunrise's. **A fork with a test that reads `package.json`
   from disk** should declare it in `lib/app/ci.ts`, or a script edit that
