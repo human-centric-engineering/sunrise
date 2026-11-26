@@ -869,7 +869,8 @@ document whose rows predate `position` falls back to that suffix, which is in
 order only for a document of one section or one chunk per section.
 Re-chunking writes every row's position: in true order when the document still
 holds `metadata.rawContent`, otherwise in the order of the rows it replaces
-(`position` when they have it, `chunkKey` when they do not).
+(`position` when they have it, the numeric key suffix when they do not — the
+order a download of them shows).
 
 The rebuild is the **ingested** text, not the source file — the chunker can
 drop a fragment that fits no chunk, which is what the Coverage column reports.

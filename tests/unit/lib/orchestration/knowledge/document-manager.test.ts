@@ -637,6 +637,31 @@ describe('rechunkDocument', () => {
     );
   });
 
+  it('rebuilds rows that predate position in numeric key-suffix order, not lexicographic', async () => {
+    // The query's chunkKey order puts -10 before -2; a download of the same
+    // rows sorts numerically, and the re-chunk must store that order.
+    vi.mocked(prisma.aiKnowledgeDocument.findUniqueOrThrow).mockResolvedValue({
+      ...makeDocument({ id: 'doc-rechunk', name: 'My Doc', status: 'ready' }),
+      chunks: [
+        { chunkKey: 'doc-intro-10', content: 'Eleventh', position: null },
+        { chunkKey: 'doc-intro-2', content: 'Third', position: null },
+      ],
+    } as never);
+    vi.mocked(prisma.aiKnowledgeDocument.update).mockResolvedValue(makeDocument() as never);
+    vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 2 });
+    vi.mocked(chunkMarkdownDocument).mockResolvedValue([makeChunk()]);
+    vi.mocked(embedBatch).mockResolvedValue(mockEmbedResult([[0.1, 0.2]]));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+
+    await rechunkDocument('doc-rechunk');
+
+    expect(chunkMarkdownDocument).toHaveBeenCalledWith(
+      'Third\n\n---\n\nEleventh',
+      'My Doc',
+      'doc-rechunk'
+    );
+  });
+
   it('loads existing document with chunks, reconstructs content, and re-processes successfully', async () => {
     const existingDoc = {
       ...makeDocument({ id: 'doc-rechunk', name: 'My Doc', status: 'ready' }),

@@ -16,6 +16,17 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
+  0-based place in its document, written whenever chunks are (upload, rechunk,
+  the patterns seeder). Knowledge search returns it on each chunk, and
+  `rebuildTextFromChunks` orders a document by it, so a multi-section document
+  downloads in document order. Rows written before the migration are null and
+  fall back to the `chunkKey` suffix order. **A fork that inserts chunk rows
+  itself** should write `position`; a document with any null row is ordered by
+  the suffix.
+
 ### Fixed
 
 - **`runStructuredCompletion` keeps the cost of a call that fails (t-1105,

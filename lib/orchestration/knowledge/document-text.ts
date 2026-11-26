@@ -56,7 +56,7 @@ export function byPosition<T extends { position: number | null }>(chunks: T[]): 
 }
 
 /** The pre-t-1106 order: the numeric `-N` suffix of each `chunkKey`. */
-function sortByKeySuffix<T extends { chunkKey: string }>(chunks: T[]): T[] {
+export function sortByKeySuffix<T extends { chunkKey: string }>(chunks: T[]): T[] {
   const indexed = chunks.map((chunk) => {
     // A repeated heading's chunk carries a `~N` dedupe suffix after its index
     // (chunker `dedupeChunkIds`, #1215); read the index through it.
