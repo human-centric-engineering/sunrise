@@ -174,14 +174,13 @@ export default defineConfig({
     //     `setupFiles` entry changes, so this is belt-and-braces: it keeps the
     //     rule explicit and also covers the `recordDependencies` resolver.
     //
-    // Not listed, because Vitest already covers them: the modules this file
-    // imports (`tests/mocks/next-font-plugin.ts`, `lib/app/ci.ts`, and
-    // anything they import). Vitest records them as the config's
-    // `configFileDependencies`, and when one changes both resolvers select
-    // every test (as of 5.1.2, so re-check this on a Vitest major too). That
-    // covers a new import here with no edit to this list. An edit to only the
-    // font plugin selects all 1685 test files, against 653 for
-    // `lib/logging/index.ts` (#1114).
+    // Not listed, because Vitest already covers them: the local modules this
+    // file imports (see the imports at the top), and anything they import.
+    // Vitest records them as the config's `configFileDependencies`, and when
+    // one changes both resolvers select every test, not a graph-traced subset
+    // (#1114). That covers a new import here with no edit to this list. No
+    // test enforces this: it is Vitest's behaviour as of 5.1.2, so re-check it
+    // when Vitest is bumped.
     //
     // Vitest matches these against absolute paths, so each needs the `**/`.
     // `tests/unit/vitest-rerun-triggers.test.ts` pins the list.

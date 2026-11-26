@@ -44,7 +44,9 @@ function forcesFullRun(relativePath: string): boolean {
   // without `**/` would pass a relative-path check and never fire in a real
   // run. Node's `path.matchesGlob` agrees on simple globs but not on extglobs,
   // dot segments or every brace form, so a trigger checked with it could pass
-  // here and never fire in vitest, or the reverse.
+  // here and never fire in vitest, or the reverse. This imports the root
+  // `picomatch`, so it must stay on the major Vitest depends on
+  // (`npm ls picomatch` shows both).
   return picomatch(triggers(), { dot: true })(join(ROOT, relativePath));
 }
 
