@@ -59,8 +59,8 @@ release process.
   tokens added to its `usage`; the caught instance is left as it was, so one
   thrown again is not billed twice (t-1109). Any other retry error is wrapped
   as the adapters wrap it (`toProviderError`: code, HTTP status and
-  `retriable` from the error, the original as `cause`) when the first attempt
-  was billed, and keeps its `name` and stack, so a check for
+  `retriable` from the error, the original as `cause`; a cancel gets code
+  `aborted`) when the first attempt was billed, and keeps its `name` and stack, so a check for
   `err.name === 'TimeoutError'` or a retry on a 429 still matches (t-1109).
   The evaluation summary now logs
   that cost on failure. **A fork caller that logs cost** should read

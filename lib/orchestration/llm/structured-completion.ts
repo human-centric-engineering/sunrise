@@ -484,6 +484,9 @@ function billedOrUndefined(usage: LlmUsage): LlmUsage | undefined {
  * the caught instance edited in place, because an instance can be thrown more
  * than once (a memoised refusal, an error a breaker holds): editing it would
  * add the first attempt's tokens again on every pass (t-1109).
+ * The subclass constructor does not run on the copy, so a subclass must keep
+ * its state in own properties: a `#private` field or WeakMap-keyed state
+ * would not survive the copy.
  *
  * Any other error has nowhere to carry usage, so when the earlier attempts
  * were billed it is wrapped the way an adapter wraps it (`toProviderError`:
