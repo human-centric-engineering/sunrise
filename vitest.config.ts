@@ -147,6 +147,39 @@ export default defineConfig({
     // Global test setup file
     setupFiles: ['./tests/setup.ts'],
 
+    // Files whose change makes `vitest --changed` run EVERY test, instead of
+    // tracing the module graph (#1331).
+    //
+    // This REPLACES Vitest's default, `['**/package.json',
+    // '**/{vitest,vite}.config.*']` (as of 5.1.2), so a trigger a later Vitest
+    // adds to its default does not apply here. Re-check it on a Vitest major.
+    //
+    // `package.json` is left out on purpose. Almost every edit to it is a
+    // script line, which no test imports, and a full run in the unsharded
+    // `test-changed` job costs a fork on `CI_TEST_SCOPE=changed` 50+ minutes.
+    // The tests that do read it (as text, so no import chain reaches them) are
+    // in `ALWAYS_RUN_TESTS` (`scripts/ci/scoped-tests.ts`), which both the
+    // local `test:changed` gate and CI's `test-changed` job always run. What
+    // this gives up: a `type`/`imports`/`exports` edit, or an `overrides` edit
+    // that leaves the lockfile unchanged, now gets a scoped run on the PR, and
+    // the full suite on push to `main` is what catches it.
+    //
+    // Added beyond the default:
+    //   - the lockfile, so a dependency bump still runs everything. It is what
+    //     kept bumps on the full run before, by way of their `package.json`
+    //     edit; without it a bump would go scoped.
+    //   - `tests/setup.ts` and `tsconfig.json`, which reach every test but are
+    //     imported by none, so an edit to either selected no tests at all.
+    //
+    // Vitest matches these against absolute paths, so each needs the `**/`.
+    // `tests/unit/vitest-rerun-triggers.test.ts` pins the list.
+    forceRerunTriggers: [
+      '**/package-lock.json',
+      '**/{vitest,vite}.config.*',
+      '**/tests/setup.ts',
+      '**/tsconfig.json',
+    ],
+
     // Include test files
     include: ['**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
 

@@ -48,11 +48,11 @@
  * list that is one entry short costs a local run that misses something CI then
  * catches; it does not ship the miss.
  *
- * On a fork that sets `CI_TEST_SCOPE=changed` the net has a hole: `test-full`
- * is skipped on PRs, and the `test-changed` job that replaces it runs a bare
- * `vitest --changed` with no always-run union, so the whole suite lands only
- * after merge. `.context/testing/scoped-runs.md` carries the one-line workflow
- * change that closes it.
+ * On a fork that sets `CI_TEST_SCOPE=changed`, `test-full` is skipped on PRs
+ * and the `test-changed` job runs this same scoped runner instead, so the
+ * always-run union applies there too (#1351). The whole suite still runs on
+ * push to `main`, so for such a fork a list that is one entry short ships the
+ * miss to `main` rather than to a PR.
  *
  * @see scripts/ci/run-scoped-tests.ts — the CLI that reads git and spawns vitest
  * @see .context/testing/scoped-runs.md — the operator-facing version of this
@@ -491,6 +491,21 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'flags equal to `lint` and `format:check`. A step added to `validate` ' +
       'alone is a `package.json`-only edit that no import chain connects to ' +
       'this test, and it would leave `/pre-pr` silently skipping that step.',
+  },
+  {
+    path: 'tests/unit/scripts/run-capped.test.ts',
+    reason:
+      'reads `package.json` as text to hold the `lint` and `type-check` ' +
+      'scripts routed through `scripts/run-capped.mjs` (#693). A script edit ' +
+      'is a `package.json`-only change, and `package.json` is no longer a ' +
+      'vitest rerun trigger (#1331), so no import chain reaches this test.',
+  },
+  {
+    path: 'tests/unit/vitest-rerun-triggers.test.ts',
+    reason:
+      'reads `.github/workflows/ci.yml` as text to hold the `test-changed` job ' +
+      'on the scoped runner, so CI keeps running this list (#1351). A ' +
+      'workflow-only edit reaches it through no import chain.',
   },
   {
     path: 'tests/unit/app/app-icons.test.ts',

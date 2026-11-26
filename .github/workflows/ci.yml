@@ -581,9 +581,18 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
-      # --passWithNoTests: a diff that touches no test-reachable code (e.g. CI
-      # config) is a valid pass, not a failure.
-      - run: npx vitest run --changed ${{ github.event.pull_request.base.sha }} --passWithNoTests
+      # The same scoped runner as the local `npm run test:changed` gate: what
+      # `vitest --changed` selects, plus `ALWAYS_RUN_TESTS`
+      # (`scripts/ci/scoped-tests.ts`) — the tests that read the tree as text,
+      # which no import chain reaches (#1351). A bare `vitest --changed` here
+      # skipped them, so a PR adding a model with a user FK passed CI without
+      # `export-sources.test.ts` ever running. `--no-fetch` because the base is
+      # given and checkout already fetched full history.
+      #
+      # --passWithNoTests is forwarded to vitest. The always-run list keeps the
+      # run non-empty, but it is kept so a fork that empties the list still
+      # passes a diff that touches no test-reachable code.
+      - run: npx tsx scripts/ci/run-scoped-tests.ts --base ${{ github.event.pull_request.base.sha }} --no-fetch --passWithNoTests
 
   # ---- Real-DB invariants the Prisma-mocked vitest suite can't cover: the
   # DB-enforced erasure behavior, plus a drift check for the raw-SQL objects
