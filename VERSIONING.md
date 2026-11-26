@@ -103,6 +103,7 @@ covered by the version contract.
   - `lib/app/api-key-scopes.ts` → `APP_API_KEY_SCOPES` — extra mintable API-key scopes
   - `lib/app/auth-landing.ts` → `appAuthLandingRoute` / `appAuthLandingLabel` — where sign-in lands
   - `lib/app/authorization.ts` → `initAppAuthorizationPolicy()` — the authorization policy: who administers, and over whose data (primitives: `registerAuthorizationPolicy()` / `DEFAULT_AUTHORIZATION_POLICY` in `lib/auth/authorization.ts`)
+  - `lib/app/billing.ts` → `initAppBilling()` — the app's billing plans and its fallback plan (§139 t-1093; primitives: `registerPlan()`, `PlanDefinition`, `RegisteredPlan`, `setFallbackPlan()`, `registeredPlans()`, `planOf()`, `fallbackPlan()`, `billingPlansFailed()` and `billingPlansEnabled()` in `lib/billing/plans.ts`; `applyPlan()` and `PlanApplied` in `lib/billing/apply-plan.ts`; `assignPlan()`, `loadOrgSubscription()`, `OrgSubscriptionView` and `BillingPlanError` in `lib/billing/subscriptions.ts`; `updateOrgQuotas()` in `lib/tenancy/org-settings.ts`; and `GET` / `PATCH /api/v1/admin/orgs/[id]/plan` with its 409 `details.reason` values `billing_off` and `provider_managed`)
   - `lib/app/bootstrap.ts` → `initApp()` — the app boot hook, awaited by `instrumentation.ts`
   - `lib/app/brand.ts` → `appBrandName` / `appBrandLegalName` / `appBrandDescription` — brand overrides
   - `lib/app/capabilities.ts` → `initAppCapabilities()` — capability registry (`registerAppCapability()`)
@@ -216,6 +217,10 @@ covered by the version contract.
     own sealed key for one provider row, unique per org and row; its `sealedKey`
     is opened only by `lib/orchestration/llm/org-provider-keys.ts`, and a read
     elsewhere must leave it out (§137 t-1044)
+  - `OrgBillingSubscription` and `BillingSubscriptionStatus`
+    (`prisma/schema/platform.prisma`) — which plan an org is on, one row per
+    org, and the provider subscription behind it; it names no person
+    (§139 t-1093, see [`.context/billing/billing.md`](./.context/billing/billing.md))
   - The `Ai*` orchestration models the admin API exposes (see
     [`.context/orchestration/admin-api.md`](./.context/orchestration/admin-api.md))
 

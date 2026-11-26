@@ -910,6 +910,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "A fork's tenancy classification of its own MODELS (t-983) — which class each is in, which tier said so, which clashed — registered from code and the same for every org, plus a warn-once latch; no row data.",
   },
   {
+    file: 'lib/billing/plans.ts',
+    holders: ['plans', 'fallbackKey', 'appInit'],
+    posture: 'no-tenant-data',
+    why: 'The billing plans and fallback plan an app registers from code (§139 t-1093), the same for every org. Which plan an org is on is its subscription row, read on every call and never held here.',
+  },
+  {
     file: 'lib/tenancy/entitlements.ts',
     holders: ['switches', 'meters', 'appInit'],
     posture: 'no-tenant-data',

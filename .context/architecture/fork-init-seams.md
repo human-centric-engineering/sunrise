@@ -56,6 +56,7 @@ Three properties come with it:
 | `account-sections.ts`              | `initAppAccountSections`             | `lib/account-sections/registry.ts`                          | roll back, log, degrade        |
 | `admin-tier.ts`                    | `initAppOrgTierAdminPages`           | `lib/auth/admin-tier.ts`                                    | roll back, log, degrade        |
 | `authorization.ts`                 | `initAppAuthorizationPolicy`         | `lib/auth/authorization.ts`                                 | roll back, log, **safe mode**  |
+| `billing.ts`                       | `initAppBilling`                     | `lib/billing/plans.ts` (plans and the fallback plan)        | roll back, log, degrade        |
 | `capabilities.ts`                  | `initAppCapabilities`                | `lib/orchestration/capabilities/registry.ts`                | roll back, log, **re-raise**   |
 | `context-contributors.ts`          | `initAppContextContributors`         | `lib/orchestration/chat/context-builder.ts`                 | roll back, log, degrade        |
 | `data-export.ts`                   | `initAppSubjectSources`              | `lib/privacy/subject-source-registry.ts`                    | roll back, log, **remembered** |

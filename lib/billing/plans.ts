@@ -13,7 +13,7 @@
  * leave staff's own settings alone, and why a plan must name a default-on
  * switch to turn it off.
  *
- * **Checked against the entitlement registry when the init runs.** A plan
+ * **Checked against the entitlement registry as it registers.** A plan
  * naming a switch or meter nothing registers would write a value nothing
  * reads, and the typo would show only as an org lacking what it paid for. So
  * it throws, and the shared init gate rolls back every plan the init
@@ -109,10 +109,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Register a plan. Call from `initAppBilling()` in `lib/app/billing.ts`.
  * Re-registering a key replaces it. A key that is not a key, a missing label,
  * a switch value that is not `true` or `false`, a limit or budget out of
- * range, a price lookup key another plan uses, or a plan past the
+ * range, a switch or meter nothing registers, a price lookup key another
+ * plan uses, a price on the fallback plan, or a plan past the
  * {@link MAX_PLANS}th throws, which rolls back every plan the init
- * registered. Whether the switches and meters it names exist is checked once
- * the init has run.
+ * registered.
  */
 export function registerPlan(definition: PlanDefinition): void {
   // Checked rather than trusted: an init written in JavaScript, or built from
@@ -188,6 +188,28 @@ export function registerPlan(definition: PlanDefinition): void {
     }
   }
 
+  // Against the entitlement registry, whose own init runs first if it has
+  // not: a key nothing registers would write a value nothing reads.
+  const switchKeys = new Set(registeredEntitlementSwitches().map((s) => s.key));
+  const unknownSwitches = Object.keys(switches).filter((k) => !switchKeys.has(k));
+  if (unknownSwitches.length > 0) {
+    throw new Error(
+      `Plan "${key}" names switches nothing registers: ${unknownSwitches.join(', ')}. Register them in lib/app/entitlements.ts, or check the spelling`
+    );
+  }
+  const meterKeys = new Set(allMeters().map((m) => m.key));
+  const unknownMeters = Object.keys(meterLimits).filter((k) => !meterKeys.has(k));
+  if (unknownMeters.length > 0) {
+    throw new Error(
+      `Plan "${key}" names meters nothing registers: ${unknownMeters.join(', ')}. Register them in lib/app/entitlements.ts, or check the spelling`
+    );
+  }
+  if (key === fallbackKey && priceLookupKey !== null) {
+    throw new Error(
+      `Plan "${key}" is the fallback plan and has a price; an org moves to it because it stopped paying, so it must have none`
+    );
+  }
+
   if (!plans.has(key) && plans.size >= MAX_PLANS) {
     throw new Error(`At most ${MAX_PLANS} plans can be registered; "${key}" is one too many`);
   }
@@ -211,48 +233,22 @@ export function registerPlan(definition: PlanDefinition): void {
  * Name the plan an org moves to when its paid subscription ends
  * (`.context/billing/billing.md#lapsed-subscriptions`). Call once, from
  * `initAppBilling()`; a later call replaces it. It must name a plan the init
- * registers, with no price, or the init fails. With none named, an org whose
+ * has already registered, with no price, or the init fails. With none named, an org whose
  * subscription ends has every switch its plan decided turned off.
  */
 export function setFallbackPlan(key: string): void {
-  if (typeof key !== 'string' || !ENTITLEMENT_KEY_PATTERN.test(key)) {
-    throw new Error(`Fallback plan "${String(key)}" is not a plan key`);
+  const plan = typeof key === 'string' ? plans.get(key) : undefined;
+  if (!plan) {
+    throw new Error(
+      `Fallback plan "${String(key)}" is not a registered plan; register it before naming it`
+    );
+  }
+  if (plan.priceLookupKey !== null) {
+    throw new Error(
+      `Fallback plan "${key}" has a price; an org moves to it because it stopped paying, so it must have none`
+    );
   }
   fallbackKey = key;
-}
-
-/**
- * Every switch and meter a plan names must be registered, and the fallback
- * must be a free plan. Run after the app's init, inside the gate, so a throw
- * rolls the plans back with everything else.
- */
-function checkAgainstRegistries(): void {
-  if (plans.size === 0 && fallbackKey === null) return;
-  const switchKeys = new Set(registeredEntitlementSwitches().map((s) => s.key));
-  const meterKeys = new Set(allMeters().map((m) => m.key));
-  for (const plan of plans.values()) {
-    const unknownSwitches = Object.keys(plan.switches).filter((k) => !switchKeys.has(k));
-    if (unknownSwitches.length > 0) {
-      throw new Error(
-        `Plan "${plan.key}" names switches nothing registers: ${unknownSwitches.join(', ')}. Register them in lib/app/entitlements.ts, or check the spelling`
-      );
-    }
-    const unknownMeters = Object.keys(plan.meterLimits).filter((k) => !meterKeys.has(k));
-    if (unknownMeters.length > 0) {
-      throw new Error(
-        `Plan "${plan.key}" names meters nothing registers: ${unknownMeters.join(', ')}. Register them in lib/app/entitlements.ts, or check the spelling`
-      );
-    }
-  }
-  if (fallbackKey !== null) {
-    const fallback = plans.get(fallbackKey);
-    if (!fallback) throw new Error(`Fallback plan "${fallbackKey}" is not a registered plan`);
-    if (fallback.priceLookupKey !== null) {
-      throw new Error(
-        `Fallback plan "${fallbackKey}" has a price; an org moves to it because it stopped paying, so it must have none`
-      );
-    }
-  }
 }
 
 const appInit = createAppInitGate({
@@ -260,10 +256,7 @@ const appInit = createAppInitGate({
   // Half an app's plans registered would let staff assign some and not
   // others, and a lapsed org could fall back to a plan that is not there.
   subject: 'app billing plans',
-  init: () => {
-    initAppBilling();
-    checkAgainstRegistries();
-  },
+  init: initAppBilling,
   snapshot: () => ({ plans: new Map(plans), fallbackKey }),
   restore: (before) => {
     restoreMap(plans, before.plans);

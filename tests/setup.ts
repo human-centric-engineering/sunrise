@@ -418,11 +418,11 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * which may read the real seam too. `defaults.test.ts` fails any other file
  * that reads a pinned seam past its pin, or unmocks one.
  *
- * Twelve seams are pinned in this file, not every lazy init in `lib/app/`:
- * the four above (llm-providers, brand, emails, waitlist-config) and the eight
+ * Thirteen seams are pinned in this file, not every lazy init in `lib/app/`:
+ * the four above (llm-providers, brand, emails, waitlist-config) and the nine
  * inits below (admin-tier, user-created, erasure, org-created, signup-org,
- * model-pins, entitlements, access-explainer). The rest are #636's sweep.
- * `tests/unit/setup-seam-pins.test.ts` fails if one of the eight inits stops
+ * model-pins, entitlements, access-explainer, billing). The rest are #636's sweep.
+ * `tests/unit/setup-seam-pins.test.ts` fails if one of the nine inits stops
  * being replaced.
  */
 // Each keeps the module's other exports, as the brand pin derives its keys: a
@@ -490,6 +490,16 @@ vi.mock('@/lib/app/access-explainer', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   initAppAccessExplainer: () => {
     // Registers no area, surface, audience or section: Sunrise's shipped default.
+  },
+}));
+// Pinned when the seam was added (§139 t-1093): a filled one registers plans
+// that check their switches and meters against the entitlement registry, which
+// the switches pin above leaves empty, so a fork's plans would fail to register
+// in every core test, and the "no plan registered" assertions would not hold.
+vi.mock('@/lib/app/billing', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  initAppBilling: () => {
+    // Registers no plan: Sunrise's shipped default.
   },
 }));
 
