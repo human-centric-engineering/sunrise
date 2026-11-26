@@ -392,6 +392,94 @@ describe('runStructuredCompletion', () => {
       expect(pe.usage).toEqual({ inputTokens: 107, outputTokens: 43 });
     });
 
+    it('keeps a ProviderError subclass when the retry throws one', async () => {
+      // A refusal (spend cap, privacy, provider policy) is matched by
+      // `instanceof` on its subclass; rebuilding it as a base ProviderError
+      // would turn a cap refusal into a generic provider failure.
+      class RefusalError extends ProviderError {
+        readonly reason = 'cap';
+        constructor() {
+          super('over the cap', { code: 'spend_cap_exceeded' });
+          this.name = 'RefusalError';
+        }
+      }
+      const retryError = new RefusalError();
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBe(retryError);
+      expect(err).toBeInstanceOf(RefusalError);
+      expect((err as RefusalError).name).toBe('RefusalError');
+      expect((err as RefusalError).reason).toBe('cap');
+      expect((err as RefusalError).usage).toEqual({ inputTokens: 100, outputTokens: 40 });
+    });
+
+    it('keeps the service tier on the failure usage when both attempts agree', async () => {
+      const tiered = (inputTokens: number, outputTokens: number) => ({
+        inputTokens,
+        outputTokens,
+        serviceTier: 'priority' as const,
+      });
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({ content: 'no', usage: tiered(100, 40), finishReason: 'stop' })
+        .mockResolvedValueOnce({
+          content: 'still no',
+          usage: tiered(120, 30),
+          finishReason: 'stop',
+        });
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect((err as ProviderError).usage).toEqual({
+        inputTokens: 220,
+        outputTokens: 70,
+        serviceTier: 'priority',
+      });
+    });
+
+    it('leaves the service tier off when the attempts were served at different tiers', async () => {
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40, serviceTier: 'priority' },
+          finishReason: 'stop',
+        })
+        .mockResolvedValueOnce({
+          content: 'still no',
+          usage: { inputTokens: 120, outputTokens: 30, serviceTier: 'standard' },
+          finishReason: 'stop',
+        });
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect((err as ProviderError).usage).toEqual({ inputTokens: 220, outputTokens: 70 });
+    });
+
     it('rethrows a non-provider retry error unchanged', async () => {
       const retryError = new TypeError('parse blew up');
       const chat = vi

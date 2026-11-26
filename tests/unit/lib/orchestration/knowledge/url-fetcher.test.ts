@@ -353,6 +353,16 @@ describe('fetchDocumentFromUrl', () => {
     expect(result.fileName).toBe('v2.1.html');
   });
 
+  it('falls back to .txt for an unmapped text/* type when the last segment contains a dot', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeFetchResponse({ contentType: 'text/x-unmapped' }) as unknown as Response
+    );
+
+    const result = await fetchDocumentFromUrl('https://example.com/api/phones.agentMessages');
+
+    expect(result.fileName).toBe('phones.agentMessages.txt');
+  });
+
   it('keeps a supported URL extension even when the content-type maps elsewhere', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       makeFetchResponse({ contentType: 'text/html' }) as unknown as Response

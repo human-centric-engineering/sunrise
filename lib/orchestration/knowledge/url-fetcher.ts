@@ -199,17 +199,16 @@ export async function fetchDocumentFromUrl(url: string): Promise<FetchedDocument
     fileName = `${fileName}${ext}`;
   }
 
-  // If still no extension, default to .txt for text content
-  if (!ext) {
-    if (contentType?.startsWith('text/')) {
-      ext = '.txt';
-      fileName = `${fileName}.txt`;
-    } else {
-      throw new Error(
-        `Cannot determine file type from URL or content-type (${contentType ?? 'unknown'}). ` +
-          `Supported: ${[...ALLOWED_EXTENSIONS].join(', ')}`
-      );
-    }
+  // If still no supported extension, default to .txt for text content — a
+  // dotted last segment with an unmapped text/* type is still text (#1214).
+  if (!ALLOWED_EXTENSIONS.has(ext) && contentType?.startsWith('text/')) {
+    ext = '.txt';
+    fileName = `${fileName}.txt`;
+  } else if (!ext) {
+    throw new Error(
+      `Cannot determine file type from URL or content-type (${contentType ?? 'unknown'}). ` +
+        `Supported: ${[...ALLOWED_EXTENSIONS].join(', ')}`
+    );
   }
 
   if (!ALLOWED_EXTENSIONS.has(ext)) {

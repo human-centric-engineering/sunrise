@@ -40,6 +40,18 @@ describe('rebuildTextFromChunks', () => {
     expect(result.chunkCount).toBe(3);
   });
 
+  it('reads the index through a repeated-heading ~N suffix (#1215)', async () => {
+    // The chunker appends `~N` to a repeated id; the index before it still
+    // decides the order, rather than the chunk sorting last as an unindexed key.
+    mockChunkFindMany.mockResolvedValue([
+      { chunkKey: 'doc-legacy-key', content: 'no index' },
+      { chunkKey: 'doc-notes-1~2', content: 'second' },
+      { chunkKey: 'doc-intro-0', content: 'first' },
+    ]);
+
+    expect((await rebuildTextFromChunks('doc-1')).text).toBe('first\n\nsecond\n\nno index');
+  });
+
   it('joins chunks with a blank line', async () => {
     mockChunkFindMany.mockResolvedValue([
       { chunkKey: 'doc-a-0', content: 'one' },

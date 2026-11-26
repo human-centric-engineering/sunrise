@@ -426,9 +426,18 @@ export async function runStructuredCompletion<T>(
   };
 }
 
-/** The attempts' usage added together; an attempt with none counts as zero. */
+/**
+ * The attempts' usage added together; an attempt with none counts as zero.
+ * `serviceTier` is kept when every attempt that reported usage agrees on it,
+ * so a failure exit's cost row is priced at the tier that served it.
+ */
 function sumUsage(attempts: Array<LlmUsage | null>): LlmUsage {
   const total: LlmUsage = { inputTokens: 0, outputTokens: 0 };
+  const tiers = new Set(
+    attempts.filter((a): a is LlmUsage => a !== null).map((a) => a.serviceTier)
+  );
+  const onlyTier = tiers.size === 1 ? [...tiers][0] : undefined;
+  if (onlyTier) total.serviceTier = onlyTier;
   for (const usage of attempts) {
     if (!usage) continue;
     total.inputTokens += usage.inputTokens;
@@ -454,8 +463,9 @@ function billedOrUndefined(usage: LlmUsage): LlmUsage | undefined {
 
 /**
  * `err`, carrying the tokens `earlier` attempts were billed for on top of its
- * own. A `ProviderError` is rebuilt with the summed `usage` (it is readonly),
- * keeping its message, code, status, retriability, cause and stack. Anything
+ * own. A `ProviderError` keeps its identity — the same instance comes back, so
+ * a subclass (`SpendCapExceededError`, `PrivacyRefusedError`, …) still matches
+ * the caller's `instanceof` — with its `usage` replaced by the sum. Anything
  * else is returned as it is: wrapping it would change the error type a caller
  * catches, and only a `ProviderError` has a place to carry usage.
  */
@@ -463,15 +473,14 @@ function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown
   if (!(err instanceof ProviderError)) return err;
   const usage = billedOrUndefined(sumUsage([...earlier, err.usage ?? null]));
   if (!usage) return err;
-  const rebuilt = new ProviderError(err.message, {
-    code: err.code,
-    ...(err.status !== undefined ? { status: err.status } : {}),
-    retriable: err.retriable,
-    ...(err.cause !== undefined ? { cause: err.cause } : {}),
-    usage,
+  // `usage` is readonly to callers; this is the one place that extends it.
+  Object.defineProperty(err, 'usage', {
+    value: usage,
+    enumerable: true,
+    configurable: true,
+    writable: false,
   });
-  if (err.stack) rebuilt.stack = err.stack;
-  return rebuilt;
+  return err;
 }
 
 /** `tokenUsage` and `costUsd` for the attempts a result was billed for. */
