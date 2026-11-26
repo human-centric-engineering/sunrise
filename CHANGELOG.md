@@ -30,6 +30,12 @@ release process.
   that cost on failure. **A fork caller that logs cost** should read
   `err instanceof ProviderError ? err.usage : undefined` on its error path, as
   `completeEvaluationSession` does.
+- **`runStructuredCompletion`'s `tokenUsage.serviceTier` is set when the
+  attempts were served at different tiers (t-1108).** It was left off, so a
+  caller re-pricing the summed tokens with `logCost` priced a priority attempt
+  at standard. It is now `'priority'` if any attempt was, else standard (no
+  tier), the same rule the failure exits use. `costUsd` is unchanged: it still
+  prices each attempt at its own tier.
 
 ## [0.21.0] — 2026-11-26
 

@@ -184,6 +184,12 @@ export interface StructuredCompletionResult<T> {
     output: number;
     cacheRead?: number;
     cacheWrite?: number;
+    /**
+     * The tier to price these summed tokens at. When the attempts were served
+     * at different tiers it is the dearer reading (priority if any attempt
+     * was, else standard), so a caller that re-prices from `tokenUsage` errs
+     * over, never under. `costUsd` prices each attempt at its own tier.
+     */
     serviceTier?: LlmUsage['serviceTier'];
   };
   costUsd: number;
@@ -433,9 +439,10 @@ export async function runStructuredCompletion<T>(
  * that tier is kept, so a failure exit's cost row is priced at the tier that
  * served it. When they disagree (`auto` serving one at priority and the next
  * at standard), the dearer reading wins — priority if any attempt was, else
- * standard — so the failure exit's count errs over, never under, as the tier
- * multiplier itself does. (The success path prices each attempt separately in
- * {@link billing} and needs neither rule.)
+ * standard — so a count re-priced from the sum errs over, never under, as the
+ * tier multiplier itself does. Both the failure exits and the success path's
+ * `tokenUsage` use it; the success path's `costUsd` prices each attempt at its
+ * own tier in {@link billing}.
  */
 function sumUsage(attempts: Array<LlmUsage | null>): LlmUsage {
   const total: LlmUsage = { inputTokens: 0, outputTokens: 0 };
@@ -516,16 +523,16 @@ function billing(
   // Each attempt is priced at the tier that served it: under `auto` one can
   // be served at priority and the next at standard.
   const billed = attempts.filter((attempt): attempt is LlmUsage => attempt !== null);
-  const tiers = new Set(billed.map((attempt) => attempt.serviceTier));
-  const onlyTier = tiers.size === 1 ? [...tiers][0] : undefined;
   return {
     tokenUsage: {
       input: usage.inputTokens,
       output: usage.outputTokens,
       ...(usage.cacheReadTokens ? { cacheRead: usage.cacheReadTokens } : {}),
       ...(usage.cacheWriteTokens ? { cacheWrite: usage.cacheWriteTokens } : {}),
-      // A cost row has one tier, so name it only when every attempt agreed.
-      ...(onlyTier ? { serviceTier: onlyTier } : {}),
+      // A cost row has one tier. A caller that logs this row re-prices the
+      // summed tokens at it, so mixed tiers take `sumUsage`'s dearer reading
+      // rather than none, which would price a priority attempt at standard.
+      ...(usage.serviceTier ? { serviceTier: usage.serviceTier } : {}),
     },
     costUsd: billed.reduce(
       (sum, attempt) =>

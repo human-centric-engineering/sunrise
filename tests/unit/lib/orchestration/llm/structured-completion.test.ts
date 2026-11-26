@@ -962,8 +962,16 @@ describe('runStructuredCompletion — cache and tier billing (t-909, t-911)', ()
       retryUserMessage: 'try again',
     });
 
-    // The attempts disagreed on tier, so the summary names none.
-    expect(result.tokenUsage).toEqual({ input: 200, output: 10, cacheRead: 150, cacheWrite: 10 });
+    // The attempts disagreed on tier. A caller re-pricing the summed tokens
+    // must not price the priority attempt at standard, so the summary takes
+    // the dearer reading (t-1108).
+    expect(result.tokenUsage).toEqual({
+      input: 200,
+      output: 10,
+      cacheRead: 150,
+      cacheWrite: 10,
+      serviceTier: 'priority',
+    });
     expect(vi.mocked(calculateCost)).toHaveBeenCalledWith('gpt-5', 100, 5, first);
     expect(vi.mocked(calculateCost)).toHaveBeenCalledWith('gpt-5', 100, 5, retry);
     // The mocked calculateCost returns 0.003 per call.
@@ -981,5 +989,23 @@ describe('runStructuredCompletion — cache and tier billing (t-909, t-911)', ()
     });
 
     expect(result.tokenUsage.serviceTier).toBe('flex');
+  });
+
+  it('names no tier (standard) when flex and standard attempts are mixed', async () => {
+    const provider = makeProvider([
+      { content: 'not json', usage: { inputTokens: 10, outputTokens: 5, serviceTier: 'flex' } },
+      { content: '{"ok":true}', usage: { inputTokens: 10, outputTokens: 5 } },
+    ] as never);
+
+    const result = await runStructuredCompletion<DummyShape>({
+      provider,
+      model: 'gpt-5',
+      messages: [{ role: 'user', content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'try again',
+    });
+
+    // Flex is the cheaper rate, so a mix with standard re-prices at standard.
+    expect(result.tokenUsage.serviceTier).toBeUndefined();
   });
 });
