@@ -56,11 +56,11 @@ export default defineConfig({
     //
     // WHY A DOCBLOCK AND NOT A GLOB. `environmentMatchGlobs` was removed in
     // vitest 3 and is absent from 4 and 5. Its replacement, `test.projects`,
-    // would work — but a projects config makes `vitest list --filesOnly` prefix
-    // every line with `[name] ` (re-checked on 5.0.1), and `scripts/ci/run-scoped-tests.ts` (the
-    // `npm run test:changed` gate) resolves its selection from exactly that
-    // output and refuses a line it cannot resolve to a file. Choosing projects
-    // here would have broken the gate that shipped one PR earlier.
+    // would work. When this was chosen, a projects config's `[name] ` prefix on
+    // `vitest list --filesOnly` lines broke `scripts/ci/run-scoped-tests.ts`
+    // (the `npm run test:changed` gate). The runner strips that prefix now
+    // (t-1089), so that reason no longer holds; the docblocks stay because
+    // they work and moving costs a sweep of every DOM test.
     environment: 'node',
 
     // Cap worker forks well below the core count.

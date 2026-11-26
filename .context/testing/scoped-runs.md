@@ -235,7 +235,7 @@ Run the full suite locally when:
 | `vitest list … failed`                       | The selection is unknown, so the run is refused rather than partial.                                   |
 | `always-run entry not found in this tree`    | A listed test was renamed or deleted. Fix the list with a reason.                                      |
 | `terminated by SIGKILL`                      | Usually OOM. Exit 1 — a killed run is not a passed one.                                                |
-| `printed N line(s) that are not files`       | Every line is prefixed — you have a vitest `projects` config, which this runner does not support.      |
+| `printed N line(s) that are not files`       | A listed path is not in the tree (a stale `projects` path), or a newline in a filename split a line.   |
 | `nothing to run`                             | Nothing was selected and no always-run test exists. Exit 0, and deliberately **not** a full-suite run. |
 
 The stale-base case is the one to take seriously. A stale base produces a short

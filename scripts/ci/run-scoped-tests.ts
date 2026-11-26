@@ -416,8 +416,8 @@ export function main(
       `\`vitest list\` printed ${selection.unrecognised.length} line(s) that are not files in this tree:`
     );
     for (const line of selection.unrecognised) console.error(`  ${JSON.stringify(line)}`);
-    console.error('The selection cannot be trusted, so nothing was run. A `projects` config');
-    console.error('prefixes each line with `[name] `; a newline in a filename splits one.');
+    console.error('The selection cannot be trusted, so nothing was run. The listed path is');
+    console.error('not in the tree (a stale project path), or a newline in a filename split one.');
     return 1;
   }
 

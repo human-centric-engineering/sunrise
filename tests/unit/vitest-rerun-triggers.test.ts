@@ -103,7 +103,9 @@ describe("CI's test-changed job", () => {
   function testChangedJob(): string {
     const workflow = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8');
     // From the job key to the next top-level job (two-space indent).
-    const job = /\n {2}test-changed:\n([\s\S]*?)(?=\n {2}[a-z][\w-]*:\n)/.exec(workflow)?.[1];
+    // Ends at any column-2 key, so a trailing comment or space on the next
+    // job's key does not let the match run on into later jobs.
+    const job = /\n {2}test-changed:[^\n]*\n([\s\S]*?)(?=\n {2}[\w-]+:)/.exec(workflow)?.[1];
     expect(
       job,
       'ci.yml no longer has a `test-changed` job — this guard cannot see it'
@@ -112,7 +114,8 @@ describe("CI's test-changed job", () => {
   }
 
   function runLines(job: string): string[] {
-    return [...job.matchAll(/^\s*- run: (.+)$/gm)].map((match) => match[1].trim());
+    // `- run:` and a `run:` under `- name:` both count.
+    return [...job.matchAll(/^\s*(?:- )?run:\s*(.+)$/gm)].map((match) => match[1].trim());
   }
 
   it('runs the scoped runner, so the always-run union applies', () => {
@@ -123,7 +126,12 @@ describe("CI's test-changed job", () => {
   });
 
   it('does not call vitest --changed directly, which would skip the always-run tests', () => {
-    const direct = runLines(testChangedJob()).filter((run) => /\bvitest\b.*--changed\b/.test(run));
+    // Every non-comment line of the job, not just `run:` values, so a
+    // command inside a `run: |` block is seen too.
+    const direct = testChangedJob()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('#'))
+      .filter((line) => /\bvitest\b.*--changed\b/.test(line));
     expect(direct).toEqual([]);
   });
 });
