@@ -492,8 +492,11 @@ function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown
     if (err instanceof Error && err.stack) wrapped.stack = err.stack;
     return wrapped;
   }
-  const usage = billedOrUndefined(sumUsage([...earlier, err.usage ?? null]));
-  if (!usage) return err;
+  const summed = billedOrUndefined(sumUsage([...earlier, err.usage ?? null]));
+  if (!summed) return err;
+  // Start from the error's own usage so counters `sumUsage` does not add
+  // (reasoning tokens, server-tool calls) survive; the summed fields win.
+  const usage: LlmUsage = { ...err.usage, ...summed };
   // `usage` is readonly to callers; this is the one place that extends it.
   Object.defineProperty(err, 'usage', {
     value: usage,

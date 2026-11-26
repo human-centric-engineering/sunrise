@@ -362,7 +362,7 @@ describe('runStructuredCompletion', () => {
         status: 504,
         retriable: true,
         cause,
-        usage: { inputTokens: 7, outputTokens: 3 },
+        usage: { inputTokens: 7, outputTokens: 3, reasoningTokens: 900 },
       });
       const chat = vi
         .fn()
@@ -389,7 +389,8 @@ describe('runStructuredCompletion', () => {
       expect(pe.retriable).toBe(true);
       expect(pe.cause).toBe(cause);
       expect(pe.stack).toBe(retryError.stack);
-      expect(pe.usage).toEqual({ inputTokens: 107, outputTokens: 43 });
+      // The retry's own counters that are not summed (reasoning) are kept.
+      expect(pe.usage).toEqual({ inputTokens: 107, outputTokens: 43, reasoningTokens: 900 });
     });
 
     it('keeps a ProviderError subclass when the retry throws one', async () => {
