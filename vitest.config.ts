@@ -174,6 +174,15 @@ export default defineConfig({
     //     `setupFiles` entry changes, so this is belt-and-braces: it keeps the
     //     rule explicit and also covers the `recordDependencies` resolver.
     //
+    // Not listed, because Vitest already covers them: the modules this file
+    // imports (`tests/mocks/next-font-plugin.ts`, `lib/app/ci.ts`, and
+    // anything they import). Vitest records them as the config's
+    // `configFileDependencies`, and when one changes both resolvers select
+    // every test (as of 5.1.2, so re-check this on a Vitest major too). That
+    // covers a new import here with no edit to this list. An edit to only the
+    // font plugin selects all 1685 test files, against 653 for
+    // `lib/logging/index.ts` (#1114).
+    //
     // Vitest matches these against absolute paths, so each needs the `**/`.
     // `tests/unit/vitest-rerun-triggers.test.ts` pins the list.
     forceRerunTriggers: [
