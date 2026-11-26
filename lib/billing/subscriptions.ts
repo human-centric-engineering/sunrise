@@ -34,6 +34,7 @@ import { Prisma, type BillingSubscriptionStatus, type PrismaClient } from '@pris
 import { applyPlan, type PlanApplied } from '@/lib/billing/apply-plan';
 import { billingPlansEnabled, planOf } from '@/lib/billing/plans';
 import { prisma } from '@/lib/db/client';
+import { isSerializableConflict } from '@/lib/db/serializable-conflict';
 import { forgetOrgCap } from '@/lib/orchestration/llm/spend-caps';
 import { runAsOrg } from '@/lib/tenancy/context';
 
@@ -126,6 +127,14 @@ export interface AssignPlanResult {
   subscription: OrgSubscriptionView | null;
 }
 
+/**
+ * How many times {@link assignPlan} runs its transaction when it loses a
+ * serialization conflict: to another assignment it waited behind, or to a
+ * settings write from another route. Past this the conflict is the caller's
+ * (the route answers 409, assign again).
+ */
+const MAX_ATTEMPTS = 3;
+
 /** Per-org lock key for billing writes; t-1094's webhook takes the same one. */
 export function billingLockKey(orgId: string): string {
   return `billing:${orgId}`;
@@ -147,9 +156,11 @@ function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, '$trans
  *
  * **One transaction, under the org's billing lock.** The record and every
  * slice the plan writes commit together, serializable, after a Postgres
- * advisory lock on {@link billingLockKey}. So two assignments at once run one
- * after the other, and neither can leave the record naming one plan over the
- * other plan's settings; a failure writes nothing.
+ * advisory lock on {@link billingLockKey}. A failure writes nothing, and
+ * neither of two assignments at once can leave the record naming one plan
+ * over the other's settings. The one that waited on the lock fails its
+ * serializable snapshot and is run again, up to {@link MAX_ATTEMPTS} times,
+ * so in practice they apply one after the other.
  *
  * Taking an org off its plan clears the plan from the record and leaves its
  * switches, limits and budget as they are: the plan stops being named, and
@@ -160,8 +171,9 @@ function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, '$trans
  *
  * @throws {BillingPlanError} `BILLING_OFF` when plans do not apply on this
  *   install, `UNKNOWN_PLAN`, `PROVIDER_MANAGED`, or `ORG_NOT_FOUND`.
- *   A clash with a concurrent settings write throws `P2034`
- *   (`isSettingsWriteConflict`), with nothing written.
+ *   A clash that outlasts the retries throws `P2034`
+ *   (`isSettingsWriteConflict`), and a lock wait past the timeout `P2028`;
+ *   either way nothing was written.
  */
 export async function assignPlan(orgId: string, planKey: string | null): Promise<AssignPlanResult> {
   if (!billingPlansEnabled()) {
@@ -178,7 +190,7 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
   const org = await prisma.org.findUnique({ where: { id: orgId }, select: { id: true } });
   if (!org) throw new BillingPlanError('ORG_NOT_FOUND', 'Organisation not found');
 
-  const result = await runAsOrg(orgId, () =>
+  const attempt = () =>
     prisma.$transaction(
       async (tx): Promise<AssignPlanResult> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${billingLockKey(orgId)}, 0))`;
@@ -270,11 +282,27 @@ export async function assignPlan(orgId: string, planKey: string | null): Promise
         };
       },
       // The settings writers ask for serializable on their own; joined to
-      // this transaction, this is where they get it. The lock is held across
-      // a handful of row writes, so the default timeout is ample.
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-    )
-  );
+      // this transaction, this is where they get it. The timeout covers a
+      // wait on the lock behind another assignment as well as the writes.
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5_000,
+        timeout: 15_000,
+      }
+    );
+  const result = await runAsOrg(orgId, async () => {
+    // The snapshot is taken at the transaction's first statement, before the
+    // lock is granted, so an assignment that waited behind another fails
+    // with a serialization conflict when it writes. Run again, it starts
+    // after the first committed and reads what that one wrote.
+    for (let tries = 1; ; tries++) {
+      try {
+        return await attempt();
+      } catch (error) {
+        if (!isSerializableConflict(error) || tries >= MAX_ATTEMPTS) throw error;
+      }
+    }
+  });
   // After the commit, so a re-read cannot fetch the budget it replaced.
   if (result.applied?.aiBudgetUsd) forgetOrgCap(orgId);
   return result;

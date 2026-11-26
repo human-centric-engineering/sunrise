@@ -184,6 +184,13 @@ describe('registering plans', () => {
 
     expect(registeredPlans()).toEqual([]);
     expect(billingPlansFailed()).toBe(true);
+    // Saying why, not that a key is misspelled.
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('billing: initAppBilling'),
+      expect.objectContaining({
+        error: expect.stringMatching(/entitlement switches failed to register/),
+      })
+    );
   });
 });
 

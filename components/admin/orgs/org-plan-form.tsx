@@ -119,7 +119,7 @@ export function OrgPlanForm({ orgId, plan: initial }: OrgPlanFormProps) {
       : null;
   const locked = !view.mayChange || subscription?.providerManaged === true || !view.enabled;
   // Saving the current plan again is how an unfinished write is finished.
-  const canSave = chosen !== current || (unfinished && chosen !== NO_PLAN);
+  const canSave = chosen !== current || (unfinished && !unregisteredPlan && chosen !== NO_PLAN);
 
   const save = async () => {
     saveFailure.clear();

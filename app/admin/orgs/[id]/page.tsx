@@ -109,9 +109,9 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
  * section shows only when the API reports at least one registered switch, or
  * that the app's registration failed, so vanilla Sunrise shows nothing new; a
  * failed load says so, since the page cannot tell whether there were any. The
- * plan section follows the same rule: it shows when plans apply (`multi`, at
- * least one registered), when the app's plans failed to register, or when the
- * load failed, so vanilla Sunrise shows nothing new. The approved providers, the privacy
+ * plan section follows the same rule: it shows when the app registers a plan
+ * (saying so when they do not apply at `single`), when the app's plans failed
+ * to register, or when the load failed, so vanilla Sunrise shows nothing new. The approved providers, the privacy
  * settings, the switches and the limits are editable here; rename, suspend and members
  * stay API-only. A
  * missing org is a 404, and any other failure to load it goes to the error
@@ -134,9 +134,11 @@ export default async function OrgPage({ params }: { params: Promise<{ id: string
   // registration that failed is shown, since every org has lost its switches.
   const showSwitches =
     entitlements === null || entitlements.switches.length > 0 || entitlements.registrationFailed;
-  // No plan registered, or not at `multi`: nothing to show, as on vanilla
-  // Sunrise. A registration that failed is shown, since no plan can be assigned.
-  const showPlan = plan === null || plan.enabled || plan.registrationFailed;
+  // No plan registered: nothing to show, as on vanilla Sunrise. Plans
+  // registered at `single` are shown with why they do not apply, and a
+  // registration that failed is shown, since no plan can be assigned.
+  const showPlan =
+    plan === null || plan.enabled || plan.registrationFailed || plan.plans.length > 0;
   // The switches and limits forms hold what they loaded in client state, so
   // after a plan is assigned (which writes both, then refreshes this page)
   // they are remounted on the new values rather than left showing the old.

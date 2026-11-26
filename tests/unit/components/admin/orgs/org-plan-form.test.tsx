@@ -215,9 +215,14 @@ describe('OrgPlanForm', () => {
     expect(screen.getByText(/which the\s+app no longer registers/)).toHaveTextContent('legacy');
     expect(save()).toBeDisabled();
 
+    // …even when its write never finished: saving it again could only fail.
+    render(<OrgPlanForm orgId={ORG} plan={view({ subscription: onPlan('legacy', null) })} />);
+    expect(screen.getAllByRole('button', { name: 'Save plan' }).at(-1)).toBeDisabled();
+    expect(screen.queryByText(/were not all written/)).not.toBeInTheDocument();
+
     // Another plan can still be chosen.
-    await user.click(screen.getByRole('radio', { name: /Free/ }));
-    expect(save()).toBeEnabled();
+    await user.click(screen.getAllByRole('radio', { name: /Free/ })[0]);
+    expect(screen.getAllByRole('button', { name: 'Save plan' })[0]).toBeEnabled();
   });
 
   it("says the app's plans failed to register", () => {

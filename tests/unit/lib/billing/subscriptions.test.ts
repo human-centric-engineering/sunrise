@@ -178,6 +178,13 @@ import {
 
 const ORG = 'cmorg000000000000000other';
 
+function conflict() {
+  return new Prisma.PrismaClientKnownRequestError('clash', {
+    code: 'P2034',
+    clientVersion: 'test',
+  });
+}
+
 /** What staff set by hand before any plan: a switch no plan names, and a request cap. */
 const HAND_SET = {
   entitlements: { on: ['beta'], off: [] },
@@ -306,19 +313,46 @@ describe('assignPlan', () => {
   });
 
   it('writes nothing when a write fails part-way: the record and the settings roll back together', async () => {
-    const conflict = new Prisma.PrismaClientKnownRequestError('clash', {
-      code: 'P2034',
-      clientVersion: 'test',
-    });
-    // The switches land, then the limits write clashes.
+    const failure = new Error('database down');
+    // The switches land, then the limits write fails.
     const real = mockPrisma.org.update.getMockImplementation()!;
-    mockPrisma.org.update.mockImplementationOnce(real).mockRejectedValueOnce(conflict);
+    mockPrisma.org.update.mockImplementationOnce(real).mockRejectedValueOnce(failure);
 
-    await expect(assignPlan(ORG, 'pro')).rejects.toBe(conflict);
+    await expect(assignPlan(ORG, 'pro')).rejects.toBe(failure);
 
     expect(settings()).toEqual(HAND_SET);
     expect(store.subscriptions.has(ORG)).toBe(false);
     expect(mockForgetOrgCap).not.toHaveBeenCalled();
+    // Not a conflict, so not run again.
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs again after losing a serialization conflict, and applies the plan', async () => {
+    // The assignment that waited on the lock behind another: its snapshot is
+    // older than the other's commit, so its write fails, and nothing of it stays.
+    const real = mockPrisma.org.update.getMockImplementation()!;
+    mockPrisma.org.update.mockImplementationOnce(real).mockRejectedValueOnce(conflict());
+
+    const result = await assignPlan(ORG, 'pro');
+
+    expect(result.changed).toBe(true);
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(settings().entitlements).toEqual({ on: ['beta', 'reports'], off: ['leads'] });
+    expect(store.subscriptions.get(ORG)?.planAppliedAt).toEqual(expect.any(Date));
+  });
+
+  it('gives up after three conflicts, with nothing written', async () => {
+    // Once per run; `mockRejectedValue` would outlive this test.
+    mockPrisma.org.update
+      .mockRejectedValueOnce(conflict())
+      .mockRejectedValueOnce(conflict())
+      .mockRejectedValueOnce(conflict());
+
+    await expect(assignPlan(ORG, 'pro')).rejects.toMatchObject({ code: 'P2034' });
+
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(3);
+    expect(settings()).toEqual(HAND_SET);
+    expect(store.subscriptions.has(ORG)).toBe(false);
   });
 
   it('takes the org billing lock before it reads the record', async () => {

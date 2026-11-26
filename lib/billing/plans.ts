@@ -31,7 +31,10 @@
 
 import { initAppBilling } from '@/lib/app/billing';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
-import { registeredEntitlementSwitches } from '@/lib/tenancy/entitlements';
+import {
+  entitlementSwitchesFailed,
+  registeredEntitlementSwitches,
+} from '@/lib/tenancy/entitlements';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { allMeters } from '@/lib/tenancy/meters';
 import {
@@ -191,6 +194,12 @@ export function registerPlan(definition: PlanDefinition): void {
   // Against the entitlement registry, whose own init runs first if it has
   // not: a key nothing registers would write a value nothing reads.
   const switchKeys = new Set(registeredEntitlementSwitches().map((s) => s.key));
+  if (Object.keys(switches).length > 0 && entitlementSwitchesFailed()) {
+    // Not a spelling problem: there are no switches to name until they do.
+    throw new Error(
+      `Plan "${key}" names switches, and the app's entitlement switches failed to register (lib/app/entitlements.ts); the server log says why`
+    );
+  }
   const unknownSwitches = Object.keys(switches).filter((k) => !switchKeys.has(k));
   if (unknownSwitches.length > 0) {
     throw new Error(

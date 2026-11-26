@@ -643,6 +643,21 @@ describe('OrgPage', () => {
       expect(screen.getByRole('checkbox', { name: /Reports/ })).toBeChecked();
     });
 
+    it('says why registered plans do not apply at single, rather than hide them', async () => {
+      serve({
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [PLAN_PATH]: { ...PLANS, enabled: false, multiTenant: false },
+      });
+
+      render(await OrgPage({ params }));
+
+      expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+      expect(screen.getByText(/Plans apply only when the install runs with/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Save plan' })).not.toBeInTheDocument();
+    });
+
     it("says the app's plans failed to register, rather than show nothing", async () => {
       serve({
         [ORG_PATH]: ORG,

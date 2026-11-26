@@ -342,6 +342,17 @@ describe('PATCH /api/v1/admin/orgs/[id]/plan', () => {
     expect((await json(res)).error?.message).toMatch(/assign the plan again/);
   });
 
+  it('answers a lock wait past the transaction timeout (P2028) with 409 too', async () => {
+    mockAssignPlan.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('expired', { code: 'P2028', clientVersion: 'test' })
+    );
+
+    const res = await patch({ planKey: 'pro' });
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error?.message).toMatch(/assign the plan again/);
+  });
+
   it('lets any other failure through to the error handler', async () => {
     mockAssignPlan.mockRejectedValue(new Error('database down'));
 

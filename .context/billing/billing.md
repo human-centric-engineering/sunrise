@@ -128,8 +128,11 @@ the current state, and that must be a no-op, not a fresh audit row.
 - **An assignment is one transaction under the org's billing lock.** The
   record and the switches, limits and caps commit together, serializable,
   after `pg_advisory_xact_lock` on `billing:<orgId>` (`billingLockKey()`).
-  Two assignments at once run one after the other, so the record never names
-  one plan over another plan's settings, and a failure writes nothing.
+  A failure writes nothing, and the record never names one plan over
+  another plan's settings. Because the serializable snapshot is taken before
+  the lock is granted, an assignment that waited behind another fails its
+  write with a serialization conflict; it is run again, up to three times, so
+  in practice they apply one after the other.
   `applyPlan()` takes the client to write on, so t-1094's webhook joins its
   own transaction the same way, under the same key. The caller forgets the
   cached AI budget after its commit (`forgetOrgCap()`).

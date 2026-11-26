@@ -23,6 +23,8 @@
  * that is fully applied writes nothing.
  */
 
+import { Prisma } from '@prisma/client';
+
 import { withAdminAuth } from '@/lib/auth/guards';
 import { APIError, ErrorCodes } from '@/lib/api/errors';
 import { errorResponse, successResponse } from '@/lib/api/responses';
@@ -145,10 +147,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
           });
       }
     }
-    if (!isSettingsWriteConflict(error)) throw error;
-    // Another write to this org's settings landed between our read and ours.
-    // The record may name the plan with it not yet applied; assigning it
-    // again finishes the write.
+    // Another write to this org's settings kept landing between our read and
+    // ours, or the wait for the org's billing lock ran past the transaction's
+    // timeout (P2028). Either way nothing was written, so assign again.
+    const timedOut =
+      error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2028';
+    if (!isSettingsWriteConflict(error) && !timedOut) throw error;
     return errorResponse(
       "Another change to this org's settings was saved at the same time; assign the plan again",
       { code: 'CONFLICT', status: 409 }
