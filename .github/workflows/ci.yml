@@ -558,8 +558,9 @@ jobs:
       github.event_name == 'pull_request'
     # Capped for the same reason as `test-full` (#843), at twice the default:
     # a change to any `forceRerunTriggers` file (vitest.config.ts: the
-    # lockfile, the vitest config, tests/setup.ts, tsconfig.json) makes
-    # `--changed` select the whole suite, unsharded, in this one job.
+    # lockfile, the vitest config, tests/setup.ts, tsconfig.json), or to any
+    # module vitest.config.ts imports, makes `--changed` select the whole
+    # suite, unsharded, in this one job.
     timeout-minutes: ${{ fromJSON(vars.CI_TEST_TIMEOUT_MINUTES || '60') }}
     # No Postgres service — see the note on `test-full`. DATABASE_URL is kept
     # for prisma generate (postinstall), which does not connect.

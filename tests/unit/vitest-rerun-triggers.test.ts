@@ -26,6 +26,7 @@ import { join } from 'node:path';
 
 import picomatch from 'picomatch';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import config from '@/vitest.config';
 import { alwaysRunPaths } from '@/scripts/ci/scoped-tests';
@@ -57,8 +58,23 @@ describe('forceRerunTriggers', () => {
     // If a Vitest bump nests its own picomatch (a new major), the matcher above
     // is no longer the one Vitest calls, and its cases prove nothing.
     const fromRoot = createRequire(join(ROOT, 'package.json'));
-    const fromVitest = createRequire(fromRoot.resolve('vitest/package.json'));
+    const vitestManifest = fromRoot.resolve('vitest/package.json');
+    const fromVitest = createRequire(vitestManifest);
     expect(fromVitest.resolve('picomatch')).toBe(fromRoot.resolve('picomatch'));
+    // Resolution alone would still find the root copy if Vitest bundled its
+    // own picomatch and dropped the dependency, so check it still declares one,
+    // on the root copy's major.
+    const manifest = z.object({
+      version: z.string(),
+      dependencies: z.record(z.string(), z.string()).optional(),
+    });
+    const vitestPkg = manifest.parse(JSON.parse(readFileSync(vitestManifest, 'utf8')));
+    const rootPkg = manifest.parse(
+      JSON.parse(readFileSync(fromRoot.resolve('picomatch/package.json'), 'utf8'))
+    );
+    const range = vitestPkg.dependencies?.picomatch;
+    expect(range, 'vitest no longer depends on picomatch').toBeDefined();
+    expect(range?.match(/\d+/)?.[0]).toBe(rootPkg.version.split('.')[0]);
   });
 
   it('includes the lockfile, the vitest/vite config, tests/setup.ts and tsconfig.json', () => {

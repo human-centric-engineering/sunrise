@@ -7,8 +7,8 @@ import { nextFontStub } from './tests/mocks/next-font-plugin';
 // runtime; vite's own config loading does not apply it to the config itself.
 import { appCoverageExclusions } from './lib/app/ci';
 
-// Vite 8 prints, on every vitest invocation, that this file (and the two `.ts`
-// modules it imports: `tests/mocks/next-font-plugin.ts`, `lib/app/ci.ts`) is
+// Vite 8 prints, on every vitest invocation, that this file (and the local
+// `.ts` modules it imports) is
 // "ESM syntax in a file loaded as CommonJS", ahead of its native config loader
 // becoming the default in a future Vite major. Nothing fails today: vitest 5
 // still loads the config through Vite's bundling loader. The real fixes are a
