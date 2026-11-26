@@ -498,9 +498,21 @@ function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown
   if (!(err instanceof ProviderError)) {
     const usage = billedOrUndefined(sumUsage(earlier));
     if (!usage) return err;
-    const base = toProviderErrorWithUsage(err, String(err), usage);
+    // A cancel is wrapped with code 'aborted', as the adapters raise one, so a
+    // classifier that reads a ProviderError's code before its name still sees
+    // a cancel rather than a provider failure.
+    const base =
+      err instanceof Error && err.name === 'AbortError'
+        ? new ProviderError(err.message || 'request aborted', {
+            code: 'aborted',
+            retriable: false,
+            cause: err,
+            usage,
+          })
+        : toProviderErrorWithUsage(err, String(err), usage);
     if (err instanceof Error) {
-      if (err.name) base.name = err.name;
+      // The default 'Error' says nothing; keep the wrapper's own name then.
+      if (err.name && err.name !== 'Error') base.name = err.name;
       if (err.stack) base.stack = err.stack;
     }
     return base;
@@ -514,15 +526,16 @@ function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown
   // survive the spread, and a retry served at flex would price the standard
   // first attempt at flex too.
   if (!summed.serviceTier) delete usage.serviceTier;
-  // Copy every own property (message, stack, name, code, a subclass's own
-  // fields) onto an object with the same prototype, then set `usage` on the
-  // copy. `usage` is readonly to callers; this is the one place that sets it.
-  const copy = Object.create(
-    Object.getPrototypeOf(err) as object,
-    Object.getOwnPropertyDescriptors(err)
-  ) as ProviderError;
+  // Build a real Error with the same prototype (so it keeps the native error
+  // slot that `util.types.isNativeError`, `Error.isError` and structuredClone
+  // look for) without running the subclass constructor, whose arguments vary.
+  // Then copy every own property (message, name, code, a subclass's own
+  // fields) and set `usage` on the copy. `usage` is readonly to callers; this
+  // is the one place that sets it.
+  const copy = Reflect.construct(Error, [err.message], err.constructor) as ProviderError;
+  Object.defineProperties(copy, Object.getOwnPropertyDescriptors(err));
   // V8 keeps `stack` behind an accessor that reads the original's internal
-  // slot, so the copied accessor reads nothing. Set it as a plain value.
+  // slot, so a copied accessor reads the wrong one. Set it as a plain value.
   Object.defineProperty(copy, 'stack', {
     value: err.stack,
     enumerable: false,

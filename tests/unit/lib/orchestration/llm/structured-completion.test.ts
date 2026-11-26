@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { types } from 'node:util';
 
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { SPAN_LLM_CALL } from '@/lib/orchestration/tracing';
@@ -617,6 +618,84 @@ describe('runStructuredCompletion', () => {
       expect(pe.cause).toBe(retryError);
       expect(pe.stack).toBe(retryError.stack);
       expect(pe.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
+    });
+
+    it('wraps an aborted retry with code aborted so it still reads as a cancel', async () => {
+      const retryError = new DOMException('This operation was aborted', 'AbortError');
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(ProviderError);
+      const pe = err as ProviderError;
+      expect(pe.code).toBe('aborted');
+      expect(pe.retriable).toBe(false);
+      expect(pe.name).toBe('AbortError');
+      expect(pe.cause).toBe(retryError);
+      expect(pe.usage).toEqual({ inputTokens: 100, outputTokens: 40 });
+    });
+
+    it('keeps the ProviderError name when wrapping a plain Error', async () => {
+      const retryError = new Error('socket hang up');
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(ProviderError);
+      expect((err as ProviderError).name).toBe('ProviderError');
+      expect((err as ProviderError).message).toBe('socket hang up');
+    });
+
+    it('returns the usage-carrying copy as a native error', async () => {
+      const retryError = new ProviderError('timed out', {
+        code: 'timeout',
+        usage: { inputTokens: 7, outputTokens: 3 },
+      });
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).not.toBe(retryError);
+      expect(types.isNativeError(err)).toBe(true);
+      expect(Object.prototype.toString.call(err)).toBe('[object Error]');
+      expect((err as ProviderError).stack).toBe(retryError.stack);
+      expect((err as ProviderError).usage).toEqual({ inputTokens: 107, outputTokens: 43 });
     });
 
     it('keeps a rate-limited retry’s status and retriable flag when carrying its usage', async () => {
