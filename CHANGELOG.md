@@ -106,7 +106,6 @@ release process.
 > - An app check in `lib/app/model-pins.ts` that refuses a move while its pins
 >   remain can now register a mover and let the check allow those pins.
 
-
 ### Changed
 
 - **A platform admin acts in a customer org as their org role there (t-1032,
@@ -338,7 +337,6 @@ release process.
   switch with the same key as a core fixture no longer lands over it.
   `tests/unit/setup-seam-pins.test.ts` fails if a pinned init stops being
   replaced.
-
 
 ## [0.20.0] — 2026-11-21
 
