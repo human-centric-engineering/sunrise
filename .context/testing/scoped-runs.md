@@ -213,6 +213,14 @@ graph:
   changes, so this one is belt-and-braces: it keeps the rule explicit and
   covers the `recordDependencies` resolver too
 
+Vitest itself adds one more rule that the list doesn't need to repeat: a change to
+any module `vitest.config.ts` imports, directly or through another import,
+selects every test (the imports are at the top of `vitest.config.ts`). Vitest
+records them as the config's `configFileDependencies` and checks them before it
+traces the graph. No test enforces this: it is Vitest's behaviour as of 5.1.2, so
+re-check it when Vitest is bumped. A new import added to the config is covered
+with no edit to the list (t-1114).
+
 `package.json` is left out because almost every edit to it is a script line,
 which no test imports. The tests that read it as text are in `ALWAYS_RUN_TESTS`.
 If you add a test that reads `package.json` from disk, add it there too.

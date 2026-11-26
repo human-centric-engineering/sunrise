@@ -21,9 +21,12 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { join, matchesGlob } from 'node:path';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 
+import picomatch from 'picomatch';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import config from '@/vitest.config';
 import { alwaysRunPaths } from '@/scripts/ci/scoped-tests';
@@ -38,16 +41,42 @@ function triggers(): string[] {
 
 /** Whether vitest would treat a change to this repo-relative file as "run everything". */
 function forcesFullRun(relativePath: string): boolean {
-  // Vitest matches the changed files' ABSOLUTE paths, so this must too: a glob
+  // The same call vitest makes on `--changed` (`picomatch(forceRerunTriggers,
+  // { dot: true })`, in its CLI API), against the same ABSOLUTE paths: a glob
   // without `**/` would pass a relative-path check and never fire in a real
-  // run. A fixed root stands in for the checkout, because `matchesGlob` will
-  // not let `**` cross a dot-directory (a worktree under `.claude/`, say),
-  // where vitest's own matcher runs with `dot: true`.
-  const absolute = `/checkout/${relativePath}`;
-  return triggers().some((glob) => matchesGlob(absolute, glob));
+  // run. Node's `path.matchesGlob` agrees on simple globs but not on extglobs,
+  // dot segments or every brace form, so a trigger checked with it could pass
+  // here and never fire in vitest, or the reverse. This imports the root
+  // `picomatch`; the test below fails if Vitest resolves a different copy.
+  // Slashes are normalised because Vitest's changed-file paths are, and
+  // picomatch treats only `/` as a separator.
+  return picomatch(triggers(), { dot: true })(join(ROOT, relativePath).replaceAll('\\', '/'));
 }
 
 describe('forceRerunTriggers', () => {
+  it('is matched here with the same picomatch copy vitest resolves', () => {
+    // If a Vitest bump nests its own picomatch (a new major), the matcher above
+    // is no longer the one Vitest calls, and its cases prove nothing.
+    const fromRoot = createRequire(join(ROOT, 'package.json'));
+    const vitestManifest = fromRoot.resolve('vitest/package.json');
+    const fromVitest = createRequire(vitestManifest);
+    expect(fromVitest.resolve('picomatch')).toBe(fromRoot.resolve('picomatch'));
+    // Resolution alone would still find the root copy if Vitest bundled its
+    // own picomatch and dropped the dependency, so check it still declares one,
+    // on the root copy's major.
+    const manifest = z.object({
+      version: z.string(),
+      dependencies: z.record(z.string(), z.string()).optional(),
+    });
+    const vitestPkg = manifest.parse(JSON.parse(readFileSync(vitestManifest, 'utf8')));
+    const rootPkg = manifest.parse(
+      JSON.parse(readFileSync(fromRoot.resolve('picomatch/package.json'), 'utf8'))
+    );
+    const range = vitestPkg.dependencies?.picomatch;
+    expect(range, 'vitest no longer depends on picomatch').toBeDefined();
+    expect(range?.match(/\d+/)?.[0]).toBe(rootPkg.version.split('.')[0]);
+  });
+
   it('includes the lockfile, the vitest/vite config, tests/setup.ts and tsconfig.json', () => {
     // Containment, not equality: a fork may add a trigger of its own without
     // editing this platform-owned test.

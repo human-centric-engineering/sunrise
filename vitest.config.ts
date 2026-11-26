@@ -7,8 +7,8 @@ import { nextFontStub } from './tests/mocks/next-font-plugin';
 // runtime; vite's own config loading does not apply it to the config itself.
 import { appCoverageExclusions } from './lib/app/ci';
 
-// Vite 8 prints, on every vitest invocation, that this file (and the two `.ts`
-// modules it imports: `tests/mocks/next-font-plugin.ts`, `lib/app/ci.ts`) is
+// Vite 8 prints, on every vitest invocation, that this file (and the local
+// `.ts` modules it imports) is
 // "ESM syntax in a file loaded as CommonJS", ahead of its native config loader
 // becoming the default in a future Vite major. Nothing fails today: vitest 5
 // still loads the config through Vite's bundling loader. The real fixes are a
@@ -173,6 +173,14 @@ export default defineConfig({
     //   - `tests/setup.ts`. Vitest already reruns everything when a
     //     `setupFiles` entry changes, so this is belt-and-braces: it keeps the
     //     rule explicit and also covers the `recordDependencies` resolver.
+    //
+    // Not listed, because Vitest already covers them: the local modules this
+    // file imports (see the imports at the top), and anything they import.
+    // Vitest records them as the config's `configFileDependencies`, and when
+    // one changes both resolvers select every test, not a graph-traced subset
+    // (t-1114). That covers a new import here with no edit to this list. No
+    // test enforces this: it is Vitest's behaviour as of 5.1.2, so re-check it
+    // when Vitest is bumped.
     //
     // Vitest matches these against absolute paths, so each needs the `**/`.
     // `tests/unit/vitest-rerun-triggers.test.ts` pins the list.
