@@ -178,7 +178,7 @@ export default defineConfig({
     // file imports (see the imports at the top), and anything they import.
     // Vitest records them as the config's `configFileDependencies`, and when
     // one changes both resolvers select every test, not a graph-traced subset
-    // (#1114). That covers a new import here with no edit to this list. No
+    // (t-1114). That covers a new import here with no edit to this list. No
     // test enforces this: it is Vitest's behaviour as of 5.1.2, so re-check it
     // when Vitest is bumped.
     //

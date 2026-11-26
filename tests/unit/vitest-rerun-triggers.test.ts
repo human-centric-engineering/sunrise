@@ -21,6 +21,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import picomatch from 'picomatch';
@@ -45,12 +46,21 @@ function forcesFullRun(relativePath: string): boolean {
   // run. Node's `path.matchesGlob` agrees on simple globs but not on extglobs,
   // dot segments or every brace form, so a trigger checked with it could pass
   // here and never fire in vitest, or the reverse. This imports the root
-  // `picomatch`, so it must stay on the major Vitest depends on
-  // (`npm ls picomatch` shows both).
-  return picomatch(triggers(), { dot: true })(join(ROOT, relativePath));
+  // `picomatch`; the test below fails if Vitest resolves a different copy.
+  // Slashes are normalised because Vitest's changed-file paths are, and
+  // picomatch treats only `/` as a separator.
+  return picomatch(triggers(), { dot: true })(join(ROOT, relativePath).replaceAll('\\', '/'));
 }
 
 describe('forceRerunTriggers', () => {
+  it('is matched here with the same picomatch copy vitest resolves', () => {
+    // If a Vitest bump nests its own picomatch (a new major), the matcher above
+    // is no longer the one Vitest calls, and its cases prove nothing.
+    const fromRoot = createRequire(join(ROOT, 'package.json'));
+    const fromVitest = createRequire(fromRoot.resolve('vitest/package.json'));
+    expect(fromVitest.resolve('picomatch')).toBe(fromRoot.resolve('picomatch'));
+  });
+
   it('includes the lockfile, the vitest/vite config, tests/setup.ts and tsconfig.json', () => {
     // Containment, not equality: a fork may add a trigger of its own without
     // editing this platform-owned test.
