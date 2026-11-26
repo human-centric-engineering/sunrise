@@ -56,13 +56,24 @@ async function partA(): Promise<void> {
     console.log('  skipped: set STRIPE_MOCK_URL (e.g. http://localhost:12111)');
     return;
   }
-  const headers = {
+  // The adapter pins the API version, so the shape checked below is that
+  // version's, not whichever default the installed stripe-mock has.
+  const baseHeaders: Record<string, string> = {
     Authorization: 'Bearer sk_test_123',
     'Content-Type': 'application/x-www-form-urlencoded',
-    'Idempotency-Key': `spike-${Date.now()}`,
+    'Stripe-Version': '2025-03-31.basil',
   };
+  let requestCount = 0;
   async function call(method: string, path: string, form?: Record<string, string>) {
     const body = form ? new URLSearchParams(form).toString() : undefined;
+    // One idempotency key per mutating request. Stripe refuses a key reused
+    // with different parameters; stripe-mock does not check, so a shared key
+    // would pass here and fail live. GETs are idempotent and send none.
+    requestCount += 1;
+    const headers =
+      method === 'GET'
+        ? baseHeaders
+        : { ...baseHeaders, 'Idempotency-Key': `spike-${Date.now()}-${requestCount}` };
     const res = await fetch(`${base}${path}`, { method, headers, body });
     const parsed: unknown = await res.json();
     return { status: res.status, json: isRecord(parsed) ? parsed : {} };
@@ -293,7 +304,6 @@ function partC(): void {
   // Every delivery here arrives after the last change, so each fetch sees the
   // final state: the worst case for reordering. A fetch racing a change is D.
   const want = planFor(current);
-  const reference = ledgerAndFetch(events, current);
   for (const [name, deliveries] of Object.entries(orders)) {
     const naive = naiveSnapshot(deliveries, current);
     const byCreated = createdOrdering(deliveries, current);
@@ -302,10 +312,12 @@ function partC(): void {
       `  ${name}: naive → ${naive.plan}, by created → ${byCreated.plan}, ledger+fetch → ${spec.plan} (want ${want})`
     );
     expect(`${name}: ledger + fetch ends on the provider's current state`, spec.plan === want);
+    // Every fetch sees one state, so exactly one plan write is right: a replay
+    // or a later delivery of the same state must add none.
     expect(
-      `${name}: ledger + fetch writes the plan no more often than in-order delivery`,
-      spec.planWrites <= reference.planWrites,
-      `${spec.planWrites} vs ${reference.planWrites}`
+      `${name}: ledger + fetch writes the plan once, however often events arrive`,
+      spec.planWrites === 1,
+      `${spec.planWrites} writes`
     );
   }
   // The two rejected rules, and why: shown, not just asserted.

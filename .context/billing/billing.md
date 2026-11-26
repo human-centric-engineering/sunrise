@@ -118,7 +118,11 @@ interface BillingProvider {
   /** The value of BILLING_PROVIDER that selects it: 'stripe'. */
   readonly key: string;
 
-  /** A hosted checkout for one plan. Creates the org's customer on first use. */
+  /**
+   * A hosted checkout for one plan. Creates the org's customer on first use.
+   * Writes the org id into the metadata of the customer, the session and the
+   * subscription, so a webhook can find the org before the reference is stored.
+   */
   createCheckout(input: {
     orgId: string;
     orgName: string;
@@ -152,7 +156,11 @@ interface BillingProvider {
     identifier: string; // the usage report's id, stable across resends
   }): Promise<void>;
 
-  /** End it now, without a refund decision. Org erasure calls this. */
+  /**
+   * End it now, without a refund decision. Org erasure calls this. A
+   * subscription that has already ended, or that the provider does not have,
+   * counts as success: the outcome erasure needs is already true.
+   */
   cancelSubscription(subscriptionRef: string): Promise<void>;
 }
 
@@ -235,11 +243,17 @@ Stripe delivers each event at least once and in no guaranteed order. It
 retries for up to three days in live mode. So:
 
 1. **Find the org** from the event's customer reference, through the org's
-   subscription record (a system read, since the org is not known yet). An event
-   for a customer no org holds is answered `200`, logged, and nothing is
-   stored. It changes nothing, so a replay of it changes nothing either. It
-   also cannot be written to the ledger, which is org-owned and refuses a row
-   with no org at `multi`.
+   subscription record (a system read, since the org is not known yet). If no
+   org holds that customer, fall back to the `orgId` that `createCheckout`
+   writes into the metadata of the customer, the session and the subscription
+   (and the session's `client_reference_id`). This covers a checkout whose
+   provider customer was created but whose local write of the reference failed
+   or has not committed: the org is linked to the customer here, provided it
+   exists and holds no other customer reference. Only an event that names no
+   org either way is answered `200`, logged, and not stored. It changes
+   nothing, so a replay of it changes nothing either. It also cannot be
+   written to the ledger, which is org-owned and refuses a row with no org at
+   `multi`.
 2. **Take a per-org lock**: a Postgres advisory transaction lock keyed on the
    org, inside a transaction run as that org (`runAsOrg`).
 3. **Insert the event id into the ledger**, unique on (provider, event id). If
@@ -273,10 +287,18 @@ gets a timeout well above a provider round trip. The alternative, comparing a
 version on the provider's object, is not available: a Stripe subscription
 carries no version.
 
-**One subscription per org.** Checkout is refused while the org's subscription
-is `active` or `past_due`, and the owner is sent to the portal instead. An
-event for a different subscription of a known customer is recorded in the
-ledger and not applied, with a warning.
+**One subscription per org.** The org's record holds one subscription
+reference. Checkout is refused while that subscription is `active` or
+`past_due`, and the owner is sent to the portal instead. While it is
+`incomplete` (a first payment that failed or awaits authentication), a new
+checkout first cancels it at the provider, so the org never has two live
+subscriptions.
+
+An event for a subscription other than the stored one replaces the stored
+reference when the org has none, or its stored one is `ended` or `incomplete`.
+That is how an org that resubscribes after its subscription ended gets its new
+plan. Otherwise the event is recorded in the ledger and not applied, with a
+warning.
 
 **Events Stripe should send:** `customer.subscription.created`, `.updated`,
 `.deleted`, `.paused` and `.resumed`, `checkout.session.completed` and
@@ -325,7 +347,10 @@ So usage is counted once per closed period and sent once (t-1097):
 1. **The period is the provider's**, read from the subscription items and
    stored on the org's subscription record at each sync. It is not the meter's
    own `period`, and not the UTC month of §110's budget. When a sync sees the
-   period move on, the one before it is closed.
+   period move on, the one before it is closed. When a sync sees the
+   subscription become `ended`, the current period is closed too, at the
+   earlier of its end and the moment it ended. There is no next period to move
+   on to, and without this the last period's usage would never be reported.
 2. **Wait for it to settle.** The maintenance tick picks up a closed period a
    few minutes after its end, so rows committed just before the boundary are
    counted.
@@ -377,7 +402,10 @@ assume. It is summed, then rounded to whole cents once, so rounding error does
 not build up per call. Any markup is the app's price per cent at the provider.
 
 **Standing meters** (seats) have no window. The report is the count when the
-period closes. Billing seats as a subscription quantity, changed as members
+closing tick picks the period up, a few minutes after it ends, not the count
+at the boundary itself. A seat added or removed in those minutes moves the
+closed period's bill. That is accepted: catching the boundary exactly would
+need a sync at that second. Billing seats as a subscription quantity, changed as members
 join, is not in this feature.
 
 **Not verified:** Stripe's documentation now recommends Metronome over Billing
@@ -408,8 +436,10 @@ Decided at planning:
   provider's pages.
 - **Erasing an org cancels its subscription at the provider first**
   (`cancelSubscription`), then deletes the local rows. Otherwise the provider
-  keeps charging a card for an org that no longer exists. If the provider
-  refuses, the erasure step fails and is retried. It does not go on without it.
+  keeps charging a card for an org that no longer exists. A subscription that
+  has already ended, or that the provider no longer has, counts as cancelled,
+  so a lapsed org's erasure is not stuck retrying. Any other refusal fails the
+  erasure step, which is retried. It does not go on without it.
 - **The provider's own records stay with the provider**: the customer, its
   invoices and payments, under the provider's retention and the tax rules on
   keeping invoices. The org export includes the provider's customer reference,
