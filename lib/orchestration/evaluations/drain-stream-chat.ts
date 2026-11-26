@@ -77,6 +77,13 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
       case 'content':
         assistantText += event.delta ?? '';
         break;
+      case 'content_reset':
+        // The handler discarded what it streamed — before a fallback provider
+        // starts again, or before a request fault ends the turn. The chat UI
+        // clears its text here; graders must not read the abandoned part
+        // either. Tool calls already made did run, so they stay.
+        assistantText = '';
+        break;
       case 'capability_result':
         if (event.trace) toolCalls.push(event.trace);
         break;
