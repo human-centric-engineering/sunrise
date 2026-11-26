@@ -38,8 +38,9 @@ import {
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
+import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { CostOperation, type Citation } from '@/types/orchestration';
-import type { LlmMessage } from '@/lib/orchestration/llm/types';
+import type { LlmMessage, LlmUsage } from '@/lib/orchestration/llm/types';
 import type {
   CompleteEvaluationParams,
   CompleteEvaluationResult,
@@ -166,10 +167,40 @@ export async function completeEvaluationSession(
     annotations,
   });
 
+  // Fire-and-forget cost logging — a Prisma write failure here must
+  // not abort the completion path.
+  const recordCost = (tokenUsage: AnalysisResult['tokenUsage']): void => {
+    const costParams: Parameters<typeof logCost>[0] = {
+      model,
+      provider: providerSlug,
+      ownKey: usesOrgOwnKey(provider),
+      inputTokens: tokenUsage.input,
+      outputTokens: tokenUsage.output,
+      cacheReadTokens: tokenUsage.cacheRead,
+      cacheWriteTokens: tokenUsage.cacheWrite,
+      serviceTier: tokenUsage.serviceTier,
+      operation: CostOperation.EVALUATION,
+      metadata: { phase: 'summary' },
+    };
+    if (session.agentId) costParams.agentId = session.agentId;
+    costParams.userId = params.userId;
+    void logCost(costParams).catch((err) => {
+      logger.error('Failed to log evaluation cost', {
+        sessionId: session.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  };
+
   let analysis: AnalysisResult;
   try {
     analysis = await runAnalysis(provider, messages, model);
   } catch (err) {
+    // A failed analysis was still billed — both attempts, when neither
+    // parsed or the retry timed out. The runner carries those tokens on a
+    // ProviderError's `usage`; record them so spend and caps see them (#1260).
+    const billed = err instanceof ProviderError ? err.usage : undefined;
+    if (billed) recordCost(tokenUsageFrom(billed));
     logger.error('Evaluation analysis failed', {
       sessionId: session.id,
       agentId: session.agentId,
@@ -181,28 +212,7 @@ export async function completeEvaluationSession(
     throw new Error('Failed to generate evaluation analysis');
   }
 
-  // Fire-and-forget cost logging — a Prisma write failure here must
-  // not abort the completion path.
-  const costParams: Parameters<typeof logCost>[0] = {
-    model,
-    provider: providerSlug,
-    ownKey: usesOrgOwnKey(provider),
-    inputTokens: analysis.tokenUsage.input,
-    outputTokens: analysis.tokenUsage.output,
-    cacheReadTokens: analysis.tokenUsage.cacheRead,
-    cacheWriteTokens: analysis.tokenUsage.cacheWrite,
-    serviceTier: analysis.tokenUsage.serviceTier,
-    operation: CostOperation.EVALUATION,
-    metadata: { phase: 'summary' },
-  };
-  if (session.agentId) costParams.agentId = session.agentId;
-  costParams.userId = params.userId;
-  void logCost(costParams).catch((err) => {
-    logger.error('Failed to log evaluation cost', {
-      sessionId: session.id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  recordCost(analysis.tokenUsage);
 
   // Score per-turn metrics. Wrap so a wholesale scoring failure still
   // lets the session complete with the summary; partial successes are
@@ -325,7 +335,12 @@ async function runAnalysis(
     temperature: ANALYSIS_TEMPERATURE,
     maxTokens: ANALYSIS_MAX_TOKENS,
     timeoutMs: ANALYSIS_TIMEOUT_MS,
-    onFinalFailure: () => new Error('Analysis response was not valid JSON after retry'),
+    onFinalFailure: (usage) =>
+      new ProviderError('Analysis response was not valid JSON after retry', {
+        code: 'structured_output_invalid',
+        retriable: false,
+        ...(usage ? { usage } : {}),
+      }),
     phase: 'summary',
   });
   return {
@@ -333,6 +348,17 @@ async function runAnalysis(
     improvementSuggestions: result.value.improvementSuggestions,
     tokenUsage: result.tokenUsage,
     costUsd: result.costUsd,
+  };
+}
+
+/** A thrown error's billed usage, in the shape a successful result reports. */
+function tokenUsageFrom(usage: LlmUsage): AnalysisResult['tokenUsage'] {
+  return {
+    input: usage.inputTokens,
+    output: usage.outputTokens,
+    ...(usage.cacheReadTokens ? { cacheRead: usage.cacheReadTokens } : {}),
+    ...(usage.cacheWriteTokens ? { cacheWrite: usage.cacheWriteTokens } : {}),
+    ...(usage.serviceTier ? { serviceTier: usage.serviceTier } : {}),
   };
 }
 

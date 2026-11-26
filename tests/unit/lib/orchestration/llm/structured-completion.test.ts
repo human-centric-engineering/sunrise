@@ -305,6 +305,113 @@ describe('runStructuredCompletion', () => {
     ).rejects.toThrow('Structured completion response was not valid JSON after retry');
   });
 
+  describe('billed usage on a failed call (#1260)', () => {
+    const base = {
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user' as const, content: 'go' }],
+      parse: dummyParse,
+      retryUserMessage: 'STRICT',
+    };
+
+    it("carries both attempts' tokens on the default error when neither parses", async () => {
+      const provider = makeProvider([
+        { content: 'no', usage: { inputTokens: 100, outputTokens: 40 } },
+        { content: 'still no', usage: { inputTokens: 120, outputTokens: 30 } },
+      ]);
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(ProviderError);
+      expect((err as ProviderError).code).toBe('structured_output_invalid');
+      expect((err as ProviderError).retriable).toBe(false);
+      expect((err as ProviderError).usage).toEqual({ inputTokens: 220, outputTokens: 70 });
+    });
+
+    it("passes both attempts' tokens to onFinalFailure", async () => {
+      const provider = makeProvider([
+        { content: 'no', usage: { inputTokens: 100, outputTokens: 40 } },
+        { content: 'still no', usage: { inputTokens: 120, outputTokens: 30 } },
+      ]);
+      const onFinalFailure = vi.fn(() => new Error('caller-supplied error'));
+
+      await expect(
+        runStructuredCompletion<DummyShape>({ ...base, provider, onFinalFailure })
+      ).rejects.toThrow('caller-supplied error');
+      expect(onFinalFailure).toHaveBeenCalledWith({ inputTokens: 220, outputTokens: 70 });
+    });
+
+    it('omits usage when neither attempt reported any', async () => {
+      const provider = makeProvider([
+        { content: 'no', usage: { inputTokens: 0, outputTokens: 0 } },
+        { content: 'still no', usage: { inputTokens: 0, outputTokens: 0 } },
+      ]);
+      const onFinalFailure = vi.fn(() => new Error('caller-supplied error'));
+
+      await expect(
+        runStructuredCompletion<DummyShape>({ ...base, provider, onFinalFailure })
+      ).rejects.toThrow('caller-supplied error');
+      expect(onFinalFailure).toHaveBeenCalledWith(undefined);
+    });
+
+    it("keeps the first attempt's tokens when the retry throws, beside the retry's own", async () => {
+      const cause = new Error('socket hang up');
+      const retryError = new ProviderError('timed out', {
+        code: 'timeout',
+        status: 504,
+        retriable: true,
+        cause,
+        usage: { inputTokens: 7, outputTokens: 3 },
+      });
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      const err: unknown = await runStructuredCompletion<DummyShape>({ ...base, provider }).catch(
+        (e: unknown) => e
+      );
+
+      expect(chat).toHaveBeenCalledTimes(2);
+      expect(err).toBeInstanceOf(ProviderError);
+      const pe = err as ProviderError;
+      expect(pe.message).toBe('timed out');
+      expect(pe.code).toBe('timeout');
+      expect(pe.status).toBe(504);
+      expect(pe.retriable).toBe(true);
+      expect(pe.cause).toBe(cause);
+      expect(pe.stack).toBe(retryError.stack);
+      expect(pe.usage).toEqual({ inputTokens: 107, outputTokens: 43 });
+    });
+
+    it('rethrows a non-provider retry error unchanged', async () => {
+      const retryError = new TypeError('parse blew up');
+      const chat = vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: 'no',
+          usage: { inputTokens: 100, outputTokens: 40 },
+          finishReason: 'stop',
+        })
+        .mockRejectedValueOnce(retryError);
+      const provider = { chat } as unknown as Parameters<
+        typeof runStructuredCompletion
+      >[0]['provider'];
+
+      await expect(runStructuredCompletion<DummyShape>({ ...base, provider })).rejects.toBe(
+        retryError
+      );
+    });
+  });
+
   describe('truncation (#587)', () => {
     // Partial JSON: the model started the object and was cut off mid-string.
     // `dummyParse` returns null on it, exactly as it would on genuine

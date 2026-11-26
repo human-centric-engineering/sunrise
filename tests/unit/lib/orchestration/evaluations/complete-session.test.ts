@@ -357,6 +357,81 @@ describe('completeEvaluationSession', () => {
     expect((err as Error).message).not.toContain('leaked');
   });
 
+  it('logs the cost of both billed attempts when the analysis fails (#1260)', async () => {
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([makeLog(1)]);
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: 'broken',
+        usage: { inputTokens: 100, outputTokens: 40 },
+        model: 'claude-sonnet-4-6',
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        content: 'still broken',
+        usage: { inputTokens: 120, outputTokens: 30 },
+        model: 'claude-sonnet-4-6',
+        finishReason: 'stop',
+      });
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+
+    await expect(
+      completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
+    ).rejects.toThrow(/Failed to generate evaluation analysis/);
+
+    expect(mockedLogCost).toHaveBeenCalledTimes(1);
+    expect(mockedLogCost.mock.calls[0][0]).toMatchObject({
+      agentId: 'agent-1',
+      userId: 'user-1',
+      operation: 'evaluation',
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 220,
+      outputTokens: 70,
+      metadata: { phase: 'summary' },
+    });
+  });
+
+  it('logs the first attempt’s cost when the retry fails outright (#1260)', async () => {
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([makeLog(1)]);
+    const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: 'broken',
+        usage: { inputTokens: 100, outputTokens: 40 },
+        model: 'claude-sonnet-4-6',
+        finishReason: 'stop',
+      })
+      .mockRejectedValueOnce(new ProviderError('timed out', { code: 'timeout', retriable: true }));
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+
+    await expect(
+      completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
+    ).rejects.toThrow(/Failed to generate evaluation analysis/);
+
+    expect(mockedLogCost).toHaveBeenCalledTimes(1);
+    expect(mockedLogCost.mock.calls[0][0]).toMatchObject({ inputTokens: 100, outputTokens: 40 });
+  });
+
+  it('logs no cost when a failed analysis was billed nothing', async () => {
+    findFirst.mockResolvedValueOnce(makeSession());
+    findLogs.mockResolvedValueOnce([makeLog(1)]);
+    const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+    const chat = vi
+      .fn()
+      .mockRejectedValueOnce(new ProviderError('bad key', { code: 'http_401', retriable: false }));
+    mockedGetProvider.mockResolvedValueOnce(makeProvider(chat));
+
+    await expect(
+      completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' })
+    ).rejects.toThrow(/Failed to generate evaluation analysis/);
+
+    expect(mockedLogCost).not.toHaveBeenCalled();
+  });
+
   it('strips ```json code fences from the model response', async () => {
     findFirst.mockResolvedValueOnce(makeSession());
     findLogs.mockResolvedValueOnce([makeLog(1)]);

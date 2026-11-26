@@ -154,8 +154,13 @@ export interface StructuredCompletionOptions<T> {
    * schema. The runner throws its own `ProviderError('truncated_no_output')`
    * instead, so every caller gets the real cause without having to
    * rediscover this one (#587).
+   *
+   * Receives the tokens billed across both attempts (absent when the host
+   * reported none), so the error it builds can carry them — e.g. as a
+   * `ProviderError`'s `usage` — and the caller can still log the cost of a
+   * call that produced nothing (#1260). The default error does exactly that.
    */
-  onFinalFailure?: () => Error;
+  onFinalFailure?: (usage?: LlmUsage) => Error;
   /**
    * Phase tag for OTEL spans and cost logs — an open string set by the
    * caller (e.g. `'summary'` for an evaluation completion summary,
@@ -373,10 +378,17 @@ export async function runStructuredCompletion<T>(
   //
   // The malformed prior response is NOT included — never trust output that
   // just misbehaved as part of a subsequent prompt.
-  const retry = await attempt(
-    [...opts.messages, { role: 'user', content: opts.retryUserMessage }],
-    0
-  );
+  let retry: Awaited<ReturnType<typeof attempt>>;
+  try {
+    retry = await attempt([...opts.messages, { role: 'user', content: opts.retryUserMessage }], 0);
+  } catch (err) {
+    // The retry failed outright (a timeout, a provider error). The first
+    // attempt was still billed, so its tokens ride out on the error the
+    // caller sees, beside any the failed retry itself reported (#1260).
+    // `attempt()` has already turned a truncation into a return, so nothing
+    // thrown here is one.
+    throw withBilledUsage(err, [first.usage]);
+  }
 
   // Both attempts are spent. Only now is the cap provably the problem.
   //
@@ -389,16 +401,19 @@ export async function runStructuredCompletion<T>(
     // doing `if (err.usage) logCost(...)` would otherwise write the "this turn
     // was free" row those guards exist to avoid. Both attempts can come back
     // usage-less from a host that ignores `stream_options.include_usage`.
-    throw truncationError(
-      opts.model,
-      maxTokens,
-      billed.inputTokens > 0 || billed.outputTokens > 0 ? billed : undefined
-    );
+    throw truncationError(opts.model, maxTokens, billedOrUndefined(billed));
   }
 
   if (retry.parsed === null) {
-    if (opts.onFinalFailure) throw opts.onFinalFailure();
-    throw new Error('Structured completion response was not valid JSON after retry');
+    // Neither attempt parsed. Both were billed, so the error carries their
+    // tokens (#1260) — omitted rather than zeroed, as on the truncation exit.
+    const usage = billedOrUndefined(sumUsage([first.usage, retry.usage]));
+    if (opts.onFinalFailure) throw opts.onFinalFailure(usage);
+    throw new ProviderError('Structured completion response was not valid JSON after retry', {
+      code: 'structured_output_invalid',
+      retriable: false,
+      ...(usage ? { usage } : {}),
+    });
   }
 
   // Both attempts are billed, so both are counted — including a first attempt
@@ -426,6 +441,37 @@ function sumUsage(attempts: Array<LlmUsage | null>): LlmUsage {
     }
   }
   return total;
+}
+
+/**
+ * The usage, or undefined when it is all zeros — so a consumer doing
+ * `if (err.usage) logCost(...)` never writes a "this call was free" row for a
+ * host that reported nothing.
+ */
+function billedOrUndefined(usage: LlmUsage): LlmUsage | undefined {
+  return usage.inputTokens > 0 || usage.outputTokens > 0 ? usage : undefined;
+}
+
+/**
+ * `err`, carrying the tokens `earlier` attempts were billed for on top of its
+ * own. A `ProviderError` is rebuilt with the summed `usage` (it is readonly),
+ * keeping its message, code, status, retriability, cause and stack. Anything
+ * else is returned as it is: wrapping it would change the error type a caller
+ * catches, and only a `ProviderError` has a place to carry usage.
+ */
+function withBilledUsage(err: unknown, earlier: Array<LlmUsage | null>): unknown {
+  if (!(err instanceof ProviderError)) return err;
+  const usage = billedOrUndefined(sumUsage([...earlier, err.usage ?? null]));
+  if (!usage) return err;
+  const rebuilt = new ProviderError(err.message, {
+    code: err.code,
+    ...(err.status !== undefined ? { status: err.status } : {}),
+    retriable: err.retriable,
+    ...(err.cause !== undefined ? { cause: err.cause } : {}),
+    usage,
+  });
+  if (err.stack) rebuilt.stack = err.stack;
+  return rebuilt;
 }
 
 /** `tokenUsage` and `costUsd` for the attempts a result was billed for. */
