@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 
 import { BillingSummary, type OrgBillingView } from '@/components/admin/billing/billing-summary';
 import { SignupPlanNotice } from '@/components/admin/billing/signup-plan-notice';
 import { SignupPlanTakeUp } from '@/components/admin/billing/signup-plan-take-up';
 import { API } from '@/lib/api/endpoints';
+import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { billingEnabled } from '@/lib/billing/config';
@@ -64,6 +65,16 @@ export default async function BillingPage({
   // Sent here to take up the plan the signup chose (§139 t-1096), or back
   // from doing so with what happened.
   const signup = query[SIGNUP_PLAN_QUERY.key];
+  // Sent here by a signup with nothing for this viewer to start (one whose
+  // plan the server dropped, an existing account signing in from a pricing
+  // link, an ADMIN): on to the landing route, as the signup would have gone.
+  if (
+    signup === SIGNUP_PLAN_QUERY.value &&
+    result?.ok &&
+    !(result.data.mayChange && result.data.signupPlan)
+  ) {
+    redirect(AUTH_LANDING_ROUTE);
+  }
 
   return (
     <div className="space-y-6">
@@ -95,7 +106,9 @@ export default async function BillingPage({
         result.data.mayChange &&
         result.data.signupPlan && <SignupPlanTakeUp orgId={result.data.orgId} />}
       {/* Still waiting (checkout left or failed): offered until settled. */}
+      {/* Not just back from paying: the webhook settling it may lag the return. */}
       {signup !== SIGNUP_PLAN_QUERY.value &&
+        returned !== 'success' &&
         result?.ok &&
         result.data.mayChange &&
         result.data.signupPlan && (

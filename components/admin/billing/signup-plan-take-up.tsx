@@ -41,6 +41,16 @@ export function SignupPlanTakeUp({ orgId }: { orgId: string }) {
   // (React running the effect twice in development) would answer `none`.
   const asked = useRef(false);
 
+  // Restored by Back from the back-forward cache, the page is as it was when
+  // it left ("Taking you…"): load the billing page afresh instead.
+  useEffect(() => {
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) billingNavigation.reload(ORG_BILLING_PAGE_PATH);
+    };
+    window.addEventListener('pageshow', restored);
+    return () => window.removeEventListener('pageshow', restored);
+  }, []);
+
   useEffect(() => {
     if (asked.current) return;
     asked.current = true;
@@ -51,6 +61,10 @@ export function SignupPlanTakeUp({ orgId }: { orgId: string }) {
           await apiClient.post<unknown>(API.ORGS.billingSignupPlan(orgId))
         );
         if (answer.outcome === 'checkout') {
+          // Back from the provider's page comes to the billing page, which
+          // offers the plan again, not to this page, which would start
+          // another checkout.
+          window.history.replaceState(null, '', ORG_BILLING_PAGE_PATH);
           billingNavigation.go(answer.url);
           return;
         }

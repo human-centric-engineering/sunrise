@@ -806,12 +806,12 @@ The plan the org's signup link named, while it waits
 [Billing](../billing/billing.md#choosing-a-plan-at-signup)). `POST` (no body)
 takes it up:
 
-| Answer                                  | When                                                                                                        |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `{ outcome: 'checkout', planKey, url }` | A paid plan: the browser goes to `url`, as for checkout. The plan stays waiting until a subscription starts |
-| `{ outcome: 'applied', planKey }`       | A free plan, now applied (`org.plan.assign`), the org's setup being finished                                |
-| `{ outcome: 'dropped', planKey }`       | The app no longer registers it                                                                              |
-| `{ outcome: 'none' }`                   | Nothing waiting, the setup not finished, the org awaits its founder, or it already has a subscription       |
+| Answer                                  | When                                                                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `{ outcome: 'checkout', planKey, url }` | A paid plan: the browser goes to `url`, as for checkout. The plan stays waiting until a subscription starts                   |
+| `{ outcome: 'applied', planKey }`       | A free plan, now applied (`org.plan.assign`), the org's setup being finished                                                  |
+| `{ outcome: 'dropped', planKey }`       | The app no longer registers it, or no longer offers it at signup                                                              |
+| `{ outcome: 'none' }`                   | Nothing waiting, a free plan's setup not finished, or the org already has a subscription (one not paid yet leaves it waiting) |
 
 `DELETE` removes it, when the owner chooses a different plan: `{ removed:
 planKey | null }`, audited as `org.billing.signup_plan.dismiss`.

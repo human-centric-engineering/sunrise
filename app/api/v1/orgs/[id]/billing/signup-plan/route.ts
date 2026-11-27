@@ -7,9 +7,10 @@
  * waiting** until a subscription starts (the webhook removes it), so an owner
  * who leaves the checkout page can come back to it. A free one is applied,
  * `{ outcome: 'applied', planKey }`, once the org's setup is done (it usually
- * already was). Otherwise `{ outcome: 'none' }` (nothing waiting, setup not
- * finished, or the org already subscribed), or `{ outcome: 'dropped',
- * planKey }` when the app no longer registers it.
+ * already was). Otherwise `{ outcome: 'none' }` (nothing waiting, a free
+ * plan's setup not finished, or the org already subscribed), or `{ outcome:
+ * 'dropped', planKey }` when the app no longer registers it or no longer
+ * offers it at signup.
  *
  * DELETE /api/v1/orgs/[id]/billing/signup-plan — the owner chooses not to take
  * it up: `{ removed: planKey | null }`. Audited as `org.billing.signup_plan.dismiss`.

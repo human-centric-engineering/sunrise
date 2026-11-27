@@ -99,10 +99,32 @@ describe('registering plans', () => {
       meterLimits: { seats: 25, convos: null },
       aiBudgetUsd: null,
       priceLookupKey: 'pro_monthly',
+      availableAtSignup: true,
     });
     expect(planOf('free')?.aiBudgetUsd).toBe(5);
     expect(fallbackPlan()?.key).toBe('free');
     expect(billingPlansFailed()).toBe(false);
+  });
+
+  it('offers a priced plan at signup by default, and an unpriced one only when the app says so (§139 t-1096)', () => {
+    appRegisters(() => {
+      registerPlan(FREE);
+      registerPlan(PRO);
+      registerPlan({ ...FREE, key: 'starter', label: 'Starter', availableAtSignup: true });
+      registerPlan({
+        ...PRO,
+        key: 'team',
+        label: 'Team',
+        priceLookupKey: 'team_monthly',
+        availableAtSignup: false,
+      });
+    });
+
+    // Unpriced and not opted in: assigned by hand or given away, never by a link.
+    expect(planOf('free')?.availableAtSignup).toBe(false);
+    expect(planOf('pro')?.availableAtSignup).toBe(true);
+    expect(planOf('starter')?.availableAtSignup).toBe(true);
+    expect(planOf('team')?.availableAtSignup).toBe(false);
   });
 
   it('keeps a budget left out apart from null: one does not decide it, the other is no cap', () => {
@@ -141,6 +163,7 @@ describe('registering plans', () => {
     ['a negative limit', { meterLimits: { seats: -1 } }, /whole number/],
     ['a budget out of range', { aiBudgetUsd: 2_000_000 }, /aiBudgetUsd/],
     ['a price lookup key with a space', { priceLookupKey: 'pro monthly' }, /priceLookupKey/],
+    ['availableAtSignup that is not a boolean', { availableAtSignup: 'yes' }, /availableAtSignup/],
   ])('refuses %s, and registers no plan at all', (_name, override, message) => {
     appRegisters(() => {
       registerPlan(FREE);

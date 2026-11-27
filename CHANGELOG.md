@@ -97,7 +97,11 @@ release process.
   `pendingSignupPlan()`, `takeUpSignupPlan()`, `dismissSignupPlan()`,
   `applyFreeSignupPlan()`, `applyWaitingFreeSignupPlans()`), and
   `SIGNUP_PLAN_PAGE`, `SIGNUP_NEXT_PARAM` and `signupNextOf()` in
-  `lib/billing/routes.ts`. Additive: `createSignupOrg()` takes an optional
+  `lib/billing/routes.ts`. New optional plan field `availableAtSignup`
+  (`PlanDefinition`; `RegisteredPlan.availableAtSignup` is always set): whether
+  a signup link may choose the plan. Left out, a priced plan may and an
+  unpriced one may not, so a plan staff assign by hand cannot be taken from a
+  link; set `true` on the free tier a pricing page offers. Additive: `createSignupOrg()` takes an optional
   `signupPlanKey`, `signupOrgMemberships()` an optional third argument, and
   `SignupForm` an optional `continueTo`. An unknown plan, an invited signup, an
   app resolver's `join` or `install`, and billing off behave as before. See

@@ -136,6 +136,12 @@ the shape it must hold:
   price ids differ between test and live mode; a lookup key (`pro_monthly`) is
   set by the operator on both. A plan with no price is one staff assign by
   hand or give away; it never goes through checkout.
+- **Whether a signup link may choose it** (`availableAtSignup`). Left out, yes
+  for a plan with a price and no for one without: an unpriced plan is
+  otherwise assigned by hand or given away, and a link must not hand it to
+  anyone. The app sets `true` on the free tier its pricing page offers, or
+  `false` to keep a priced plan off signup links
+  ([Choosing a plan at signup](#choosing-a-plan-at-signup)).
 - **The app's fallback plan**, named once for the app, not per plan: what an
   org moves to when its subscription ends ([Lapsed subscriptions](#lapsed-subscriptions)).
 
@@ -692,12 +698,16 @@ every later step can read. A plan key is not personal data, so nothing new
 goes into the per-person export or erasure.
 
 **Nothing changes unless all of these hold:** billing is on (`billingEnabled()`),
-the key names a registered plan, and the signup gets an org of its own
-(`asksSignupOrg()`, and the resolver answers `own`). So:
+the key names a registered plan the app offers at signup (`availableAtSignup`),
+and the signup gets an org of its own (`asksSignupOrg()`, and the resolver
+answers `own`). So:
 
-- **An unknown plan** is dropped, logged at `info`, and the signup lands as it
-  does today. It is never trusted: the hook checks the key whatever the page
-  did.
+- **An unknown plan, or one not offered at signup,** is dropped, logged at
+  `info`, and the signup lands as it does today. It is never trusted: the hook
+  checks the key whatever the page or the request body said, and every later
+  step checks it again, so a plan the app stops offering is dropped rather
+  than applied. An unpriced plan is not offered unless the app says so, so
+  `/signup?plan=enterprise` cannot give away a plan staff assign by hand.
 - **An invited signup** ignores it: it joins the inviting org, which is
   already on a plan. So does one an app's resolver sends to an existing org
   (`join`) or the install org, and platform staff. The Google button does not
@@ -721,9 +731,15 @@ plan over it.
 - **When.** `completeSignupOrg()` applies it as the setup ends. If a hook
   failed, or another runner held the hooks, it waits; the `signupPlans`
   maintenance task (every 15 minutes, system scope) applies it once the hooks
-  have run. That task selects only the orgs waiting on a registered free plan,
-  not awaiting their founder and owing no hook this process runs, so an org
-  waiting on a hook is not re-read every tick.
+  have run. That task selects only the orgs waiting on a free plan offered at
+  signup, not awaiting their founder and owing no hook this process runs, in a
+  random order, so an org waiting on a hook is not re-read every tick and none
+  it cannot finish holds up the rest.
+- **However long it takes.** A hook that keeps failing holds the plan back for
+  as long as it fails: applying it anyway would let that hook's next run write
+  its default over the founder's choice. Said once at `warn` when it starts to
+  wait (`the free plan chosen at signup waits on org-created hooks still
+owed`), beside the hook's own `error` on every failed run.
 - **What holds it back.** A registered hook still owed, and an owed record this
   version cannot read (a newer version wrote it, and runs its hooks). A key no
   process registers any more does not: it stays owed by design, but nothing
@@ -748,17 +764,33 @@ goes on to the page that starts the checkout, server-side, for that plan.
   keeps it and it works on whichever device the link is opened. The callback
   page follows `next` only when it is exactly that page (`signupNextOf()`), so
   the link is not an open redirect.
+- **The page decides, on the server.** Sent there with nothing for this viewer
+  to start (an existing account signing in from a pricing link, a plan the
+  server dropped, an ADMIN), the page sends them on to the landing route, as
+  the signup would have gone. A plain MEMBER never reaches it: the admin
+  layout sends them to the landing route first.
+- **While the org still awaits its founder,** a paid plan's checkout starts
+  anyway: the mark is released after the response that sent the founder
+  there, and the owner's own session proves they can act, as a sign-in does.
+  Only the free plan waits for the setup.
 - **Nothing intercepts later visits.** There is no redirect from the landing
   route: a redirect there would be cached by the client router's prefetch and
   replayed after the plan was settled.
 - **It stays waiting until it is settled.** Starting the checkout does not
   remove it. A subscription that gives access removes it, in the webhook's own
   transaction, whichever plan it is on; so does the owner choosing a different
-  plan (`DELETE`, audited as `org.billing.signup_plan.dismiss`). Meanwhile the
-  billing read answers it (`signupPlan`, never while the org has a provider
-  subscription) and the page offers it. So an owner who leaves the checkout
+  plan (`DELETE`, audited as `org.billing.signup_plan.dismiss`). A
+  subscription not paid yet (`incomplete`) leaves it waiting, to be offered
+  again if that subscription ends unpaid. Meanwhile the billing read answers it
+  (`signupPlan`, never while the org has a provider subscription) and the page
+  offers it, except straight back from a successful checkout, when the webhook
+  that settles it may not have landed. So an owner who leaves the checkout
   page, or whose checkout failed, finds it there, and nothing is started that
   they did not ask for.
+- **Back from the provider's page** comes to the billing page, which offers it,
+  not to the take-up, which would start another checkout: the take-up replaces
+  its own history entry before it leaves, and a page Back restores from the
+  back-forward cache is loaded afresh.
 
 **Only the OWNER** may take it up or decline it, and the route refuses anyone
 else, as the checkout route does (`assertMayChangeBilling()`); the page offers

@@ -29,10 +29,35 @@ import { APIClientError, apiClient } from '@/lib/api/client';
 
 const ORG = 'cmorg000000000000000other';
 
+/** A `pageshow`, as the browser fires it (happy-dom drops `persisted`). */
+function pageshow(persisted: boolean): Event {
+  return Object.assign(new Event('pageshow'), { persisted });
+}
+
 describe('SignupPlanTakeUp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(billingNavigation, 'go').mockImplementation(() => {});
+    vi.spyOn(billingNavigation, 'reload').mockImplementation(() => {});
+    window.history.replaceState(null, '', '/admin/billing?signup=plan');
+  });
+
+  it('loads the billing page afresh when Back restores it from the back-forward cache', () => {
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    render(<SignupPlanTakeUp orgId={ORG} />);
+
+    window.dispatchEvent(pageshow(true));
+
+    expect(billingNavigation.reload).toHaveBeenCalledWith('/admin/billing');
+  });
+
+  it('does nothing on an ordinary page show', () => {
+    vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+    render(<SignupPlanTakeUp orgId={ORG} />);
+
+    window.dispatchEvent(pageshow(false));
+
+    expect(billingNavigation.reload).not.toHaveBeenCalled();
   });
 
   it('says it is opening payment, asks once, and follows the checkout', async () => {
@@ -58,6 +83,9 @@ describe('SignupPlanTakeUp', () => {
     expect(apiClient.post).toHaveBeenCalledTimes(1);
     expect(apiClient.post).toHaveBeenCalledWith(`/api/v1/orgs/${ORG}/billing/signup-plan`);
     expect(router.replace).not.toHaveBeenCalled();
+    // Back from the provider comes to the billing page, not to a second take-up.
+    expect(window.location.pathname).toBe('/admin/billing');
+    expect(window.location.search).toBe('');
   });
 
   it.each(['applied', 'dropped'])('reloads the page saying it was %s', async (outcome) => {

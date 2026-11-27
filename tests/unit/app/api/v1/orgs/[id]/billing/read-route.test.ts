@@ -84,6 +84,7 @@ vi.mock('@/lib/billing/plans', () => ({
         label: 'Pro',
         description: 'More of everything',
         priceLookupKey: 'pro_monthly',
+        availableAtSignup: true,
       },
     })[key],
 }));

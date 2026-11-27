@@ -65,15 +65,29 @@ describe('SignupPlanNotice', () => {
     expect(screen.getByRole('button', { name: 'Opening…' })).toBeDisabled();
   });
 
-  it('refreshes the page when there was nothing left to start', async () => {
+  it('reloads the page when there was nothing left to start', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ outcome: 'none' });
     render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Subscribe to Pro' }));
 
-    await waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/admin/billing'));
     expect(billingNavigation.go).not.toHaveBeenCalled();
   });
+
+  it.each(['applied', 'dropped'])(
+    'reloads the page saying what happened when the route answers %s',
+    async (outcome) => {
+      vi.mocked(apiClient.post).mockResolvedValue({ outcome, planKey: 'pro' });
+      render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Subscribe to Pro' }));
+
+      await waitFor(() =>
+        expect(router.replace).toHaveBeenCalledWith(`/admin/billing?signup=${outcome}`)
+      );
+    }
+  );
 
   it('does not follow a checkout URL that is not http(s)', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({

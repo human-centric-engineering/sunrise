@@ -34,9 +34,15 @@ const notFound = vi.hoisted(() =>
     throw new Error('NEXT_NOT_FOUND');
   })
 );
+const redirect = vi.hoisted(() =>
+  vi.fn((to: string) => {
+    throw new Error(`NEXT_REDIRECT ${to}`);
+  })
+);
 vi.mock('next/navigation', async (importOriginal) => ({
   ...(await importOriginal<typeof import('next/navigation')>()),
   notFound,
+  redirect,
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -67,6 +73,7 @@ vi.mock('@/components/admin/billing/signup-plan-notice', () => ({
 }));
 
 import BillingPage from '@/app/admin/billing/page';
+import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -199,16 +206,31 @@ describe('BillingPage — a plan chosen at signup (§139 t-1096)', () => {
     expect(screen.queryByTestId('signup-plan-notice')).not.toBeInTheDocument();
   });
 
-  it('does not for a viewer who cannot pay, nor with no paid plan waiting', async () => {
+  it('sends a viewer with nothing to start on to the landing route, as the signup would have gone', async () => {
+    // An ADMIN, who cannot pay; and an owner whose plan the server dropped,
+    // or an existing account signing in from a pricing link.
     vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ ...WAITING, mayChange: false }));
-    const { unmount } = render(await page({ signup: 'plan' }));
-    expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('signup-plan-notice')).not.toBeInTheDocument();
-    unmount();
+    await expect(page({ signup: 'plan' })).rejects.toThrow(`NEXT_REDIRECT ${AUTH_LANDING_ROUTE}`);
 
     vi.mocked(serverFetch).mockResolvedValue(apiSuccess(BILLING));
+    await expect(page({ signup: 'plan' })).rejects.toThrow(`NEXT_REDIRECT ${AUTH_LANDING_ROUTE}`);
+  });
+
+  it('stays, showing why, when the billing could not be read', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
+
     render(await page({ signup: 'plan' }));
+
+    expect(redirect).not.toHaveBeenCalled();
     expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
+  });
+
+  it('does not offer it again straight back from paying: the webhook may not have landed', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(WAITING));
+
+    render(await page({ checkout: 'success' }));
+
+    expect(screen.queryByTestId('signup-plan-notice')).not.toBeInTheDocument();
   });
 
   it('offers the waiting plan to the owner on any other visit, until it is settled', async () => {

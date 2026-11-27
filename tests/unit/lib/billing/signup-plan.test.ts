@@ -25,12 +25,19 @@ import { Prisma } from '@prisma/client';
 const state = vi.hoisted(() => ({ billingOn: true, plansFailed: false }));
 vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => state.billingOn }));
 
-const FREE = { key: 'starter', label: 'Starter', priceLookupKey: null };
-const PRO = { key: 'pro', label: 'Pro', priceLookupKey: 'pro_monthly' };
+const FREE = { key: 'starter', label: 'Starter', priceLookupKey: null, availableAtSignup: true };
+const PRO = { key: 'pro', label: 'Pro', priceLookupKey: 'pro_monthly', availableAtSignup: true };
+/** Unpriced and not offered at signup: assigned by hand, invoiced offline. */
+const ENTERPRISE = {
+  key: 'enterprise',
+  label: 'Enterprise',
+  priceLookupKey: null,
+  availableAtSignup: false,
+};
 vi.mock('@/lib/billing/plans', () => ({
   billingPlansFailed: () => state.plansFailed,
-  planOf: (key: string) => ({ starter: FREE, pro: PRO })[key],
-  registeredPlans: () => [FREE, PRO],
+  planOf: (key: string) => ({ starter: FREE, pro: PRO, enterprise: ENTERPRISE })[key],
+  registeredPlans: () => [FREE, PRO, ENTERPRISE],
 }));
 
 const hooks = vi.hoisted(() => ({ keys: [] as string[] }));
@@ -130,6 +137,11 @@ describe('signupPlanOf', () => {
     expect(signupPlanOf('')).toBeNull();
   });
 
+  it('drops a plan the app does not offer at signup, such as one assigned by hand', () => {
+    expect(signupPlanOf('enterprise')).toBeNull();
+    expect(signupPlanOffer('enterprise')).toBeNull();
+  });
+
   it('drops every key while billing is off', () => {
     state.billingOn = false;
     expect(signupPlanOf('pro')).toBeNull();
@@ -194,11 +206,18 @@ describe('pendingSignupPlan — what the billing page offers', () => {
     expect(pendingSignupPlan({ signupPlan: 'pro' })).toEqual({ key: 'pro', label: 'Pro' });
   });
 
-  it('offers nothing for a free plan, an unknown one, none, or an org awaiting its founder', () => {
+  it('offers nothing for a free plan, an unknown one, one not offered at signup, or none', () => {
     expect(pendingSignupPlan({ signupPlan: 'starter' })).toBeNull();
     expect(pendingSignupPlan({ signupPlan: 'legacy' })).toBeNull();
+    expect(pendingSignupPlan({ signupPlan: 'enterprise' })).toBeNull();
     expect(pendingSignupPlan({})).toBeNull();
-    expect(pendingSignupPlan({ signupPlan: 'pro', awaitingFounder: true })).toBeNull();
+  });
+
+  it('offers it while the org still awaits its founder: the owner on the page can act', () => {
+    expect(pendingSignupPlan({ signupPlan: 'pro', awaitingFounder: true })).toEqual({
+      key: 'pro',
+      label: 'Pro',
+    });
   });
 
   it('offers nothing while the app’s plans failed to register', () => {
@@ -333,6 +352,48 @@ describe('a free plan — part of the org’s setup', () => {
   });
 });
 
+describe('a plan not offered at signup (an unpriced one assigned by hand)', () => {
+  it('is never applied, however it came to be waiting', async () => {
+    waiting('enterprise');
+
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
+    expect(mockAssignPlan).not.toHaveBeenCalled();
+  });
+
+  it('is dropped by the take-up, as one no longer offered', async () => {
+    waiting('enterprise');
+    takeAsStored('enterprise');
+
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({
+      kind: 'dropped',
+      planKey: 'enterprise',
+    });
+    expect(mockAssignPlan).not.toHaveBeenCalled();
+  });
+
+  it('sends no verification link on to checkout', async () => {
+    db.orgMembership.findMany.mockResolvedValue([
+      { org: { settings: { signupPlan: 'enterprise' } } },
+    ]);
+
+    expect(await signupContinuationForUser(FOUNDER)).toBeNull();
+  });
+});
+
+describe('a free plan waiting on hooks', () => {
+  it('says so once, at warn, so a setup that never finishes is noticed', async () => {
+    hooks.keys = ['app.seed'];
+    waiting('starter', { orgCreated: { owed: ['app.seed'], source: 'signup' } });
+
+    await applyFreeSignupPlan(ORG, FOUNDER);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'billing: the free plan chosen at signup waits on org-created hooks still owed',
+      { orgId: ORG, planKey: 'starter' }
+    );
+  });
+});
+
 describe('applyWaitingFreeSignupPlans — the sweep', () => {
   it('applies each waiting free plan the select finds, with no actor', async () => {
     db.$queryRaw.mockResolvedValue([{ id: ORG }]);
@@ -350,7 +411,9 @@ describe('applyWaitingFreeSignupPlans — the sweep', () => {
     await applyWaitingFreeSignupPlans();
 
     const values = db.$queryRaw.mock.calls[0].slice(1);
+    // Only the free plans offered at signup: not the hand-assigned one.
     expect(values).toEqual(expect.arrayContaining([['starter'], ['app.seed']]));
+    expect(values).not.toContainEqual(expect.arrayContaining(['enterprise']));
   });
 
   it('counts only what it applied, so a plan that keeps failing is not work', async () => {
@@ -394,14 +457,35 @@ describe('a paid plan — the owner’s to start', () => {
     expect(mockTake).not.toHaveBeenCalled();
   });
 
-  it('starts no second checkout over a subscription: the choice is settled and removed', async () => {
+  it.each(['ACTIVE', 'PAST_DUE'])(
+    'starts no second checkout over a %s subscription: the choice is settled and removed',
+    async (status) => {
+      waiting('pro');
+      takeAsStored('pro');
+      mockLoadSubscription.mockResolvedValue({ providerManaged: true, status });
+
+      expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
+      expect(mockStartCheckout).not.toHaveBeenCalled();
+      expect(mockTake).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('leaves it waiting over an unpaid (incomplete) subscription, to offer again if it ends', async () => {
     waiting('pro');
-    takeAsStored('pro');
-    mockLoadSubscription.mockResolvedValue({ providerManaged: true });
+    mockLoadSubscription.mockResolvedValue({ providerManaged: true, status: 'INCOMPLETE' });
 
     expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
     expect(mockStartCheckout).not.toHaveBeenCalled();
-    expect(mockTake).toHaveBeenCalledTimes(1);
+    expect(mockTake).not.toHaveBeenCalled();
+  });
+
+  it('starts its checkout while the org still awaits its founder: the owner’s session can act', async () => {
+    waiting('pro', { awaitingFounder: true });
+
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toMatchObject({
+      kind: 'checkout',
+      planKey: 'pro',
+    });
   });
 
   it('is removed when the owner chooses not to take it up', async () => {
@@ -422,11 +506,13 @@ describe('nothing to do', () => {
     expect(mockTake).not.toHaveBeenCalled();
   });
 
-  it('does nothing while the org still awaits its founder', async () => {
-    waiting('pro', { awaitingFounder: true });
+  it('applies no free plan while the org still awaits its founder: the app’s setup has not run', async () => {
+    waiting('starter', { awaitingFounder: true });
 
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
     expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
-    expect(mockStartCheckout).not.toHaveBeenCalled();
+    expect(mockTake).not.toHaveBeenCalled();
+    expect(mockAssignPlan).not.toHaveBeenCalled();
   });
 
   it('leaves it waiting while billing is off, or the app’s plans failed to register', async () => {
@@ -448,7 +534,7 @@ describe('nothing to do', () => {
       planKey: 'legacy',
     });
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('no longer registered'),
+      expect.stringContaining('no longer offered'),
       expect.objectContaining({ orgId: ORG, planKey: 'legacy' })
     );
   });

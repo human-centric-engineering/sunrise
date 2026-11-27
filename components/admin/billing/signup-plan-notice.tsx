@@ -25,6 +25,7 @@ import { SaveError } from '@/components/forms/form-error';
 import { Button } from '@/components/ui/button';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_QUERY } from '@/lib/billing/routes';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 
 /** The route's answer to `POST`. A checkout's URL is over http(s) only. */
@@ -64,6 +65,12 @@ export function SignupPlanNotice({ orgId, planLabel }: SignupPlanNoticeProps) {
         billingNavigation.go(answer.url);
         return; // Left pending: the page is going away.
       }
+      // The page says what happened, as after the signup's own take-up.
+      router.replace(
+        answer.outcome === 'none'
+          ? ORG_BILLING_PAGE_PATH
+          : `${ORG_BILLING_PAGE_PATH}?${SIGNUP_PLAN_QUERY.key}=${answer.outcome}`
+      );
       router.refresh();
     } catch (err) {
       save.report(err);

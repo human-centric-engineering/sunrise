@@ -31,6 +31,10 @@ export const billingNavigation = {
   go(url: string): void {
     window.location.assign(url);
   },
+  /** Load `path` afresh, in place of this history entry. */
+  reload(path: string): void {
+    window.location.replace(path);
+  },
 };
 
 export type BillingActionButtonProps =
