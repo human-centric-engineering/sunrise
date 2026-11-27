@@ -9,6 +9,10 @@
  *
  * And the storage sweep (§109 t-736): the org's prefix is deleted only after
  * the transaction commits, and a sweep failure is reported, never thrown.
+ *
+ * And the payment provider (§139 t-1094): the org's subscriptions are
+ * cancelled before the transaction opens, and a refusal deletes nothing.
+ * What the cancellation itself does is `tests/unit/lib/billing/erase.test.ts`.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -40,6 +44,9 @@ const storage = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/storage/client', () => ({ getStorageClient: storage.getStorageClient }));
 
+const billing = vi.hoisted(() => ({ cancelOrgSubscriptionsAtProvider: vi.fn() }));
+vi.mock('@/lib/billing/erase', () => billing);
+
 import { eraseOrg, sweepErasedOrgStorage } from '@/lib/privacy/erase-org';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 
@@ -55,6 +62,8 @@ beforeEach(() => {
   tx.org.delete.mockResolvedValue({ id: ORG });
   storage.getStorageClient.mockReturnValue({ deletePrefix: storage.deletePrefix });
   storage.deletePrefix.mockResolvedValue({ success: true, key: `orgs/${ORG}/` });
+  db.org.findUnique.mockResolvedValue({ id: ORG });
+  billing.cancelOrgSubscriptionsAtProvider.mockResolvedValue(null);
 });
 
 describe('eraseOrg', () => {
@@ -88,7 +97,55 @@ describe('eraseOrg', () => {
       pendingInvitations: 2,
       sessionsCleared: 4,
       storageSwept: true,
+      subscriptionsCancelled: 0,
     });
+  });
+
+  it('cancels the org’s subscriptions at the provider before the transaction opens', async () => {
+    billing.cancelOrgSubscriptionsAtProvider.mockResolvedValue({
+      provider: 'stripe',
+      customers: ['cus_1'],
+      cancelled: ['sub_1', 'sub_2'],
+    });
+
+    const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+
+    expect(billing.cancelOrgSubscriptionsAtProvider).toHaveBeenCalledWith(ORG);
+    expect(billing.cancelOrgSubscriptionsAtProvider.mock.invocationCallOrder[0]).toBeLessThan(
+      db.$transaction.mock.invocationCallOrder[0]
+    );
+    expect(result.subscriptionsCancelled).toBe(2);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'Org erased',
+      expect.objectContaining({ subscriptionsCancelledRefs: ['sub_1', 'sub_2'] })
+    );
+  });
+
+  it('says loudly when the delete fails after subscriptions were cancelled', async () => {
+    billing.cancelOrgSubscriptionsAtProvider.mockResolvedValue({
+      provider: 'stripe',
+      customers: ['cus_1'],
+      cancelled: ['sub_1'],
+    });
+    tx.org.delete.mockRejectedValue(new Error('FK'));
+
+    await expect(eraseOrg({ orgId: ORG, actorUserId: ADMIN })).rejects.toThrow('FK');
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('after its subscriptions were cancelled'),
+      expect.any(Error),
+      expect.objectContaining({ orgId: ORG, cancelled: ['sub_1'] })
+    );
+  });
+
+  it('deletes nothing when the provider refuses a cancellation', async () => {
+    billing.cancelOrgSubscriptionsAtProvider.mockRejectedValue(new Error('Stripe is down'));
+
+    await expect(eraseOrg({ orgId: ORG, actorUserId: ADMIN })).rejects.toThrow('Stripe is down');
+
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(tx.org.delete).not.toHaveBeenCalled();
+    expect(storage.deletePrefix).not.toHaveBeenCalled();
   });
 
   it('keeps the org on the admin audit rows made in it (t-1005)', async () => {
@@ -200,7 +257,16 @@ describe('eraseOrg', () => {
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
-  it('is a 404 for an org that does not exist, and writes nothing', async () => {
+  it('is a 404 for an org that does not exist, and never reaches the provider', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    const error = await eraseOrg({ orgId: ORG, actorUserId: ADMIN }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(OrgLifecycleError);
+    expect((error as OrgLifecycleError).code).toBe('ORG_NOT_FOUND');
+    expect(billing.cancelOrgSubscriptionsAtProvider).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('is a 404, and writes nothing, for an org deleted after the first read', async () => {
     tx.org.findUnique.mockResolvedValue(null);
     const error = await eraseOrg({ orgId: ORG, actorUserId: ADMIN }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(OrgLifecycleError);
@@ -224,6 +290,7 @@ describe('eraseOrg', () => {
       pendingInvitations: 2,
       sessionsCleared: 4,
       storageSwept: true,
+      subscriptionsCancelledRefs: [],
     });
   });
 });

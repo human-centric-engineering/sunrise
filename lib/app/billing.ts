@@ -21,6 +21,13 @@
  * `setFallbackPlan()` names, once, the plan an org moves to when a paid
  * subscription ends. It must have no price.
  *
+ * **A payment provider of your own** (§139 t-1094): Stripe ships in core
+ * (`BILLING_PROVIDER=stripe`). For another, implement `BillingProvider`
+ * (`lib/billing/provider.ts`), register it here with
+ * `registerBillingProvider({ key, create, configured })`, and set
+ * `BILLING_PROVIDER` to its key. `create()` runs on first use, so an SDK it
+ * imports with `await import()` loads only then.
+ *
  * Plans apply only at `TENANCY_MODE=multi`. Auto-wired:
  * `lib/billing/plans.ts` calls this once, lazily, before its first read.
  * Register inside this function, not at the module's top level, so a throw

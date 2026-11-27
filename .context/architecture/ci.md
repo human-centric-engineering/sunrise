@@ -970,9 +970,17 @@ NOBYPASSRLS` app role, with `TENANCY_APP_ROLE_PASSWORD` set to a value
    memory by the owner layer. Measured: it fails 5 checks when one policy is widened
    to `USING (true)`, and at the first create when one is dropped
    (default-deny under `FORCE`).
-6. The switch round-trips — `--enable` (no change) → `--disable` →
+6. `scripts/smoke/billing-webhook.ts` at `multi` as the app role (§139
+   t-1094), with `BILLING_PROVIDER=smoke`: the billing webhook's event ledger
+   refuses a replay through its unique key, a failure after the ledger insert
+   rolls it back, two deliveries at once and out of order end on the
+   provider's state, and org erasure cancels at the provider before the
+   billing rows cascade. Its last section drives the real Stripe adapter
+   against the job's second service, `stripe/stripe-mock` (pinned), which
+   checks only that each request is valid against Stripe's OpenAPI spec.
+7. The switch round-trips — `--enable` (no change) → `--disable` →
    `--disable` (no change) → `--enable` → `--disable` — exit 0 each time.
-7. `scripts/smoke/tenancy.ts` at `single` as the owner, on the same
+8. `scripts/smoke/tenancy.ts` at `single` as the owner, on the same
    database, which now also asserts `pg_class` shows RLS neither enabled nor
    forced on every tenant-owned table.
 

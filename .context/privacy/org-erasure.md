@@ -41,7 +41,17 @@ const { members, pendingInvitations, sessionsCleared, storageSwept } = await era
 
 ## What goes, and what stays
 
-One transaction, in this order, and then a storage sweep:
+**First, with billing on, the org's subscriptions at the payment provider are
+cancelled** (§139 t-1094, `lib/billing/erase.ts`): every live subscription of
+every customer the org has there, found by the stored reference and by the
+provider's search of customer metadata. The billing rows are the platform's
+only link to that customer, so this happens before anything is deleted, and a
+refusal from the provider stops the erasure with nothing deleted. While the
+org may still be paying at a provider that is not switched on, erasure is
+refused (`409 BILLING_NOT_CANCELLED`); see
+[Billing: Privacy](../billing/billing.md#privacy).
+
+Then one transaction, in this order, and then a storage sweep:
 
 1. **Pending invitations into the org** — `Verification` rows whose metadata
    names it. They have no FK to `Org`, so nothing else would remove them, and

@@ -916,6 +916,18 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The billing plans and fallback plan an app registers from code (§139 t-1093), the same for every org. Which plan an org is on is its subscription row, read on every call and never held here.',
   },
   {
+    file: 'lib/billing/provider.ts',
+    holders: ['providers'],
+    posture: 'no-tenant-data',
+    why: 'The payment providers an app registers from code (§139 t-1094), the same for every org: a key and a factory, no row data.',
+  },
+  {
+    file: 'lib/billing/config.ts',
+    holders: ['built'],
+    posture: 'no-tenant-data',
+    why: 'The one payment provider in use, built once from BILLING_PROVIDER and its keys (§139 t-1094): an API client the same for every org. Which org a call is for is passed on each call, never held here.',
+  },
+  {
     file: 'lib/tenancy/entitlements.ts',
     holders: ['switches', 'meters', 'appInit'],
     posture: 'no-tenant-data',

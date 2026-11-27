@@ -733,6 +733,17 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     fetch: ({ orgId }) =>
       prisma.orgBillingSubscription.findMany({ where: { orgId }, orderBy: byCreatedAt }),
   },
+  {
+    model: 'BillingWebhookEvent',
+    section: 'billingWebhookEvents',
+    disposition: 'export',
+    description:
+      'Each event the payment provider sent about the organisation’s subscription: the provider’s event id and type, when it arrived, and what was done with it.',
+    // §139 t-1094. `orgId` is required on this table, so there is no NULL-org
+    // row; it names no person. Erased with the org by the cascade.
+    fetch: ({ orgId }) =>
+      prisma.billingWebhookEvent.findMany({ where: { orgId }, orderBy: { receivedAt: 'asc' } }),
+  },
 ];
 
 /**

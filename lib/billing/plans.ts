@@ -30,6 +30,7 @@
  */
 
 import { initAppBilling } from '@/lib/app/billing';
+import { billingProviderRegistry } from '@/lib/billing/provider';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import {
   entitlementSwitchesFailed,
@@ -264,14 +265,31 @@ const appInit = createAppInitGate({
   label: 'billing: initAppBilling',
   // Half an app's plans registered would let staff assign some and not
   // others, and a lapsed org could fall back to a plan that is not there.
-  subject: 'app billing plans',
+  subject: 'app billing plans and payment providers',
   init: initAppBilling,
-  snapshot: () => ({ plans: new Map(plans), fallbackKey }),
+  // The providers an app registers (t-1094) are in the snapshot too: one left
+  // behind by an init that threw would be selectable by BILLING_PROVIDER while
+  // the log said nothing registered.
+  snapshot: () => ({
+    plans: new Map(plans),
+    fallbackKey,
+    providers: new Map(billingProviderRegistry()),
+  }),
   restore: (before) => {
     restoreMap(plans, before.plans);
     fallbackKey = before.fallbackKey;
+    restoreMap(billingProviderRegistry(), before.providers);
   },
 });
+
+/**
+ * Run the app's billing init if it has not run, so the providers it
+ * registers are in place. `lib/billing/config.ts` calls it before reading
+ * which provider is in use.
+ */
+export function ensureAppBillingInit(): void {
+  appInit.ensure();
+}
 
 /** Every registered plan, in registration order. Empty on vanilla Sunrise. */
 export function registeredPlans(): readonly RegisteredPlan[] {
@@ -313,5 +331,6 @@ export function billingPlansEnabled(): boolean {
 export function __resetBillingPlansForTests(): void {
   plans.clear();
   fallbackKey = null;
+  billingProviderRegistry().clear();
   appInit.reset();
 }

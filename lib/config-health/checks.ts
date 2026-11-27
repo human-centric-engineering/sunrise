@@ -14,7 +14,10 @@
  * `lib/app/config-health.ts`.
  */
 
+import { billingEnabled, billingProviderState } from '@/lib/billing/config';
+import { fallbackPlan } from '@/lib/billing/plans';
 import { isEmailEnabled } from '@/lib/email/client';
+import { env } from '@/lib/env';
 import { prisma } from '@/lib/db/client';
 import { confidentialModelProblem } from '@/lib/orchestration/llm/confidential-route';
 import { classifyProvidersByCredential } from '@/lib/orchestration/llm/provider-credentials';
@@ -200,6 +203,48 @@ export const CONFIG_HEALTH_CHECKS: ConfigHealthCheck[] = [
     remediation: 'Set RESEND_API_KEY and EMAIL_FROM.',
     docsPath: '.context/email/overview.md',
     detect: isEmailEnabled,
+  },
+  // Billing (§139 t-1094). Each applies only once BILLING_PROVIDER is set, so
+  // an install that does not bill sees none of them.
+  {
+    key: 'billing_provider',
+    label: 'Payment provider',
+    severity: 'critical',
+    applicable: () => isMultiTenant() && !!env.BILLING_PROVIDER,
+    description:
+      'BILLING_PROVIDER is set, but the provider it names is not registered or its keys are ' +
+      'not all set, so billing is off: no organisation can start a checkout, and the webhook ' +
+      'answers that billing is off.',
+    remediation:
+      'For Stripe, set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET. For a provider the app adds, ' +
+      'check its key matches the one registered in lib/app/billing.ts and set its own keys.',
+    docsPath: '.context/billing/billing.md',
+    detect: (): boolean => billingProviderState().on,
+  },
+  {
+    key: 'billing_single_tenant',
+    label: 'Billing at single tenancy',
+    severity: 'warning',
+    applicable: () => !!env.BILLING_PROVIDER,
+    description:
+      'BILLING_PROVIDER is set on an install with one organisation. Billing applies only at ' +
+      'TENANCY_MODE=multi, so it is off.',
+    remediation: 'Unset BILLING_PROVIDER, or run with TENANCY_MODE=multi.',
+    docsPath: '.context/billing/billing.md',
+    detect: (): boolean => isMultiTenant(),
+  },
+  {
+    key: 'billing_fallback_plan',
+    label: 'Fallback plan for lapsed subscriptions',
+    severity: 'warning',
+    applicable: () => billingEnabled(),
+    description:
+      'Billing is on and the app names no fallback plan, so an organisation whose subscription ' +
+      'ends has every switch its plan decided turned off, and keeps its limits and AI budget.',
+    remediation:
+      'Name a plan with no price as the fallback, with setFallbackPlan() in lib/app/billing.ts.',
+    docsPath: '.context/billing/billing.md',
+    detect: (): boolean => fallbackPlan() !== null,
   },
   {
     key: 'db_pooler',

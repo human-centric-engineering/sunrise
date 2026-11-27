@@ -37,6 +37,33 @@ release process.
   `initAppEntitlements`; a fork that fills the seam pins its new row in
   `tests/unit/lib/app/defaults.test.ts`. See
   [`.context/billing/billing.md`](./.context/billing/billing.md#plans).
+- **Taking payment through a provider, with Stripe first (§139 t-1094).**
+  Off unless `BILLING_PROVIDER` is set, and only at `TENANCY_MODE=multi`;
+  with it unset nothing changes and the `stripe` package (a new dependency)
+  is never loaded. `BILLING_PROVIDER=stripe` with `STRIPE_SECRET_KEY` and
+  `STRIPE_WEBHOOK_SECRET` turns on the Stripe adapter
+  (`lib/billing/providers/stripe.ts`, API version pinned in code). An app
+  adds another provider from `initAppBilling()` with
+  `registerBillingProvider()` (`lib/billing/provider.ts`, the provider-neutral
+  `BillingProvider` interface); `billingProviderState()` /
+  `billingProvider()` in `lib/billing/config.ts` say which is on. New routes:
+  `POST /api/v1/orgs/[id]/billing/checkout` and `/portal`, for the org's
+  OWNER only (resource kind `org.billing`); and
+  `POST /api/v1/billing/webhook/[provider]`, signature-verified over the raw
+  body, IP-keyed in the rate-limit policy. The webhook records each event
+  once in the new published model `BillingWebhookEvent` (org-owned, in the
+  org export) and applies the provider's current subscription under the
+  lapsed rule: past due keeps the plan, cancelled or unpaid applies the
+  fallback plan. `OrgBillingSubscription` gains `providerStatus`,
+  `providerLive`, `cancelAtPeriodEnd` and a unique (`provider`, `customerRef`). Three
+  config-health checks (`billing_provider`, `billing_single_tenant`,
+  `billing_fallback_plan`). **Org erasure now cancels the org's live
+  subscriptions at the provider before it deletes anything**, and refuses
+  (409 `BILLING_NOT_CANCELLED`) while the org may still be paying at a
+  provider that is not switched on; `EraseOrgResult` gains
+  `subscriptionsCancelled`. CI's `smoke-multi` job runs the new
+  `smoke:billing-webhook` and a pinned `stripe/stripe-mock` service. See
+  [`.context/billing/billing.md`](./.context/billing/billing.md#setting-up-stripe).
 - **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
   0-based place in its document, written whenever chunks are (upload, rechunk,
   the patterns seeder). Knowledge search returns it on each chunk, and

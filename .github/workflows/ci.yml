@@ -676,6 +676,13 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # Stripe's API as an OpenAPI-validating mock, for the billing smoke's
+      # adapter section (§139 t-1094). It keeps no state and sends no
+      # webhooks, so it checks only that each request is well formed.
+      stripe-mock:
+        image: stripe/stripe-mock:v0.206.0
+        ports:
+          - 12111:12111
     env:
       # The OWNER connection: migrations, the seed, the role and the switch
       # all run as it. The app role below is what every code path is tested
@@ -737,6 +744,16 @@ jobs:
           SEALED_SECRET_KEYS: 'ci:ci-sealed-secret-key-not-a-secret-0123456789'
           SEALED_SECRET_ACTIVE_KEY: 'ci'
         run: npx tsx scripts/smoke/tenancy-isolation.ts
+      # The billing webhook's ledger, locks and rollback on real Postgres with
+      # RLS forced, erasure cancelling at the provider first, and the Stripe
+      # adapter's requests against stripe-mock (§139 t-1094).
+      - name: Billing webhook smoke, as the app role
+        env:
+          DATABASE_URL: ${{ env.APP_URL }}
+          TENANCY_MODE: multi
+          BILLING_PROVIDER: smoke
+          STRIPE_MOCK_URL: 'http://localhost:12111'
+        run: npx tsx scripts/smoke/billing-webhook.ts
       # Idempotence: the switch reports "no change" and exits 0 either way.
       - name: Enable is idempotent; disable and re-enable round-trip
         env:

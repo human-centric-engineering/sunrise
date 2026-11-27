@@ -43,6 +43,9 @@ the per-admin export sub-cap noted below.
 | `GET/PATCH/DELETE …/orgs/[id]/entitlements` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH …/orgs/[id]/meters`              | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH …/orgs/[id]/plan`                | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `POST /api/v1/orgs/[id]/billing/checkout`   | `withAuth`      | The org's **OWNER** while acting in it. Browser session only; not a support session, a platform admin, or the install org.                             |
+| `POST /api/v1/orgs/[id]/billing/portal`     | `withAuth`      | As above.                                                                                                                                              |
+| `POST /api/v1/billing/webhook/[provider]`   | none            | The payment provider: its signature over the raw body. IP-keyed section cap.                                                                           |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
@@ -697,13 +700,51 @@ do not apply on this install; `provider_managed` when a provider subscription
 that has not ended decides the org's plan; or, with no reason, another write
 to the org's settings landed at the same time, so assign the plan again).
 
+### Pay for a plan: checkout and the portal
+
+```
+POST /api/v1/orgs/[id]/billing/checkout   { "planKey": "pro" }
+POST /api/v1/orgs/[id]/billing/portal
+```
+
+Both answer `{ url }` on the payment provider's own pages, and the browser
+goes there; the provider sends it back to `/admin/billing` (§139 t-1094,
+[Billing](../billing/billing.md#what-t-1094-built)). Checkout creates the
+org's customer at the provider on first use. It does not put the org on the
+plan: the webhook does, from the subscription the provider holds. Each
+checkout started writes an `org.billing.checkout` audit row.
+
+**Error Responses**: `400 VALIDATION_ERROR` (a malformed body, or a plan key
+nothing registers) · `403 FORBIDDEN` (not the org's OWNER acting in it, an
+API key, a support session) · `404 ORG_NOT_FOUND` · `409 CONFLICT` with
+`details.reason`: `billing_off`; `not_purchasable` (the plan has no price);
+`price_missing` (the provider has no active price with the plan's lookup
+key); `already_subscribed` (the org has a live subscription: change plan in
+the portal); `no_customer` (portal only: the org has never been through a
+checkout); `install_org`.
+
+### The billing webhook
+
+```
+POST /api/v1/billing/webhook/[provider]
+```
+
+Where the payment provider sends its events: `/api/v1/billing/webhook/stripe`.
+No session or key; the signature over the raw body is checked before anything
+is read. `404` while billing is off or for another provider, `400` on a bad
+signature, `413` over 512 KB, `200` once handled (including a replay), `500`
+on anything else, which the provider retries. See
+[Webhooks](../billing/billing.md#webhooks).
+
 ### Erase an org
 
 ```
 DELETE /api/v1/admin/orgs/[id]
 ```
 
-Calls `eraseOrg()` — see [Org Erasure](../privacy/org-erasure.md). The org,
+Calls `eraseOrg()` — see [Org Erasure](../privacy/org-erasure.md). With
+billing on, the org's live subscriptions are cancelled at the payment provider
+first, and a refusal there erases nothing. The org,
 its memberships, its credentials and its pending invitations go; its members'
 accounts stay. After the transaction commits, the org's storage prefix
 (`orgs/{id}/`) is deleted, best-effort: `storageSwept` is `true` when that
@@ -721,12 +762,17 @@ when no storage is configured.
     "members": 3,
     "pendingInvitations": 0,
     "sessionsCleared": 2,
-    "storageSwept": true
+    "storageSwept": true,
+    "subscriptionsCancelled": 0
   }
 }
 ```
 
-**Error Responses**: `400 INSTALL_ORG_IMMUTABLE` · `404 ORG_NOT_FOUND`.
+**Error Responses**: `400 INSTALL_ORG_IMMUTABLE` · `404 ORG_NOT_FOUND` ·
+`409 BILLING_NOT_CANCELLED` (the org has a subscription that has not ended,
+at a payment provider that is not switched on; switch billing back on and
+erase again) · `500` when the provider refuses a cancellation (nothing was
+erased; erase again).
 
 ## Related Documentation
 

@@ -129,6 +129,9 @@ describe('runConfigHealthChecks', () => {
       'retired_model_in_use',
       'retiring_model_in_use',
       'email',
+      'billing_provider',
+      'billing_single_tenant',
+      'billing_fallback_plan',
       'db_pooler',
     ]);
   });
@@ -142,6 +145,9 @@ describe('runConfigHealthChecks', () => {
       'retired_model_in_use',
       'retiring_model_in_use',
       'email',
+      'billing_provider',
+      'billing_single_tenant',
+      'billing_fallback_plan',
       'db_pooler',
       'CRON_SECRET',
     ]);
