@@ -370,6 +370,14 @@ healed in later (at sign-in, or by `healSignupRecord()` when an admin adds them
 elsewhere) has the mark removed the same way, and that org's setup runs after
 the response. Only an `OWNER` membership removes a mark.
 
+**A plan from the signup link rides along.** While billing is on, a signup
+from `/signup?plan=pro` that gets an org of its own has the plan recorded on
+that org (`Org.settings.signupPlan`), in the same INSERT. A free plan is applied
+when the org's setup runs, after the app's hooks; a paid one sends the founder
+to checkout on their first visit. An invited signup, a `join` or `install`
+answer, and an unknown plan ignore it. See
+[Choosing a plan at signup](../billing/billing.md#choosing-a-plan-at-signup).
+
 **Nothing of the person is copied onto the org.** With no app-chosen `name`,
 the org is called "My organisation" (`DEFAULT_SIGNUP_ORG_NAME`) and its slug is
 `org-<random>`: never from the person's name or address. `eraseUser()` does not
@@ -461,7 +469,9 @@ they switch to it. Only a membership counts, so platform staff looking at
 a customer's org are not sent to its welcome step. Other paths, a deep link
 included, are never redirected. A failed read lets the request through to the
 landing route, logged at `warn`. With the route `null` the proxy reads
-nothing. The value must be root-relative, not the landing route's own path,
+nothing, unless billing is on: then the org's OWNER, while their signup's
+plan waits to be taken up, is sent to the billing page first, welcome route
+or not ([Choosing a plan at signup](../billing/billing.md#choosing-a-plan-at-signup)). The value must be root-relative, not the landing route's own path,
 and not on or under an auth route (`AUTH_ROUTES`: `/login`, `/signup`,
 `/reset-password`, from which the proxy sends a signed-in user back to the
 landing route), or it throws at module load (`lib/auth-landing/route.ts`).

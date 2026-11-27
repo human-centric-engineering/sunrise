@@ -75,6 +75,23 @@ release process.
   its own page under `/admin/billing`** must move it, as registration now
   refuses a page inside a core section. See
   [`.context/billing/billing.md`](./.context/billing/billing.md#the-billing-page).
+- **Choosing a plan at signup (§139 t-1096).** A pricing page links to
+  `/signup?plan=<key>`. While billing is on, a key naming a registered plan is
+  shown on the signup page, carried through the signup (the email form's body,
+  or the OAuth state), checked again in the user-create hook, and recorded on
+  the org a self-serve signup founds (`Org.settings.signupPlan`,
+  `ORG_SIGNUP_PLAN_KEY`, with `readOrgSignupPlan()` and `takeOrgSignupPlan()`
+  in `lib/tenancy/org-settings.ts`). A free plan is applied once the org's
+  setup runs, after the app's org-created hooks; for a paid one the proxy
+  sends the org's OWNER from the landing route to `/admin/billing?signup=plan`,
+  before any welcome step, and the page starts its checkout. New route
+  `POST /api/v1/orgs/[id]/billing/signup-plan` (the OWNER acting in the org,
+  as checkout). New module `lib/billing/signup-plan.ts` (`signupPlanOf()`,
+  `signupPlanOffer()`, `takeUpSignupPlan()`). Additive: `createSignupOrg()`
+  takes an optional `signupPlanKey`, and `signupOrgMemberships()` an optional
+  third argument. An unknown plan, an invited signup, an app resolver's `join`
+  or `install`, and billing off behave as before. See
+  [`.context/billing/billing.md`](./.context/billing/billing.md#choosing-a-plan-at-signup).
 - **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
   0-based place in its document, written whenever chunks are (upload, rechunk,
   the patterns seeder). Knowledge search returns it on each chunk, and
@@ -86,6 +103,9 @@ release process.
 
 ### Changed
 
+- **The billing page says "set by platform staff" of a priced plan only
+  (§139 t-1096).** `OrgBilling.subscription.assignedByHand` is now false for a
+  plan with no price, which may be the one the founder chose at signup.
 - **A switch with no `upgradeUrl` now links to the billing page while billing
   is on (§139 t-1095).** The 403's `details.upgradeUrl`, and a locked item and
   page, carry `/admin/billing` for a viewer admitted to the org tier (the
