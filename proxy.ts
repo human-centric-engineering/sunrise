@@ -23,7 +23,12 @@ import appFrameablePaths from '@/lib/app/frameable-paths.json';
 import { frameablePrefixes } from '@/lib/security/frame-deny-source.cjs';
 import { resolveTenantFromRequest, TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, isAuthRoutePath } from '@/lib/auth-landing/route';
-import { welcomeRedirectFor } from '@/lib/tenancy/onboarding';
+import {
+  isSignupPlanRedirect,
+  SIGNUP_PLAN_SENT_COOKIE,
+  SIGNUP_PLAN_SENT_MAX_AGE_SECONDS,
+  welcomeRedirectFor,
+} from '@/lib/tenancy/onboarding';
 import { billingEnabled } from '@/lib/billing/config';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
 
@@ -390,7 +395,8 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // link (`callbackUrl`) does not, and is not redirected. The OWNER of an org
   // whose signup chose a plan goes to the billing page first, to take it up
   // (§139 t-1096). With no welcome route set in lib/app/welcome.ts and
-  // billing off, nothing is read.
+  // billing off, nothing is read; with billing on, every authenticated landing
+  // GET costs a session and a membership read, as a welcome route does.
   if ((AUTH_WELCOME_ROUTE !== null || billingEnabled()) && authenticated) {
     const welcome = await welcomeRedirectFor(request, tenantOrgId);
     if (welcome) {
@@ -399,6 +405,17 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
         pageRedirectStatus
       );
       redirectResponse.headers.set('x-request-id', requestId);
+      // Sent to take up the signup plan once an hour at most, so a take-up
+      // that cannot finish never keeps the owner off the landing route.
+      if (isSignupPlanRedirect(welcome)) {
+        redirectResponse.cookies.set(SIGNUP_PLAN_SENT_COOKIE, '1', {
+          httpOnly: true,
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+          path: '/',
+          maxAge: SIGNUP_PLAN_SENT_MAX_AGE_SECONDS,
+        });
+      }
       return setVisitorCookie(redirectResponse);
     }
   }

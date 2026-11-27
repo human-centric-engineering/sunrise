@@ -24,18 +24,44 @@ vi.mock('@/lib/billing/plans', () => ({
   planOf: (key: string) => ({ starter: FREE, pro: PRO })[key],
 }));
 
+const errors = vi.hoisted(() => ({
+  BillingPlanError: class BillingPlanError extends Error {
+    constructor(
+      readonly code: string,
+      message: string
+    ) {
+      super(message);
+    }
+  },
+  BillingCheckoutError: class BillingCheckoutError extends Error {
+    constructor(
+      readonly code: string,
+      message: string
+    ) {
+      super(message);
+    }
+  },
+}));
 const mockAssignPlan = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/billing/subscriptions', () => ({ assignPlan: mockAssignPlan }));
+vi.mock('@/lib/billing/subscriptions', () => ({
+  assignPlan: mockAssignPlan,
+  BillingPlanError: errors.BillingPlanError,
+}));
 const mockStartCheckout = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/billing/checkout', () => ({ startCheckout: mockStartCheckout }));
+vi.mock('@/lib/billing/checkout', () => ({
+  startCheckout: mockStartCheckout,
+  BillingCheckoutError: errors.BillingCheckoutError,
+}));
 
 const db = vi.hoisted(() => ({ org: { findUnique: vi.fn() } }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 
 const mockTake = vi.hoisted(() => vi.fn());
+const mockRestore = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/tenancy/org-settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/tenancy/org-settings')>()),
   takeOrgSignupPlan: mockTake,
+  restoreOrgSignupPlan: mockRestore,
 }));
 
 const mockAudit = vi.hoisted(() => vi.fn());
@@ -269,6 +295,87 @@ describe('applyFreeSignupPlan', () => {
       expect.stringContaining('could not apply'),
       expect.any(Error),
       { orgId: ORG }
+    );
+  });
+});
+
+describe('takeUpSignupPlan — a take-up that fails part-way', () => {
+  it('drops a free plan the org can no longer take, since the provider manages its plan', async () => {
+    waiting('starter');
+    takeAsStored('starter');
+    mockAssignPlan.mockRejectedValue(
+      new errors.BillingPlanError('PROVIDER_MANAGED', 'The provider manages this plan')
+    );
+
+    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
+      kind: 'none',
+    });
+    expect(mockTake).toHaveBeenCalledTimes(1);
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  it('leaves a free plan waiting when applying it fails for another reason', async () => {
+    waiting('starter');
+    takeAsStored('starter');
+    mockAssignPlan.mockRejectedValue(new Error('connection reset'));
+
+    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
+      'connection reset'
+    );
+    expect(mockTake).not.toHaveBeenCalled();
+  });
+
+  it('answers applied when the plan went on but removing the key failed', async () => {
+    waiting('starter');
+    mockTake.mockRejectedValue(new Error('database gone'));
+
+    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
+      kind: 'applied',
+      planKey: 'starter',
+    });
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'org.plan.assign', entityId: ORG })
+    );
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('puts a paid plan back when the checkout fails for a passing reason', async () => {
+    waiting('pro');
+    takeAsStored('pro');
+    mockStartCheckout.mockRejectedValue(new Error('provider 503'));
+
+    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
+      'provider 503'
+    );
+    expect(mockRestore).toHaveBeenCalledWith(ORG, 'pro');
+  });
+
+  it('does not put a paid plan back when the provider refuses the checkout', async () => {
+    waiting('pro');
+    takeAsStored('pro');
+    mockStartCheckout.mockRejectedValue(
+      new errors.BillingCheckoutError('PRICE_MISSING', 'No such price')
+    );
+
+    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
+      'No such price'
+    );
+    expect(mockRestore).not.toHaveBeenCalled();
+  });
+
+  it('still rethrows the checkout failure when putting the plan back fails too', async () => {
+    waiting('pro');
+    takeAsStored('pro');
+    mockStartCheckout.mockRejectedValue(new Error('provider 503'));
+    mockRestore.mockRejectedValue(new Error('database gone'));
+
+    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
+      'provider 503'
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      'billing: could not put back the plan chosen at signup',
+      expect.any(Error),
+      { orgId: ORG, planKey: 'pro' }
     );
   });
 });

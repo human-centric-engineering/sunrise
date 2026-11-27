@@ -34,7 +34,8 @@ import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, routePathname } from '@/lib/aut
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE, orgAdministers } from '@/lib/tenancy/roles';
 import { billingEnabled } from '@/lib/billing/config';
-import { SIGNUP_PLAN_PAGE } from '@/lib/billing/routes';
+import { planOf } from '@/lib/billing/plans';
+import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_PAGE, SIGNUP_PLAN_QUERY } from '@/lib/billing/routes';
 import { sessionActingOrgId } from '@/lib/tenancy/entry';
 import {
   clearOrgAwaitingOnboarding,
@@ -118,14 +119,26 @@ export async function markOrgOnboarded(
  * `null` to let it through. The landing request's query string is carried
  * across.
  *
- * **A plan chosen at signup comes first** (§139 t-1096): while billing is
- * on, the org's OWNER is sent to the billing page (`SIGNUP_PLAN_PAGE`) when
- * the org's signup chose a plan not yet taken up, and the page takes it up.
- * An ADMIN is not, since only the owner can pay. That holds whether or not
- * a welcome route is set; the welcome step follows on the next visit.
+ * **A plan chosen at signup** (§139 t-1096): while billing is on, the org's
+ * OWNER is sent to the billing page (`SIGNUP_PLAN_PAGE`) when the org's
+ * signup chose a plan not yet taken up, and the page takes it up. An ADMIN is
+ * not, since only the owner can pay. A paid plan (or one the app no longer
+ * registers) comes before the welcome step, which follows on the next visit.
+ * A free one comes after it: the org's setup applies it in the background,
+ * usually before the founder's first landing, so the owner is sent for it
+ * only when it is still waiting once there is no welcome step to take, which
+ * is what retries a setup that failed to apply it.
+ *
+ * **Once an hour per browser.** A redirect there sets a short-lived cookie
+ * (`SIGNUP_PLAN_SENT_COOKIE`), and while it is present the owner is not sent
+ * again. So a take-up that cannot finish (the billing read failing, the
+ * provider down) costs one detour, not the landing route: the owner reaches
+ * it on the next visit and has the billing page's own buttons meanwhile.
  *
  * Reads nothing when the app sets no welcome route and billing is off, or
- * the path is not the landing route. The org is the one the request acts for, in the guard's
+ * the path is not the landing route. With billing on that is a session read
+ * and one membership read on every landing page load, as a welcome route
+ * costs. The org is the one the request acts for, in the guard's
  * precedence (the app's tenant resolver, else the session's active org, else
  * the install org at `single`), and only a membership of it counts: platform
  * staff looking at a customer's org are not sent to its welcome step.
@@ -169,19 +182,24 @@ export async function welcomeRedirectFor(
     });
     if (!membership || !orgAdministers(membership.role)) return null;
     if (membership.org.status !== 'ACTIVE') return null;
-    // The plan the signup chose comes first (§139 t-1096): its owner goes to
-    // the billing page, which takes it up. Only the OWNER, who alone can pay.
-    if (
+    // The plan the signup chose (§139 t-1096): its owner goes to the billing
+    // page, which takes it up. Only the OWNER, who alone can pay.
+    const signupPlan =
       billing &&
       membership.role === ORG_OWNER_ROLE &&
-      readOrgSignupPlan(membership.org.settings) !== null &&
+      !request.cookies.has(SIGNUP_PLAN_SENT_COOKIE) &&
       !(ORG_AWAITING_FOUNDER_KEY in asObject(membership.org.settings))
-    ) {
-      return SIGNUP_PLAN_PAGE;
+        ? readOrgSignupPlan(membership.org.settings)
+        : null;
+    const freePlan = signupPlan !== null && planOf(signupPlan)?.priceLookupKey === null;
+    if (signupPlan !== null && !freePlan) {
+      return withQuery(SIGNUP_PLAN_PAGE, request.nextUrl.search);
     }
-    if (AUTH_WELCOME_ROUTE === null) return null;
-    if (readOrgOnboarded(membership.org.settings)) return null;
-    return withQuery(AUTH_WELCOME_ROUTE, request.nextUrl.search);
+    if (AUTH_WELCOME_ROUTE !== null && !readOrgOnboarded(membership.org.settings)) {
+      return withQuery(AUTH_WELCOME_ROUTE, request.nextUrl.search);
+    }
+    // A free plan the org's setup has not applied yet, or failed to.
+    return freePlan ? withQuery(SIGNUP_PLAN_PAGE, request.nextUrl.search) : null;
   } catch (error) {
     logger.warn(
       'Could not read org onboarding for the landing route; letting the request through',
@@ -195,6 +213,25 @@ export async function welcomeRedirectFor(
 
 const landingPathname = routePathname(AUTH_LANDING_ROUTE);
 
+/**
+ * The cookie the proxy sets when it sends an owner to take up their signup
+ * plan, so it does not send them again while it lasts (see
+ * {@link welcomeRedirectFor}). Its value carries nothing.
+ */
+export const SIGNUP_PLAN_SENT_COOKIE = 'sunrise-signup-plan-sent';
+
+/** How long {@link SIGNUP_PLAN_SENT_COOKIE} lasts: an hour. */
+export const SIGNUP_PLAN_SENT_MAX_AGE_SECONDS = 60 * 60;
+
+/** Whether a {@link welcomeRedirectFor} answer sends the owner to take up their signup plan. */
+export function isSignupPlanRedirect(location: string): boolean {
+  const url = new URL(location, 'http://localhost');
+  return (
+    url.pathname === ORG_BILLING_PAGE_PATH &&
+    url.searchParams.get(SIGNUP_PLAN_QUERY.key) === SIGNUP_PLAN_QUERY.value
+  );
+}
+
 function asObject(value: unknown): object {
   return typeof value === 'object' && value !== null ? value : {};
 }
@@ -203,7 +240,7 @@ function asObject(value: unknown): object {
 const NEXT_RSC_QUERY_KEY = '_rsc';
 
 /**
- * The welcome route with the landing request's query string added, so a
+ * A route (the welcome route, the signup-plan page) with the landing request's query string added, so a
  * parameter a door into the app passed (`?joined=acme`) survives the hop. A
  * key the welcome route already sets keeps its own value. Next's own `_rsc`
  * cache-busting key belongs to the landing request and is not copied.

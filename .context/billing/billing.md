@@ -711,18 +711,37 @@ the key names a registered plan, and the signup gets an org of its own
 still awaits its founder (`awaitingFounder`), since the app's org-created hooks
 have not run, and a plan applied before them could be overwritten by a default
 they write. A free plan is applied and then removed: applying is idempotent, so
-a failure part-way leaves it waiting for the founder's first visit, which takes
-it up the same way. A paid plan is removed first and then sent to checkout, so
-the owner is sent there once; an owner who leaves the checkout page uses the
-billing page's own buttons. The removal is a serializable read-modify-write
+a failure to apply it leaves it waiting for a later visit, which takes it up
+the same way, and one that applied it but failed to remove it still answers
+`applied`. A free plan the org can no longer take (the provider manages its
+plan, because the owner subscribed meanwhile) is dropped. A paid plan is
+removed first and then sent to checkout, so the owner is sent there once; an
+owner who leaves the checkout page uses the billing page's own buttons. A
+checkout the provider refuses is final; one that fails for any other reason
+(the provider down, a timeout) puts the plan back for a later visit. The removal is a serializable read-modify-write
 (`takeOrgSignupPlan()`), so two callers cannot both take it.
 
 **Why the free plan is applied at setup and the paid one at the first visit.**
 Checkout needs the owner's browser. A free plan needs nothing from them, and
 applying it at setup means the org is on it before they first look. The
 `orgCreatedHooks` job's 15-minute backstop releases a founder's org without
-running `completeSignupOrg()`; such an org's free plan is taken up on the
-first visit instead, as a paid one is.
+running `completeSignupOrg()`; such an org's free plan is taken up on a
+later visit instead, once any welcome step is done.
+
+**When the proxy sends the owner there.** A paid plan, or one the app no
+longer registers, comes before any welcome step. A free plan comes after it:
+the setup normally applies it in the background before the founder's first
+landing, so the owner is sent for a free plan only when it is still waiting
+and there is no welcome step to take. That retries a setup that failed to
+apply it, and keeps the race between the background setup and the founder's
+first landing from sending them to the billing page. The landing request's
+query string is carried across.
+
+**Once an hour per browser.** Each redirect there sets the
+`sunrise-signup-plan-sent` cookie (`SIGNUP_PLAN_SENT_COOKIE`, an hour,
+`httpOnly`), and the owner is not sent again while it lasts. A take-up that
+cannot finish (the billing read failing, the provider down) costs the owner one
+detour, never the landing route itself.
 
 **Only the OWNER is redirected,** and the route refuses anyone else, as the
 checkout route does (`assertMayChangeBilling()`). While billing is on, the

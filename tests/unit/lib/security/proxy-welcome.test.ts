@@ -27,7 +27,13 @@ vi.mock('@/lib/security/rate-limit-middleware', () => ({
 vi.mock('@/lib/app/welcome', () => ({ appWelcomeRoute: '/welcome' }));
 
 const mockWelcomeRedirectFor = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/tenancy/onboarding', () => ({ welcomeRedirectFor: mockWelcomeRedirectFor }));
+vi.mock('@/lib/tenancy/onboarding', () => ({
+  welcomeRedirectFor: mockWelcomeRedirectFor,
+  // Its own behaviour is onboarding.test.ts; here only which answer it names.
+  isSignupPlanRedirect: (location: string) => location === '/admin/billing?signup=plan',
+  SIGNUP_PLAN_SENT_COOKIE: 'sunrise-signup-plan-sent',
+  SIGNUP_PLAN_SENT_MAX_AGE_SECONDS: 3600,
+}));
 
 import { proxy } from '@/proxy';
 import { __resetTenantResolverForTests, registerTenantResolver } from '@/lib/tenancy/resolver';
@@ -71,6 +77,33 @@ describe('proxy — welcome redirect, welcome route set', () => {
     expect(response.headers.get('location')).toBe('http://localhost:3000/welcome');
     expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
     expect(mockWelcomeRedirectFor).toHaveBeenCalledWith(request, null);
+  });
+
+  it('marks a redirect to take up the signup plan, so it is not sent again for an hour', async () => {
+    mockWelcomeRedirectFor.mockResolvedValue('/admin/billing?signup=plan');
+
+    const response = await proxy(createMockRequest('/dashboard', { cookies: SESSION_COOKIE }));
+
+    expect(response.headers.get('location')).toBe(
+      'http://localhost:3000/admin/billing?signup=plan'
+    );
+    const sent = response.headers
+      .getSetCookie()
+      .find((cookie) => cookie.startsWith('sunrise-signup-plan-sent='));
+    expect(sent).toMatch(/^sunrise-signup-plan-sent=1;/);
+    expect(sent).toMatch(/Max-Age=3600/);
+    expect(sent).toMatch(/HttpOnly/i);
+    expect(sent).toMatch(/SameSite=lax/i);
+  });
+
+  it('sets no such cookie on a redirect to the welcome step', async () => {
+    mockWelcomeRedirectFor.mockResolvedValue('/welcome');
+
+    const response = await proxy(createMockRequest('/dashboard', { cookies: SESSION_COOKIE }));
+
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith('sunrise-signup-plan-sent='))
+    ).toBe(false);
   });
 
   it('lets the request through when welcomeRedirectFor answers null', async () => {

@@ -30,9 +30,9 @@
 import { z } from 'zod';
 
 import { billingEnabled } from '@/lib/billing/config';
-import { startCheckout } from '@/lib/billing/checkout';
+import { BillingCheckoutError, startCheckout } from '@/lib/billing/checkout';
 import { planOf, type RegisteredPlan } from '@/lib/billing/plans';
-import { assignPlan } from '@/lib/billing/subscriptions';
+import { assignPlan, BillingPlanError } from '@/lib/billing/subscriptions';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -40,6 +40,7 @@ import {
   isSettingsWriteConflict,
   ORG_AWAITING_FOUNDER_KEY,
   readOrgSignupPlan,
+  restoreOrgSignupPlan,
   takeOrgSignupPlan,
 } from '@/lib/tenancy/org-settings';
 import { ENTITLEMENT_KEY_PATTERN } from '@/lib/validations/tenancy';
@@ -98,11 +99,15 @@ const TAKE_ATTEMPTS = 3;
  *
  * **Once each.** A free plan is applied, then removed: applying is
  * idempotent, so two callers at once both apply the same plan, and one that
- * fails part-way leaves it waiting for the next. A paid one is removed first,
- * then sent to checkout, so the owner is sent there once. A checkout that is
- * then refused (its price not set up at the provider, say) throws
- * `BillingCheckoutError` for the route to answer, and the owner chooses on
- * the billing page as anyone would.
+ * fails to remove it still answers `applied` and leaves it for the next to
+ * remove. A free plan the org can no longer take (the provider manages its
+ * plan: the owner subscribed meanwhile) is dropped, answering `none`. A paid
+ * one is removed first, then sent to checkout, so the owner is sent there
+ * once. A checkout that is then refused (its price not set up at the
+ * provider, say) throws `BillingCheckoutError` for the route to answer, and
+ * the owner chooses on the billing page as anyone would; one that fails for
+ * any other reason (the provider down) puts the plan back for the next visit
+ * and rethrows.
  *
  * Who may call it is the caller's business: the route asks for the org's
  * OWNER acting in it.
@@ -129,8 +134,32 @@ export async function takeUpSignupPlan(
   }
 
   if (plan.priceLookupKey === null) {
-    const assigned = await assignPlan(orgId, plan.key);
-    await take(orgId, (key) => key === plan.key);
+    let assigned: Awaited<ReturnType<typeof assignPlan>>;
+    try {
+      assigned = await assignPlan(orgId, plan.key);
+    } catch (error) {
+      // The provider manages the org's plan now (the owner subscribed on the
+      // billing page meanwhile): the free plan can never go on, so it is
+      // dropped rather than left to fail at every visit.
+      if (!(error instanceof BillingPlanError) || error.code !== 'PROVIDER_MANAGED') throw error;
+      await take(orgId, (key) => key === plan.key);
+      logger.info('billing: the org has a subscription; the free plan chosen at signup dropped', {
+        orgId,
+        planKey: plan.key,
+      });
+      return { kind: 'none' };
+    }
+    try {
+      await take(orgId, (key) => key === plan.key);
+    } catch (error) {
+      // The plan is on; only removing the key failed. Applying is idempotent,
+      // so the next take-up finds it on and removes the key then.
+      logger.warn('billing: applied the plan chosen at signup but could not clear it', {
+        orgId,
+        planKey: plan.key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     if (assigned.changed) {
       logAdminAction({
         // The founder chose it at signup.
@@ -149,7 +178,16 @@ export async function takeUpSignupPlan(
 
   if (!options.paid) return { kind: 'none' };
   if ((await take(orgId, (key) => key === plan.key)) === null) return { kind: 'none' };
-  const { url } = await startCheckout(orgId, plan.key);
+  let url: string;
+  try {
+    ({ url } = await startCheckout(orgId, plan.key));
+  } catch (error) {
+    // A refusal (`BillingCheckoutError`) is final: the owner chooses on the
+    // billing page. Anything else (the provider down, a timeout) may pass, so
+    // the plan is put back for the next visit rather than lost.
+    if (!(error instanceof BillingCheckoutError)) await putBack(orgId, plan.key);
+    throw error;
+  }
   logger.info('billing: started checkout for the plan chosen at signup', {
     orgId,
     planKey: plan.key,
@@ -165,6 +203,18 @@ async function take(orgId: string, accept: (planKey: string) => boolean): Promis
     } catch (error) {
       if (!isSettingsWriteConflict(error) || attempt >= TAKE_ATTEMPTS) throw error;
     }
+  }
+}
+
+/** Put a taken paid plan back after a checkout that failed for a passing reason. Never throws. */
+async function putBack(orgId: string, planKey: string): Promise<void> {
+  try {
+    await restoreOrgSignupPlan(orgId, planKey);
+  } catch (error) {
+    logger.error('billing: could not put back the plan chosen at signup', error, {
+      orgId,
+      planKey,
+    });
   }
 }
 

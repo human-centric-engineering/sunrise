@@ -391,6 +391,28 @@ export async function takeOrgSignupPlan(
 }
 
 /**
+ * Put back a signup plan {@link takeOrgSignupPlan} took, after a checkout
+ * that failed for a passing reason (§139 t-1096). Writes only when no plan is
+ * waiting, so a newer one is never replaced.
+ *
+ * @returns whether it was written; `false` when a plan is already waiting or
+ *   the org does not exist.
+ */
+export async function restoreOrgSignupPlan(
+  orgId: string,
+  planKey: string,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<boolean> {
+  const result = await updateSettingsSlice(
+    orgId,
+    ORG_SIGNUP_PLAN_KEY,
+    (settings) => (readOrgSignupPlan(settings) === null ? planKey : LEAVE_AS_IS),
+    db
+  );
+  return result?.written ?? false;
+}
+
+/**
  * The key an org's default interface language lives under in `Org.settings`
  * (§138 t-1071): a BCP 47 tag, or absent for "no default".
  */

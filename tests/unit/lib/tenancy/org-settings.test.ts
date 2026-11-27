@@ -61,6 +61,7 @@ import {
   writePlatformAgentsMarker,
   updateOrgQuotas,
   readOrgSignupPlan,
+  restoreOrgSignupPlan,
   takeOrgSignupPlan,
 } from '@/lib/tenancy/org-settings';
 
@@ -1593,5 +1594,24 @@ describe('the signup plan (§139 t-1096)', () => {
   it('answers null for an org that does not exist', async () => {
     const { db } = txOver(undefined);
     expect(await takeOrgSignupPlan('gone', () => true, db)).toBeNull();
+  });
+
+  it('puts a taken plan back, keeping every other key', async () => {
+    const { tx, db } = txOver({ locale: 'fr' });
+
+    expect(await restoreOrgSignupPlan('org_a', 'pro', db)).toBe(true);
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: 'org_a' },
+      data: { settings: { locale: 'fr', signupPlan: 'pro' } },
+    });
+  });
+
+  it('never replaces a plan already waiting, and answers false for a missing org', async () => {
+    const waiting = txOver({ signupPlan: 'team' });
+    expect(await restoreOrgSignupPlan('org_a', 'pro', waiting.db)).toBe(false);
+    expect(waiting.tx.org.update).not.toHaveBeenCalled();
+
+    const { db } = txOver(undefined);
+    expect(await restoreOrgSignupPlan('gone', 'pro', db)).toBe(false);
   });
 });

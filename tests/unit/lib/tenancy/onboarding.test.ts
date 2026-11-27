@@ -49,8 +49,21 @@ vi.mock('@/lib/app/welcome', () => ({ appWelcomeRoute: '/welcome' }));
 // Off by default, as in an install that never bills (§139 t-1096).
 const billing = vi.hoisted(() => ({ on: false }));
 vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => billing.on }));
+vi.mock('@/lib/billing/plans', () => ({
+  planOf: (key: string) =>
+    ({
+      pro: { key: 'pro', priceLookupKey: 'pro_monthly' },
+      starter: { key: 'starter', priceLookupKey: null },
+    })[key],
+}));
 
-import { isOrgOnboarded, markOrgOnboarded, welcomeRedirectFor } from '@/lib/tenancy/onboarding';
+import {
+  isOrgOnboarded,
+  isSignupPlanRedirect,
+  markOrgOnboarded,
+  SIGNUP_PLAN_SENT_COOKIE,
+  welcomeRedirectFor,
+} from '@/lib/tenancy/onboarding';
 import { ORG_AWAITING_ONBOARDING_KEY, readOrgOnboarded } from '@/lib/tenancy/org-settings';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -90,6 +103,7 @@ function requestFor(
     method,
     nextUrl: new URL(`http://localhost:3000${pathname}`),
     headers: new Headers({ cookie: 'better-auth.session_token=x', ...headers }),
+    cookies: new Map<string, string>(),
   } as unknown as NextRequest;
 }
 
@@ -438,6 +452,60 @@ describe('welcomeRedirectFor — a plan chosen at signup (§139 t-1096)', () => 
     memberOf({});
 
     expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
+  });
+
+  it('carries the landing request’s query string across', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro' });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard?utm_source=x'), null)).toBe(
+      '/admin/billing?signup=plan&utm_source=x'
+    );
+  });
+
+  it('does not send the owner again while the sent cookie lasts', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
+    const request = requestFor('/dashboard');
+    request.cookies.set(SIGNUP_PLAN_SENT_COOKIE, '1');
+
+    expect(await welcomeRedirectFor(request, null)).toBe('/welcome');
+  });
+
+  it('sends the welcome step before a free plan, which the org’s setup applies', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'starter', awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
+  });
+
+  it('sends the owner for a free plan still waiting once onboarding is done', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'starter' });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe(
+      '/admin/billing?signup=plan'
+    );
+  });
+
+  it('sends the owner for a plan the app no longer registers, before the welcome step', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'retired', awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe(
+      '/admin/billing?signup=plan'
+    );
+  });
+
+  it('tells a signup-plan redirect from any other', () => {
+    expect(isSignupPlanRedirect('/admin/billing?signup=plan&utm_source=x')).toBe(true);
+    expect(isSignupPlanRedirect('/admin/billing?signup=applied')).toBe(false);
+    expect(isSignupPlanRedirect('/welcome?signup=plan')).toBe(false);
   });
 
   describe('with no welcome route set', () => {
