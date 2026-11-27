@@ -681,8 +681,8 @@ to signup with the plan's key, and the plan is carried to the new org:
 | The signup page               | `signupPlanOffer()` checks the key. A registered plan, while billing is on, is named on the page ("You are signing up for the Pro plan…"); anything else shows nothing and is not sent                                                              |
 | The signup request            | The email form sends `signupPlan` in the sign-up body; the Google button sends it in the OAuth state (`additionalData`). Neither is a user field                                                                                                    |
 | The user-create hook          | `userCreateBeforeHook` reads it (`carriedSignupPlan()`) and hands it to `signupOrgMemberships()`, which checks it again (`signupPlanOf()`) and records it on the new org, in the same INSERT: `Org.settings.signupPlan` (`ORG_SIGNUP_PLAN_KEY`)     |
-| The org's setup (a free plan) | `completeSignupOrg()` runs the app's org-created hooks, then `applyFreeSignupPlan()`: a plan with no price is applied with `assignPlan()`, then removed                                                                                             |
-| The first visit (a paid plan) | The proxy sends the org's OWNER from the landing route to `/admin/billing?signup=plan` (`welcomeRedirectFor()`), before any welcome step. The page asks `POST /api/v1/orgs/[id]/billing/signup-plan`, which removes the plan and answers a checkout |
+| The org's setup (a free plan) | `completeSignupOrg()` runs the app's org-created hooks, then `applyFreeSignupPlan()`: a plan with no price is removed, then applied with `assignPlan()`                                                                                             |
+| The first visit (a paid plan) | The proxy sends the org's OWNER from the landing route to `/admin/billing?signup=plan` (`landingRedirectFor()`), before any welcome step. The page asks `POST /api/v1/orgs/[id]/billing/signup-plan`, which removes the plan and answers a checkout |
 | Back from the take-up         | A checkout goes to the provider and returns as any checkout does. Otherwise the page is reloaded saying what happened: `?signup=applied`, `dropped` (no longer registered) or `failed`                                                              |
 
 **Why on the org, not a cookie or the session.** The plan has to survive email
@@ -708,18 +708,27 @@ the key names a registered plan, and the signup gets an org of its own
   the plan dropped; the person still gets their own org.
 
 **Taken up once, after the app's setup.** Nothing is taken up while the org
-still awaits its founder (`awaitingFounder`), since the app's org-created hooks
-have not run, and a plan applied before them could be overwritten by a default
-they write. A free plan is applied and then removed: applying is idempotent, so
-a failure to apply it leaves it waiting for a later visit, which takes it up
-the same way, and one that applied it but failed to remove it still answers
-`applied`. A free plan the org can no longer take (the provider manages its
-plan, because the owner subscribed meanwhile) is dropped. A paid plan is
-removed first and then sent to checkout, so the owner is sent there once; an
-owner who leaves the checkout page uses the billing page's own buttons. A
-checkout the provider refuses is final; one that fails for any other reason
-(the provider down, a timeout) puts the plan back for a later visit. The removal is a serializable read-modify-write
-(`takeOrgSignupPlan()`), so two callers cannot both take it.
+still awaits its founder (`awaitingFounder`), and a free plan is not taken up
+while the org still owes its org-created hooks (`orgCreated`), since a default
+plan one of them writes would replace it. Either kind is removed before
+anything else happens, by a serializable read-modify-write
+(`takeOrgSignupPlan()`), so two callers cannot both take it and a plan is
+never applied twice over one the org has moved to since.
+
+- **A free plan** is then applied. If the provider manages the org's plan
+  (the owner subscribed meanwhile) it is dropped. Any other failure puts it
+  back (`restoreOrgSignupPlan()`, which never replaces a plan already
+  waiting), since `assignPlan()` changed nothing, and a later visit tries
+  again.
+- **A paid plan** is then sent to checkout, so the owner is sent there once.
+  A checkout that fails, refused by the provider or not, answers `failed`,
+  and the owner chooses on the billing page as anyone would. It is not put
+  back: a later visit would start a checkout the owner did not ask for, and
+  closing open checkouts first would close any they had opened themselves.
+  An owner who leaves the checkout page uses the billing page's own buttons.
+- **While the app's billing init failed** (`billingPlansFailed()`) nothing is
+  taken up, since no plan is registered then and a valid choice would look
+  retired.
 
 **Why the free plan is applied at setup and the paid one at the first visit.**
 Checkout needs the owner's browser. A free plan needs nothing from them, and
@@ -729,19 +738,19 @@ running `completeSignupOrg()`; such an org's free plan is taken up on a
 later visit instead, once any welcome step is done.
 
 **When the proxy sends the owner there.** A paid plan, or one the app no
-longer registers, comes before any welcome step. A free plan comes after it:
-the setup normally applies it in the background before the founder's first
-landing, so the owner is sent for a free plan only when it is still waiting
-and there is no welcome step to take. That retries a setup that failed to
-apply it, and keeps the race between the background setup and the founder's
-first landing from sending them to the billing page. The landing request's
-query string is carried across.
+longer registers, comes before any welcome step. A free plan comes after it,
+and only once the org owes no org-created hooks: the setup applies it in the
+background after them, so the owner is sent for a free plan only when that
+failed, and the take-up page retries it. The landing request's query string
+is not carried there, since the page replaces its own URL once it is done. A
+plan lookup that fails skips the signup plan, never the welcome step.
 
-**Once an hour per browser.** Each redirect there sets the
+**Once an hour per org, per browser.** Each redirect there sets the
 `sunrise-signup-plan-sent` cookie (`SIGNUP_PLAN_SENT_COOKIE`, an hour,
-`httpOnly`), and the owner is not sent again while it lasts. A take-up that
-cannot finish (the billing read failing, the provider down) costs the owner one
-detour, never the landing route itself.
+`httpOnly`) holding the org's id, and the owner is not sent again for that org
+while it lasts. A take-up that cannot finish (the billing read failing) costs
+the owner one detour, never the landing route itself. A prefetch of the
+landing route is redirected but does not set it: it is not a visit.
 
 **Only the OWNER is redirected,** and the route refuses anyone else, as the
 checkout route does (`assertMayChangeBilling()`). While billing is on, the

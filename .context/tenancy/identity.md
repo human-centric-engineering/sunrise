@@ -445,7 +445,7 @@ bad value that kept every owner out of the product is the worse failure.
   `redirect(AUTH_LANDING_ROUTE)`.
 
 **The redirect.** `lib/app/welcome.ts` ships `appWelcomeRoute = null`. Set it,
-and the proxy (`welcomeRedirectFor()`, called from `proxy.ts`) sends a
+and the proxy (`landingRedirectFor()`, called from `proxy.ts`) sends a
 signed-in request for the **landing route** (`AUTH_LANDING_ROUTE`) to the
 welcome route when the user is an **OWNER or ADMIN** of the org the request
 acts for, and that org is `ACTIVE` and unfinished. A plain MEMBER is not sent:
@@ -470,8 +470,10 @@ a customer's org are not sent to its welcome step. Other paths, a deep link
 included, are never redirected. A failed read lets the request through to the
 landing route, logged at `warn`. With the route `null` the proxy reads
 nothing, unless billing is on: then the org's OWNER, while their signup's
-plan waits to be taken up, is sent to the billing page first, welcome route
-or not ([Choosing a plan at signup](../billing/billing.md#choosing-a-plan-at-signup)). The value must be root-relative, not the landing route's own path,
+plan waits to be taken up, is sent to the billing page (`landingRedirectFor()`)
+before the welcome step for a paid plan, and after it for a free one, at most
+once an hour per org per browser
+([Choosing a plan at signup](../billing/billing.md#choosing-a-plan-at-signup)). The value must be root-relative, not the landing route's own path,
 and not on or under an auth route (`AUTH_ROUTES`: `/login`, `/signup`,
 `/reset-password`, from which the proxy sends a signed-in user back to the
 landing route), or it throws at module load (`lib/auth-landing/route.ts`).

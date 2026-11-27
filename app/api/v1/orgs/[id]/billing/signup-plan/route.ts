@@ -7,7 +7,9 @@
  * that checkout; a free one is applied, `{ outcome: 'applied', planKey }`.
  * Otherwise `{ outcome: 'none' }` (nothing waiting, or already taken up), or
  * `{ outcome: 'dropped', planKey }` when the app no longer registers it. It is
- * taken up once: a second call answers `none`.
+ * taken up once: a second call answers `none`. The one exception is a free
+ * plan whose assignment failed and changed nothing, which is put back for a
+ * later call.
  *
  * The billing page calls it when the proxy sends the founder there
  * (`/admin/billing?signup=plan`) on their first visit to the landing route.

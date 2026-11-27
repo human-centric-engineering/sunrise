@@ -15,25 +15,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 
-const state = vi.hoisted(() => ({ billingOn: true }));
+const state = vi.hoisted(() => ({ billingOn: true, plansFailed: false }));
 vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => state.billingOn }));
 
 const FREE = { key: 'starter', label: 'Starter', priceLookupKey: null };
 const PRO = { key: 'pro', label: 'Pro', priceLookupKey: 'pro_monthly' };
 vi.mock('@/lib/billing/plans', () => ({
+  billingPlansFailed: () => state.plansFailed,
   planOf: (key: string) => ({ starter: FREE, pro: PRO })[key],
 }));
 
 const errors = vi.hoisted(() => ({
   BillingPlanError: class BillingPlanError extends Error {
-    constructor(
-      readonly code: string,
-      message: string
-    ) {
-      super(message);
-    }
-  },
-  BillingCheckoutError: class BillingCheckoutError extends Error {
     constructor(
       readonly code: string,
       message: string
@@ -48,10 +41,7 @@ vi.mock('@/lib/billing/subscriptions', () => ({
   BillingPlanError: errors.BillingPlanError,
 }));
 const mockStartCheckout = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/billing/checkout', () => ({
-  startCheckout: mockStartCheckout,
-  BillingCheckoutError: errors.BillingCheckoutError,
-}));
+vi.mock('@/lib/billing/checkout', () => ({ startCheckout: mockStartCheckout }));
 
 const db = vi.hoisted(() => ({ org: { findUnique: vi.fn() } }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
@@ -97,6 +87,7 @@ function takeAsStored(planKey: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   state.billingOn = true;
+  state.plansFailed = false;
   mockAssignPlan.mockResolvedValue({ changed: true, previousPlanKey: null });
   mockStartCheckout.mockResolvedValue({ url: 'https://checkout.example/c/1' });
 });
@@ -128,7 +119,7 @@ describe('signupPlanOf', () => {
 });
 
 describe('takeUpSignupPlan — a free plan', () => {
-  it('applies it, then removes it, and audits it as the founder’s', async () => {
+  it('removes it, then applies it, and audits it as the founder’s', async () => {
     waiting('starter');
     takeAsStored('starter');
 
@@ -136,8 +127,8 @@ describe('takeUpSignupPlan — a free plan', () => {
 
     expect(result).toEqual({ kind: 'applied', planKey: 'starter' });
     expect(mockAssignPlan).toHaveBeenCalledWith(ORG, 'starter');
-    expect(mockAssignPlan.mock.invocationCallOrder[0]).toBeLessThan(
-      mockTake.mock.invocationCallOrder[0]
+    expect(mockTake.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAssignPlan.mock.invocationCallOrder[0]
     );
     expect(mockStartCheckout).not.toHaveBeenCalled();
     expect(mockAudit).toHaveBeenCalledWith(
@@ -151,14 +142,36 @@ describe('takeUpSignupPlan — a free plan', () => {
     );
   });
 
-  it('leaves it waiting when applying it fails, so the next caller tries again', async () => {
+  it('puts it back when applying it fails, so the next caller tries again', async () => {
     waiting('starter');
+    takeAsStored('starter');
     mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
 
     await expect(takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).rejects.toThrow(
       'lock wait timeout'
     );
+    expect(mockRestore).toHaveBeenCalledWith(ORG, 'starter');
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  it('applies nothing when another caller took it first', async () => {
+    waiting('starter');
+    mockTake.mockResolvedValue(null);
+
+    expect(await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).toEqual({
+      kind: 'none',
+    });
+    expect(mockAssignPlan).not.toHaveBeenCalled();
+  });
+
+  it('waits while the org still owes its org-created hooks, so a default they write cannot replace it', async () => {
+    waiting('starter', { orgCreated: { owed: ['app.seed'], source: 'signup' } });
+
+    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
+      kind: 'none',
+    });
     expect(mockTake).not.toHaveBeenCalled();
+    expect(mockAssignPlan).not.toHaveBeenCalled();
   });
 
   it('writes no audit row when the org was already on it', async () => {
@@ -255,6 +268,16 @@ describe('takeUpSignupPlan — nothing to do', () => {
     expect(mockTake).not.toHaveBeenCalled();
   });
 
+  it('leaves it waiting while the app’s plans failed to register, rather than drop a valid choice', async () => {
+    waiting('pro');
+    state.plansFailed = true;
+
+    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
+      kind: 'none',
+    });
+    expect(mockTake).not.toHaveBeenCalled();
+  });
+
   it('drops a key the app no longer registers, logged', async () => {
     waiting('legacy');
     takeAsStored('legacy');
@@ -288,6 +311,7 @@ describe('takeUpSignupPlan — nothing to do', () => {
 describe('applyFreeSignupPlan', () => {
   it('never throws: a failure is logged at error', async () => {
     waiting('starter');
+    takeAsStored('starter');
     mockAssignPlan.mockRejectedValue(new Error('boom'));
 
     await expect(applyFreeSignupPlan(ORG, FOUNDER)).resolves.toBeUndefined();
@@ -311,71 +335,34 @@ describe('takeUpSignupPlan — a take-up that fails part-way', () => {
       kind: 'none',
     });
     expect(mockTake).toHaveBeenCalledTimes(1);
+    expect(mockRestore).not.toHaveBeenCalled();
     expect(mockAudit).not.toHaveBeenCalled();
   });
 
-  it('leaves a free plan waiting when applying it fails for another reason', async () => {
-    waiting('starter');
-    takeAsStored('starter');
-    mockAssignPlan.mockRejectedValue(new Error('connection reset'));
-
-    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
-      'connection reset'
-    );
-    expect(mockTake).not.toHaveBeenCalled();
-  });
-
-  it('answers applied when the plan went on but removing the key failed', async () => {
-    waiting('starter');
-    mockTake.mockRejectedValue(new Error('database gone'));
-
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'applied',
-      planKey: 'starter',
-    });
-    expect(mockAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'org.plan.assign', entityId: ORG })
-    );
-    expect(logger.warn).toHaveBeenCalled();
-  });
-
-  it('puts a paid plan back when the checkout fails for a passing reason', async () => {
+  it('does not put a paid plan back after any checkout failure: a later visit would start one unasked', async () => {
     waiting('pro');
     takeAsStored('pro');
     mockStartCheckout.mockRejectedValue(new Error('provider 503'));
 
     await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
       'provider 503'
-    );
-    expect(mockRestore).toHaveBeenCalledWith(ORG, 'pro');
-  });
-
-  it('does not put a paid plan back when the provider refuses the checkout', async () => {
-    waiting('pro');
-    takeAsStored('pro');
-    mockStartCheckout.mockRejectedValue(
-      new errors.BillingCheckoutError('PRICE_MISSING', 'No such price')
-    );
-
-    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
-      'No such price'
     );
     expect(mockRestore).not.toHaveBeenCalled();
   });
 
-  it('still rethrows the checkout failure when putting the plan back fails too', async () => {
-    waiting('pro');
-    takeAsStored('pro');
-    mockStartCheckout.mockRejectedValue(new Error('provider 503'));
+  it('still rethrows the assignment failure when putting the plan back fails too', async () => {
+    waiting('starter');
+    takeAsStored('starter');
+    mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
     mockRestore.mockRejectedValue(new Error('database gone'));
 
     await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
-      'provider 503'
+      'lock wait timeout'
     );
     expect(logger.error).toHaveBeenCalledWith(
       'billing: could not put back the plan chosen at signup',
       expect.any(Error),
-      { orgId: ORG, planKey: 'pro' }
+      { orgId: ORG, planKey: 'starter' }
     );
   });
 });

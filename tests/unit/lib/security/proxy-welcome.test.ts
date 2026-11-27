@@ -2,7 +2,7 @@
  * Unit Test: the proxy's welcome redirect (§134 t-1063)
  *
  * With a welcome route set in `lib/app/welcome.ts`, a signed-in request is
- * handed to `welcomeRedirectFor()` and redirected where it says. With none
+ * handed to `landingRedirectFor()` and redirected where it says. With none
  * set, the proxy never asks, which is what keeps the seam behaviour-neutral at
  * rest. The decision itself (landing route only, members of unfinished orgs
  * only) is tested in tests/unit/lib/tenancy/onboarding.test.ts; here it is
@@ -26,11 +26,9 @@ vi.mock('@/lib/security/rate-limit-middleware', () => ({
 }));
 vi.mock('@/lib/app/welcome', () => ({ appWelcomeRoute: '/welcome' }));
 
-const mockWelcomeRedirectFor = vi.hoisted(() => vi.fn());
+const mockLandingRedirectFor = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/tenancy/onboarding', () => ({
-  welcomeRedirectFor: mockWelcomeRedirectFor,
-  // Its own behaviour is onboarding.test.ts; here only which answer it names.
-  isSignupPlanRedirect: (location: string) => location === '/admin/billing?signup=plan',
+  landingRedirectFor: mockLandingRedirectFor,
   SIGNUP_PLAN_SENT_COOKIE: 'sunrise-signup-plan-sent',
   SIGNUP_PLAN_SENT_MAX_AGE_SECONDS: 3600,
 }));
@@ -38,19 +36,26 @@ vi.mock('@/lib/tenancy/onboarding', () => ({
 import { proxy } from '@/proxy';
 import { __resetTenantResolverForTests, registerTenantResolver } from '@/lib/tenancy/resolver';
 
+const WELCOME = { location: '/welcome', signupPlanOrgId: null };
+const SIGNUP_PLAN = { location: '/admin/billing?signup=plan', signupPlanOrgId: 'org_acme' };
+
 const SESSION_COOKIE = { 'better-auth.session_token': 'valid-session-token' };
 
 function createMockRequest(
   pathname: string,
-  options: { cookies?: Record<string, string>; method?: string } = {}
+  options: {
+    cookies?: Record<string, string>;
+    method?: string;
+    headers?: Record<string, string>;
+  } = {}
 ): NextRequest {
   const url = `http://localhost:3000${pathname}`;
-  const { cookies = {}, method = 'GET' } = options;
+  const { cookies = {}, method = 'GET', headers = {} } = options;
   return {
     nextUrl: new URL(url),
     url,
     method,
-    headers: new Map<string, string>(),
+    headers: new Map<string, string>(Object.entries(headers)),
     cookies: {
       get: (name: string) => (cookies[name] ? { name, value: cookies[name] } : undefined),
     },
@@ -60,15 +65,15 @@ function createMockRequest(
 describe('proxy — welcome redirect, welcome route set', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockWelcomeRedirectFor.mockResolvedValue(null);
+    mockLandingRedirectFor.mockResolvedValue(null);
   });
 
   afterEach(() => {
     __resetTenantResolverForTests();
   });
 
-  it('redirects a signed-in request to where welcomeRedirectFor says', async () => {
-    mockWelcomeRedirectFor.mockResolvedValue('/welcome');
+  it('redirects a signed-in request to where landingRedirectFor says', async () => {
+    mockLandingRedirectFor.mockResolvedValue(WELCOME);
     const request = createMockRequest('/dashboard', { cookies: SESSION_COOKIE });
 
     const response = await proxy(request);
@@ -76,11 +81,11 @@ describe('proxy — welcome redirect, welcome route set', () => {
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe('http://localhost:3000/welcome');
     expect(response.headers.get('x-request-id')).toBe('test-request-id-123');
-    expect(mockWelcomeRedirectFor).toHaveBeenCalledWith(request, null);
+    expect(mockLandingRedirectFor).toHaveBeenCalledWith(request, null);
   });
 
-  it('marks a redirect to take up the signup plan, so it is not sent again for an hour', async () => {
-    mockWelcomeRedirectFor.mockResolvedValue('/admin/billing?signup=plan');
+  it('marks the browser with the org on a redirect to take up its signup plan, for an hour', async () => {
+    mockLandingRedirectFor.mockResolvedValue(SIGNUP_PLAN);
 
     const response = await proxy(createMockRequest('/dashboard', { cookies: SESSION_COOKIE }));
 
@@ -90,14 +95,33 @@ describe('proxy — welcome redirect, welcome route set', () => {
     const sent = response.headers
       .getSetCookie()
       .find((cookie) => cookie.startsWith('sunrise-signup-plan-sent='));
-    expect(sent).toMatch(/^sunrise-signup-plan-sent=1;/);
+    expect(sent).toMatch(/^sunrise-signup-plan-sent=org_acme;/);
     expect(sent).toMatch(/Max-Age=3600/);
     expect(sent).toMatch(/HttpOnly/i);
     expect(sent).toMatch(/SameSite=lax/i);
   });
 
+  it.each<Record<string, string>>([
+    { 'next-router-prefetch': '1' },
+    { 'sec-purpose': 'prefetch' },
+    { purpose: 'prefetch' },
+  ])('redirects a prefetch but does not mark the browser (%o)', async (headers) => {
+    mockLandingRedirectFor.mockResolvedValue(SIGNUP_PLAN);
+
+    const response = await proxy(
+      createMockRequest('/dashboard', { cookies: SESSION_COOKIE, headers })
+    );
+
+    expect(response.headers.get('location')).toBe(
+      'http://localhost:3000/admin/billing?signup=plan'
+    );
+    expect(
+      response.headers.getSetCookie().some((c) => c.startsWith('sunrise-signup-plan-sent='))
+    ).toBe(false);
+  });
+
   it('sets no such cookie on a redirect to the welcome step', async () => {
-    mockWelcomeRedirectFor.mockResolvedValue('/welcome');
+    mockLandingRedirectFor.mockResolvedValue(WELCOME);
 
     const response = await proxy(createMockRequest('/dashboard', { cookies: SESSION_COOKIE }));
 
@@ -106,12 +130,12 @@ describe('proxy — welcome redirect, welcome route set', () => {
     ).toBe(false);
   });
 
-  it('lets the request through when welcomeRedirectFor answers null', async () => {
+  it('lets the request through when landingRedirectFor answers null', async () => {
     const response = await proxy(createMockRequest('/dashboard', { cookies: SESSION_COOKIE }));
 
     expect(response.status).toBe(200);
     expect(response.headers.get('location')).toBeNull();
-    expect(mockWelcomeRedirectFor).toHaveBeenCalledTimes(1);
+    expect(mockLandingRedirectFor).toHaveBeenCalledTimes(1);
   });
 
   it('passes the org the tenant resolver names, not a client header', async () => {
@@ -120,14 +144,14 @@ describe('proxy — welcome redirect, welcome route set', () => {
 
     await proxy(request);
 
-    expect(mockWelcomeRedirectFor).toHaveBeenCalledWith(request, 'org_acme');
+    expect(mockLandingRedirectFor).toHaveBeenCalledWith(request, 'org_acme');
   });
 
   it('does not ask for a request with no session cookie', async () => {
     const response = await proxy(createMockRequest('/'));
 
     expect(response.status).toBe(200);
-    expect(mockWelcomeRedirectFor).not.toHaveBeenCalled();
+    expect(mockLandingRedirectFor).not.toHaveBeenCalled();
   });
 });
 
@@ -141,12 +165,12 @@ describe('proxy — welcome redirect, no welcome route set (the shipped default)
     vi.resetModules();
     vi.doMock('@/lib/app/welcome', () => ({ appWelcomeRoute: null }));
     const { proxy: freshProxy } = await import('@/proxy');
-    mockWelcomeRedirectFor.mockClear();
-    mockWelcomeRedirectFor.mockResolvedValue('/welcome');
+    mockLandingRedirectFor.mockClear();
+    mockLandingRedirectFor.mockResolvedValue(WELCOME);
 
     const response = await freshProxy(createMockRequest('/dashboard', { cookies: SESSION_COOKIE }));
 
     expect(response.status).toBe(200);
-    expect(mockWelcomeRedirectFor).not.toHaveBeenCalled();
+    expect(mockLandingRedirectFor).not.toHaveBeenCalled();
   });
 });

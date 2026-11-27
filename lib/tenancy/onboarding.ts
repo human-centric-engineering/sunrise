@@ -34,13 +34,14 @@ import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, routePathname } from '@/lib/aut
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE, orgAdministers } from '@/lib/tenancy/roles';
 import { billingEnabled } from '@/lib/billing/config';
-import { planOf } from '@/lib/billing/plans';
-import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_PAGE, SIGNUP_PLAN_QUERY } from '@/lib/billing/routes';
+import { billingPlansFailed, planOf } from '@/lib/billing/plans';
+import { SIGNUP_PLAN_PAGE } from '@/lib/billing/routes';
 import { sessionActingOrgId } from '@/lib/tenancy/entry';
 import {
   clearOrgAwaitingOnboarding,
   isSettingsWriteConflict,
   ORG_AWAITING_FOUNDER_KEY,
+  ORG_CREATED_HOOKS_KEY,
   readOrgOnboarded,
   readOrgSignupPlan,
 } from '@/lib/tenancy/org-settings';
@@ -113,27 +114,50 @@ export async function markOrgOnboarded(
   }
 }
 
+/** Where {@link landingRedirectFor} sends a request, and why. */
+export interface LandingRedirect {
+  location: string;
+  /**
+   * The org whose signup plan the owner is sent to take up, or `null` for
+   * the welcome step. The proxy marks the browser with it
+   * ({@link SIGNUP_PLAN_SENT_COOKIE}) so the owner is not sent again soon.
+   */
+  signupPlanOrgId: string | null;
+}
+
+/**
+ * {@link landingRedirectFor}'s location alone: where the proxy should send
+ * this request instead, or `null` to let it through.
+ */
+export async function welcomeRedirectFor(
+  request: NextRequest,
+  headerOrgId: string | null
+): Promise<string | null> {
+  return (await landingRedirectFor(request, headerOrgId))?.location ?? null;
+}
+
 /**
  * Where the proxy should send this request instead, when it is a signed-in
  * OWNER or ADMIN of an unfinished, active org reaching the landing route;
- * `null` to let it through. The landing request's query string is carried
- * across.
+ * `null` to let it through. For the welcome step the landing request's query
+ * string is carried across.
  *
  * **A plan chosen at signup** (§139 t-1096): while billing is on, the org's
  * OWNER is sent to the billing page (`SIGNUP_PLAN_PAGE`) when the org's
  * signup chose a plan not yet taken up, and the page takes it up. An ADMIN is
  * not, since only the owner can pay. A paid plan (or one the app no longer
  * registers) comes before the welcome step, which follows on the next visit.
- * A free one comes after it: the org's setup applies it in the background,
- * usually before the founder's first landing, so the owner is sent for it
- * only when it is still waiting once there is no welcome step to take, which
- * is what retries a setup that failed to apply it.
+ * A free one comes after it, and only once the org owes no org-created hooks:
+ * the org's setup applies it in the background after them, so the owner is
+ * sent for it only when that failed, which is what retries it. The landing
+ * query is not carried there: the page replaces its own URL once it is done.
  *
- * **Once an hour per browser.** A redirect there sets a short-lived cookie
- * (`SIGNUP_PLAN_SENT_COOKIE`), and while it is present the owner is not sent
- * again. So a take-up that cannot finish (the billing read failing, the
- * provider down) costs one detour, not the landing route: the owner reaches
- * it on the next visit and has the billing page's own buttons meanwhile.
+ * **Once an hour per org, per browser.** A redirect there makes the proxy set
+ * a short-lived cookie holding the org's id (`SIGNUP_PLAN_SENT_COOKIE`), and
+ * while it names this org the owner is not sent again. So a take-up that
+ * cannot finish (the billing read failing, the provider down) costs one
+ * detour, not the landing route. A prefetch is not marked: it is not a visit.
+ * A failing plan lookup skips the signup plan, never the welcome step.
  *
  * Reads nothing when the app sets no welcome route and billing is off, or
  * the path is not the landing route. With billing on that is a session read
@@ -157,10 +181,10 @@ export async function markOrgOnboarded(
  * @param headerOrgId the org the app's tenant resolver names for this
  *   request, as the proxy computed it (not a client's header).
  */
-export async function welcomeRedirectFor(
+export async function landingRedirectFor(
   request: NextRequest,
   headerOrgId: string | null
-): Promise<string | null> {
+): Promise<LandingRedirect | null> {
   const billing = billingEnabled();
   if (AUTH_WELCOME_ROUTE === null && !billing) return null;
   // A page load only. A server action posted from the landing page (or any
@@ -182,24 +206,27 @@ export async function welcomeRedirectFor(
     });
     if (!membership || !orgAdministers(membership.role)) return null;
     if (membership.org.status !== 'ACTIVE') return null;
+    const settings = asObject(membership.org.settings);
     // The plan the signup chose (§139 t-1096): its owner goes to the billing
     // page, which takes it up. Only the OWNER, who alone can pay.
     const signupPlan =
       billing &&
       membership.role === ORG_OWNER_ROLE &&
-      !request.cookies.has(SIGNUP_PLAN_SENT_COOKIE) &&
-      !(ORG_AWAITING_FOUNDER_KEY in asObject(membership.org.settings))
-        ? readOrgSignupPlan(membership.org.settings)
+      request.cookies.get(SIGNUP_PLAN_SENT_COOKIE)?.value !== orgId &&
+      !(ORG_AWAITING_FOUNDER_KEY in settings)
+        ? readOrgSignupPlan(settings)
         : null;
-    const freePlan = signupPlan !== null && planOf(signupPlan)?.priceLookupKey === null;
-    if (signupPlan !== null && !freePlan) {
-      return withQuery(SIGNUP_PLAN_PAGE, request.nextUrl.search);
+    const kind = signupPlan === null ? null : signupPlanKind(signupPlan);
+    const toPlan = { location: SIGNUP_PLAN_PAGE, signupPlanOrgId: orgId };
+    if (kind === 'paid') return toPlan;
+    if (AUTH_WELCOME_ROUTE !== null && !readOrgOnboarded(settings)) {
+      return {
+        location: withQuery(AUTH_WELCOME_ROUTE, request.nextUrl.search),
+        signupPlanOrgId: null,
+      };
     }
-    if (AUTH_WELCOME_ROUTE !== null && !readOrgOnboarded(membership.org.settings)) {
-      return withQuery(AUTH_WELCOME_ROUTE, request.nextUrl.search);
-    }
-    // A free plan the org's setup has not applied yet, or failed to.
-    return freePlan ? withQuery(SIGNUP_PLAN_PAGE, request.nextUrl.search) : null;
+    // A free plan the org's setup failed to apply, once its hooks have run.
+    return kind === 'free' && !(ORG_CREATED_HOOKS_KEY in settings) ? toPlan : null;
   } catch (error) {
     logger.warn(
       'Could not read org onboarding for the landing route; letting the request through',
@@ -215,32 +242,46 @@ const landingPathname = routePathname(AUTH_LANDING_ROUTE);
 
 /**
  * The cookie the proxy sets when it sends an owner to take up their signup
- * plan, so it does not send them again while it lasts (see
- * {@link welcomeRedirectFor}). Its value carries nothing.
+ * plan, holding the org's id, so it does not send them again for that org
+ * while it lasts (see {@link landingRedirectFor}).
  */
 export const SIGNUP_PLAN_SENT_COOKIE = 'sunrise-signup-plan-sent';
 
 /** How long {@link SIGNUP_PLAN_SENT_COOKIE} lasts: an hour. */
 export const SIGNUP_PLAN_SENT_MAX_AGE_SECONDS = 60 * 60;
 
-/** Whether a {@link welcomeRedirectFor} answer sends the owner to take up their signup plan. */
-export function isSignupPlanRedirect(location: string): boolean {
-  const url = new URL(location, 'http://localhost');
-  return (
-    url.pathname === ORG_BILLING_PAGE_PATH &&
-    url.searchParams.get(SIGNUP_PLAN_QUERY.key) === SIGNUP_PLAN_QUERY.value
-  );
+/**
+ * Whether a waiting signup plan is free or `paid` (a plan the app no longer
+ * registers counts as paid: the take-up page says it was dropped), or `null`
+ * when the plans cannot be read, so the plan is skipped and the welcome step
+ * still answered.
+ */
+function signupPlanKind(planKey: string): 'free' | 'paid' | null {
+  try {
+    if (billingPlansFailed()) return null;
+    return planOf(planKey)?.priceLookupKey === null ? 'free' : 'paid';
+  } catch (error) {
+    logger.warn('Could not read the plan chosen at signup; not sending the owner for it', {
+      planKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
-function asObject(value: unknown): object {
-  return typeof value === 'object' && value !== null ? value : {};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
 }
 
 /** The query key Next adds to RSC and prefetch requests to bust caches. */
 const NEXT_RSC_QUERY_KEY = '_rsc';
 
 /**
- * A route (the welcome route, the signup-plan page) with the landing request's query string added, so a
+ * The welcome route with the landing request's query string added, so a
  * parameter a door into the app passed (`?joined=acme`) survives the hop. A
  * key the welcome route already sets keeps its own value. Next's own `_rsc`
  * cache-busting key belongs to the landing request and is not copied.

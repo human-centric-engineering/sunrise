@@ -49,17 +49,23 @@ vi.mock('@/lib/app/welcome', () => ({ appWelcomeRoute: '/welcome' }));
 // Off by default, as in an install that never bills (§139 t-1096).
 const billing = vi.hoisted(() => ({ on: false }));
 vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => billing.on }));
+const plans = vi.hoisted(() => ({ failed: false, throws: false }));
 vi.mock('@/lib/billing/plans', () => ({
+  billingPlansFailed: () => plans.failed,
   planOf: (key: string) =>
-    ({
-      pro: { key: 'pro', priceLookupKey: 'pro_monthly' },
-      starter: { key: 'starter', priceLookupKey: null },
-    })[key],
+    plans.throws
+      ? (() => {
+          throw new Error('plans unreadable');
+        })()
+      : {
+          pro: { key: 'pro', priceLookupKey: 'pro_monthly' },
+          starter: { key: 'starter', priceLookupKey: null },
+        }[key],
 }));
 
 import {
   isOrgOnboarded,
-  isSignupPlanRedirect,
+  landingRedirectFor,
   markOrgOnboarded,
   SIGNUP_PLAN_SENT_COOKIE,
   welcomeRedirectFor,
@@ -97,13 +103,20 @@ function conflict(): Prisma.PrismaClientKnownRequestError {
 
 function requestFor(
   pathname: string,
-  { method = 'GET', headers = {} }: { method?: string; headers?: Record<string, string> } = {}
+  {
+    method = 'GET',
+    headers = {},
+    sentFor,
+  }: { method?: string; headers?: Record<string, string>; sentFor?: string } = {}
 ): NextRequest {
   return {
     method,
     nextUrl: new URL(`http://localhost:3000${pathname}`),
     headers: new Headers({ cookie: 'better-auth.session_token=x', ...headers }),
-    cookies: new Map<string, string>(),
+    cookies: {
+      get: (name: string) =>
+        name === SIGNUP_PLAN_SENT_COOKIE && sentFor ? { name, value: sentFor } : undefined,
+    },
   } as unknown as NextRequest;
 }
 
@@ -115,6 +128,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockIsMulti.mockReturnValue(true);
   billing.on = false;
+  plans.failed = false;
+  plans.throws = false;
 });
 
 describe('readOrgOnboarded', () => {
@@ -454,24 +469,73 @@ describe('welcomeRedirectFor — a plan chosen at signup (§139 t-1096)', () => 
     expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
   });
 
-  it('carries the landing request’s query string across', async () => {
+  it('does not carry the landing query to the take-up page, which replaces its own URL', async () => {
     billing.on = true;
     signedIn();
     memberOf({ signupPlan: 'pro' });
 
-    expect(await welcomeRedirectFor(requestFor('/dashboard?utm_source=x'), null)).toBe(
-      '/admin/billing?signup=plan&utm_source=x'
+    expect(await welcomeRedirectFor(requestFor('/dashboard?checkout=cancelled'), null)).toBe(
+      '/admin/billing?signup=plan'
     );
   });
 
-  it('does not send the owner again while the sent cookie lasts', async () => {
+  it('names the org, so the proxy can mark the browser for it', async () => {
     billing.on = true;
     signedIn();
     memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
-    const request = requestFor('/dashboard');
-    request.cookies.set(SIGNUP_PLAN_SENT_COOKIE, '1');
+
+    expect(await landingRedirectFor(requestFor('/dashboard'), null)).toEqual({
+      location: '/admin/billing?signup=plan',
+      signupPlanOrgId: ORG,
+    });
+  });
+
+  it('names no org for the welcome step', async () => {
+    signedIn();
+    memberOf({ awaitingOnboarding: true });
+
+    expect(await landingRedirectFor(requestFor('/dashboard'), null)).toEqual({
+      location: '/welcome',
+      signupPlanOrgId: null,
+    });
+  });
+
+  it('does not send the owner again while the sent cookie names this org', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
+    const request = requestFor('/dashboard', { sentFor: ORG });
 
     expect(await welcomeRedirectFor(request, null)).toBe('/welcome');
+  });
+
+  it('still sends the owner when the sent cookie names another org', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro' });
+    const request = requestFor('/dashboard', { sentFor: 'cmorg0000000000000000other' });
+
+    expect(await welcomeRedirectFor(request, null)).toBe('/admin/billing?signup=plan');
+  });
+
+  it('skips the plan but still answers the welcome step when the plans cannot be read', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
+
+    plans.throws = true;
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
+    plans.throws = false;
+    plans.failed = true;
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
+  });
+
+  it('does not send the owner for a free plan while the org still owes its hooks', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'starter', orgCreated: { owed: ['app.seed'], source: 'signup' } });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
   });
 
   it('sends the welcome step before a free plan, which the org’s setup applies', async () => {
@@ -500,12 +564,6 @@ describe('welcomeRedirectFor — a plan chosen at signup (§139 t-1096)', () => 
     expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe(
       '/admin/billing?signup=plan'
     );
-  });
-
-  it('tells a signup-plan redirect from any other', () => {
-    expect(isSignupPlanRedirect('/admin/billing?signup=plan&utm_source=x')).toBe(true);
-    expect(isSignupPlanRedirect('/admin/billing?signup=applied')).toBe(false);
-    expect(isSignupPlanRedirect('/welcome?signup=plan')).toBe(false);
   });
 
   describe('with no welcome route set', () => {

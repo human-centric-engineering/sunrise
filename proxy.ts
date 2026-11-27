@@ -24,10 +24,9 @@ import { frameablePrefixes } from '@/lib/security/frame-deny-source.cjs';
 import { resolveTenantFromRequest, TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, isAuthRoutePath } from '@/lib/auth-landing/route';
 import {
-  isSignupPlanRedirect,
+  landingRedirectFor,
   SIGNUP_PLAN_SENT_COOKIE,
   SIGNUP_PLAN_SENT_MAX_AGE_SECONDS,
-  welcomeRedirectFor,
 } from '@/lib/tenancy/onboarding';
 import { billingEnabled } from '@/lib/billing/config';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
@@ -133,6 +132,16 @@ const CROSS_ORIGIN_TOKEN_ROUTES = [
   /^\/api\/v1\/embed\//,
   /^\/api\/v1\/orchestration\/approvals\/[^/]+\/(approve|reject)\/embed$/,
 ];
+
+/**
+ * Whether the request is a link prefetch, not a visit: Next's router marks
+ * its own (`next-router-prefetch`), and browsers mark theirs
+ * (`sec-purpose` / `purpose: prefetch`).
+ */
+function isPrefetch(request: NextRequest): boolean {
+  const purpose = request.headers.get('sec-purpose') ?? request.headers.get('purpose') ?? '';
+  return request.headers.has('next-router-prefetch') || purpose.includes('prefetch');
+}
 
 /**
  * Validate origin for state-changing requests (additional CSRF protection)
@@ -398,17 +407,18 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // billing off, nothing is read; with billing on, every authenticated landing
   // GET costs a session and a membership read, as a welcome route does.
   if ((AUTH_WELCOME_ROUTE !== null || billingEnabled()) && authenticated) {
-    const welcome = await welcomeRedirectFor(request, tenantOrgId);
-    if (welcome) {
+    const landing = await landingRedirectFor(request, tenantOrgId);
+    if (landing) {
       const redirectResponse = NextResponse.redirect(
-        new URL(welcome, request.url),
+        new URL(landing.location, request.url),
         pageRedirectStatus
       );
       redirectResponse.headers.set('x-request-id', requestId);
-      // Sent to take up the signup plan once an hour at most, so a take-up
-      // that cannot finish never keeps the owner off the landing route.
-      if (isSignupPlanRedirect(welcome)) {
-        redirectResponse.cookies.set(SIGNUP_PLAN_SENT_COOKIE, '1', {
+      // Sent to take up the signup plan once an hour per org at most, so a
+      // take-up that cannot finish never keeps the owner off the landing
+      // route. A prefetch is not a visit, so it does not use that up.
+      if (landing.signupPlanOrgId !== null && !isPrefetch(request)) {
+        redirectResponse.cookies.set(SIGNUP_PLAN_SENT_COOKIE, landing.signupPlanOrgId, {
           httpOnly: true,
           sameSite: 'lax',
           secure: process.env.NODE_ENV === 'production',

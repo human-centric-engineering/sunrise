@@ -80,11 +80,15 @@ release process.
   shown on the signup page, carried through the signup (the email form's body,
   or the OAuth state), checked again in the user-create hook, and recorded on
   the org a self-serve signup founds (`Org.settings.signupPlan`,
-  `ORG_SIGNUP_PLAN_KEY`, with `readOrgSignupPlan()` and `takeOrgSignupPlan()`
-  in `lib/tenancy/org-settings.ts`). A free plan is applied once the org's
-  setup runs, after the app's org-created hooks; for a paid one the proxy
-  sends the org's OWNER from the landing route to `/admin/billing?signup=plan`,
-  before any welcome step, and the page starts its checkout. New route
+  `ORG_SIGNUP_PLAN_KEY`, with `readOrgSignupPlan()`, `takeOrgSignupPlan()` and
+  `restoreOrgSignupPlan()` in `lib/tenancy/org-settings.ts`). A free plan is
+  applied once the org's setup runs, after the app's org-created hooks; for a
+  paid one the proxy sends the org's OWNER from the landing route to
+  `/admin/billing?signup=plan`, before any welcome step, and the page starts
+  its checkout. The proxy sends an owner there at most once an hour per org
+  (the `sunrise-signup-plan-sent` cookie). New in `lib/tenancy/onboarding.ts`:
+  `landingRedirectFor()`, which `welcomeRedirectFor()` now wraps, answering
+  the location and the org whose plan it is for. New route
   `POST /api/v1/orgs/[id]/billing/signup-plan` (the OWNER acting in the org,
   as checkout). New module `lib/billing/signup-plan.ts` (`signupPlanOf()`,
   `signupPlanOffer()`, `takeUpSignupPlan()`). Additive: `createSignupOrg()`
