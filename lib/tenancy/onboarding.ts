@@ -32,12 +32,16 @@ import { logger } from '@/lib/logging';
 import { auth } from '@/lib/auth/config';
 import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, routePathname } from '@/lib/auth-landing/route';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { orgAdministers } from '@/lib/tenancy/roles';
+import { ORG_OWNER_ROLE, orgAdministers } from '@/lib/tenancy/roles';
+import { billingEnabled } from '@/lib/billing/config';
+import { SIGNUP_PLAN_PAGE } from '@/lib/billing/upgrade-url';
 import { sessionActingOrgId } from '@/lib/tenancy/entry';
 import {
   clearOrgAwaitingOnboarding,
   isSettingsWriteConflict,
+  ORG_AWAITING_FOUNDER_KEY,
   readOrgOnboarded,
+  readOrgSignupPlan,
 } from '@/lib/tenancy/org-settings';
 
 /**
@@ -114,8 +118,14 @@ export async function markOrgOnboarded(
  * `null` to let it through. The landing request's query string is carried
  * across.
  *
- * Reads nothing when the app sets no welcome route, or the path is not the
- * landing route. The org is the one the request acts for, in the guard's
+ * **A plan chosen at signup comes first** (§139 t-1096): while billing is
+ * on, the org's OWNER is sent to the billing page (`SIGNUP_PLAN_PAGE`) when
+ * the org's signup chose a plan not yet taken up, and the page takes it up.
+ * An ADMIN is not, since only the owner can pay. That holds whether or not
+ * a welcome route is set; the welcome step follows on the next visit.
+ *
+ * Reads nothing when the app sets no welcome route and billing is off, or
+ * the path is not the landing route. The org is the one the request acts for, in the guard's
  * precedence (the app's tenant resolver, else the session's active org, else
  * the install org at `single`), and only a membership of it counts: platform
  * staff looking at a customer's org are not sent to its welcome step.
@@ -138,7 +148,8 @@ export async function welcomeRedirectFor(
   request: NextRequest,
   headerOrgId: string | null
 ): Promise<string | null> {
-  if (AUTH_WELCOME_ROUTE === null) return null;
+  const billing = billingEnabled();
+  if (AUTH_WELCOME_ROUTE === null && !billing) return null;
   // A page load only. A server action posted from the landing page (or any
   // other non-GET) answered with a redirect would fail in the client.
   if (request.method !== 'GET' && request.method !== 'HEAD') return null;
@@ -158,6 +169,17 @@ export async function welcomeRedirectFor(
     });
     if (!membership || !orgAdministers(membership.role)) return null;
     if (membership.org.status !== 'ACTIVE') return null;
+    // The plan the signup chose comes first (§139 t-1096): its owner goes to
+    // the billing page, which takes it up. Only the OWNER, who alone can pay.
+    if (
+      billing &&
+      membership.role === ORG_OWNER_ROLE &&
+      readOrgSignupPlan(membership.org.settings) !== null &&
+      !(ORG_AWAITING_FOUNDER_KEY in asObject(membership.org.settings))
+    ) {
+      return SIGNUP_PLAN_PAGE;
+    }
+    if (AUTH_WELCOME_ROUTE === null) return null;
     if (readOrgOnboarded(membership.org.settings)) return null;
     return withQuery(AUTH_WELCOME_ROUTE, request.nextUrl.search);
   } catch (error) {
@@ -172,6 +194,10 @@ export async function welcomeRedirectFor(
 }
 
 const landingPathname = routePathname(AUTH_LANDING_ROUTE);
+
+function asObject(value: unknown): object {
+  return typeof value === 'object' && value !== null ? value : {};
+}
 
 /** The query key Next adds to RSC and prefetch requests to bust caches. */
 const NEXT_RSC_QUERY_KEY = '_rsc';

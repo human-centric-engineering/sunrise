@@ -46,6 +46,10 @@ vi.mock('@/lib/tenancy/context', async (importOriginal) => ({
 
 vi.mock('@/lib/app/welcome', () => ({ appWelcomeRoute: '/welcome' }));
 
+// Off by default, as in an install that never bills (§139 t-1096).
+const billing = vi.hoisted(() => ({ on: false }));
+vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => billing.on }));
+
 import { isOrgOnboarded, markOrgOnboarded, welcomeRedirectFor } from '@/lib/tenancy/onboarding';
 import { ORG_AWAITING_ONBOARDING_KEY, readOrgOnboarded } from '@/lib/tenancy/org-settings';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -96,6 +100,7 @@ function signedIn(activeOrgId: string | null = ORG): void {
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsMulti.mockReturnValue(true);
+  billing.on = false;
 });
 
 describe('readOrgOnboarded', () => {
@@ -386,5 +391,85 @@ describe('welcomeRedirectFor (no welcome route set)', () => {
     expect(await fresh.welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
     expect(mockGetSession).not.toHaveBeenCalled();
     expect(mockMembershipFind).not.toHaveBeenCalled();
+  });
+});
+
+describe('welcomeRedirectFor — a plan chosen at signup (§139 t-1096)', () => {
+  function memberOf(settings: unknown, role = 'OWNER', status = 'ACTIVE'): void {
+    mockMembershipFind.mockResolvedValue({ role, org: { status, settings } });
+  }
+
+  it('sends the OWNER to the billing page to take it up, before the welcome step', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe(
+      '/admin/billing?signup=plan'
+    );
+  });
+
+  it('sends an ADMIN to the welcome step instead: only the owner can pay', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingOnboarding: true }, 'ADMIN');
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
+  });
+
+  it('waits while the org still awaits its founder', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingFounder: true, awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
+  });
+
+  it('behaves as it did before while billing is off', async () => {
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
+  });
+
+  it('leaves an org with no plan waiting to the welcome step', async () => {
+    billing.on = true;
+    signedIn();
+    memberOf({});
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
+  });
+
+  describe('with no welcome route set', () => {
+    afterEach(() => {
+      vi.resetModules();
+      vi.doMock('@/lib/app/welcome', () => ({ appWelcomeRoute: '/welcome' }));
+    });
+
+    async function withoutWelcome() {
+      vi.resetModules();
+      vi.doMock('@/lib/app/welcome', () => ({ appWelcomeRoute: null }));
+      return import('@/lib/tenancy/onboarding');
+    }
+
+    it('still sends the OWNER to take up their plan while billing is on', async () => {
+      const fresh = await withoutWelcome();
+      billing.on = true;
+      signedIn();
+      memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
+
+      expect(await fresh.welcomeRedirectFor(requestFor('/dashboard'), null)).toBe(
+        '/admin/billing?signup=plan'
+      );
+    });
+
+    it('sends nobody anywhere once there is no plan waiting', async () => {
+      const fresh = await withoutWelcome();
+      billing.on = true;
+      signedIn();
+      memberOf({ awaitingOnboarding: true });
+
+      expect(await fresh.welcomeRedirectFor(requestFor('/dashboard'), null)).toBeNull();
+    });
   });
 });

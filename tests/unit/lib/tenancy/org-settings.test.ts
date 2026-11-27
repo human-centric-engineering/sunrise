@@ -60,6 +60,8 @@ import {
   writeOrgQuotas,
   writePlatformAgentsMarker,
   updateOrgQuotas,
+  readOrgSignupPlan,
+  takeOrgSignupPlan,
 } from '@/lib/tenancy/org-settings';
 
 const ORG_A = 'cmorg00000000000000000orga';
@@ -1534,5 +1536,62 @@ describe('updateOrgQuotas (§139 t-1093)', () => {
       where: { id: ORG_A },
       data: { settings: { quotas: { monthlyBudgetUsd: 10, requestsPerMinute: 60 } } },
     });
+  });
+});
+
+describe('the signup plan (§139 t-1096)', () => {
+  /** A `$transaction` over one org row holding `settings` (`undefined` = no such org). */
+  function txOver(settings: unknown) {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue(settings === undefined ? null : { settings }),
+        update: vi.fn(),
+      },
+    };
+    const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>, _opts?: unknown) =>
+      fn(tx)
+    );
+    return { tx, db: { $transaction } as never, $transaction };
+  }
+
+  it('reads the waiting key, and null for none, an empty or a non-string value', () => {
+    expect(readOrgSignupPlan({ signupPlan: 'pro' })).toBe('pro');
+    expect(readOrgSignupPlan({ signupPlan: '' })).toBeNull();
+    expect(readOrgSignupPlan({ signupPlan: 3 })).toBeNull();
+    expect(readOrgSignupPlan({})).toBeNull();
+    expect(readOrgSignupPlan(null)).toBeNull();
+    expect(readOrgSignupPlan(['pro'])).toBeNull();
+  });
+
+  it('removes it and answers it when accepted, keeping every other key, serializably', async () => {
+    const { tx, db, $transaction } = txOver({ signupPlan: 'pro', locale: 'fr', fork: { x: 1 } });
+
+    expect(await takeOrgSignupPlan('org_a', (key) => key === 'pro', db)).toBe('pro');
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: 'org_a' },
+      data: { settings: { locale: 'fr', fork: { x: 1 } } },
+    });
+    expect($transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+  });
+
+  it('writes nothing and answers null when declined, when none waits, or while the org awaits its founder', async () => {
+    const declined = txOver({ signupPlan: 'pro' });
+    expect(await takeOrgSignupPlan('org_a', () => false, declined.db)).toBeNull();
+    expect(declined.tx.org.update).not.toHaveBeenCalled();
+
+    const none = txOver({ locale: 'fr' });
+    expect(await takeOrgSignupPlan('org_a', () => true, none.db)).toBeNull();
+    expect(none.tx.org.update).not.toHaveBeenCalled();
+
+    const founding = txOver({ signupPlan: 'pro', awaitingFounder: true });
+    expect(await takeOrgSignupPlan('org_a', () => true, founding.db)).toBeNull();
+    expect(founding.tx.org.update).not.toHaveBeenCalled();
+  });
+
+  it('answers null for an org that does not exist', async () => {
+    const { db } = txOver(undefined);
+    expect(await takeOrgSignupPlan('gone', () => true, db)).toBeNull();
   });
 });

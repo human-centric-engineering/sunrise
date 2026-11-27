@@ -110,6 +110,13 @@ vi.mock('@/lib/tenancy/lifecycle', async (importOriginal) => ({
   completeFoundedSignupOrgs: mockCompleteFoundedSignupOrgs,
 }));
 
+// Whether a key names a plan is signup-plan.test.ts; here, what the hooks
+// carry to it (§139 t-1096). `pro` is a registered plan, anything else is not.
+vi.mock('@/lib/billing/signup-plan', () => ({
+  signupPlanOf: vi.fn((raw: unknown) => (raw === 'pro' ? { key: 'pro' } : null)),
+  applyFreeSignupPlan: vi.fn(),
+}));
+
 import {
   userCreateBeforeHook,
   userCreateAfterHook,
@@ -122,6 +129,7 @@ import {
   __resetSignupOrgResolverForTests,
 } from '@/lib/tenancy/signup-org';
 import { logger } from '@/lib/logging';
+import { getOAuthState } from 'better-auth/api';
 
 const EMAIL_PATH = { path: '/sign-up/email' };
 const OAUTH_PATH = { path: '/callback/google' };
@@ -152,7 +160,7 @@ function session(userId: string): SessionCreateData {
 /** The before hook, then the session hook (inside the sign-up transaction), then the after hook. */
 async function signUp(
   user: UserCreateData,
-  ctx: { path: string },
+  ctx: { path: string; body?: unknown },
   wrap: (run: () => Promise<{ data: UserCreateData }>) => Promise<{ data: UserCreateData }> = (
     run
   ) => run()
@@ -461,5 +469,61 @@ describe('a signup org’s deferred setup, off the request (t-1062)', () => {
     await afterEmailVerificationHook(verified);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(mockCompleteFoundedSignupOrgs).not.toHaveBeenCalled();
+  });
+});
+
+describe('a plan chosen at signup, carried through the hooks (§139 t-1096)', () => {
+  const withPlan = (plan: unknown) => ({ ...EMAIL_PATH, body: { signupPlan: plan } });
+
+  it('an email signup records the plan its body carries on its new org', async () => {
+    await signUp(newUser(), withPlan('pro'));
+
+    expect(mockCreateSignupOrg).toHaveBeenCalledWith(
+      expect.objectContaining({ signupPlanKey: 'pro' })
+    );
+  });
+
+  it('an OAuth signup records the plan its OAuth state carries', async () => {
+    // Read twice on a callback: for an invitation, then for the plan.
+    // `additionalData` is spread onto the state's top level.
+    const state = { callbackURL: '/dashboard', codeVerifier: 'v', expiresAt: 0 };
+    vi.mocked(getOAuthState).mockResolvedValue({ ...state, signupPlan: 'pro' });
+    try {
+      await signUp(newUser(), OAUTH_PATH);
+    } finally {
+      vi.mocked(getOAuthState).mockResolvedValue(state);
+    }
+
+    expect(mockCreateSignupOrg).toHaveBeenCalledWith(
+      expect.objectContaining({ signupPlanKey: 'pro' })
+    );
+  });
+
+  it('an unknown plan, or one that is not a string, is dropped: the signup lands as today', async () => {
+    db.$executeRaw.mockResolvedValue(1);
+    for (const plan of ['platinum', 42]) {
+      vi.clearAllMocks();
+      mockCreateSignupOrg.mockResolvedValue({ id: NEW_ORG, slug: 'ada-1', name: 'x' });
+      carrier.pending = null;
+      const user = newUser();
+
+      const { row, activeOrgId } = await signUp(user, withPlan(plan));
+
+      expect(mockCreateSignupOrg).toHaveBeenCalledWith(
+        expect.not.objectContaining({ signupPlanKey: expect.anything() })
+      );
+      expect(row).toEqual({ ...user, signupOrgId: NEW_ORG, signupOrgRole: ORG_OWNER_ROLE });
+      expect(activeOrgId).toBe(NEW_ORG);
+    }
+  });
+
+  it('an invited signup ignores it: it joins the inviting org, which is already on a plan', async () => {
+    const user = newUser();
+    const { waitlistEntryId: _dropped, ...invitation } = waitlistInvitation(CUSTOMER_ORG);
+
+    const { row } = await signUp(user, withPlan('pro'), (run) => runInvitedSignup(run, invitation));
+
+    expect(mockCreateSignupOrg).not.toHaveBeenCalled();
+    expect(row).toEqual({ ...user, signupOrgId: CUSTOMER_ORG, signupOrgRole: DEFAULT_ORG_ROLE });
   });
 });

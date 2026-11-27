@@ -311,6 +311,32 @@ describe('components/forms/signup-form', () => {
     });
   });
 
+  describe('a plan chosen at signup (§139 t-1096)', () => {
+    it('sends the plan the page checked with the signup', async () => {
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      render(<SignupForm signupPlan="pro" />);
+      await user.type(screen.getByLabelText(/full name/i), 'John Doe');
+      await user.type(screen.getByLabelText(/email/i), 'test@example.com');
+      await user.type(screen.getByLabelText(/^password$/i), 'Password123!');
+      await user.type(screen.getByLabelText(/confirm password/i), 'Password123!');
+      await user.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(authClient.signUp.email).toHaveBeenCalledWith(
+          {
+            name: 'John Doe',
+            email: 'test@example.com',
+            password: 'Password123!',
+            signupPlan: 'pro',
+          },
+          expect.any(Object)
+        );
+      });
+    });
+  });
+
   describe('form submission', () => {
     it('should call authClient.signUp.email with form data', async () => {
       // Arrange

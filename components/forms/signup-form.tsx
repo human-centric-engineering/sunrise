@@ -37,7 +37,16 @@ import { useSaveFailure } from '@/lib/hooks/use-save-failure';
  *   - If session created (no verification required) → redirect to dashboard
  *   - If no session (verification required) → redirect to verify-email page
  */
-export function SignupForm() {
+export interface SignupFormProps {
+  /**
+   * The plan the signup link chose, already checked by the page (§139
+   * t-1096), or `null`. Sent with the signup, in the body or the OAuth state;
+   * the server checks it again.
+   */
+  signupPlan?: string | null;
+}
+
+export function SignupForm({ signupPlan = null }: SignupFormProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { track, identify } = useAnalytics();
@@ -87,6 +96,8 @@ export function SignupForm() {
           email: data.email,
           password: data.password,
           name: data.name,
+          // Not a user field: the user-create hook reads it from the body.
+          ...(signupPlan ? { signupPlan } : {}),
         },
         {
           onRequest: () => {
@@ -130,7 +141,7 @@ export function SignupForm() {
       <NoScriptNotice />
 
       {/* OAuth Buttons */}
-      <OAuthButtons callbackUrl={AUTH_LANDING_ROUTE} />
+      <OAuthButtons callbackUrl={AUTH_LANDING_ROUTE} signupPlan={signupPlan} />
 
       {/* Email/Password Form */}
       <form

@@ -51,6 +51,14 @@ vi.mock('@/components/admin/billing/billing-summary', () => ({
   },
 }));
 
+// The take-up's own behaviour is signup-plan-take-up.test.tsx; here, when the
+// page renders it (§139 t-1096).
+vi.mock('@/components/admin/billing/signup-plan-take-up', () => ({
+  SignupPlanTakeUp: ({ orgId }: { orgId: string }) => (
+    <div data-testid="signup-plan-take-up">{orgId}</div>
+  ),
+}));
+
 import BillingPage from '@/app/admin/billing/page';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { serverFetch } from '@/lib/api/server-fetch';
@@ -163,5 +171,52 @@ describe('BillingPage', () => {
     render(await page({ checkout: 'whatever' }));
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+});
+
+describe('BillingPage — a plan chosen at signup (§139 t-1096)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    billing.on = true;
+    vi.mocked(requestActingOrg).mockResolvedValue(ORG);
+  });
+
+  it('takes the plan up for the owner the proxy sent here', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(BILLING));
+
+    render(await page({ signup: 'plan' }));
+
+    expect(screen.getByTestId('signup-plan-take-up')).toHaveTextContent(ORG.id);
+  });
+
+  it('does not for a viewer who cannot pay, nor without the query', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ ...BILLING, mayChange: false }));
+    render(await page({ signup: 'plan' }));
+    expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
+
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(BILLING));
+    render(await page());
+    expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['applied', 'This organisation is now on the plan you chose when you signed up.', 'status'],
+    [
+      'dropped',
+      'The plan you chose when you signed up is no longer offered. Choose one below.',
+      'status',
+    ],
+    [
+      'failed',
+      'The plan you chose when you signed up could not be set up. Choose one below.',
+      'alert',
+    ],
+  ])('says what happened when it comes back with ?signup=%s', async (outcome, words, role) => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(BILLING));
+
+    render(await page({ signup: outcome }));
+
+    expect(screen.getByRole(role)).toHaveTextContent(words);
+    expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
   });
 });

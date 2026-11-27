@@ -4,11 +4,12 @@ import { notFound } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 
 import { BillingSummary, type OrgBillingView } from '@/components/admin/billing/billing-summary';
+import { SignupPlanTakeUp } from '@/components/admin/billing/signup-plan-take-up';
 import { API } from '@/lib/api/endpoints';
 import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { billingEnabled } from '@/lib/billing/config';
-import { ORG_BILLING_PAGE_PATH } from '@/lib/billing/upgrade-url';
+import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_QUERY } from '@/lib/billing/upgrade-url';
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -25,7 +26,9 @@ export async function generateMetadata(): Promise<Metadata> {
  * `GET /api/v1/orgs/[id]/billing`, which says what the viewer may do: the
  * OWNER gets the checkout and portal buttons, everyone else the same page
  * read-only. It is where the provider sends the owner back to after a
- * checkout (`?checkout=success|cancelled`) or the portal.
+ * checkout (`?checkout=success|cancelled`) or the portal, and where the proxy
+ * sends a founder whose signup chose a plan (`?signup=plan`, §139 t-1096),
+ * which it takes up.
  *
  * With billing off the page does not exist, as its routes answer
  * `billing_off`, and its sidebar item is hidden. Billing that cannot be
@@ -55,6 +58,9 @@ export default async function BillingPage({
       ? await loadServerData<OrgBillingView>(API.ORGS.billing(org.id))
       : null;
   const returned = query.checkout;
+  // Sent here to take up the plan the signup chose (§139 t-1096), or back
+  // from doing so with what happened.
+  const signup = query[SIGNUP_PLAN_QUERY.key];
 
   return (
     <div className="space-y-6">
@@ -77,6 +83,18 @@ export default async function BillingPage({
       {returned === 'cancelled' && (
         <p role="status" className="rounded-md border px-4 py-3 text-sm">
           {t('checkoutCancelled')}
+        </p>
+      )}
+
+      {signup === SIGNUP_PLAN_QUERY.value && result?.ok && result.data.mayChange && (
+        <SignupPlanTakeUp orgId={result.data.orgId} />
+      )}
+      {(signup === 'applied' || signup === 'dropped' || signup === 'failed') && (
+        <p
+          role={signup === 'failed' ? 'alert' : 'status'}
+          className="rounded-md border px-4 py-3 text-sm"
+        >
+          {t(`signupPlan.${signup}`)}
         </p>
       )}
 

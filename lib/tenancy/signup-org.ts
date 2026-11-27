@@ -59,6 +59,7 @@ import { logger } from '@/lib/logging';
 import { createAppInitGate } from '@/lib/fork-init';
 import { initAppSignupOrgResolver } from '@/lib/app/signup-org';
 import { withTimeout } from '@/lib/utils/with-timeout';
+import { signupPlanOf } from '@/lib/billing/signup-plan';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { createSignupOrg } from '@/lib/tenancy/lifecycle';
@@ -225,11 +226,15 @@ export function asksSignupOrg(
  * over a fault.
  *
  * For `own` (and the default, with no resolver registered) this creates the
- * org, through `createSignupOrg()`.
+ * org, through `createSignupOrg()`. `carried.plan` is the plan the signup
+ * link named (§139 t-1096), unchecked: recorded on that org only when it
+ * names a registered plan while billing is on (`signupPlanOf()`), and
+ * ignored for `join` and `install`, whose org is not the signup's to buy for.
  */
 export async function signupOrgMemberships(
   user: NewUserShape & { email: string; name: string; emailVerified: boolean },
-  request: Omit<SignupOrgRequest, 'email' | 'name' | 'emailVerified'>
+  request: Omit<SignupOrgRequest, 'email' | 'name' | 'emailVerified'>,
+  carried: { plan?: unknown } = {}
 ): Promise<NewUserMemberships | null> {
   const log = { email: user.email, signupMethod: request.signupMethod };
   try {
@@ -288,16 +293,42 @@ export async function signupOrgMemberships(
       return { membership: { orgId: org.id, role: answer.role ?? DEFAULT_ORG_ROLE } };
     }
 
+    const signupPlanKey = signupPlanKeyOf(carried.plan, log);
     const org = await createSignupOrg({
       name: answer.name ?? DEFAULT_SIGNUP_ORG_NAME,
       // Named by the app: its slug may follow its name.
       slug: signupOrgSlug(answer.name ?? ''),
+      ...(signupPlanKey ? { signupPlanKey } : {}),
     });
     return { membership: { orgId: org.id, role: ORG_OWNER_ROLE } };
   } catch (error) {
     logger.error('Failed to decide a signup’s own org; using the install org', error, log);
     return null;
   }
+}
+
+/**
+ * The plan key to record on the signup's org, or `null`. A plan that is not
+ * one is dropped, never trusted, and never fails the signup.
+ */
+function signupPlanKeyOf(raw: unknown, log: Record<string, unknown>): string | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  let plan;
+  try {
+    plan = signupPlanOf(raw);
+  } catch (error) {
+    // Where the signup lands must not depend on the plan it asked for.
+    logger.error('Could not check the plan a signup named; ignored', error, log);
+    return null;
+  }
+  if (!plan) {
+    logger.info('Signup named a plan that is not available; ignored', {
+      ...log,
+      plan: typeof raw === 'string' ? raw.slice(0, 64) : typeof raw,
+    });
+    return null;
+  }
+  return plan.key;
 }
 
 /** Ask the resolver, bounded, and validate what it says. `null` means fall back (logged here). */

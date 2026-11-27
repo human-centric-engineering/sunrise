@@ -24,6 +24,7 @@ import { frameablePrefixes } from '@/lib/security/frame-deny-source.cjs';
 import { resolveTenantFromRequest, TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, isAuthRoutePath } from '@/lib/auth-landing/route';
 import { welcomeRedirectFor } from '@/lib/tenancy/onboarding';
+import { billingEnabled } from '@/lib/billing/config';
 import { isInviteOnly } from '@/lib/auth/signup-mode';
 
 // The fork's tenant resolver, registered once at module load — the
@@ -386,9 +387,11 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // landing route with a GET, goes to the app's welcome route instead (§134
   // t-1063). The usual doors into the app (login, OAuth, signup, invitations,
   // the brand link) land on that one route; a sign-in that returns to a deep
-  // link (`callbackUrl`) does not, and is not redirected. With no
-  // welcome route set in lib/app/welcome.ts nothing is read.
-  if (AUTH_WELCOME_ROUTE !== null && authenticated) {
+  // link (`callbackUrl`) does not, and is not redirected. The OWNER of an org
+  // whose signup chose a plan goes to the billing page first, to take it up
+  // (§139 t-1096). With no welcome route set in lib/app/welcome.ts and
+  // billing off, nothing is read.
+  if ((AUTH_WELCOME_ROUTE !== null || billingEnabled()) && authenticated) {
     const welcome = await welcomeRedirectFor(request, tenantOrgId);
     if (welcome) {
       const redirectResponse = NextResponse.redirect(

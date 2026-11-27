@@ -16,6 +16,8 @@ interface OAuthButtonProps {
   errorCallbackUrl?: string;
   invitationToken?: string;
   invitationEmail?: string;
+  /** The plan a signup link chose (§139 t-1096), carried in the OAuth state. */
+  signupPlan?: string;
 }
 
 /**
@@ -55,6 +57,7 @@ export function OAuthButton({
   errorCallbackUrl,
   invitationToken,
   invitationEmail,
+  signupPlan,
 }: OAuthButtonProps) {
   const t = useTranslations('forms.oauth');
   const [isLoading, setIsLoading] = useState(false);
@@ -74,8 +77,9 @@ export function OAuthButton({
         callbackURL: string;
         errorCallbackURL?: string;
         additionalData?: {
-          invitationToken: string;
-          invitationEmail: string;
+          invitationToken?: string;
+          invitationEmail?: string;
+          signupPlan?: string;
         };
       } = {
         provider,
@@ -94,6 +98,10 @@ export function OAuthButton({
           invitationToken,
           invitationEmail,
         };
+      } else if (signupPlan) {
+        // The plan a signup link chose (§139 t-1096). Never with an
+        // invitation: an invited signup joins an org already on a plan.
+        oauthRequest.additionalData = { signupPlan };
       }
 
       // Mark OAuth attempt in sessionStorage for tracking after redirect

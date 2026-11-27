@@ -252,23 +252,34 @@ describe('the org’s OWNER, acting in it', () => {
     expect(meters.usage).not.toHaveBeenCalled();
   });
 
-  it('sees a plan staff set by hand as such, with no portal to open', async () => {
+  const HAND_SET = {
+    ...PAID,
+    provider: null,
+    customerRef: null,
+    subscriptionRef: null,
+    providerStatus: null,
+    providerLive: false,
+    periodStart: null,
+    periodEnd: null,
+  };
+
+  it('sees a priced plan staff set by hand as such, with no portal to open', async () => {
     actingAs(ORG_OWNER_ROLE);
-    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({
-      ...PAID,
-      planKey: 'free',
-      provider: null,
-      customerRef: null,
-      subscriptionRef: null,
-      providerStatus: null,
-      providerLive: false,
-      periodStart: null,
-      periodEnd: null,
-    });
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({ ...HAND_SET, planKey: 'team' });
 
     const { data } = await json(await read());
 
     expect(data?.subscription).toMatchObject({ assignedByHand: true, providerManaged: false });
+    expect(data?.portalAvailable).toBe(false);
+  });
+
+  it('does not say staff set a free plan, which the founder may have chosen at signup (t-1096)', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({ ...HAND_SET, planKey: 'free' });
+
+    const { data } = await json(await read());
+
+    expect(data?.subscription).toMatchObject({ assignedByHand: false, providerManaged: false });
     expect(data?.portalAvailable).toBe(false);
     expect(data?.plans.every((plan) => !plan.current)).toBe(true);
   });

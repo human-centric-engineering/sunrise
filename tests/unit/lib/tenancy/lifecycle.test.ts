@@ -71,6 +71,10 @@ vi.mock('@/lib/tenancy/org-created-hooks', () => ({
   runOrgCreatedHooks: mockRunHooks,
 }));
 
+// The take-up's own rules are signup-plan.test.ts; here, when setup asks it.
+const mockApplyFreePlan = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('@/lib/billing/signup-plan', () => ({ applyFreeSignupPlan: mockApplyFreePlan }));
+
 import {
   addMember,
   changeMemberRole,
@@ -425,6 +429,43 @@ describe('createSignupOrg (§134 t-1062)', () => {
     expect(mockRunHooks).toHaveBeenCalledWith(ORG, { ownerUserId: OWNER });
     expect(mockReconcile).toHaveBeenCalledWith(ORG);
     expect(order).toEqual(['hooks', 'agents']);
+  });
+
+  it('records the plan the signup chose in the same INSERT (§139 t-1096)', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.org.create.mockResolvedValue(orgRow());
+
+    await createSignupOrg({ slug: 'org-1a2b3c4d', name: 'My organisation', signupPlanKey: 'pro' });
+
+    expect(db.org.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          slug: 'org-1a2b3c4d',
+          name: 'My organisation',
+          settings: { awaitingFounder: true, signupPlan: 'pro', awaitingOnboarding: true },
+        },
+      })
+    );
+  });
+
+  it('completeSignupOrg applies a free signup plan after the app’s hooks, so a default they write does not replace it', async () => {
+    const order: string[] = [];
+    mockRunHooks.mockImplementation(async () => {
+      order.push('hooks');
+      return { succeeded: 1, failed: 0, unregistered: 0 };
+    });
+    mockReconcile.mockImplementation(async () => {
+      order.push('agents');
+      return {};
+    });
+    mockApplyFreePlan.mockImplementation(async () => {
+      order.push('plan');
+    });
+
+    await completeSignupOrg(ORG, OWNER);
+
+    expect(mockApplyFreePlan).toHaveBeenCalledWith(ORG, OWNER);
+    expect(order).toEqual(['hooks', 'agents', 'plan']);
   });
 
   it('completeFoundedSignupOrgs sets up each org the release hands back, with its owner', async () => {

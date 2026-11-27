@@ -203,6 +203,54 @@ describe('components/forms/oauth-button', () => {
     });
   });
 
+  describe('a plan chosen at signup (§139 t-1096)', () => {
+    it('carries the plan in the OAuth state', async () => {
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      render(
+        <OAuthButton provider="google" callbackUrl="/dashboard" signupPlan="pro">
+          Continue with Google
+        </OAuthButton>
+      );
+      await user.click(screen.getByRole('button'));
+
+      await waitFor(() => {
+        expect(authClient.signIn.social).toHaveBeenCalledWith({
+          provider: 'google',
+          callbackURL: '/dashboard',
+          additionalData: { signupPlan: 'pro' },
+        });
+      });
+    });
+
+    it('never carries it with an invitation, whose org is already on a plan', async () => {
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      render(
+        <OAuthButton
+          provider="google"
+          callbackUrl="/dashboard"
+          invitationToken="token-123"
+          invitationEmail="user@example.com"
+          signupPlan="pro"
+        >
+          Accept with Google
+        </OAuthButton>
+      );
+      await user.click(screen.getByRole('button'));
+
+      await waitFor(() => {
+        expect(authClient.signIn.social).toHaveBeenCalledWith(
+          expect.objectContaining({
+            additionalData: { invitationToken: 'token-123', invitationEmail: 'user@example.com' },
+          })
+        );
+      });
+    });
+  });
+
   describe('invitation flow', () => {
     it('should pass invitation token and email via additionalData', async () => {
       // Arrange

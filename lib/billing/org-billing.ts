@@ -61,7 +61,11 @@ export interface OrgBilling {
      * install's portal cannot open it and its checkout refuses until it ends.
      */
     elsewhere: boolean;
-    /** Platform staff put the org on it by hand: no provider subscription is behind it. */
+    /**
+     * Platform staff put the org on a priced plan by hand: no provider
+     * subscription is behind it. Never said of a plan with no price, which
+     * staff or the founder's signup may have set.
+     */
     assignedByHand: boolean;
     /** Ends when the current period does (cancelled in the portal). */
     cancelAtPeriodEnd: boolean;
@@ -178,7 +182,10 @@ export async function loadOrgBilling(
           status: record.status,
           providerManaged: record.providerManaged,
           elsewhere: record.providerManaged && record.provider !== state.providerKey,
-          assignedByHand: isAssignedByHand(record),
+          // A free plan has nothing to pay, and may be one the founder chose
+          // at signup (t-1096): "set by staff, not paid for here" is said of
+          // a priced plan only.
+          assignedByHand: isAssignedByHand(record) && current?.priceLookupKey !== null,
           cancelAtPeriodEnd: record.cancelAtPeriodEnd,
           periodStart: record.periodStart,
           periodEnd: record.periodEnd,

@@ -79,6 +79,8 @@ export const API = {
     billing: (id: string): string => `/api/v1/orgs/${id}/billing`,
     /** Start a checkout for a plan, as the org's owner (§139) */
     billingCheckout: (id: string): string => `/api/v1/orgs/${id}/billing/checkout`,
+    /** Take up the plan the org's signup chose, as its owner (§139 t-1096) */
+    billingSignupPlan: (id: string): string => `/api/v1/orgs/${id}/billing/signup-plan`,
     /** Open the payment provider's billing portal, as the org's owner (§139) */
     billingPortal: (id: string): string => `/api/v1/orgs/${id}/billing/portal`,
     /** One provider's key: save or replace (PUT), remove (DELETE) */

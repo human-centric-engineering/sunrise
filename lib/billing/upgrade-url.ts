@@ -16,6 +16,15 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 /** The org-admin console's billing page, where the provider also sends an owner back to. */
 export const ORG_BILLING_PAGE_PATH = '/admin/billing';
 
+/**
+ * What the billing page is opened with when the proxy sends a founder there
+ * to take up the plan their signup chose (§139 t-1096).
+ */
+export const SIGNUP_PLAN_QUERY = { key: 'signup', value: 'plan' } as const;
+
+/** Where the proxy sends an owner whose org has a signup plan waiting. */
+export const SIGNUP_PLAN_PAGE = `${ORG_BILLING_PAGE_PATH}?${SIGNUP_PLAN_QUERY.key}=${SIGNUP_PLAN_QUERY.value}`;
+
 /** Who is asking, for {@link upgradeUrlFor}. */
 export interface UpgradeViewer {
   /** The org the viewer acts in. */

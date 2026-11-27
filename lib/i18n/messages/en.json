@@ -513,6 +513,10 @@
         "failed": "Failed to create account. Please try again.",
         "creating": "Creating account...",
         "submit": "Create Account"
+      },
+      "plan": {
+        "paid": "You are signing up for the {plan} plan. Once your account is set up, you go to the payment page to pay for it.",
+        "free": "You are signing up for the {plan} plan."
       }
     },
     "resetPassword": {
@@ -1460,6 +1464,12 @@
         "opening": "Opening…",
         "checkoutFailed": "Checkout could not be started.",
         "portalFailed": "The billing portal could not be opened."
+      },
+      "signupPlan": {
+        "opening": "Taking you to the payment page for the plan you chose when you signed up…",
+        "applied": "This organisation is now on the plan you chose when you signed up.",
+        "dropped": "The plan you chose when you signed up is no longer offered. Choose one below.",
+        "failed": "The plan you chose when you signed up could not be set up. Choose one below."
       }
     },
     "waitlist": {
