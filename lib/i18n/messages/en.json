@@ -1431,6 +1431,36 @@
         "label": "Current period",
         "range": "{start} to {end}"
       },
+      "allowances": {
+        "heading": "Included in your plan",
+        "intro": "How much of each item your plan includes this period, how much has been used, and what happens past it.",
+        "item": "What",
+        "used": "Used",
+        "included": "Included",
+        "status": "Status",
+        "rule": {
+          "warn": "Your organisation's owners are told when it is nearly used up. Nothing is stopped.",
+          "soft_cap": "Use past what is included is billed for each unit over.",
+          "hard_cap": "Nothing more can be added once what is included is used up."
+        },
+        "state": {
+          "within": "Within the allowance",
+          "warn": {
+            "near": "Nearly used up",
+            "reached": "Used up"
+          },
+          "soft_cap": {
+            "near": "Nearly used up",
+            "reached": "Past the allowance: billed"
+          },
+          "hard_cap": {
+            "near": "Nearly used up",
+            "reached": "Limit reached"
+          }
+        },
+        "countFailed": "Could not be counted",
+        "loadFailed": "What your plan includes could not be counted. Reload the page to try again."
+      },
       "usage": {
         "heading": "Usage",
         "intro": "What this organisation has used, against the limit its plan sets.",

@@ -67,6 +67,7 @@ function billing(overrides: Partial<OrgBillingView> = {}): OrgBillingView {
     customerElsewhere: false,
     installOrg: false,
     signupPlan: null,
+    allowances: [],
     ...overrides,
   };
 }
@@ -363,5 +364,87 @@ describe('BillingSummary', () => {
     render(<BillingSummary billing={billing({ plans: [] })} />);
 
     expect(screen.getByText(/There are no plans to buy here/)).toBeInTheDocument();
+  });
+});
+
+describe('what the plan includes (§139 t-1097)', () => {
+  const allowance = (overrides: Partial<NonNullable<OrgBillingView['allowances']>[number]>) => ({
+    key: 'convos',
+    label: 'Conversations',
+    overage: 'warn' as const,
+    allowance: 1000,
+    money: false,
+    used: 100,
+    state: 'within' as const,
+    window: { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' },
+    ...overrides,
+  });
+
+  it('shows each item with its use, its allowance, what happens past it, and where it stands', () => {
+    render(
+      <BillingSummary
+        billing={billing({
+          allowances: [
+            allowance({ used: 850, state: 'near' }),
+            allowance({
+              key: 'ai_spend_cents',
+              label: 'AI spend',
+              overage: 'soft_cap',
+              money: true,
+              allowance: 5000,
+              used: 6250,
+              state: 'reached',
+            }),
+            allowance({
+              key: 'docs',
+              label: 'Documents',
+              overage: 'hard_cap',
+              allowance: 5,
+              used: 2,
+            }),
+          ],
+        })}
+      />
+    );
+
+    expect(screen.getByText('Included in your plan')).toBeInTheDocument();
+    const convos = screen.getByRole('row', { name: /Conversations/ });
+    expect(within(convos).getByText('850')).toBeInTheDocument();
+    expect(within(convos).getByText('1,000')).toBeInTheDocument();
+    expect(within(convos).getByText('Nearly used up')).toBeInTheDocument();
+    expect(
+      within(convos).getByText(/owners are told when it is nearly used up/)
+    ).toBeInTheDocument();
+
+    const ai = screen.getByRole('row', { name: /AI spend/ });
+    expect(within(ai).getByText('$62.50')).toBeInTheDocument();
+    expect(within(ai).getByText('$50.00')).toBeInTheDocument();
+    expect(within(ai).getByText('Past the allowance: billed')).toBeInTheDocument();
+
+    const docs = screen.getByRole('row', { name: /Documents/ });
+    expect(within(docs).getByText('Within the allowance')).toBeInTheDocument();
+    expect(within(docs).getByText(/Nothing more can be added/)).toBeInTheDocument();
+  });
+
+  it('says an item could not be counted, never 0', () => {
+    render(
+      <BillingSummary billing={billing({ allowances: [allowance({ used: null, state: null })] })} />
+    );
+
+    const convos = screen.getByRole('row', { name: /Conversations/ });
+    expect(within(convos).getByText('Could not be counted')).toBeInTheDocument();
+    expect(within(convos).queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('is left out for a plan with no metered items, and says so when they could not be read', () => {
+    const { unmount } = render(<BillingSummary billing={billing({ allowances: [] })} />);
+    expect(screen.queryByText('Included in your plan')).not.toBeInTheDocument();
+    unmount();
+
+    render(<BillingSummary billing={billing({ allowances: null })} />);
+    expect(screen.getByText(/What your plan includes could not be counted/)).toHaveAttribute(
+      'role',
+      'alert'
+    );
   });
 });

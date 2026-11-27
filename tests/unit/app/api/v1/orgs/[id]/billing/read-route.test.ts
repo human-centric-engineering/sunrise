@@ -105,6 +105,11 @@ vi.mock('@/lib/tenancy/meters', async (importOriginal) => ({
   loadOrgMeterUsage: meters.usage,
 }));
 
+// What the allowances say is usage-notices.test.ts; here, that the page
+// carries them and still answers when they cannot be read (§139 t-1097).
+const allowances = vi.hoisted(() => ({ load: vi.fn(async () => [] as unknown[]) }));
+vi.mock('@/lib/billing/usage-notices', () => ({ loadPlanAllowances: allowances.load }));
+
 import { GET } from '@/app/api/v1/orgs/[id]/billing/route';
 import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
 import { createMockAuthSession } from '@/tests/helpers/auth';
@@ -145,6 +150,7 @@ interface Answer {
       periodEnd: string | null;
     } | null;
     usage: Array<{ key: string; used: number | null; limit: number | null }> | null;
+    allowances?: unknown[] | null;
     plans: Array<{ key: string; current: boolean }>;
     signupPlan: { key: string; label: string } | null;
     mayChange: boolean;
@@ -413,6 +419,22 @@ describe('the org’s OWNER, acting in it', () => {
     expect(mockLog.error).toHaveBeenCalledWith(
       expect.stringContaining("could not read the org's usage"),
       expect.objectContaining({ orgId: ORG, error: 'connection reset' })
+    );
+  });
+
+  it('carries what the plan includes, and still answers when it cannot be counted (t-1097)', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    const leads = { key: 'leads', label: 'Leads', overage: 'warn', allowance: 10, used: 9 };
+    allowances.load.mockResolvedValueOnce([leads]);
+    expect((await json(await read())).data).toMatchObject({ allowances: [leads] });
+
+    allowances.load.mockRejectedValueOnce(new Error('count broke'));
+    const res = await read();
+    expect(res.status).toBe(200);
+    expect((await json(res)).data).toMatchObject({ allowances: null, plan: { key: 'pro' } });
+    expect(mockLog.error).toHaveBeenCalledWith(
+      expect.stringContaining("could not read the org's allowances"),
+      expect.objectContaining({ orgId: ORG, error: 'count broke' })
     );
   });
 

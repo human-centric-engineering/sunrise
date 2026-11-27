@@ -24,6 +24,7 @@ import EscalationNotification from '@/emails/escalation-notification';
 import EventNotification, { eventNotificationSubject } from '@/emails/event-notification';
 import InvitationEmail from '@/emails/invitation';
 import ResetPasswordEmail from '@/emails/reset-password';
+import UsageNoticeEmail from '@/emails/usage-notice';
 import VerifyEmail from '@/emails/verify-email';
 import WaitlistAlreadyOnListEmail from '@/emails/waitlist-already-on-list';
 import WaitlistConfirmEmail from '@/emails/waitlist-confirm';
@@ -61,6 +62,17 @@ const TEMPLATES: Record<string, () => ReactElement> = {
       newEmail: V.email,
       approvalUrl: V.url,
       expiresAt: V.date,
+      ...where,
+    }),
+  'usage-notice': () =>
+    UsageNoticeEmail({
+      orgName: V.org,
+      meterLabel: V.other,
+      threshold: 'near',
+      used: 8,
+      allowance: 10,
+      money: false,
+      billingUrl: V.url,
       ...where,
     }),
   'cleanup-ready': () =>
@@ -188,6 +200,7 @@ describe('every email subject under the pseudo-locale', () => {
         'eventNotification',
         'invitation',
         'resetPassword',
+        'usageNotice',
         'verifyEmail',
         'waitlistAlreadyOnList',
         'waitlistConfirm',
@@ -208,6 +221,8 @@ describe('every email subject under the pseudo-locale', () => {
       t('waitlistAlreadyOnList.subject', { brand: V.org }),
       t('contactNotification.subject', { brand: V.org, subject: V.other }),
       t('cleanupReady.subject', { name: V.text }),
+      t('usageNotice.subject', { org: V.org, meter: V.other, threshold: 'near' }),
+      t('usageNotice.subject', { org: V.org, meter: V.other, threshold: 'reached' }),
       t('escalationNotification.subject', { priority: V.other, reason: V.text }),
       t('eventNotification.testSubject', { brand: V.org }),
       eventNotificationSubject('workflow_failed', { workflowName: V.name }, where),
