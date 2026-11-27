@@ -708,9 +708,10 @@ the key names a registered plan, and the signup gets an org of its own
   the plan dropped; the person still gets their own org.
 
 **Taken up once, after the app's setup.** Nothing is taken up while the org
-still awaits its founder (`awaitingFounder`), and a free plan is not taken up
-while the org still owes its org-created hooks (`orgCreated`), since a default
-plan one of them writes would replace it. Either kind is removed before
+still awaits its founder (`awaitingFounder`). The org's setup applies a free
+plan right after the app's org-created hooks run, whether or not they all
+succeeded, so a default plan one of them writes cannot replace it and a hook
+that keeps failing cannot hold it back. Either kind is removed before
 anything else happens, by a serializable read-modify-write
 (`takeOrgSignupPlan()`), so two callers cannot both take it and a plan is
 never applied twice over one the org has moved to since.
@@ -718,8 +719,8 @@ never applied twice over one the org has moved to since.
 - **A free plan** is then applied. If the provider manages the org's plan
   (the owner subscribed meanwhile) it is dropped. Any other failure puts it
   back (`restoreOrgSignupPlan()`, which never replaces a plan already
-  waiting), since `assignPlan()` changed nothing, and a later visit tries
-  again.
+  waiting, tried again on a settings-write clash), since `assignPlan()`
+  changed nothing, and a later visit tries again.
 - **A paid plan** is then sent to checkout, so the owner is sent there once.
   A checkout that fails, refused by the provider or not, answers `failed`,
   and the owner chooses on the billing page as anyone would. It is not put
@@ -743,14 +744,15 @@ and only once the org owes no org-created hooks: the setup applies it in the
 background after them, so the owner is sent for a free plan only when that
 failed, and the take-up page retries it. The landing request's query string
 is not carried there, since the page replaces its own URL once it is done. A
-plan lookup that fails skips the signup plan, never the welcome step.
+plan lookup that fails skips the signup plan, never the welcome step. A
+prefetch of the landing route is never sent there: the client router would
+cache that redirect and follow it without asking the proxy again.
 
 **Once an hour per org, per browser.** Each redirect there sets the
 `sunrise-signup-plan-sent` cookie (`SIGNUP_PLAN_SENT_COOKIE`, an hour,
 `httpOnly`) holding the org's id, and the owner is not sent again for that org
 while it lasts. A take-up that cannot finish (the billing read failing) costs
-the owner one detour, never the landing route itself. A prefetch of the
-landing route is redirected but does not set it: it is not a visit.
+the owner one detour, never the landing route itself.
 
 **Only the OWNER is redirected,** and the route refuses anyone else, as the
 checkout route does (`assertMayChangeBilling()`). While billing is on, the

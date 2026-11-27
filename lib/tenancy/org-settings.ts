@@ -391,9 +391,11 @@ export async function takeOrgSignupPlan(
 }
 
 /**
- * Put back a signup plan {@link takeOrgSignupPlan} took, after a checkout
- * that failed for a passing reason (§139 t-1096). Writes only when no plan is
- * waiting, so a newer one is never replaced.
+ * Put back a free signup plan {@link takeOrgSignupPlan} took, after its
+ * assignment failed and changed nothing (§139 t-1096). Writes only when no
+ * plan is waiting, so a newer one is never replaced. Never for a paid plan
+ * after a failed checkout: a later visit would start a checkout the owner did
+ * not ask for.
  *
  * @returns whether it was written; `false` when a plan is already waiting or
  *   the org does not exist.

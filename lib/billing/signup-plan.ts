@@ -39,7 +39,6 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   isSettingsWriteConflict,
   ORG_AWAITING_FOUNDER_KEY,
-  ORG_CREATED_HOOKS_KEY,
   readOrgSignupPlan,
   restoreOrgSignupPlan,
   takeOrgSignupPlan,
@@ -80,7 +79,11 @@ export function signupPlanOffer(raw: unknown): SignupPlanOffer | null {
 
 /** What {@link takeUpSignupPlan} did. */
 export type SignupPlanTakeUp =
-  /** Nothing was waiting, or it is not this caller's to take. */
+  /**
+   * Nothing was waiting, it is not this caller's to take, or a free plan was
+   * dropped because the provider manages the org's plan (the owner already
+   * subscribed, so there is nothing to tell them).
+   */
   | { kind: 'none' }
   /** A free plan, applied. */
   | { kind: 'applied'; planKey: string }
@@ -106,9 +109,10 @@ const TAKE_ATTEMPTS = 3;
  * - A free plan is applied after the take. One the org can no longer take
  *   (the provider manages its plan: the owner subscribed meanwhile) is
  *   dropped, answering `none`. Any other failure puts it back, since
- *   `assignPlan()` changed nothing, and rethrows. A free plan waits while the
- *   org still owes its org-created hooks, so a default one of them writes
- *   cannot replace it.
+ *   `assignPlan()` changed nothing, and rethrows. The org's setup applies it
+ *   right after the org-created hooks run, whether or not they all succeeded,
+ *   so it is never left waiting on a hook that keeps failing; the proxy waits
+ *   for owed hooks before sending the owner for it (`landingRedirectFor()`).
  * - A paid plan is sent to checkout after the take. A checkout that then
  *   fails, refused (`BillingCheckoutError`) or not, throws for the route to
  *   answer, and the owner chooses on the billing page as anyone would. It is
@@ -144,7 +148,6 @@ export async function takeUpSignupPlan(
   }
 
   if (plan.priceLookupKey === null) {
-    if (hasKey(org?.settings, ORG_CREATED_HOOKS_KEY)) return { kind: 'none' };
     if ((await take(orgId, (key) => key === plan.key)) === null) return { kind: 'none' };
     let assigned: Awaited<ReturnType<typeof assignPlan>>;
     try {
@@ -197,15 +200,24 @@ async function take(orgId: string, accept: (planKey: string) => boolean): Promis
   }
 }
 
-/** Put back a free plan whose assignment failed and changed nothing. Never throws. */
+/**
+ * Put back a free plan whose assignment failed and changed nothing, tried
+ * again when it clashes with another settings write, as {@link take} is.
+ * Never throws: a failure is logged at `error`, the plan then lost.
+ */
 async function putBack(orgId: string, planKey: string): Promise<void> {
-  try {
-    await restoreOrgSignupPlan(orgId, planKey);
-  } catch (error) {
-    logger.error('billing: could not put back the plan chosen at signup', error, {
-      orgId,
-      planKey,
-    });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await restoreOrgSignupPlan(orgId, planKey);
+      return;
+    } catch (error) {
+      if (isSettingsWriteConflict(error) && attempt < TAKE_ATTEMPTS) continue;
+      logger.error('billing: could not put back the plan chosen at signup', error, {
+        orgId,
+        planKey,
+      });
+      return;
+    }
   }
 }
 

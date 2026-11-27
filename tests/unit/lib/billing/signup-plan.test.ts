@@ -164,14 +164,14 @@ describe('takeUpSignupPlan — a free plan', () => {
     expect(mockAssignPlan).not.toHaveBeenCalled();
   });
 
-  it('waits while the org still owes its org-created hooks, so a default they write cannot replace it', async () => {
-    waiting('starter', { orgCreated: { owed: ['app.seed'], source: 'signup' } });
+  it('applies it even while a hook stays owed, so it never waits on a hook that keeps failing', async () => {
+    waiting('starter', { orgCreated: { owed: ['app.removed'], source: 'signup' } });
+    takeAsStored('starter');
 
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
+    expect(await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).toEqual({
+      kind: 'applied',
+      planKey: 'starter',
     });
-    expect(mockTake).not.toHaveBeenCalled();
-    expect(mockAssignPlan).not.toHaveBeenCalled();
   });
 
   it('writes no audit row when the org was already on it', async () => {
@@ -348,6 +348,23 @@ describe('takeUpSignupPlan — a take-up that fails part-way', () => {
       'provider 503'
     );
     expect(mockRestore).not.toHaveBeenCalled();
+  });
+
+  it('tries a put-back that clashed with another settings write again', async () => {
+    waiting('starter');
+    takeAsStored('starter');
+    mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
+    const clash = new Prisma.PrismaClientKnownRequestError('write conflict', {
+      code: 'P2034',
+      clientVersion: 'test',
+    });
+    mockRestore.mockRejectedValueOnce(clash).mockResolvedValueOnce(true);
+
+    await expect(takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).rejects.toThrow(
+      'lock wait timeout'
+    );
+    expect(mockRestore).toHaveBeenCalledTimes(2);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it('still rethrows the assignment failure when putting the plan back fails too', async () => {

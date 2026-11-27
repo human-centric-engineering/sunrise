@@ -134,16 +134,6 @@ const CROSS_ORIGIN_TOKEN_ROUTES = [
 ];
 
 /**
- * Whether the request is a link prefetch, not a visit: Next's router marks
- * its own (`next-router-prefetch`), and browsers mark theirs
- * (`sec-purpose` / `purpose: prefetch`).
- */
-function isPrefetch(request: NextRequest): boolean {
-  const purpose = request.headers.get('sec-purpose') ?? request.headers.get('purpose') ?? '';
-  return request.headers.has('next-router-prefetch') || purpose.includes('prefetch');
-}
-
-/**
  * Validate origin for state-changing requests (additional CSRF protection)
  *
  * Better-auth provides CSRF protection via tokens, but this adds defense-in-depth
@@ -416,8 +406,8 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
       redirectResponse.headers.set('x-request-id', requestId);
       // Sent to take up the signup plan once an hour per org at most, so a
       // take-up that cannot finish never keeps the owner off the landing
-      // route. A prefetch is not a visit, so it does not use that up.
-      if (landing.signupPlanOrgId !== null && !isPrefetch(request)) {
+      // route. A prefetch is never sent there (landingRedirectFor()).
+      if (landing.signupPlanOrgId !== null) {
         redirectResponse.cookies.set(SIGNUP_PLAN_SENT_COOKIE, landing.signupPlanOrgId, {
           httpOnly: true,
           sameSite: 'lax',

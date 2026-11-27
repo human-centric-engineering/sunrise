@@ -16,8 +16,11 @@
  * The platform's one use of the read: with a welcome route set
  * (`lib/app/welcome.ts`), the proxy sends an OWNER or ADMIN of an unfinished,
  * active org who reaches the landing route to the welcome route instead
- * ({@link welcomeRedirectFor}). With none set nothing is read or redirected,
- * and an app can still call {@link isOrgOnboarded} its own way.
+ * ({@link landingRedirectFor}, which also sends an OWNER to take up the plan
+ * their signup chose; {@link welcomeRedirectFor} is its location alone, kept
+ * for callers of the earlier API). With no welcome route and billing off
+ * nothing is read or redirected, and an app can still call
+ * {@link isOrgOnboarded} its own way.
  *
  * **Tenancy posture:** stateless. `Org` and `OrgMembership` are system models,
  * and every read here is keyed on the org id (and user id), so it answers the
@@ -41,7 +44,7 @@ import {
   clearOrgAwaitingOnboarding,
   isSettingsWriteConflict,
   ORG_AWAITING_FOUNDER_KEY,
-  ORG_CREATED_HOOKS_KEY,
+  readOrgCreatedOwed,
   readOrgOnboarded,
   readOrgSignupPlan,
 } from '@/lib/tenancy/org-settings';
@@ -156,7 +159,9 @@ export async function welcomeRedirectFor(
  * a short-lived cookie holding the org's id (`SIGNUP_PLAN_SENT_COOKIE`), and
  * while it names this org the owner is not sent again. So a take-up that
  * cannot finish (the billing read failing, the provider down) costs one
- * detour, not the landing route. A prefetch is not marked: it is not a visit.
+ * detour, not the landing route. A prefetch is never sent there: the client
+ * router would cache that redirect and follow it without asking the proxy,
+ * so neither the cookie nor a finished take-up would stop it.
  * A failing plan lookup skips the signup plan, never the welcome step.
  *
  * Reads nothing when the app sets no welcome route and billing is off, or
@@ -212,6 +217,7 @@ export async function landingRedirectFor(
     const signupPlan =
       billing &&
       membership.role === ORG_OWNER_ROLE &&
+      !isPrefetch(request) &&
       request.cookies.get(SIGNUP_PLAN_SENT_COOKIE)?.value !== orgId &&
       !(ORG_AWAITING_FOUNDER_KEY in settings)
         ? readOrgSignupPlan(settings)
@@ -226,7 +232,7 @@ export async function landingRedirectFor(
       };
     }
     // A free plan the org's setup failed to apply, once its hooks have run.
-    return kind === 'free' && !(ORG_CREATED_HOOKS_KEY in settings) ? toPlan : null;
+    return kind === 'free' && readOrgCreatedOwed(settings) === null ? toPlan : null;
   } catch (error) {
     logger.warn(
       'Could not read org onboarding for the landing route; letting the request through',
@@ -267,6 +273,16 @@ function signupPlanKind(planKey: string): 'free' | 'paid' | null {
     });
     return null;
   }
+}
+
+/**
+ * Whether the request is a link prefetch, not a visit: Next's router marks
+ * its own (`next-router-prefetch`), and browsers mark theirs
+ * (`sec-purpose` / `purpose: prefetch`).
+ */
+function isPrefetch(request: NextRequest): boolean {
+  const purpose = request.headers.get('sec-purpose') ?? request.headers.get('purpose') ?? '';
+  return request.headers.has('next-router-prefetch') || purpose.includes('prefetch');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

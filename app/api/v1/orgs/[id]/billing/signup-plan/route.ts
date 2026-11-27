@@ -5,7 +5,8 @@
  * link named a plan that has not been taken up yet, takes it up: a paid plan
  * answers `{ outcome: 'checkout', planKey, url }`, and the browser goes to
  * that checkout; a free one is applied, `{ outcome: 'applied', planKey }`.
- * Otherwise `{ outcome: 'none' }` (nothing waiting, or already taken up), or
+ * Otherwise `{ outcome: 'none' }` (nothing waiting, already taken up, or a
+ * free plan dropped because the owner has since subscribed), or
  * `{ outcome: 'dropped', planKey }` when the app no longer registers it. It is
  * taken up once: a second call answers `none`. The one exception is a free
  * plan whose assignment failed and changed nothing, which is put back for a

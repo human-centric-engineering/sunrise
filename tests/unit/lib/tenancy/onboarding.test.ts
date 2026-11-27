@@ -530,6 +530,18 @@ describe('welcomeRedirectFor — a plan chosen at signup (§139 t-1096)', () => 
     expect(await welcomeRedirectFor(requestFor('/dashboard'), null)).toBe('/welcome');
   });
 
+  it.each<Record<string, string>>([
+    { 'next-router-prefetch': '1' },
+    { 'sec-purpose': 'prefetch' },
+    { purpose: 'prefetch' },
+  ])('never sends a prefetch for the plan: the router would cache it (%o)', async (headers) => {
+    billing.on = true;
+    signedIn();
+    memberOf({ signupPlan: 'pro', awaitingOnboarding: true });
+
+    expect(await welcomeRedirectFor(requestFor('/dashboard', { headers }), null)).toBe('/welcome');
+  });
+
   it('does not send the owner for a free plan while the org still owes its hooks', async () => {
     billing.on = true;
     signedIn();

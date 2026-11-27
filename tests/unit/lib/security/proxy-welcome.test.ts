@@ -101,25 +101,6 @@ describe('proxy — welcome redirect, welcome route set', () => {
     expect(sent).toMatch(/SameSite=lax/i);
   });
 
-  it.each<Record<string, string>>([
-    { 'next-router-prefetch': '1' },
-    { 'sec-purpose': 'prefetch' },
-    { purpose: 'prefetch' },
-  ])('redirects a prefetch but does not mark the browser (%o)', async (headers) => {
-    mockLandingRedirectFor.mockResolvedValue(SIGNUP_PLAN);
-
-    const response = await proxy(
-      createMockRequest('/dashboard', { cookies: SESSION_COOKIE, headers })
-    );
-
-    expect(response.headers.get('location')).toBe(
-      'http://localhost:3000/admin/billing?signup=plan'
-    );
-    expect(
-      response.headers.getSetCookie().some((c) => c.startsWith('sunrise-signup-plan-sent='))
-    ).toBe(false);
-  });
-
   it('sets no such cookie on a redirect to the welcome step', async () => {
     mockLandingRedirectFor.mockResolvedValue(WELCOME);
 
