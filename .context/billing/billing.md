@@ -25,7 +25,7 @@ table says what exists.
 | ----------------------------------------------------------------------------- | ------ | ------------- |
 | This spec, and the spike                                                      | t-1092 | **Built**     |
 | Plans as bundles of entitlements; the org's subscription record; staff assign | t-1093 | **Built**     |
-| The provider adapter, Stripe, checkout, portal, the webhook, lapsed handling  | t-1094 | Not built yet |
+| The provider adapter, Stripe, checkout, portal, the webhook, lapsed handling  | t-1094 | **Built**     |
 | The billing page in the org-admin console                                     | t-1095 | Not built yet |
 | Choosing a plan at signup                                                     | t-1096 | Not built yet |
 | Usage reported each period; the overage rule                                  | t-1097 | Not built yet |
@@ -74,6 +74,47 @@ for how much, and none of that needs code in the platform.
   in config health (§133) and leave billing off. Neither throws at boot.
 - **An app adds another provider** through `lib/app/billing.ts`, the same seam
   its plans are registered in, and names it in `BILLING_PROVIDER`.
+
+### Setting up Stripe
+
+In the Stripe Dashboard, in test mode first and then again in live mode:
+
+1. **A product and price for each priced plan**, with the price's **lookup
+   key** set to the plan's `priceLookupKey` (`pro_monthly`). Price ids differ
+   between modes; the lookup key is what the platform uses, so set it on
+   both.
+2. **A webhook endpoint** (Developers → Webhooks → Add endpoint) at
+   `https://<your app>/api/v1/billing/webhook/stripe`, sending exactly these
+   events:
+   - `customer.subscription.created`, `customer.subscription.updated`,
+     `customer.subscription.deleted`, `customer.subscription.paused`,
+     `customer.subscription.resumed`
+   - `checkout.session.completed`
+   - `invoice.payment_failed`
+
+   Copy its signing secret (`whsec_…`) into `STRIPE_WEBHOOK_SECRET`. Any
+   API version works: the webhook reads only each event's id, type and
+   references, and fetches the subscription at the version pinned in the
+   adapter.
+
+3. **The secret key** (`sk_test_…`, or a restricted key with read and write
+   on customers, Checkout sessions, the customer portal, subscriptions and
+   prices, and read on customers' search) into `STRIPE_SECRET_KEY`.
+4. **Failed payments** (Billing → Revenue recovery → Retries): choose to
+   cancel the subscription, or mark it unpaid, once retries fail. Left as
+   past due, the org keeps its plan for as long as Stripe keeps it there; the
+   platform adds no deadline of its own.
+5. **The customer portal** (Settings → Billing → Customer portal): allow
+   changing plan between your plans' prices and cancelling, and set
+   cancellations to take effect **at the end of the billing period**, so the
+   last period's usage can still be reported (t-1097).
+6. Set `BILLING_PROVIDER=stripe` and restart. Config health on the admin
+   overview says if either key is missing, if the install is not at `multi`,
+   or if the app names no fallback plan.
+
+For local development, the Stripe CLI forwards test-mode events to your dev
+server and prints a signing secret for them:
+`stripe listen --forward-to localhost:3000/api/v1/billing/webhook/stripe`.
 
 ## Plans
 
@@ -156,7 +197,10 @@ the current state, and that must be a no-op, not a fresh audit row.
 checkout.** The adapter reads the subscription's price lookup keys and the
 plan with that key is applied. A subscription on a price no plan names (made by
 hand in the Stripe Dashboard, say) is recorded with its status. The org's plan
-is left unchanged, and config health warns.
+is left unchanged, and the webhook logs a warning naming the lookup keys.
+(Config health does not warn: nothing stores which price an org is on, and
+reading every org's subscription from the provider on each admin page load
+was not worth it. Revisit if operators miss the log line.)
 
 ## The adapter
 
@@ -415,10 +459,11 @@ arrives, not at its next renewal.
 
 **Events Stripe should send:** `customer.subscription.created`, `.updated`,
 `.deleted`, `.paused` and `.resumed`, `checkout.session.completed` and
-`invoice.payment_failed`. The setup steps in t-1094's section of this page will
-list them for the Stripe Dashboard.
+`invoice.payment_failed` ([Setting up Stripe](#setting-up-stripe)). Any other
+type is answered `200` and ignored.
 
-**Ledger retention:** rows are kept at least 35 days. Stripe retries for three
+**Ledger retention:** rows are kept at least 35 days. Nothing purges them
+yet, so today they are kept until the org is erased. Stripe retries for three
 days, and an event can be resent by hand for up to 30. A row purged earlier
 would let a manual resend apply again. With fetch-and-apply that is harmless
 to state, but not to side effects.
@@ -450,6 +495,62 @@ Decided at planning (2026-11-25):
   fallback plan, and config health warns when billing is on and none is named.
 - **The org's data stays.** A lapsed org loses access to what its plan gave
   it, never the records it made there. Erasure is a separate request.
+
+## What t-1094 built
+
+| Need                                 | Where                                                                                                     |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| The interface, an app's own provider | `BillingProvider`, `registerBillingProvider()` (`lib/billing/provider.ts`), from `initAppBilling()`       |
+| Is billing on, and which provider    | `billingProviderState()`, `billingEnabled()`, `billingProvider()` (`lib/billing/config.ts`)               |
+| Stripe                               | `lib/billing/providers/stripe.ts`, loaded by `import()` only when chosen; API version `2026-10-28.endive` |
+| Start a checkout                     | `POST /api/v1/orgs/[id]/billing/checkout` `{ planKey }` → `{ url }` (`startCheckout()`)                   |
+| Open the portal                      | `POST /api/v1/orgs/[id]/billing/portal` → `{ url }` (`openBillingPortal()`)                               |
+| The webhook                          | `POST /api/v1/billing/webhook/[provider]` (`handleBillingWebhook()`, `lib/billing/webhook.ts`)            |
+| The event ledger                     | `BillingWebhookEvent` (`prisma/schema/platform.prisma`), unique on (provider, event id)                   |
+| Erasure cancelling first             | `cancelOrgSubscriptionsAtProvider()` (`lib/billing/erase.ts`), called by `eraseOrg()`                     |
+| Config health                        | `billing_provider`, `billing_single_tenant`, `billing_fallback_plan` (`lib/config-health/checks.ts`)      |
+| Check it on a real database          | `npm run smoke:billing-webhook`; with `STRIPE_MOCK_URL`, also the Stripe adapter against `stripe-mock`    |
+
+- **Checkout and the portal sit under the org**, at
+  `/api/v1/orgs/[id]/billing/`, beside the org's other routes, and are asked
+  of the authorization policy as the resource kind `org.billing`. Sunrise's
+  policy admits the org's OWNER and ADMIN to that kind (the ADMIN may view
+  billing, t-1095); the routes then require the **OWNER, acting in the org,
+  in a browser session**. An ADMIN, a MEMBER, a platform admin, a support
+  session, an API key and the install org are refused. Staff put an org on a
+  plan by hand instead.
+- **Both answer a URL** and the browser goes there. The provider sends the
+  owner back to `/admin/billing` (`?checkout=success` or `?checkout=cancelled`),
+  the org-admin console's billing page, which t-1095 builds. Until then that
+  page does not exist.
+- **The webhook answers** 404 while billing is off or the URL names another
+  provider, 400 on a bad signature, 200 once handled (applied, unchanged, a
+  replay, an ignored type, an org that no longer exists), and 500 on anything
+  else, rolled back, so the provider retries. A body over 512 KB is refused
+  with 413 before it is read further.
+- **Each ledger row says what was done** (`outcome`): `applied`, `unchanged`,
+  `not_applied` (recorded with a warning: the org holds another customer,
+  already has a live subscription, or the subscription's metadata names
+  another org), or `no_subscription`.
+- **Audit rows:** `org.billing.checkout` when an owner starts one, and
+  `org.billing.sync`, with no user, when the webhook changed the org's plan
+  or status: from and to, and what the plan wrote.
+- **A customer belongs to one org**: (`provider`, `customerRef`) is unique on
+  `OrgBillingSubscription`, which is how the webhook finds the org.
+- **Erasure refuses** with 409 `BILLING_NOT_CANCELLED` while billing is off
+  (or on with another provider) and the org's record holds a subscription
+  that has not ended: there is nothing to cancel it with. Switching billing
+  back on is the remedy. With an ended subscription, or none, erasure goes
+  ahead and logs that it did not check the provider.
+- **Not in t-1094:** telling the owner a payment failed (the event is
+  recorded; nothing is sent), purging old ledger rows, the billing page
+  (t-1095), and usage reports (t-1097; `reportUsage()` is implemented in the
+  Stripe adapter, and nothing calls it yet).
+- **Known gap, erasure and a checkout at the same moment:** the
+  cancellation runs before the erasure's transaction and outside the org's
+  billing lock, so a checkout completed in between is not cancelled. Its
+  webhook then names an org that no longer exists and is dropped, as with a
+  customer the search has not caught up with ([Privacy](#privacy)).
 
 ## Usage reporting
 
