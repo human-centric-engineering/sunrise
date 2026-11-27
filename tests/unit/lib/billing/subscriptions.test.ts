@@ -38,6 +38,7 @@ interface SubscriptionRow {
   periodEnd: Date | null;
   planAppliedAt: Date | null;
   updatedAt: Date;
+  providerLive?: boolean;
 }
 
 const store = vi.hoisted(() => ({
@@ -448,6 +449,30 @@ describe('assignPlan', () => {
       customerRef: 'cus_1',
       subscriptionRef: 'sub_1',
       status: 'PAST_DUE',
+      periodStart: null,
+      periodEnd: null,
+      planAppliedAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await expect(assignPlan(ORG, 'switches_only')).rejects.toMatchObject({
+      code: 'PROVIDER_MANAGED',
+    });
+    await expect(assignPlan(ORG, null)).rejects.toMatchObject({ code: 'PROVIDER_MANAGED' });
+    expect(writes()).toEqual({ org: 0, record: 0 });
+  });
+
+  it('refuses over an ended subscription the provider can still charge (unpaid, paused)', async () => {
+    // Assigned over, its reference would be cleared, and erasure with billing
+    // off could no longer see it was still collectable (t-1094 round 2).
+    store.subscriptions.set(ORG, {
+      orgId: ORG,
+      planKey: 'pro',
+      provider: 'stripe',
+      customerRef: 'cus_1',
+      subscriptionRef: 'sub_1',
+      status: 'ENDED',
+      providerLive: true,
       periodStart: null,
       periodEnd: null,
       planAppliedAt: new Date(),

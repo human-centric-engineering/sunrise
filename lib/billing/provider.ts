@@ -62,6 +62,9 @@ export interface BillingProvider {
 
   /**
    * A hosted checkout for one plan. Creates the org's customer on first use,
+   * or when the provider no longer has the stored one (the answer's
+   * `customerRef` is then the new one), and closes the customer's other open
+   * checkout pages first,
    * and writes the org id into the metadata of the customer, the session and
    * the subscription, so a webhook can find the org before the customer
    * reference is stored.
@@ -75,8 +78,19 @@ export interface BillingProvider {
     cancelUrl: string;
   }): Promise<{ url: string; customerRef: string }>;
 
-  /** The provider's own page for changing plan, card or cancelling. */
+  /**
+   * The provider's own page for changing plan, card or cancelling. Throws
+   * {@link BillingCustomerMissingError} when the provider no longer has the
+   * customer.
+   */
   openPortal(input: { customerRef: string; returnUrl: string }): Promise<{ url: string }>;
+
+  /**
+   * Close every checkout page of the customer that is still open, so none
+   * can be paid after this. One completed in the meantime is left alone.
+   * Called before a new checkout, and by org erasure.
+   */
+  expireOpenCheckouts(customerRef: string): Promise<void>;
 
   /**
    * Verify the signature over the raw body, then say what changed. Throws
@@ -138,6 +152,18 @@ export class BillingPriceMissingError extends Error {
   constructor(readonly priceLookupKey: string) {
     super(`The payment provider has no active price with the lookup key "${priceLookupKey}"`);
     this.name = 'BillingPriceMissingError';
+  }
+}
+
+/**
+ * The provider no longer has the customer the org's record names (deleted
+ * in the provider's dashboard, say). The portal answers that the org has no
+ * billing account; a checkout makes a new customer.
+ */
+export class BillingCustomerMissingError extends Error {
+  constructor(readonly customerRef: string) {
+    super(`The payment provider has no customer "${customerRef}"`);
+    this.name = 'BillingCustomerMissingError';
   }
 }
 

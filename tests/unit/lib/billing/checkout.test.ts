@@ -4,8 +4,8 @@
  * The real `startCheckout()` and `openBillingPortal()` over an in-memory
  * subscription record and a fake provider. Pins the "one subscription per
  * org" rule (any live one of the customer is refused, stored or not; an
- * incomplete, paused or unpaid one is cancelled once the new checkout
- * exists, and not when it could not be made), that the customer is created once and stored,
+ * incomplete, paused or unpaid one does not stop it and is left for the
+ * webhook to cancel; another provider's live one is refused), that the customer is created once and stored,
  * the refusals, and where the provider sends the owner back to.
  *
  * @see lib/billing/checkout.ts
@@ -31,6 +31,8 @@ interface Row {
   provider: string | null;
   customerRef: string | null;
   subscriptionRef: string | null;
+  status?: string;
+  providerLive?: boolean;
 }
 const db = vi.hoisted(() => ({ orgs: new Set<string>(), records: new Map<string, Row>() }));
 const mockPrisma = vi.hoisted(() => {
@@ -74,7 +76,11 @@ const mockPrisma = vi.hoisted(() => {
 });
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 
-import { BillingPriceMissingError, type ProviderSubscription } from '@/lib/billing/provider';
+import {
+  BillingCustomerMissingError,
+  BillingPriceMissingError,
+  type ProviderSubscription,
+} from '@/lib/billing/provider';
 
 const fake = vi.hoisted((): { provider: unknown } => ({ provider: null }));
 vi.mock('@/lib/billing/config', () => ({ billingProvider: async () => fake.provider }));
@@ -183,27 +189,60 @@ describe('startCheckout', () => {
     ['an incomplete first payment', sub({ status: 'incomplete', providerStatus: 'incomplete' })],
     ['a paused trial', sub({ status: 'ended', providerStatus: 'paused', live: true })],
     ['an unpaid subscription', sub({ status: 'ended', providerStatus: 'unpaid', live: true })],
-  ])('cancels %s once the new checkout exists', async (_name, current) => {
+  ])('goes ahead over %s and leaves it for the webhook to cancel', async (_name, current) => {
+    // Cancelled here, an owner who then abandoned the checkout page would
+    // have lost it for nothing (review round 2).
     db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_a', subscriptionRef: 'sub_1' });
     provider.listLiveSubscriptions.mockResolvedValue([current]);
 
-    await startCheckout(ORG, 'pro');
-
-    expect(provider.cancelSubscription).toHaveBeenCalledWith('sub_1');
-    expect(provider.createCheckout.mock.invocationCallOrder[0]).toBeLessThan(
-      provider.cancelSubscription.mock.invocationCallOrder[0]
-    );
+    expect(await startCheckout(ORG, 'pro')).toEqual({ url: 'https://checkout.test/s' });
+    expect(provider.cancelSubscription).not.toHaveBeenCalled();
   });
 
-  it('cancels nothing when the new checkout could not be made', async () => {
-    db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_a', subscriptionRef: 'sub_1' });
-    provider.listLiveSubscriptions.mockResolvedValue([
-      sub({ status: 'ended', providerStatus: 'paused', live: true }),
-    ]);
-    provider.createCheckout.mockRejectedValue(new BillingPriceMissingError('pro_monthly'));
+  it('refuses while a subscription at another provider has not ended', async () => {
+    db.records.set(ORG, {
+      provider: 'paddle',
+      customerRef: 'ctm_1',
+      subscriptionRef: 'sub_p',
+      status: 'ACTIVE',
+      providerLive: true,
+    });
+    expect(await refusal(startCheckout(ORG, 'pro'))).toBe('ALREADY_SUBSCRIBED');
+    expect(provider.createCheckout).not.toHaveBeenCalled();
+  });
 
-    expect(await refusal(startCheckout(ORG, 'pro'))).toBe('PRICE_MISSING');
-    expect(provider.cancelSubscription).not.toHaveBeenCalled();
+  it('over an ended subscription at another provider, clears its reference with the new customer', async () => {
+    db.records.set(ORG, {
+      provider: 'paddle',
+      customerRef: 'ctm_1',
+      subscriptionRef: 'sub_p',
+      status: 'ENDED',
+      providerLive: false,
+    });
+
+    await startCheckout(ORG, 'pro');
+
+    expect(provider.createCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({ customerRef: null })
+    );
+    expect(db.records.get(ORG)).toMatchObject({
+      provider: 'stripe',
+      customerRef: 'cus_created',
+      subscriptionRef: null,
+      providerLive: false,
+    });
+  });
+
+  it('stores the new customer the adapter made when Stripe no longer had the old one', async () => {
+    db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_deleted', subscriptionRef: null });
+    provider.createCheckout.mockResolvedValue({
+      url: 'https://checkout.test/s',
+      customerRef: 'cus_fresh',
+    });
+
+    await startCheckout(ORG, 'pro');
+
+    expect(db.records.get(ORG)?.customerRef).toBe('cus_fresh');
   });
 
   it('asks the provider nothing about subscriptions before the org has a customer', async () => {
@@ -251,5 +290,14 @@ describe('openBillingPortal', () => {
   it('refuses when billing is off', async () => {
     fake.provider = null;
     expect(await refusal(openBillingPortal(ORG))).toBe('BILLING_OFF');
+  });
+
+  it('says the org has no billing account when the provider no longer has its customer', async () => {
+    db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_deleted', subscriptionRef: null });
+    provider.openPortal.mockRejectedValue(new BillingCustomerMissingError('cus_deleted'));
+    expect(await refusal(openBillingPortal(ORG))).toBe('NO_CUSTOMER');
+
+    provider.openPortal.mockRejectedValue(new Error('network'));
+    await expect(openBillingPortal(ORG)).rejects.toThrow('network');
   });
 });

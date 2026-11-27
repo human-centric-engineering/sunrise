@@ -117,7 +117,24 @@ describe('eraseOrg', () => {
     expect(result.subscriptionsCancelled).toBe(2);
     expect(mockLogger.info).toHaveBeenCalledWith(
       'Org erased',
-      expect.objectContaining({ subscriptionsCancelled: ['sub_1', 'sub_2'] })
+      expect.objectContaining({ subscriptionsCancelledRefs: ['sub_1', 'sub_2'] })
+    );
+  });
+
+  it('says loudly when the delete fails after subscriptions were cancelled', async () => {
+    billing.cancelOrgSubscriptionsAtProvider.mockResolvedValue({
+      provider: 'stripe',
+      customers: ['cus_1'],
+      cancelled: ['sub_1'],
+    });
+    tx.org.delete.mockRejectedValue(new Error('FK'));
+
+    await expect(eraseOrg({ orgId: ORG, actorUserId: ADMIN })).rejects.toThrow('FK');
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('after its subscriptions were cancelled'),
+      expect.any(Error),
+      expect.objectContaining({ orgId: ORG, cancelled: ['sub_1'] })
     );
   });
 
@@ -273,7 +290,7 @@ describe('eraseOrg', () => {
       pendingInvitations: 2,
       sessionsCleared: 4,
       storageSwept: true,
-      subscriptionsCancelled: [],
+      subscriptionsCancelledRefs: [],
     });
   });
 });

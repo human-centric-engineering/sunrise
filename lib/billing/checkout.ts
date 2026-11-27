@@ -9,12 +9,17 @@
  * one the webhook and a hand assignment take) and lists every live
  * subscription of the org's customer at the provider, not only the stored
  * one, whose webhook may not have landed: an `active` or `past_due` one is
- * refused, and the owner is sent to the portal; an `incomplete` one, or one
- * that has ended and can still be resumed or charged (paused, unpaid), is
- * cancelled once the new checkout exists; one that has ended for good, or
- * none, does not stop it. The adapter also closes the customer's other open
- * checkout pages, so two tabs cannot both be paid. So the org never has two
- * live subscriptions.
+ * refused, and the owner is sent to the portal. An `incomplete` one, or one
+ * that has ended and can still be resumed or charged (paused, unpaid), does
+ * not stop it, and is not touched here: the webhook cancels it once the new
+ * subscription exists, so an owner who abandons the checkout page has lost
+ * nothing (review round 2). The adapter closes the customer's other open
+ * checkout pages, so two tabs cannot both be paid.
+ *
+ * A subscription at another provider (the install switched
+ * `BILLING_PROVIDER`) that has not ended, or can still charge, is refused
+ * too; over one that has, the record's subscription fields are cleared, so
+ * the webhook does not mistake the old reference for a live one.
  *
  * Who may call these is the routes' business: an org OWNER, acting in the org.
  *
@@ -26,7 +31,7 @@ import { Prisma } from '@prisma/client';
 import { getPublicUrl } from '@/lib/api/server-fetch';
 import { billingProvider } from '@/lib/billing/config';
 import { planOf } from '@/lib/billing/plans';
-import { BillingPriceMissingError } from '@/lib/billing/provider';
+import { BillingCustomerMissingError, BillingPriceMissingError } from '@/lib/billing/provider';
 import { lockOrgBilling } from '@/lib/billing/subscriptions';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -98,9 +103,26 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
       }
       const record = await tx.orgBillingSubscription.findUnique({
         where: { orgId },
-        select: { provider: true, customerRef: true },
+        select: {
+          provider: true,
+          customerRef: true,
+          subscriptionRef: true,
+          status: true,
+          providerLive: true,
+        },
       });
       const sameProvider = record?.provider === provider.key;
+      if (
+        record?.provider &&
+        !sameProvider &&
+        record.subscriptionRef !== null &&
+        (record.status !== 'ENDED' || record.providerLive)
+      ) {
+        throw new BillingCheckoutError(
+          'ALREADY_SUBSCRIBED',
+          `This organisation still has a subscription at ${record.provider}. It has to end there before it can subscribe here.`
+        );
+      }
 
       const customerRef = sameProvider ? record.customerRef : null;
 
@@ -141,20 +163,6 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
         throw error;
       }
 
-      // An unfinished first payment, or a paused or unpaid subscription, is
-      // replaced so the org never has two live subscriptions. Only once the
-      // new checkout exists: cancelled first, a checkout that then failed
-      // would have cost the org its paused trial for nothing (review round 1).
-      for (const replaced of live) {
-        await provider.cancelSubscription(replaced.ref);
-        logger.info('billing: cancelled an unfinished subscription to start a new checkout', {
-          provider: provider.key,
-          orgId,
-          subscriptionRef: replaced.ref,
-          providerStatus: replaced.providerStatus,
-        });
-      }
-
       if (!sameProvider || record.customerRef !== checkout.customerRef) {
         if (record?.customerRef && record.customerRef !== checkout.customerRef) {
           logger.warn('billing: the organisation’s customer reference is replaced', {
@@ -163,7 +171,22 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
             to: { provider: provider.key, customerRef: checkout.customerRef },
           });
         }
-        const link = { provider: provider.key, customerRef: checkout.customerRef };
+        const link = {
+          provider: provider.key,
+          customerRef: checkout.customerRef,
+          // The old provider's subscription has ended (refused above
+          // otherwise): its reference must not read as this provider's.
+          ...(sameProvider
+            ? {}
+            : {
+                subscriptionRef: null,
+                providerStatus: null,
+                providerLive: false,
+                cancelAtPeriodEnd: false,
+                periodStart: null,
+                periodEnd: null,
+              }),
+        };
         await tx.orgBillingSubscription.upsert({
           where: { orgId },
           create: { orgId, ...link },
@@ -179,7 +202,8 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
  * Open the provider's customer portal for the org.
  *
  * @throws {BillingCheckoutError} `BILLING_OFF`, or `NO_CUSTOMER` when the org
- *   has never been through a checkout with this provider.
+ *   has never been through a checkout with this provider, or the provider no
+ *   longer has its customer.
  */
 export async function openBillingPortal(orgId: string): Promise<{ url: string }> {
   const provider = await billingProvider();
@@ -196,8 +220,23 @@ export async function openBillingPortal(orgId: string): Promise<{ url: string }>
       'This organisation has not subscribed yet, so there is no billing portal to open.'
     );
   }
-  return provider.openPortal({
-    customerRef: record.customerRef,
-    returnUrl: billingPage(''),
-  });
+  try {
+    return await provider.openPortal({
+      customerRef: record.customerRef,
+      returnUrl: billingPage(''),
+    });
+  } catch (error) {
+    if (error instanceof BillingCustomerMissingError) {
+      logger.warn('billing: the provider no longer has the org’s customer', {
+        provider: provider.key,
+        orgId,
+        customerRef: record.customerRef,
+      });
+      throw new BillingCheckoutError(
+        'NO_CUSTOMER',
+        'This organisation has no billing account at the payment provider any more. Start a new subscription to make one.'
+      );
+    }
+    throw error;
+  }
 }

@@ -12,7 +12,9 @@
  * Every customer of the org is found: the stored reference, and any whose
  * metadata names the org (`findCustomerRefs`), which covers a customer whose
  * reference was never stored. Every `live` subscription of each is
- * cancelled, not only the stored one, so an `unpaid` or paused one ends too.
+ * cancelled, not only the stored one, so an `unpaid` or paused one ends too,
+ * and each customer's open checkout pages are closed first, so none can be
+ * paid after the org is gone.
  * One that has already ended, or that the provider no longer has, counts as
  * cancelled, so a lapsed org's erasure is not stuck.
  *
@@ -108,6 +110,9 @@ export async function cancelOrgSubscriptionsAtProvider(
 
   const cancelled: string[] = [];
   for (const customerRef of customers) {
+    // First, so a checkout page left open cannot be paid once the org is
+    // gone (review round 2).
+    await provider.expireOpenCheckouts(customerRef);
     for (const subscription of await provider.listLiveSubscriptions(customerRef)) {
       await provider.cancelSubscription(subscription.ref);
       cancelled.push(subscription.ref);

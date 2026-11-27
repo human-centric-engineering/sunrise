@@ -80,6 +80,7 @@ const SUBSCRIPTION_SELECT = {
   subscriptionRef: true,
   status: true,
   providerStatus: true,
+  providerLive: true,
   cancelAtPeriodEnd: true,
   periodStart: true,
   periodEnd: true,
@@ -94,6 +95,7 @@ type SubscriptionRow = {
   subscriptionRef: string | null;
   status: BillingSubscriptionStatus;
   providerStatus: string | null;
+  providerLive: boolean;
   cancelAtPeriodEnd: boolean;
   periodStart: Date | null;
   periodEnd: Date | null;
@@ -101,8 +103,16 @@ type SubscriptionRow = {
   updatedAt: Date;
 };
 
-function isProviderManaged(row: Pick<SubscriptionRow, 'subscriptionRef' | 'status'>): boolean {
-  return row.subscriptionRef !== null && row.status !== 'ENDED';
+/**
+ * A provider subscription that has not ended, or has ended and can still be
+ * charged or resumed (unpaid, paused). Staff do not assign over either: the
+ * second would hide a subscription the provider may still collect on from
+ * erasure (review round 2). Cancel it at the provider first.
+ */
+function isProviderManaged(
+  row: Pick<SubscriptionRow, 'subscriptionRef' | 'status' | 'providerLive'>
+): boolean {
+  return row.subscriptionRef !== null && (row.status !== 'ENDED' || row.providerLive);
 }
 
 function toView(row: SubscriptionRow): OrgSubscriptionView {

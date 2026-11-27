@@ -33,6 +33,7 @@ const sdk = vi.hoisted(() => {
     constructed: [] as unknown[],
     pricesList: vi.fn(),
     customersCreate: vi.fn(),
+    customersRetrieve: vi.fn(),
     customersSearch: vi.fn(),
     sessionsCreate: vi.fn(),
     sessionsList: vi.fn(),
@@ -54,7 +55,11 @@ vi.mock('stripe', () => {
       StripeSignatureVerificationError: sdk.StripeSignatureVerificationError,
     };
     prices = { list: sdk.calls.pricesList };
-    customers = { create: sdk.calls.customersCreate, search: sdk.calls.customersSearch };
+    customers = {
+      create: sdk.calls.customersCreate,
+      retrieve: sdk.calls.customersRetrieve,
+      search: sdk.calls.customersSearch,
+    };
     checkout = {
       sessions: {
         create: sdk.calls.sessionsCreate,
@@ -77,7 +82,11 @@ vi.mock('stripe', () => {
   return { default: Stripe };
 });
 
-import { BillingPriceMissingError, BillingSignatureError } from '@/lib/billing/provider';
+import {
+  BillingCustomerMissingError,
+  BillingPriceMissingError,
+  BillingSignatureError,
+} from '@/lib/billing/provider';
 import { createStripeProvider, STRIPE_API_VERSION } from '@/lib/billing/providers/stripe';
 
 const calls = sdk.calls;
@@ -106,6 +115,7 @@ beforeEach(() => {
   calls.pricesList.mockResolvedValue({ data: [{ id: 'price_1' }] });
   calls.sessionsList.mockImplementation(() => sdk.pages([]));
   calls.sessionsExpire.mockResolvedValue({});
+  calls.customersRetrieve.mockResolvedValue({ id: 'cus_old' });
   calls.customersCreate.mockResolvedValue({ id: 'cus_new' });
   calls.sessionsCreate.mockResolvedValue({ url: 'https://checkout.stripe.test/s' });
   calls.portalCreate.mockResolvedValue({ url: 'https://billing.stripe.test/p' });
@@ -188,6 +198,28 @@ describe('createCheckout', () => {
     expect(calls.sessionsCreate).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'marked deleted',
+      () => calls.customersRetrieve.mockResolvedValue({ id: 'cus_old', deleted: true }),
+    ],
+    [
+      'missing',
+      () =>
+        calls.customersRetrieve.mockRejectedValue(
+          new sdk.StripeInvalidRequestError('resource_missing')
+        ),
+    ],
+  ])('makes a new customer when the stored one is %s at Stripe', async (_name, arrange) => {
+    arrange();
+
+    const result = await provider.createCheckout({ ...input, customerRef: 'cus_old' });
+
+    expect(calls.customersCreate).toHaveBeenCalled();
+    expect(calls.sessionsList).not.toHaveBeenCalled();
+    expect(result.customerRef).toBe('cus_new');
+  });
+
   it('reuses a stored customer', async () => {
     await provider.createCheckout({ ...input, customerRef: 'cus_old' });
     expect(calls.customersCreate).not.toHaveBeenCalled();
@@ -220,6 +252,30 @@ describe('openPortal', () => {
       return_url: 'https://app.test/r',
     });
     expect(result).toEqual({ url: 'https://billing.stripe.test/p' });
+  });
+});
+
+describe('openPortal and expireOpenCheckouts, for a customer Stripe no longer has', () => {
+  it('the portal says the customer is missing; other errors pass on', async () => {
+    calls.portalCreate.mockRejectedValueOnce(new sdk.StripeInvalidRequestError('resource_missing'));
+    await expect(
+      provider.openPortal({ customerRef: 'cus_gone', returnUrl: 'https://app.test/r' })
+    ).rejects.toBeInstanceOf(BillingCustomerMissingError);
+    calls.portalCreate.mockRejectedValueOnce(new Error('network'));
+    await expect(
+      provider.openPortal({ customerRef: 'cus_1', returnUrl: 'https://app.test/r' })
+    ).rejects.toThrow('network');
+  });
+
+  it('there are no open checkouts to expire', async () => {
+    calls.sessionsList.mockImplementation(() => {
+      throw new sdk.StripeInvalidRequestError('resource_missing');
+    });
+    await expect(provider.expireOpenCheckouts('cus_gone')).resolves.toBeUndefined();
+    calls.sessionsList.mockImplementation(() => {
+      throw new Error('network');
+    });
+    await expect(provider.expireOpenCheckouts('cus_1')).rejects.toThrow('network');
   });
 });
 

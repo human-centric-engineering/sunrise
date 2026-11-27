@@ -32,6 +32,7 @@ const ORG = 'org_a';
 const provider = {
   key: 'stripe',
   findCustomerRefs: vi.fn(),
+  expireOpenCheckouts: vi.fn(),
   listLiveSubscriptions: vi.fn(),
   cancelSubscription: vi.fn(),
 };
@@ -65,6 +66,11 @@ describe('cancelOrgSubscriptionsAtProvider', () => {
       cancelled: ['sub_1', 'sub_unpaid', 'sub_never_stored'],
     });
     expect(provider.cancelSubscription).toHaveBeenCalledTimes(3);
+    // Each customer's open checkout pages are closed before its subscriptions.
+    expect(provider.expireOpenCheckouts.mock.calls).toEqual([['cus_a'], ['cus_orphan']]);
+    expect(provider.expireOpenCheckouts.mock.invocationCallOrder[0]).toBeLessThan(
+      provider.listLiveSubscriptions.mock.invocationCallOrder[0]
+    );
   });
 
   it('finds a customer by search when none was ever stored', async () => {

@@ -25,6 +25,7 @@
 import Stripe from 'stripe';
 
 import {
+  BillingCustomerMissingError,
   BillingPriceMissingError,
   BillingSignatureError,
   STRIPE_PROVIDER_KEY,
@@ -191,6 +192,37 @@ export function createStripeProvider(options: StripeProviderOptions): BillingPro
     }
   }
 
+  /** Whether Stripe still has the customer: a deleted one reads back marked `deleted`. */
+  async function customerExists(customerRef: string): Promise<boolean> {
+    try {
+      const customer = await stripe.customers.retrieve(customerRef);
+      return !('deleted' in customer && customer.deleted === true);
+    } catch (error) {
+      if (isMissing(error)) return false;
+      throw error;
+    }
+  }
+
+  async function expireOpenCheckouts(customerRef: string): Promise<void> {
+    try {
+      for await (const open of stripe.checkout.sessions.list({
+        customer: customerRef,
+        status: 'open',
+        limit: 100,
+      })) {
+        // One completed since the list can no longer be expired, and is the
+        // webhook's to record.
+        await stripe.checkout.sessions.expire(open.id).catch((error: unknown) => {
+          if (!(error instanceof Stripe.errors.StripeInvalidRequestError)) throw error;
+        });
+      }
+    } catch (error) {
+      // A customer Stripe no longer has has no open checkouts.
+      if (isMissing(error)) return;
+      throw error;
+    }
+  }
+
   return {
     key: STRIPE_PROVIDER_KEY,
 
@@ -204,24 +236,17 @@ export function createStripeProvider(options: StripeProviderOptions): BillingPro
       if (!price) throw new BillingPriceMissingError(input.priceLookupKey);
 
       const metadata = { [STRIPE_ORG_METADATA_KEY]: input.orgId };
+      // A stored customer deleted at Stripe is replaced, rather than every
+      // checkout failing on it; the caller stores the new reference.
+      const stored = input.customerRef === null ? false : await customerExists(input.customerRef);
       const customerRef =
-        input.customerRef ?? (await stripe.customers.create({ name: input.orgName, metadata })).id;
+        stored && input.customerRef !== null
+          ? input.customerRef
+          : (await stripe.customers.create({ name: input.orgName, metadata })).id;
 
       // One open checkout per customer: a page left open in another tab and
-      // paid after this one would start a second subscription. One that
-      // completed in the meantime can no longer be expired, and is the
-      // webhook's to record.
-      if (input.customerRef !== null) {
-        for await (const open of stripe.checkout.sessions.list({
-          customer: customerRef,
-          status: 'open',
-          limit: 100,
-        })) {
-          await stripe.checkout.sessions.expire(open.id).catch((error: unknown) => {
-            if (!(error instanceof Stripe.errors.StripeInvalidRequestError)) throw error;
-          });
-        }
-      }
+      // paid after this one would start a second subscription.
+      if (stored) await expireOpenCheckouts(customerRef);
 
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
@@ -238,12 +263,19 @@ export function createStripeProvider(options: StripeProviderOptions): BillingPro
     },
 
     async openPortal(input) {
-      const session = await stripe.billingPortal.sessions.create({
-        customer: input.customerRef,
-        return_url: input.returnUrl,
-      });
-      return { url: session.url };
+      try {
+        const session = await stripe.billingPortal.sessions.create({
+          customer: input.customerRef,
+          return_url: input.returnUrl,
+        });
+        return { url: session.url };
+      } catch (error) {
+        if (isMissing(error)) throw new BillingCustomerMissingError(input.customerRef);
+        throw error;
+      }
     },
+
+    expireOpenCheckouts,
 
     parseWebhook(input) {
       const signature = input.headers.get('stripe-signature');

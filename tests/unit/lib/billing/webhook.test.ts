@@ -287,6 +287,7 @@ function makeProvider(): BillingProvider {
     key: 'stripe',
     createCheckout: vi.fn(),
     openPortal: vi.fn(),
+    expireOpenCheckouts: vi.fn(),
     parseWebhook: vi.fn(async ({ rawBody, headers }: { rawBody: string; headers: Headers }) => {
       if (headers.get('x-signature') !== 'good') throw new BillingSignatureError();
       return JSON.parse(rawBody) as BillingEvent;
@@ -764,6 +765,49 @@ describe('one subscription per org', () => {
       planKey: 'team',
       status: 'ACTIVE',
     });
+  });
+
+  it('a paid subscription replaces a stored one that can still charge, and cancels it', async () => {
+    linkCustomer();
+    holds(sub('sub_trial'));
+    await deliver({ subscriptionRef: 'sub_trial' });
+    // The trial paused with no card; the owner then bought a plan.
+    holds(sub('sub_trial', { status: 'ended', providerStatus: 'paused', live: true }));
+    await deliver({ subscriptionRef: 'sub_trial' });
+    holds(sub('sub_paid', { priceLookupKeys: ['team_monthly'] }));
+
+    await deliver({ subscriptionRef: 'sub_paid' });
+
+    expect(provider.cancelSubscription).toHaveBeenCalledWith('sub_trial');
+    expect(stored()).toMatchObject({
+      subscriptionRef: 'sub_paid',
+      planKey: 'team',
+      status: 'ACTIVE',
+    });
+  });
+
+  it('an unpaid new subscription waits, and cancels nothing, while the stored one can still charge', async () => {
+    linkCustomer();
+    holds(sub('sub_trial'));
+    await deliver({ subscriptionRef: 'sub_trial' });
+    holds(sub('sub_trial', { status: 'ended', providerStatus: 'paused', live: true }));
+    await deliver({ subscriptionRef: 'sub_trial' });
+    holds(sub('sub_new', { status: 'incomplete', providerStatus: 'incomplete' }));
+
+    const result = await deliver({ subscriptionRef: 'sub_new' });
+
+    expect(result).toMatchObject({ outcome: 'unchanged' });
+    expect(provider.cancelSubscription).not.toHaveBeenCalled();
+    expect(stored()?.subscriptionRef).toBe('sub_trial');
+  });
+
+  it('a stored subscription that ended for good is replaced without a cancellation', async () => {
+    linkCustomer();
+    holds(sub('sub_old', { status: 'ended', providerStatus: 'canceled', live: false }));
+    await deliver({ subscriptionRef: 'sub_old' });
+    holds(sub('sub_new'));
+    await deliver({ subscriptionRef: 'sub_new' });
+    expect(provider.cancelSubscription).not.toHaveBeenCalled();
   });
 
   it('a late event for an old subscription that ended never replaces the live one', async () => {

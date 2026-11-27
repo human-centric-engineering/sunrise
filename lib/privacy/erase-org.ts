@@ -130,7 +130,7 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
   // charging. A throw here stops the erasure with nothing deleted.
   const billing = await cancelOrgSubscriptionsAtProvider(orgId);
 
-  const result = await prisma.$transaction(async (tx) => {
+  const erase = prisma.$transaction(async (tx) => {
     const org = await tx.org.findUnique({
       where: { id: orgId },
       select: { id: true, _count: { select: { memberships: true } } },
@@ -161,6 +161,23 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
     };
   });
 
+  let result: Awaited<typeof erase>;
+  try {
+    result = await erase;
+  } catch (error) {
+    if (billing && billing.cancelled.length > 0) {
+      // The provider cannot join the transaction: the cancellations stand
+      // while the org does not. Said loudly, so nobody reads the failure as
+      // "nothing happened" (review round 2). Erasing again finishes it.
+      logger.error(
+        'Org erasure failed after its subscriptions were cancelled at the payment provider; the org still exists without them. Erase it again.',
+        error,
+        { orgId, actorUserId, provider: billing.provider, cancelled: billing.cancelled }
+      );
+    }
+    throw error;
+  }
+
   const erasedAt = new Date();
   const storageSwept = await sweepOrgStorage(orgId);
   logger.info('Org erased', {
@@ -168,7 +185,7 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
     actorUserId,
     ...result,
     storageSwept,
-    subscriptionsCancelled: billing?.cancelled ?? [],
+    subscriptionsCancelledRefs: billing?.cancelled ?? [],
   });
 
   return {

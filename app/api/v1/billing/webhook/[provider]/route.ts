@@ -48,7 +48,7 @@ export async function POST(
   }
   // The raw bytes, as text: a body parsed and re-serialised does not verify.
   const rawBody = await request.text();
-  if (rawBody.length > MAX_BODY_BYTES) {
+  if (Buffer.byteLength(rawBody, 'utf8') > MAX_BODY_BYTES) {
     return errorResponse('Request body too large', { code: 'PAYLOAD_TOO_LARGE', status: 413 });
   }
 

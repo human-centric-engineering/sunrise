@@ -4,7 +4,10 @@
  * Billing is on when `BILLING_PROVIDER` names a provider, the install runs at
  * `TENANCY_MODE=multi`, and the provider's secrets are set. Anything short of
  * that leaves it off and says why ({@link billingProviderState}), which config
- * health reports; none of it throws at boot.
+ * health reports; none of it throws at boot. A value that is set but has the
+ * wrong shape (`Stripe`, a publishable `pk_` key in `STRIPE_SECRET_KEY`) is
+ * different: `lib/env.ts` fails the boot naming the variable, as it does for
+ * every server variable.
  *
  * **The provider is built on first use, and only then.** The Stripe adapter's
  * module, and with it the `stripe` package, is loaded by a dynamic `import()`

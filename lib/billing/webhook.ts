@@ -334,6 +334,33 @@ async function applyEvent(
         storedRef,
       });
     }
+    // A stored one the provider can still charge or resume (unfinished,
+    // paused, unpaid) is replaced only by one that has been paid for, and is
+    // cancelled then: checkout leaves it alone, so an owner who abandons the
+    // checkout page has lost nothing (review round 2).
+    const storedChargeable =
+      storedRef !== null && (record?.status === 'INCOMPLETE' || record?.providerLive === true);
+    if (storedChargeable) {
+      if (subscription.status === 'incomplete') {
+        logger.info('billing: an unpaid subscription waits while the stored one can still charge', {
+          ...fields,
+          storedRef,
+        });
+        return {
+          outcome: 'unchanged',
+          subscriptionRef: subscription.ref,
+          plan: null,
+          status: null,
+          writes: null,
+          budgetChanged: false,
+        };
+      }
+      await provider.cancelSubscription(storedRef);
+      logger.info('billing: cancelled the subscription a paid one replaces', {
+        ...fields,
+        storedRef,
+      });
+    }
   }
 
   let applied = await writeSubscription(tx, provider, orgId, record, subscription);

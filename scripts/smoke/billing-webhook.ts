@@ -94,6 +94,7 @@ const smokeProvider: BillingProvider = {
       customerRef: input.customerRef ?? `cus_${stamp}`,
     }),
   openPortal: () => Promise.resolve({ url: 'https://portal.smoke/p' }),
+  expireOpenCheckouts: () => Promise.resolve(),
   parseWebhook: ({ rawBody, headers }) => {
     const given = Buffer.from(headers.get('x-smoke-signature') ?? '', 'hex');
     const expected = Buffer.from(sign(rawBody), 'hex');
@@ -218,6 +219,17 @@ async function stripeMockSection(url: string): Promise<void> {
     if (!sub || !(sub.periodStart instanceof Date)) throw new Error('did not map');
   });
   await run('live subscriptions of a customer', () => adapter.listLiveSubscriptions('cus_1'));
+  await run('open checkouts of a customer, expired', () => adapter.expireOpenCheckouts('cus_1'));
+  await run('checkout for a stored customer (retrieve, expire, session)', () =>
+    adapter.createCheckout({
+      orgId: 'org_smoke',
+      orgName: 'Smoke',
+      customerRef: 'cus_1',
+      priceLookupKey: 'pro_monthly',
+      successUrl: 'https://app.test/s',
+      cancelUrl: 'https://app.test/c',
+    })
+  );
   await run('customer search by org', () => adapter.findCustomerRefs('org_smoke'));
   await run('meter event', () =>
     adapter.reportUsage({
