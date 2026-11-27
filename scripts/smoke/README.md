@@ -22,6 +22,7 @@ npm run smoke:delivery-destination  # webhook/hook deliveries record their desti
 npm run smoke:tenancy-isolation     # two orgs at TENANCY_MODE=multi as the restricted role — THROWAWAY DB only (CI: `smoke-multi`)
 npm run smoke:model-move            # §136 model move: two orgs at TENANCY_MODE=multi, each moved in its own scope (dev DB or throwaway)
 npm run smoke:billing-plans         # §139 billing plans: a plan sets exactly what it names on a real org, and re-assigning writes nothing (TENANCY_MODE=multi)
+npm run smoke:billing-webhook       # §139 billing webhook: replay, rollback, order and erasure on a real org; Stripe adapter vs stripe-mock with STRIPE_MOCK_URL (CI: `smoke-multi`)
 ```
 
 Or directly:
