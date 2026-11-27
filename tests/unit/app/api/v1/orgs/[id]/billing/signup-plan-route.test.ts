@@ -65,6 +65,7 @@ vi.mock('@/lib/billing/signup-plan', () => ({ takeUpSignupPlan: mockTakeUp }));
 
 import { POST } from '@/app/api/v1/orgs/[id]/billing/signup-plan/route';
 import { BillingCheckoutError } from '@/lib/billing/checkout';
+import { BillingPlanError } from '@/lib/billing/subscriptions';
 import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
 import { createMockAuthSession } from '@/tests/helpers/auth';
 
@@ -173,6 +174,41 @@ describe('the org’s OWNER', () => {
 
     expect(res.status).toBe(409);
     expect((await json(res)).error?.details?.reason).toBe('price_missing');
+  });
+});
+
+describe('a free plan that cannot be applied', () => {
+  it('answers 409 with the reason when the plan cannot be assigned', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockTakeUp.mockRejectedValue(new BillingPlanError('PROVIDER_MANAGED', 'paid elsewhere'));
+
+    const res = await takeUp();
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error).toMatchObject({
+      code: 'CONFLICT',
+      details: { reason: 'provider_managed' },
+    });
+  });
+
+  it('answers 404 when the org is gone', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockTakeUp.mockRejectedValue(new BillingPlanError('ORG_NOT_FOUND', 'gone'));
+
+    const res = await takeUp();
+
+    expect(res.status).toBe(404);
+    expect((await json(res)).error?.code).toBe('NOT_FOUND');
+  });
+
+  it('answers 500 for anything else, without saying what', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockTakeUp.mockRejectedValue(new Error('connection reset'));
+
+    const res = await takeUp();
+
+    expect(res.status).toBe(500);
+    expect(mockAudit).not.toHaveBeenCalled();
   });
 });
 
