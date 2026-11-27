@@ -512,7 +512,9 @@ routes still refuse. Like the gate, that is the reader's lock: the page still
 renders on the server, so it reads its rows through its routes. `refusalMessage` replaces the sentence on the 403 and on
 the locked item and page, and `upgradeUrl` (a path on this site or an
 `https://` address, checked at registration) rides on the 403 as
-`details.upgradeUrl` and is the locked item's and page's link. Neither is used
+`details.upgradeUrl` and is the locked item's and page's link. With no
+`upgradeUrl` and billing on, the org's OWNER and ADMIN get `/admin/billing`
+instead (§139 t-1095). Neither is used
 when the org's switches could not be read: the route says it could not check,
 and the item and page stay hidden, so nobody is told to buy what their org may
 have. A surface is locked only when the tier admits the viewer and the org's

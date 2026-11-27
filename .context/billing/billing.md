@@ -26,7 +26,7 @@ table says what exists.
 | This spec, and the spike                                                      | t-1092 | **Built**     |
 | Plans as bundles of entitlements; the org's subscription record; staff assign | t-1093 | **Built**     |
 | The provider adapter, Stripe, checkout, portal, the webhook, lapsed handling  | t-1094 | **Built**     |
-| The billing page in the org-admin console                                     | t-1095 | Not built yet |
+| The billing page in the org-admin console                                     | t-1095 | **Built**     |
 | Choosing a plan at signup                                                     | t-1096 | Not built yet |
 | Usage reported each period; the overage rule                                  | t-1097 | Not built yet |
 
@@ -560,8 +560,7 @@ Decided at planning (2026-11-25):
   plan by hand instead.
 - **Both answer a URL** and the browser goes there. The provider sends the
   owner back to `/admin/billing` (`?checkout=success` or `?checkout=cancelled`),
-  the org-admin console's billing page, which t-1095 builds. Until then that
-  page does not exist.
+  the org-admin console's billing page ([The billing page](#the-billing-page)).
 - **The webhook answers** 404 while billing is off or the URL names another
   provider, 400 on a bad signature, 200 once handled (applied, unchanged, a
   replay, an ignored type, an org that no longer exists), and 500 on anything
@@ -590,8 +589,7 @@ Decided at planning (2026-11-25):
   back on is the remedy. With an ended subscription, or none, erasure goes
   ahead and logs that it did not check the provider.
 - **Not in t-1094:** telling the owner a payment failed (the event is
-  recorded; nothing is sent), purging old ledger rows, the billing page
-  (t-1095), and usage reports (t-1097; `reportUsage()` is implemented in the
+  recorded; nothing is sent), purging old ledger rows, and usage reports (t-1097; `reportUsage()` is implemented in the
   Stripe adapter, and nothing calls it yet).
 - **Erasure closes the org's open checkout pages** at the provider before it
   cancels the subscriptions, so a page left open in a tab cannot be paid
@@ -606,6 +604,54 @@ Decided at planning (2026-11-25):
   the instant between the list and the expiry, is not caught. Its
   webhook then names an org that no longer exists and is dropped, as with a
   customer the search has not caught up with ([Privacy](#privacy)).
+
+## The billing page
+
+`/admin/billing` in the org-admin console (t-1095), a shell over
+`GET /api/v1/orgs/[id]/billing` (`loadOrgBilling()`,
+`lib/billing/org-billing.ts`). It shows, for the org the viewer acts in:
+
+- **The plan and its status**: active, payment overdue (with what that means:
+  the provider is retrying and the plan stays), waiting for the first
+  payment, or ended. "Ends on …" when it is cancelled at period end, and "Set
+  by platform staff" for a plan assigned by hand.
+- **The current period**, from the provider's subscription.
+- **Usage against each limit**, every meter `loadOrgMeterUsage()` counts. A
+  meter that could not be counted says so and never shows 0.
+- **The plans it could buy**: those with a price. The OWNER gets a checkout
+  button on each plan the org is not on. While a subscription is live there is
+  no checkout (the route would refuse `already_subscribed`), and the page
+  says to change plan in the portal.
+- **Manage billing**, the customer portal: card, invoices, plan changes and
+  cancellation, on the provider's pages. Offered once the org has a customer
+  at this install's provider. The page lists no invoices itself.
+
+| Who                                   | Sees                                                         |
+| ------------------------------------- | ------------------------------------------------------------ |
+| The org's OWNER, acting in it         | Everything, with the checkout and portal buttons             |
+| The org's ADMIN                       | The same page, read-only, saying only an owner can change it |
+| A platform admin, in a customer's org | Read-only, as an ADMIN                                       |
+| An org MEMBER                         | Nothing: the admin console turns them away                   |
+
+- **Only while billing is on.** With `billingEnabled()` false, the page answers
+  404, its sidebar item is hidden (`sectionsForCapabilities()`, as for the
+  waitlist), and the access explainer leaves it out. The route answers
+  `billing_off`.
+- **In the install org** it says the install org is never billed and fetches
+  nothing.
+- **Coming back from checkout** (`?checkout=success`) it says the payment went
+  through and the plan follows once the provider confirms it. The plan comes
+  from the webhook, so it may lag by a few seconds. `?checkout=cancelled` says
+  nothing was charged.
+- **The default upgrade link.** A switch the app gave no `upgradeUrl`
+  ([entitlements](../tenancy/entitlements.md#hidden-or-locked)) links to this
+  page while billing is on (`upgradeUrlFor()`, `lib/billing/upgrade-url.ts`).
+  That is on the 403's `details.upgradeUrl` and on a locked item and page,
+  for the org's OWNER and ADMIN. A named-tier holder gets no link, since the
+  page is not theirs. The app's own link always wins.
+- **The words** are the platform catalogue's, `admin.billing`, so a fork
+  rewords them with `overridePlatformMessages()`. Plan and meter labels are the
+  app's, as it registered them.
 
 ## Usage reporting
 
