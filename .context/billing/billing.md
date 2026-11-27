@@ -169,8 +169,11 @@ the current state, and that must be a no-op, not a fresh audit row.
 - **An assignment is one transaction under the org's locks.** The record
   and the switches, limits and caps commit together, or not at all. It takes
   `pg_advisory_xact_lock` on `billing:<orgId>` (`billingLockKey()`), so two
-  assignments run one after the other, then the org row `FOR UPDATE`, so a
-  settings write from another route waits for it. It runs at READ COMMITTED,
+  assignments run one after the other, then the org row `FOR NO KEY UPDATE`,
+  so a settings write from another route waits for it. Not `FOR UPDATE`:
+  checkout and the webhook hold these locks while they wait on the provider,
+  and `FOR UPDATE` would block every insert into a table with a foreign key to
+  the org for that long. It runs at READ COMMITTED,
   so reads after those locks see the latest commit. Serializable was tried
   and rejected in review: its snapshot is taken before the lock is granted,
   so an assignment that waited could read stale state and, with nothing to
@@ -455,10 +458,11 @@ stored one: a subscription whose webhook has not landed yet is not stored
   the adapter makes a new one, and checkout stores it. The portal answers
   `no_customer`.
 
-The Stripe adapter also expires the customer's other open checkout pages
-before it makes a new one, so a page left open in another tab cannot be paid
-as well. One completed in the instant between the list and the expiry is the
-webhook's to record: it is refused (`not_applied`, with a warning) while the
+Checkout first closes the customer's other open checkout pages
+(`expireOpenCheckouts`), then lists the live subscriptions, so a page left
+open in another tab is either closed or already listed. The Stripe adapter
+closes them again as it makes the new one. One paid in the instant between
+the expiry and the list landing at Stripe is the webhook's to record: it is refused (`not_applied`, with a warning) while the
 org's stored subscription is live, and has to be refunded at Stripe.
 
 So the org never has two live subscriptions.
@@ -473,9 +477,18 @@ the event is recorded in the ledger and not applied, with a warning.
 The two can arrive in either order. So when an applied event leaves the stored
 subscription `ended`, the webhook also calls `listLiveSubscriptions` for the
 customer and, if one is not `ended`, adopts it as the stored reference and
-applies its state in the same transaction. A new subscription recorded before
+applies its state in the same transaction, preferring an `active` or
+`past_due` one over an `incomplete` one. A new subscription recorded before
 the old one's cancellation therefore takes effect when the cancellation
-arrives, not at its next renewal.
+arrives, not at its next renewal. When the ended one can still charge
+(`unpaid`, `paused`), only a paid subscription is adopted, and the ended one
+is cancelled at the provider as it is replaced; an `incomplete` one waits for
+its own paid event.
+
+When checkout stores a new customer (another provider's, or Stripe made a new
+one because it no longer had the stored one), the record's subscription
+fields are cleared with it, so the old reference is not read as the new
+customer's.
 
 **Events Stripe should send:** `customer.subscription.created`, `.updated`,
 `.deleted`, `.paused` and `.resumed`, `checkout.session.completed` and

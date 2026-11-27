@@ -111,6 +111,7 @@ const provider = {
   createCheckout: vi.fn(),
   openPortal: vi.fn(),
   listLiveSubscriptions: vi.fn(),
+  expireOpenCheckouts: vi.fn(),
   cancelSubscription: vi.fn(),
 };
 
@@ -131,6 +132,7 @@ beforeEach(() => {
   }));
   provider.openPortal.mockResolvedValue({ url: 'https://portal.test/p' });
   provider.listLiveSubscriptions.mockResolvedValue([]);
+  provider.expireOpenCheckouts.mockResolvedValue(undefined);
 });
 
 describe('startCheckout', () => {
@@ -233,8 +235,16 @@ describe('startCheckout', () => {
     });
   });
 
-  it('stores the new customer the adapter made when Stripe no longer had the old one', async () => {
-    db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_deleted', subscriptionRef: null });
+  it('stores the new customer the adapter made when Stripe no longer had the old one, clearing the old subscription', async () => {
+    // Left in place, the old reference would make the webhook refuse the
+    // org's own new subscription (review round 3).
+    db.records.set(ORG, {
+      provider: 'stripe',
+      customerRef: 'cus_deleted',
+      subscriptionRef: 'sub_old',
+      status: 'ENDED',
+      providerLive: true,
+    });
     provider.createCheckout.mockResolvedValue({
       url: 'https://checkout.test/s',
       customerRef: 'cus_fresh',
@@ -242,12 +252,29 @@ describe('startCheckout', () => {
 
     await startCheckout(ORG, 'pro');
 
-    expect(db.records.get(ORG)?.customerRef).toBe('cus_fresh');
+    expect(db.records.get(ORG)).toMatchObject({
+      customerRef: 'cus_fresh',
+      subscriptionRef: null,
+      providerLive: false,
+    });
+  });
+
+  it('closes the open checkout pages before it lists the live subscriptions', async () => {
+    // The other way round, a page paid in between is neither listed nor closed.
+    db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_a', subscriptionRef: null });
+
+    await startCheckout(ORG, 'pro');
+
+    expect(provider.expireOpenCheckouts).toHaveBeenCalledWith('cus_a');
+    expect(provider.expireOpenCheckouts.mock.invocationCallOrder[0]).toBeLessThan(
+      provider.listLiveSubscriptions.mock.invocationCallOrder[0] ?? 0
+    );
   });
 
   it('asks the provider nothing about subscriptions before the org has a customer', async () => {
     await startCheckout(ORG, 'pro');
     expect(provider.listLiveSubscriptions).not.toHaveBeenCalled();
+    expect(provider.expireOpenCheckouts).not.toHaveBeenCalled();
     expect(provider.cancelSubscription).not.toHaveBeenCalled();
   });
 

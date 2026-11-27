@@ -13,13 +13,14 @@
  * that has ended and can still be resumed or charged (paused, unpaid), does
  * not stop it, and is not touched here: the webhook cancels it once the new
  * subscription exists, so an owner who abandons the checkout page has lost
- * nothing (review round 2). The adapter closes the customer's other open
- * checkout pages, so two tabs cannot both be paid.
+ * nothing (review round 2). The customer's other open checkout pages are
+ * closed before the list is read, so two tabs cannot both be paid.
  *
  * A subscription at another provider (the install switched
  * `BILLING_PROVIDER`) that has not ended, or can still charge, is refused
- * too; over one that has, the record's subscription fields are cleared, so
- * the webhook does not mistake the old reference for a live one.
+ * too. Whenever the customer changes (another provider's, or a new one for a
+ * customer the provider no longer has), the record's subscription fields are
+ * cleared, so the webhook does not mistake the old reference for a live one.
  *
  * Who may call these is the routes' business: an org OWNER, acting in the org.
  *
@@ -130,6 +131,10 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
       // subscription whose webhook has not landed yet is not stored, and a
       // second checkout over it would leave the org paying twice (review
       // round 1). The stored status is the neutral one, so ask the provider.
+      // Other open checkout pages are closed first, then the list is read, so
+      // a page paid in another tab is either closed or already listed (review
+      // round 3). The adapter closes them again when it creates this one.
+      if (customerRef !== null) await provider.expireOpenCheckouts(customerRef);
       const live = customerRef === null ? [] : await provider.listLiveSubscriptions(customerRef);
       if (live.some((s) => s.status === 'active' || s.status === 'past_due')) {
         throw new BillingCheckoutError(
@@ -171,21 +176,20 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
             to: { provider: provider.key, customerRef: checkout.customerRef },
           });
         }
+        // A new customer, at this provider or another, holds none of the old
+        // one's subscription: its reference must not read as the new
+        // customer's, or the webhook would refuse the org's own new
+        // subscription (review round 3). The old provider's has ended
+        // (refused above otherwise); the old customer here is gone.
         const link = {
           provider: provider.key,
           customerRef: checkout.customerRef,
-          // The old provider's subscription has ended (refused above
-          // otherwise): its reference must not read as this provider's.
-          ...(sameProvider
-            ? {}
-            : {
-                subscriptionRef: null,
-                providerStatus: null,
-                providerLive: false,
-                cancelAtPeriodEnd: false,
-                periodStart: null,
-                periodEnd: null,
-              }),
+          subscriptionRef: null,
+          providerStatus: null,
+          providerLive: false,
+          cancelAtPeriodEnd: false,
+          periodStart: null,
+          periodEnd: null,
         };
         await tx.orgBillingSubscription.upsert({
           where: { orgId },

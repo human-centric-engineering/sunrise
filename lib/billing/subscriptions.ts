@@ -176,9 +176,15 @@ export function onTransaction(tx: Prisma.TransactionClient): Pick<PrismaClient, 
  * Take the org's billing locks inside an open transaction: the advisory lock
  * on {@link billingLockKey}, so every billing write for the org (a hand
  * assignment, a checkout, a webhook delivery) runs one after the other, then
- * the org row `FOR UPDATE`, so a settings write from another route waits for
- * the plan's read-modify-write. Every billing transaction takes both, in this
- * order, so two of them cannot deadlock on each other.
+ * the org row `FOR NO KEY UPDATE`, so a settings write from another route
+ * waits for the plan's read-modify-write. Every billing transaction takes
+ * both, in this order, so two of them cannot deadlock on each other.
+ *
+ * `NO KEY UPDATE`, not `UPDATE`: checkout and the webhook hold the lock while
+ * they wait on the provider, and `FOR UPDATE` would block every insert into a
+ * table with a foreign key to the org (chat messages, cost logs) for that
+ * long. Those inserts take `KEY SHARE`, which `NO KEY UPDATE` does not block;
+ * an `UPDATE` of the org row still waits (review round 3).
  *
  * @returns `false` when the org row does not exist (deleted, or erased).
  */
@@ -189,7 +195,7 @@ export async function lockOrgBilling(
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${billingLockKey(orgId)}, 0))`;
   const locked = await tx.$queryRaw<
     { id: string }[]
-  >`SELECT "id" FROM "org" WHERE "id" = ${orgId} FOR UPDATE`;
+  >`SELECT "id" FROM "org" WHERE "id" = ${orgId} FOR NO KEY UPDATE`;
   return locked.length > 0;
 }
 
@@ -200,7 +206,7 @@ export async function lockOrgBilling(
  * record and every slice the plan writes commit together, or not at all. It
  * first takes a Postgres advisory lock on {@link billingLockKey}, so two
  * assignments (and t-1094's webhook) run one after the other, then the org
- * row `FOR UPDATE`, so a settings write from another route waits for it.
+ * row `FOR NO KEY UPDATE`, so a settings write from another route waits for it.
  * At READ COMMITTED every read after those locks sees what committed before
  * them. Serializable would not: its snapshot is taken at the first
  * statement, before the lock is granted, so an assignment that waited could

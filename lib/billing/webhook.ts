@@ -367,9 +367,24 @@ async function applyEvent(
   if (subscription.status === 'ended') {
     // A new subscription recorded before this one's cancellation arrived
     // takes effect now, not at its next renewal.
+    // A paid one first: list order would let an unfinished checkout win over
+    // an active subscription (review round 3).
     const live = await provider.listLiveSubscriptions(subscription.customerRef);
-    const next = live.find((s) => s.ref !== subscription.ref && s.status !== 'ended');
+    const candidates = live.filter((s) => s.ref !== subscription.ref && s.status !== 'ended');
+    const paid = candidates.find((s) => s.status === 'active' || s.status === 'past_due');
+    // While the ended one can still charge (unpaid, paused), only a paid one
+    // replaces it, as on the path above; an unfinished one waits for its own
+    // webhook.
+    const next = paid ?? (subscription.live ? undefined : candidates[0]);
     if (next) {
+      if (subscription.live) {
+        // Replaced, so it must not go on charging (review round 3).
+        await provider.cancelSubscription(subscription.ref);
+        logger.info('billing: cancelled the ended subscription a paid one replaces', {
+          ...fields,
+          adoptedRef: next.ref,
+        });
+      }
       const after = await tx.orgBillingSubscription.findUnique({
         where: { orgId },
         select: RECORD_SELECT,

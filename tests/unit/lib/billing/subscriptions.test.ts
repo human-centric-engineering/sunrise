@@ -367,7 +367,7 @@ describe('assignPlan', () => {
     expect(lockSql.join('?')).toContain('pg_advisory_xact_lock');
     expect(key).toBe(`billing:${ORG}`);
     const [rowSql, id] = mockPrisma.$queryRaw.mock.calls[0] as unknown as [string[], string];
-    expect(rowSql.join('?')).toMatch(/FROM "org" WHERE "id" = \? FOR UPDATE/);
+    expect(rowSql.join('?')).toMatch(/FROM "org" WHERE "id" = \? FOR NO KEY UPDATE$/);
     expect(id).toBe(ORG);
     const lock = mockPrisma.$executeRaw.mock.invocationCallOrder[0];
     const row = mockPrisma.$queryRaw.mock.invocationCallOrder[0];

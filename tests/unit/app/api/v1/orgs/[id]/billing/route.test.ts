@@ -78,6 +78,7 @@ const provider = vi.hoisted(() => ({
   createCheckout: vi.fn(),
   openPortal: vi.fn(),
   listLiveSubscriptions: vi.fn(),
+  expireOpenCheckouts: vi.fn(),
   cancelSubscription: vi.fn(),
 }));
 const billing = vi.hoisted(() => ({ on: true }));
@@ -160,6 +161,7 @@ beforeEach(() => {
   });
   provider.openPortal.mockResolvedValue({ url: 'https://portal.test/p' });
   provider.listLiveSubscriptions.mockResolvedValue([]);
+  provider.expireOpenCheckouts.mockResolvedValue(undefined);
 });
 
 describe('the org’s OWNER', () => {

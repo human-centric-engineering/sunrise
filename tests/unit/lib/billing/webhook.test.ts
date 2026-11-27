@@ -732,6 +732,50 @@ describe('one subscription per org', () => {
     });
   });
 
+  it('adopts a paid subscription over an unfinished one, whatever order the provider lists them', async () => {
+    linkCustomer();
+    holds(sub('sub_old'));
+    await deliver({ subscriptionRef: 'sub_old' });
+    // Listed first: an abandoned checkout.
+    holds(sub('sub_unpaid', { status: 'incomplete', providerStatus: 'incomplete' }));
+    holds(sub('sub_paid', { priceLookupKeys: ['team_monthly'] }));
+
+    holds(sub('sub_old', { status: 'ended', providerStatus: 'canceled', live: false }));
+    await deliver({ subscriptionRef: 'sub_old' });
+
+    expect(stored()).toMatchObject({ subscriptionRef: 'sub_paid', planKey: 'team' });
+  });
+
+  it('cancels an ended subscription that can still charge when a paid one is adopted in its place', async () => {
+    linkCustomer();
+    holds(sub('sub_old'));
+    await deliver({ subscriptionRef: 'sub_old' });
+    holds(sub('sub_new', { priceLookupKeys: ['team_monthly'] }));
+
+    holds(sub('sub_old', { status: 'ended', providerStatus: 'unpaid', live: true }));
+    await deliver({ subscriptionRef: 'sub_old' });
+
+    expect(provider.cancelSubscription).toHaveBeenCalledWith('sub_old');
+    expect(stored()).toMatchObject({ subscriptionRef: 'sub_new', planKey: 'team' });
+  });
+
+  it('does not adopt an unfinished one while the ended subscription can still charge', async () => {
+    linkCustomer();
+    holds(sub('sub_old'));
+    await deliver({ subscriptionRef: 'sub_old' });
+    holds(sub('sub_new', { status: 'incomplete', providerStatus: 'incomplete' }));
+
+    holds(sub('sub_old', { status: 'ended', providerStatus: 'unpaid', live: true }));
+    await deliver({ subscriptionRef: 'sub_old' });
+
+    expect(provider.cancelSubscription).not.toHaveBeenCalled();
+    expect(stored()).toMatchObject({
+      subscriptionRef: 'sub_old',
+      status: 'ENDED',
+      providerLive: true,
+    });
+  });
+
   it('forgets the cached budget when the lapse changed it, even if the adopted plan does not', async () => {
     // pro ($100) lapses to free ($10), and team, adopted in the same
     // delivery, is $10 too: only the first write moved the budget.
