@@ -362,3 +362,19 @@ it('refuses an org that does not exist at the guard, and reads nothing', async (
   expect((await read()).status).toBe(403);
   expect(mockDb.orgBillingSubscription.findUnique).not.toHaveBeenCalled();
 });
+
+it('answers 404 when the org is gone by the time its billing is read', async () => {
+  // The guard found it; it was erased before the handler read it.
+  actingAs(ORG_OWNER_ROLE);
+  let reads = 0;
+  mockDb.org.findUnique.mockImplementation(async (args: { where: { id: string } }) =>
+    args.where.id === ORG && ++reads > 1
+      ? null
+      : { id: args.where.id, status: 'ACTIVE', name: 'Acme' }
+  );
+
+  const res = await read();
+
+  expect(res.status).toBe(404);
+  expect(mockDb.orgBillingSubscription.findUnique).not.toHaveBeenCalled();
+});

@@ -90,3 +90,17 @@ describe('BillingActionButton', () => {
     expect(billingNavigation.go).not.toHaveBeenCalled();
   });
 });
+
+describe('billingNavigation', () => {
+  it('sends the browser to the address', () => {
+    vi.restoreAllMocks();
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    try {
+      billingNavigation.go('https://billing.stripe.test/p/1');
+      expect(assign).toHaveBeenCalledWith('https://billing.stripe.test/p/1');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
