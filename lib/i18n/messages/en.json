@@ -1896,6 +1896,16 @@
       "button": "Open cleanup chat",
       "fineprint": "Until you click <strong>Mark cleaned</strong> or <strong>Use original</strong>, the document stays in the <em>Cleaning</em> tab of your knowledge base and won't be searchable by your agents."
     },
+    "usageNotice": {
+      "subject": "{org}: {threshold, select, reached {{meter} has reached its allowance} other {{meter} is nearly at its allowance}}",
+      "preview": "{threshold, select, reached {{meter} has reached its allowance} other {{meter} is nearly at its allowance}}",
+      "heading": "{threshold, select, reached {Allowance reached: {meter}} other {Nearly at the allowance: {meter}}}",
+      "usedCount": "{meter}: {org} has used {used, number} of the {allowance, number} included in its plan for this period.",
+      "usedMoney": "{org} has used {used, number, ::currency/USD} of the {allowance, number, ::currency/USD} of {meter} included in its plan for this period.",
+      "nothingStopped": "Nothing has been stopped. To change the plan, open the billing page, or ask whoever manages your organisation's account.",
+      "button": "Open billing",
+      "fineprint": "You are receiving this because you are an owner of {org}."
+    },
     "escalationNotification": {
       "subject": "Escalation ({priority}): {reason}",
       "preview": "Escalation ({priority}): {reason}",

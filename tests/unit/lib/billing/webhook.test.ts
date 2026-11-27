@@ -104,6 +104,11 @@ vi.mock('@/lib/billing/apply-plan', () => ({ applyPlan: mockApplyPlan }));
 // The settings slice's own read-modify-write is org-settings.test.ts; here,
 // that a subscription settles the plan a signup chose (§139 t-1096).
 const mockTakeSignupPlan = vi.hoisted(() => vi.fn(async () => null));
+// Closing a period for usage reports (§139 t-1097): which period the webhook
+// closes is pinned here; what closing writes is usage-report.test.ts.
+const mockClosePeriod = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock('@/lib/billing/usage-report', () => ({ closeBillingPeriod: mockClosePeriod }));
+
 vi.mock('@/lib/tenancy/org-settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/tenancy/org-settings')>()),
   takeOrgSignupPlan: mockTakeSignupPlan,
@@ -122,6 +127,7 @@ interface RecordRow {
   cancelAtPeriodEnd: boolean;
   periodStart: Date | null;
   periodEnd: Date | null;
+  endedAt?: Date | null;
   planAppliedAt: Date | null;
 }
 interface LedgerRow {
@@ -952,5 +958,118 @@ describe('the audit row', () => {
         metadata: expect.objectContaining({ provider: 'stripe', eventId: 'evt_audit' }),
       })
     );
+  });
+});
+
+describe('closing a billing period for usage reports (t-1097)', () => {
+  const NOV = new Date('2026-11-01T00:00:00Z');
+  const DEC = new Date('2026-12-01T00:00:00Z');
+  const JAN = new Date('2027-01-01T00:00:00Z');
+
+  /** The org is on pro through sub_1, in November's period. */
+  function onPro(overrides: Partial<RecordRow> = {}): void {
+    db.records.set(ORG, {
+      orgId: ORG,
+      planKey: 'pro',
+      provider: 'stripe',
+      customerRef: 'cus_a',
+      subscriptionRef: 'sub_1',
+      status: 'ACTIVE',
+      providerStatus: 'active',
+      cancelAtPeriodEnd: false,
+      periodStart: NOV,
+      periodEnd: DEC,
+      planAppliedAt: new Date(),
+      ...overrides,
+    });
+  }
+
+  it('closes the period a renewal moves past, under the plan the org was on', async () => {
+    onPro();
+    holds(sub('sub_1', { periodStart: DEC, periodEnd: JAN }));
+
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(mockClosePeriod).toHaveBeenCalledTimes(1);
+    expect(mockClosePeriod).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        orgId: ORG,
+        provider: 'stripe',
+        customerRef: 'cus_a',
+        subscriptionRef: 'sub_1',
+        planKey: 'pro',
+        periodStart: NOV,
+      },
+      { periodEnd: DEC, lastPeriod: false }
+    );
+    expect(stored()).toMatchObject({ periodStart: DEC, periodEnd: JAN });
+  });
+
+  it('closes a subscription ended part-way through its period at when it ended, as its last', async () => {
+    onPro();
+    const endedAt = new Date('2026-11-20T10:00:00Z');
+    holds(sub('sub_1', { status: 'ended', providerStatus: 'canceled', live: false, endedAt }));
+
+    await deliver({ subscriptionRef: 'sub_1', providerType: 'customer.subscription.deleted' });
+
+    expect(mockClosePeriod).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ periodStart: NOV, planKey: 'pro' }),
+      { periodEnd: endedAt, lastPeriod: true }
+    );
+    expect(stored()).toMatchObject({ status: 'ENDED', endedAt });
+  });
+
+  it('closes an unpaid subscription, which has not ended at the provider, at its period end', async () => {
+    onPro({ status: 'PAST_DUE', providerStatus: 'past_due' });
+    holds(sub('sub_1', { status: 'ended', providerStatus: 'unpaid', live: true, endedAt: null }));
+
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(mockClosePeriod).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      periodEnd: DEC,
+      lastPeriod: true,
+    });
+  });
+
+  it('closes nothing when the period has not moved, and nothing for a subscription that gave no plan', async () => {
+    onPro();
+    holds(sub('sub_1', { cancelAtPeriodEnd: true }));
+    await deliver({ subscriptionRef: 'sub_1' });
+    expect(mockClosePeriod).not.toHaveBeenCalled();
+    expect(stored()).toMatchObject({ cancelAtPeriodEnd: true });
+
+    // An unfinished checkout that expires was never on a plan's period.
+    onPro({ status: 'INCOMPLETE', subscriptionRef: 'sub_1' });
+    holds(sub('sub_1', { status: 'ended', providerStatus: 'incomplete_expired', live: false }));
+    await deliver({ subscriptionRef: 'sub_1' });
+    expect(mockClosePeriod).not.toHaveBeenCalled();
+  });
+
+  it('a replay closes nothing again', async () => {
+    onPro();
+    holds(sub('sub_1', { periodStart: DEC, periodEnd: JAN }));
+
+    await deliver({ id: 'evt_renew', subscriptionRef: 'sub_1' });
+    await deliver({ id: 'evt_renew', subscriptionRef: 'sub_1' });
+
+    expect(mockClosePeriod).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed close rolls the sync back, so the retry moves the period on and closes it', async () => {
+    onPro();
+    holds(sub('sub_1', { periodStart: DEC, periodEnd: JAN }));
+    mockClosePeriod.mockRejectedValueOnce(new Error('database went away'));
+
+    await expect(deliver({ id: 'evt_renew', subscriptionRef: 'sub_1' })).rejects.toThrow(
+      'database went away'
+    );
+    expect(stored()).toMatchObject({ periodStart: NOV, periodEnd: DEC });
+    expect(db.ledger).toEqual([]);
+
+    await deliver({ id: 'evt_renew', subscriptionRef: 'sub_1' });
+    expect(mockClosePeriod).toHaveBeenCalledTimes(2);
+    expect(stored()).toMatchObject({ periodStart: DEC, periodEnd: JAN });
   });
 });

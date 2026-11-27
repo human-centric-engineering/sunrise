@@ -29,6 +29,7 @@
 
 import { APIError } from '@/lib/api/errors';
 import { billingProvider } from '@/lib/billing/config';
+import { reportBeforeCancelling } from '@/lib/billing/usage-report';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { runAsOrg } from '@/lib/tenancy/context';
@@ -96,6 +97,17 @@ export async function cancelOrgSubscriptionsAtProvider(
       );
     }
     return null;
+  }
+
+  // The open period's usage first, so the invoice the cancellation makes
+  // carries it (t-1097). A failure stops the erasure, which is retried.
+  const reported = await reportBeforeCancelling(provider, orgId);
+  if (reported > 0) {
+    logger.info('billing: reported usage before cancelling for org erasure', {
+      orgId,
+      provider: provider.key,
+      reports: reported,
+    });
   }
 
   const found = await provider.findCustomerRefs(orgId);

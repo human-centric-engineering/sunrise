@@ -41,6 +41,7 @@ import {
   type ProviderSubscription,
 } from '@/lib/billing/provider';
 import { lockOrgBilling, onTransaction } from '@/lib/billing/subscriptions';
+import { closeBillingPeriod } from '@/lib/billing/usage-report';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -99,6 +100,7 @@ type RecordRow = {
   cancelAtPeriodEnd: boolean;
   periodStart: Date | null;
   periodEnd: Date | null;
+  endedAt: Date | null;
 };
 
 const RECORD_SELECT = {
@@ -112,6 +114,7 @@ const RECORD_SELECT = {
   cancelAtPeriodEnd: true,
   periodStart: true,
   periodEnd: true,
+  endedAt: true,
 } as const;
 
 /** What one delivery changed, for the audit row written after the commit. */
@@ -411,6 +414,57 @@ async function applyEvent(
   return applied;
 }
 
+/**
+ * When this sync moves the stored subscription past its period, or ends it,
+ * the period it held is closed for usage reporting (t-1097), in this
+ * transaction: the report rows commit with the record that moved on, or not
+ * at all. Only a period that gave the org its plan (`ACTIVE`, `PAST_DUE`) is
+ * billed, under the plan it was on.
+ */
+async function closePeriodIfOver(
+  tx: Prisma.TransactionClient,
+  provider: BillingProvider,
+  orgId: string,
+  record: RecordRow | null,
+  subscription: ProviderSubscription
+): Promise<void> {
+  if (
+    record === null ||
+    record.provider !== provider.key ||
+    record.subscriptionRef !== subscription.ref ||
+    record.customerRef === null ||
+    record.periodStart === null ||
+    record.periodEnd === null ||
+    (record.status !== 'ACTIVE' && record.status !== 'PAST_DUE')
+  ) {
+    return;
+  }
+  const ended = subscription.status === 'ended';
+  const movedOn = subscription.periodStart.getTime() > record.periodStart.getTime();
+  if (!ended && !movedOn) return;
+  // Ended before the period's end (cancelled at once, retries exhausted):
+  // closed when it ended. An unpaid one has no `endedAt`, so its period runs out.
+  const endedAt = ended ? subscription.endedAt : null;
+  const periodEnd =
+    endedAt !== null && endedAt < record.periodEnd && endedAt > record.periodStart
+      ? endedAt
+      : record.periodEnd;
+  await closeBillingPeriod(
+    tx,
+    {
+      orgId,
+      provider: provider.key,
+      customerRef: record.customerRef,
+      subscriptionRef: record.subscriptionRef,
+      planKey: record.planKey,
+      periodStart: record.periodStart,
+    },
+    // The provider invoices a subscription's last period as it ends, so no
+    // report sent after that is billed.
+    { periodEnd, lastPeriod: ended }
+  );
+}
+
 /** The plan whose price the subscription is on; `undefined` when none is. */
 function planForPrices(lookupKeys: readonly string[]): RegisteredPlan | undefined {
   return registeredPlans().find(
@@ -502,6 +556,7 @@ async function writeSubscription(
     cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
     periodStart: subscription.periodStart,
     periodEnd: subscription.periodEnd,
+    endedAt: subscription.endedAt,
     planKey: toPlan,
   };
   const recordMatches =
@@ -515,8 +570,11 @@ async function writeSubscription(
     record.cancelAtPeriodEnd === data.cancelAtPeriodEnd &&
     record.periodStart?.getTime() === data.periodStart.getTime() &&
     record.periodEnd?.getTime() === data.periodEnd.getTime() &&
+    (record.endedAt?.getTime() ?? null) === (data.endedAt?.getTime() ?? null) &&
     record.planKey === data.planKey;
   const settingsChanged = writes?.changed ?? false;
+
+  await closePeriodIfOver(tx, provider, orgId, record, subscription);
 
   if (!recordMatches || settingsChanged) {
     const row = { ...data, ...(planWritten ? { planAppliedAt: new Date() } : {}) };

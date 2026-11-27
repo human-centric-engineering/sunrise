@@ -26,6 +26,13 @@ vi.mock('@/lib/db/client', () => ({
 const fake = vi.hoisted((): { provider: unknown } => ({ provider: null }));
 vi.mock('@/lib/billing/config', () => ({ billingProvider: async () => fake.provider }));
 
+// What reporting writes and sends is usage-report.test.ts; here, that it
+// comes before any cancellation and that its failure stops the erasure.
+const mockReportBeforeCancelling = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock('@/lib/billing/usage-report', () => ({
+  reportBeforeCancelling: mockReportBeforeCancelling,
+}));
+
 import { BillingErasureError, cancelOrgSubscriptionsAtProvider } from '@/lib/billing/erase';
 
 const ORG = 'org_a';
@@ -56,6 +63,33 @@ beforeEach(() => {
 });
 
 describe('cancelOrgSubscriptionsAtProvider', () => {
+  it('reports the open period’s usage before it cancels anything (t-1097)', async () => {
+    mockReportBeforeCancelling.mockResolvedValueOnce(2);
+
+    await cancelOrgSubscriptionsAtProvider(ORG);
+
+    expect(mockReportBeforeCancelling).toHaveBeenCalledWith(provider, ORG);
+    expect(mockReportBeforeCancelling.mock.invocationCallOrder[0]).toBeLessThan(
+      provider.cancelSubscription.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('cancels nothing when the usage report fails, so the erasure stops and is retried', async () => {
+    mockReportBeforeCancelling.mockRejectedValueOnce(new Error('provider unreachable'));
+
+    await expect(cancelOrgSubscriptionsAtProvider(ORG)).rejects.toThrow('provider unreachable');
+    expect(provider.cancelSubscription).not.toHaveBeenCalled();
+  });
+
+  it('reports nothing while billing is off', async () => {
+    fake.provider = null;
+    record.row = null;
+
+    await cancelOrgSubscriptionsAtProvider(ORG);
+
+    expect(mockReportBeforeCancelling).not.toHaveBeenCalled();
+  });
+
   it('cancels every live subscription of every customer, the stored one and the ones searched', async () => {
     const result = await cancelOrgSubscriptionsAtProvider(ORG);
 

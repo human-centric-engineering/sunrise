@@ -87,6 +87,7 @@
     "smoke:model-move": "TENANCY_MODE=multi tsx --env-file=.env.local scripts/smoke/model-move.ts",
     "smoke:billing-plans": "TENANCY_MODE=multi tsx --env-file=.env.local scripts/smoke/billing-plans.ts",
     "smoke:billing-webhook": "TENANCY_MODE=multi BILLING_PROVIDER=smoke tsx --env-file=.env.local scripts/smoke/billing-webhook.ts",
+    "smoke:billing-usage": "TENANCY_MODE=multi BILLING_PROVIDER=smoke tsx --env-file=.env.local scripts/smoke/billing-usage.ts",
     "smoke:send-message-target": "tsx --env-file=.env.local scripts/smoke/send-message-target.ts",
     "smoke:embed-visitor": "tsx --env-file=.env.local scripts/smoke/embed-visitor.ts",
     "postinstall": "prisma generate",

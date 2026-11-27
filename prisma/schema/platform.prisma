@@ -244,6 +244,10 @@ model OrgBillingSubscription {
   providerLive      Boolean                   @default(false)
   /// Whether the subscription ends when the current period does (t-1094).
   cancelAtPeriodEnd Boolean                   @default(false)
+  /// When the provider ended it (Stripe's `ended_at`); null while it has not.
+  /// A subscription ended before its period's end closes that period here,
+  /// not at the period's end (t-1097).
+  endedAt           DateTime?
   /// When `planKey`'s entitlements were last written to the org. null while
   /// a write has not finished, which re-assigning the plan heals.
   planAppliedAt     DateTime?
@@ -284,6 +288,98 @@ model BillingWebhookEvent {
   @@unique([provider, eventId])
   @@index([orgId])
   @@map("billing_webhook_event")
+}
+
+/// One billed meter's usage for one billing period (§139 t-1097,
+/// `.context/billing/billing.md#usage-reporting`): counted once after the
+/// period closes, recorded before it is sent, and sent with this row's id as
+/// the provider's identifier. Unique on (org, meter, period start), so a
+/// retried tick or a second instance never makes a second report. Only a
+/// metered item whose overage rule is `soft_cap` has one. Org-owned, names no
+/// person.
+model BillingUsageReport {
+  id              String                   @id @default(cuid())
+  /// The `BILLING_PROVIDER` key, customer and subscription it is reported to.
+  provider        String
+  customerRef     String
+  subscriptionRef String
+  /// The plan the org was on when the period closed, and its metered item.
+  planKey         String
+  meterKey        String
+  /// The provider's name for the meter (Stripe's meter `event_name`).
+  providerMeter   String
+  allowance       Int
+  periodStart     DateTime
+  /// The period's end, or when the subscription ended if that was earlier.
+  periodEnd       DateTime
+  /// The subscription's last period: it ended, or was cancelling at its end.
+  /// The provider has already invoiced it by the time it closes, so the
+  /// closing count is recorded and marked `LATE`, not sent.
+  lastPeriod      Boolean                  @default(false)
+  status          BillingUsageReportStatus @default(PENDING)
+  /// The count for the period, and what is reported: the excess over the
+  /// allowance. Null until the period is counted, which happens once.
+  used            Int?
+  quantity        Int?
+  countedAt       DateTime?
+  /// Running totals sent while a subscription cancels at period end: how
+  /// many, and the last quantity sent. Each send's identifier is the row's id
+  /// and this count.
+  runningSends    Int                      @default(0)
+  runningQuantity Int?
+  /// A send in progress: another instance leaves the row alone until this is
+  /// a few minutes old, so a send that crashed is retried.
+  sendingAt       DateTime?
+  sentAt          DateTime?
+
+  orgId String
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([orgId, meterKey, periodStart])
+  @@index([status])
+  @@map("billing_usage_report")
+}
+
+/// Where a usage report is (`.context/billing/billing.md#usage-reporting`).
+enum BillingUsageReportStatus {
+  /// The period is still open: only running totals are sent from it.
+  OPEN
+  /// Closed, waiting a few minutes to settle before it is counted.
+  PENDING
+  /// Counted, with an excess to send.
+  COUNTED
+  /// Sent to the provider.
+  SENT
+  /// Counted, and within the allowance: nothing to send.
+  NONE
+  /// Counted after the provider invoiced the period, so not sent.
+  LATE
+}
+
+/// A notice that an org is near, or at, the allowance of a metered item
+/// whose overage rule is `warn` (§139 t-1097). One per (org, meter, period
+/// start, threshold), inserted before the notice is sent, so a retried tick
+/// never sends it twice. Org-owned, names no person.
+model BillingUsageNotice {
+  id          String   @id @default(cuid())
+  meterKey    String
+  /// The start of the window the usage was counted in.
+  periodStart DateTime
+  /// `near` or `reached`.
+  threshold   String
+  used        Int
+  allowance   Int
+
+  orgId String
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  notifiedAt DateTime @default(now())
+
+  @@unique([orgId, meterKey, periodStart, threshold])
+  @@map("billing_usage_notice")
 }
 
 /// A subscription's state as it bears on access (`.context/billing/billing.md#the-adapter`).
