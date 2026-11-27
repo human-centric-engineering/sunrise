@@ -3,11 +3,18 @@
  *
  * - `signupPlanOf` / `signupPlanOffer`: only a registered plan's key, only
  *   while billing is on; anything else is dropped.
- * - `takeUpSignupPlan`: a free plan is applied and then removed; a paid one
- *   is left for the founder's first visit by the org's setup (`paid: false`)
- *   and, from the billing page (`paid: true`), removed and sent to checkout.
- *   Nothing happens while the org awaits its founder or billing is off; a
- *   key the app no longer registers is dropped.
+ * - A free plan is part of the org's setup: removed then applied, only once
+ *   no hook this process runs is owed; put back when the assignment fails;
+ *   dropped when the provider manages the org's plan. The sweep applies the
+ *   ones setup could not.
+ * - A paid plan is the owner's to start: the take-up answers its checkout and
+ *   leaves it waiting, for the billing page to offer again; a subscription
+ *   settles it. `dismissSignupPlan` removes it.
+ * - Where a signup goes on to: the paid plan's checkout page, for the form,
+ *   OAuth and the verification link (`signupContinuationForUser`).
+ * - Nothing happens while the org awaits its founder, billing is off or the
+ *   app's plans failed to register; a key the app no longer registers is
+ *   dropped.
  *
  * The settings slice's own read-modify-write is org-settings.test.ts; here it
  * is mocked at the module, with what it is asked to take asserted.
@@ -23,7 +30,11 @@ const PRO = { key: 'pro', label: 'Pro', priceLookupKey: 'pro_monthly' };
 vi.mock('@/lib/billing/plans', () => ({
   billingPlansFailed: () => state.plansFailed,
   planOf: (key: string) => ({ starter: FREE, pro: PRO })[key],
+  registeredPlans: () => [FREE, PRO],
 }));
+
+const hooks = vi.hoisted(() => ({ keys: [] as string[] }));
+vi.mock('@/lib/tenancy/org-created-hooks', () => ({ orgCreatedHookKeys: () => hooks.keys }));
 
 const errors = vi.hoisted(() => ({
   BillingPlanError: class BillingPlanError extends Error {
@@ -36,14 +47,20 @@ const errors = vi.hoisted(() => ({
   },
 }));
 const mockAssignPlan = vi.hoisted(() => vi.fn());
+const mockLoadSubscription = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/billing/subscriptions', () => ({
   assignPlan: mockAssignPlan,
+  loadOrgSubscription: mockLoadSubscription,
   BillingPlanError: errors.BillingPlanError,
 }));
 const mockStartCheckout = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/billing/checkout', () => ({ startCheckout: mockStartCheckout }));
 
-const db = vi.hoisted(() => ({ org: { findUnique: vi.fn() } }));
+const db = vi.hoisted(() => ({
+  org: { findUnique: vi.fn() },
+  orgMembership: { findMany: vi.fn() },
+  $queryRaw: vi.fn(),
+}));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 
 const mockTake = vi.hoisted(() => vi.fn());
@@ -62,6 +79,11 @@ vi.mock('@/lib/logging', () => ({
 
 import {
   applyFreeSignupPlan,
+  applyWaitingFreeSignupPlans,
+  dismissSignupPlan,
+  pendingSignupPlan,
+  signupContinuation,
+  signupContinuationForUser,
   signupPlanOf,
   signupPlanOffer,
   takeUpSignupPlan,
@@ -88,6 +110,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.billingOn = true;
   state.plansFailed = false;
+  hooks.keys = [];
+  mockLoadSubscription.mockResolvedValue(null);
   mockAssignPlan.mockResolvedValue({ changed: true, previousPlanKey: null });
   mockStartCheckout.mockResolvedValue({ url: 'https://checkout.example/c/1' });
 });
@@ -118,19 +142,82 @@ describe('signupPlanOf', () => {
   });
 });
 
-describe('takeUpSignupPlan — a free plan', () => {
+describe('where a signup goes on to', () => {
+  it('goes on to the checkout page for a paid plan, and to the landing route otherwise', () => {
+    expect(signupContinuation(signupPlanOffer('pro'))).toBe('/admin/billing?signup=plan');
+    expect(signupContinuation(signupPlanOffer('starter'))).toBeNull();
+    expect(signupContinuation(null)).toBeNull();
+  });
+
+  function owns(...settings: unknown[]) {
+    db.orgMembership.findMany.mockResolvedValue(settings.map((s) => ({ org: { settings: s } })));
+  }
+
+  it('sends a verification link on to checkout when an org the person owns waits on a paid plan', async () => {
+    // Still awaiting its founder when the link is sent: that does not matter here.
+    owns({ signupPlan: 'pro', awaitingFounder: true });
+
+    expect(await signupContinuationForUser(FOUNDER)).toBe('/admin/billing?signup=plan');
+    expect(db.orgMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: FOUNDER, role: 'OWNER' } })
+    );
+  });
+
+  it('sends it to the landing route for a free plan, an unknown one, or no org waiting', async () => {
+    owns({ signupPlan: 'starter' });
+    expect(await signupContinuationForUser(FOUNDER)).toBeNull();
+
+    owns({ signupPlan: 'legacy' });
+    expect(await signupContinuationForUser(FOUNDER)).toBeNull();
+
+    owns();
+    expect(await signupContinuationForUser(FOUNDER)).toBeNull();
+  });
+
+  it('never throws: a failed read sends the link to the landing route', async () => {
+    db.orgMembership.findMany.mockRejectedValue(new Error('db down'));
+
+    expect(await signupContinuationForUser(FOUNDER)).toBeNull();
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('answers nothing while billing is off', async () => {
+    state.billingOn = false;
+
+    expect(await signupContinuationForUser(FOUNDER)).toBeNull();
+    expect(db.orgMembership.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('pendingSignupPlan — what the billing page offers', () => {
+  it('offers a paid plan still waiting', () => {
+    expect(pendingSignupPlan({ signupPlan: 'pro' })).toEqual({ key: 'pro', label: 'Pro' });
+  });
+
+  it('offers nothing for a free plan, an unknown one, none, or an org awaiting its founder', () => {
+    expect(pendingSignupPlan({ signupPlan: 'starter' })).toBeNull();
+    expect(pendingSignupPlan({ signupPlan: 'legacy' })).toBeNull();
+    expect(pendingSignupPlan({})).toBeNull();
+    expect(pendingSignupPlan({ signupPlan: 'pro', awaitingFounder: true })).toBeNull();
+  });
+
+  it('offers nothing while the app’s plans failed to register', () => {
+    state.plansFailed = true;
+    expect(pendingSignupPlan({ signupPlan: 'pro' })).toBeNull();
+  });
+});
+
+describe('a free plan — part of the org’s setup', () => {
   it('removes it, then applies it, and audits it as the founder’s', async () => {
     waiting('starter');
     takeAsStored('starter');
 
-    const result = await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER });
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(true);
 
-    expect(result).toEqual({ kind: 'applied', planKey: 'starter' });
     expect(mockAssignPlan).toHaveBeenCalledWith(ORG, 'starter');
     expect(mockTake.mock.invocationCallOrder[0]).toBeLessThan(
       mockAssignPlan.mock.invocationCallOrder[0]
     );
-    expect(mockStartCheckout).not.toHaveBeenCalled();
     expect(mockAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: FOUNDER,
@@ -142,36 +229,79 @@ describe('takeUpSignupPlan — a free plan', () => {
     );
   });
 
-  it('puts it back when applying it fails, so the next caller tries again', async () => {
+  it('waits while a hook this process runs is still owed, so a default it writes cannot replace it', async () => {
+    hooks.keys = ['app.seed'];
+    waiting('starter', { orgCreated: { owed: ['app.seed'], source: 'signup' } });
+
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
+    expect(mockTake).not.toHaveBeenCalled();
+    expect(mockAssignPlan).not.toHaveBeenCalled();
+  });
+
+  it('is not held back by a hook no process registers any more', async () => {
+    hooks.keys = ['app.seed'];
+    waiting('starter', { orgCreated: { owed: ['app.removed'], source: 'signup' } });
+    takeAsStored('starter');
+
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(true);
+  });
+
+  it('waits on an owed record this version cannot read: a newer version runs its hooks', async () => {
+    waiting('starter', { orgCreated: { owed: 'not-a-list', v: 9 } });
+
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
+    expect(mockTake).not.toHaveBeenCalled();
+  });
+
+  it('puts it back when the assignment fails, which changed nothing, and logs it', async () => {
     waiting('starter');
     takeAsStored('starter');
     mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
 
-    await expect(takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).rejects.toThrow(
-      'lock wait timeout'
-    );
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
     expect(mockRestore).toHaveBeenCalledWith(ORG, 'starter');
     expect(mockAudit).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      'billing: could not apply the plan chosen at signup',
+      expect.any(Error),
+      { orgId: ORG }
+    );
+  });
+
+  it('tries a put-back that clashed with another settings write again', async () => {
+    waiting('starter');
+    takeAsStored('starter');
+    mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
+    mockRestore.mockRejectedValueOnce(conflict()).mockResolvedValueOnce(true);
+
+    await applyFreeSignupPlan(ORG, FOUNDER);
+
+    expect(mockRestore).toHaveBeenCalledTimes(2);
+    expect(logger.error).not.toHaveBeenCalledWith(
+      'billing: could not put back the plan chosen at signup',
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it('drops it when the provider manages the org’s plan: the owner already subscribed', async () => {
+    waiting('starter');
+    takeAsStored('starter');
+    mockAssignPlan.mockRejectedValue(
+      new errors.BillingPlanError('PROVIDER_MANAGED', 'The provider manages this plan')
+    );
+
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
+    expect(mockTake).toHaveBeenCalledTimes(1);
+    expect(mockRestore).not.toHaveBeenCalled();
   });
 
   it('applies nothing when another caller took it first', async () => {
     waiting('starter');
     mockTake.mockResolvedValue(null);
 
-    expect(await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
     expect(mockAssignPlan).not.toHaveBeenCalled();
-  });
-
-  it('applies it even while a hook stays owed, so it never waits on a hook that keeps failing', async () => {
-    waiting('starter', { orgCreated: { owed: ['app.removed'], source: 'signup' } });
-    takeAsStored('starter');
-
-    expect(await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).toEqual({
-      kind: 'applied',
-      planKey: 'starter',
-    });
   });
 
   it('writes no audit row when the org was already on it', async () => {
@@ -179,102 +309,133 @@ describe('takeUpSignupPlan — a free plan', () => {
     takeAsStored('starter');
     mockAssignPlan.mockResolvedValue({ changed: false, previousPlanKey: 'starter' });
 
-    await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER });
+    await applyFreeSignupPlan(ORG, FOUNDER);
 
     expect(mockAudit).not.toHaveBeenCalled();
   });
-});
 
-describe('takeUpSignupPlan — a paid plan', () => {
-  it('is left waiting by the org’s setup, for the founder’s first visit', async () => {
+  it('leaves a paid plan alone: it is the owner’s to start', async () => {
     waiting('pro');
 
-    const result = await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER });
-
-    expect(result).toEqual({ kind: 'none' });
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(false);
     expect(mockTake).not.toHaveBeenCalled();
     expect(mockStartCheckout).not.toHaveBeenCalled();
   });
 
-  it('is removed, then sent to checkout for that plan, from the billing page', async () => {
+  it('is applied by the route too, once the setup is done', async () => {
+    waiting('starter');
+    takeAsStored('starter');
+
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({
+      kind: 'applied',
+      planKey: 'starter',
+    });
+  });
+});
+
+describe('applyWaitingFreeSignupPlans — the sweep', () => {
+  it('applies each waiting free plan the select finds, with no actor', async () => {
+    db.$queryRaw.mockResolvedValue([{ id: ORG }]);
+    waiting('starter');
+    takeAsStored('starter');
+
+    expect(await applyWaitingFreeSignupPlans()).toEqual({ orgs: 1, applied: 1 });
+    expect(mockAudit).toHaveBeenCalledWith(expect.objectContaining({ userId: null }));
+  });
+
+  it('selects by the registered free plans and the hooks this process runs', async () => {
+    hooks.keys = ['app.seed'];
+    db.$queryRaw.mockResolvedValue([]);
+
+    await applyWaitingFreeSignupPlans();
+
+    const values = db.$queryRaw.mock.calls[0].slice(1);
+    expect(values).toEqual(expect.arrayContaining([['starter'], ['app.seed']]));
+  });
+
+  it('counts only what it applied, so a plan that keeps failing is not work', async () => {
+    db.$queryRaw.mockResolvedValue([{ id: ORG }]);
+    waiting('starter');
+    takeAsStored('starter');
+    mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
+
+    expect(await applyWaitingFreeSignupPlans()).toEqual({ orgs: 1, applied: 0 });
+  });
+
+  it('makes no query while billing is off or the plans failed to register', async () => {
+    state.billingOn = false;
+    expect(await applyWaitingFreeSignupPlans()).toEqual({ orgs: 0, applied: 0 });
+    state.billingOn = true;
+    state.plansFailed = true;
+    expect(await applyWaitingFreeSignupPlans()).toEqual({ orgs: 0, applied: 0 });
+    expect(db.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('a paid plan — the owner’s to start', () => {
+  it('answers its checkout and leaves it waiting, for the billing page to offer again', async () => {
     waiting('pro');
-    takeAsStored('pro');
 
-    const result = await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER });
-
-    expect(result).toEqual({
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({
       kind: 'checkout',
       planKey: 'pro',
       url: 'https://checkout.example/c/1',
     });
-    expect(mockTake.mock.invocationCallOrder[0]).toBeLessThan(
-      mockStartCheckout.mock.invocationCallOrder[0]
-    );
     expect(mockStartCheckout).toHaveBeenCalledWith(ORG, 'pro');
+    expect(mockTake).not.toHaveBeenCalled();
     expect(mockAssignPlan).not.toHaveBeenCalled();
   });
 
-  it('starts no checkout when another caller took it first', async () => {
+  it('throws a failed checkout for the route to answer, still waiting', async () => {
     waiting('pro');
-    mockTake.mockResolvedValue(null);
+    mockStartCheckout.mockRejectedValue(new Error('provider 503'));
 
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
-    expect(mockStartCheckout).not.toHaveBeenCalled();
+    await expect(takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).rejects.toThrow('provider 503');
+    expect(mockTake).not.toHaveBeenCalled();
   });
 
-  it('throws the checkout’s refusal for the route to answer, with the plan already taken', async () => {
+  it('starts no second checkout over a subscription: the choice is settled and removed', async () => {
     waiting('pro');
     takeAsStored('pro');
-    mockStartCheckout.mockRejectedValue(new Error('PRICE_MISSING'));
+    mockLoadSubscription.mockResolvedValue({ providerManaged: true });
 
-    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
-      'PRICE_MISSING'
-    );
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
+    expect(mockStartCheckout).not.toHaveBeenCalled();
     expect(mockTake).toHaveBeenCalledTimes(1);
+  });
+
+  it('is removed when the owner chooses not to take it up', async () => {
+    takeAsStored('pro');
+
+    expect(await dismissSignupPlan(ORG)).toBe('pro');
+    mockTake.mockResolvedValue(null);
+    expect(await dismissSignupPlan(ORG)).toBeNull();
   });
 });
 
-describe('takeUpSignupPlan — nothing to do', () => {
+describe('nothing to do', () => {
   it('answers none when nothing is waiting, or there is no such org', async () => {
     waiting(null);
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
     db.org.findUnique.mockResolvedValue(null);
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
     expect(mockTake).not.toHaveBeenCalled();
   });
 
-  it('does nothing while the org still awaits its founder: the app’s setup has not run', async () => {
-    waiting('starter', { awaitingFounder: true });
+  it('does nothing while the org still awaits its founder', async () => {
+    waiting('pro', { awaitingFounder: true });
 
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
-    expect(mockAssignPlan).not.toHaveBeenCalled();
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
+    expect(mockStartCheckout).not.toHaveBeenCalled();
   });
 
-  it('leaves it waiting while billing is off', async () => {
+  it('leaves it waiting while billing is off, or the app’s plans failed to register', async () => {
     waiting('pro');
     state.billingOn = false;
-
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
-    expect(mockTake).not.toHaveBeenCalled();
-  });
-
-  it('leaves it waiting while the app’s plans failed to register, rather than drop a valid choice', async () => {
-    waiting('pro');
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
+    state.billingOn = true;
     state.plansFailed = true;
-
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({ kind: 'none' });
     expect(mockTake).not.toHaveBeenCalled();
   });
 
@@ -282,11 +443,10 @@ describe('takeUpSignupPlan — nothing to do', () => {
     waiting('legacy');
     takeAsStored('legacy');
 
-    expect(await takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).toEqual({
+    expect(await takeUpSignupPlan(ORG, { actorUserId: FOUNDER })).toEqual({
       kind: 'dropped',
       planKey: 'legacy',
     });
-    expect(mockAssignPlan).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('no longer registered'),
       expect.objectContaining({ orgId: ORG, planKey: 'legacy' })
@@ -294,92 +454,17 @@ describe('takeUpSignupPlan — nothing to do', () => {
   });
 
   it('tries a take that clashed with another settings write again', async () => {
-    waiting('pro');
-    const clash = new Prisma.PrismaClientKnownRequestError('write conflict', {
-      code: 'P2034',
-      clientVersion: 'test',
-    });
-    mockTake.mockRejectedValueOnce(clash).mockResolvedValueOnce('pro');
+    waiting('starter');
+    mockTake.mockRejectedValueOnce(conflict()).mockResolvedValueOnce('starter');
 
-    const result = await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER });
-
-    expect(result.kind).toBe('checkout');
+    expect(await applyFreeSignupPlan(ORG, FOUNDER)).toBe(true);
     expect(mockTake).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('applyFreeSignupPlan', () => {
-  it('never throws: a failure is logged at error', async () => {
-    waiting('starter');
-    takeAsStored('starter');
-    mockAssignPlan.mockRejectedValue(new Error('boom'));
-
-    await expect(applyFreeSignupPlan(ORG, FOUNDER)).resolves.toBeUndefined();
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('could not apply'),
-      expect.any(Error),
-      { orgId: ORG }
-    );
+function conflict() {
+  return new Prisma.PrismaClientKnownRequestError('write conflict', {
+    code: 'P2034',
+    clientVersion: 'test',
   });
-});
-
-describe('takeUpSignupPlan — a take-up that fails part-way', () => {
-  it('drops a free plan the org can no longer take, since the provider manages its plan', async () => {
-    waiting('starter');
-    takeAsStored('starter');
-    mockAssignPlan.mockRejectedValue(
-      new errors.BillingPlanError('PROVIDER_MANAGED', 'The provider manages this plan')
-    );
-
-    expect(await takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).toEqual({
-      kind: 'none',
-    });
-    expect(mockTake).toHaveBeenCalledTimes(1);
-    expect(mockRestore).not.toHaveBeenCalled();
-    expect(mockAudit).not.toHaveBeenCalled();
-  });
-
-  it('does not put a paid plan back after any checkout failure: a later visit would start one unasked', async () => {
-    waiting('pro');
-    takeAsStored('pro');
-    mockStartCheckout.mockRejectedValue(new Error('provider 503'));
-
-    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
-      'provider 503'
-    );
-    expect(mockRestore).not.toHaveBeenCalled();
-  });
-
-  it('tries a put-back that clashed with another settings write again', async () => {
-    waiting('starter');
-    takeAsStored('starter');
-    mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
-    const clash = new Prisma.PrismaClientKnownRequestError('write conflict', {
-      code: 'P2034',
-      clientVersion: 'test',
-    });
-    mockRestore.mockRejectedValueOnce(clash).mockResolvedValueOnce(true);
-
-    await expect(takeUpSignupPlan(ORG, { paid: false, actorUserId: FOUNDER })).rejects.toThrow(
-      'lock wait timeout'
-    );
-    expect(mockRestore).toHaveBeenCalledTimes(2);
-    expect(logger.error).not.toHaveBeenCalled();
-  });
-
-  it('still rethrows the assignment failure when putting the plan back fails too', async () => {
-    waiting('starter');
-    takeAsStored('starter');
-    mockAssignPlan.mockRejectedValue(new Error('lock wait timeout'));
-    mockRestore.mockRejectedValue(new Error('database gone'));
-
-    await expect(takeUpSignupPlan(ORG, { paid: true, actorUserId: FOUNDER })).rejects.toThrow(
-      'lock wait timeout'
-    );
-    expect(logger.error).toHaveBeenCalledWith(
-      'billing: could not put back the plan chosen at signup',
-      expect.any(Error),
-      { orgId: ORG, planKey: 'starter' }
-    );
-  });
-});
+}

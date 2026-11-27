@@ -58,6 +58,7 @@ import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 import { runWaitlistRetention } from '@/lib/waitlist/retention';
 import { retryOwedOrgCreatedHooks } from '@/lib/tenancy/org-created-hooks';
 import { sweepAbandonedSignupOrgs } from '@/lib/tenancy/signup-org';
+import { applyWaitingFreeSignupPlans } from '@/lib/billing/signup-plan';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -306,6 +307,21 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     run: () => sweepAbandonedSignupOrgs(),
     // Batch-capped: a deletion may mean more behind it.
     foundWork: (r) => r.deleted > 0,
+  }),
+  job({
+    name: 'signupPlans',
+    // Once, not once per org: it selects only the orgs with a free plan from
+    // their signup waiting on a finished setup (§139 t-1096). With billing off
+    // or no free plan registered it makes no query.
+    scope: {
+      system: 'signupPlans: apply the free plans signups chose once their setup is done (t-1096)',
+    },
+    // The orgCreatedHooks job's own gap: a plan waits on a hook it retries.
+    intervalMs: 15 * MINUTE,
+    run: () => applyWaitingFreeSignupPlans(),
+    // A plan whose assignment keeps failing is not work: counting it would
+    // hold the idle gate open, as for orgCreatedHooks.
+    foundWork: (r) => r.applied > 0,
   }),
 ];
 

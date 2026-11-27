@@ -67,6 +67,7 @@ const BASE: OrgBillingView = {
   portalAvailable: true,
   customerElsewhere: false,
   installOrg: false,
+  signupPlan: null,
 };
 
 /** The rendered text with the app's own labels taken out. */

@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { SignupForm } from '@/components/forms/signup-form';
 import { BRAND } from '@/lib/brand';
-import { SIGNUP_PLAN_PARAM, signupPlanOffer } from '@/lib/billing/signup-plan';
+import { SIGNUP_PLAN_PARAM, signupContinuation, signupPlanOffer } from '@/lib/billing/signup-plan';
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('auth.signup.meta');
@@ -49,7 +49,7 @@ export default async function SignupPage({
           </p>
         )}
         <Suspense fallback={<div>{t('shared.loading')}</div>}>
-          <SignupForm signupPlan={offer?.key ?? null} />
+          <SignupForm signupPlan={offer?.key ?? null} continueTo={signupContinuation(offer)} />
         </Suspense>
 
         {/* Login Link */}

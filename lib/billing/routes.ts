@@ -8,11 +8,29 @@
 export const ORG_BILLING_PAGE_PATH = '/admin/billing';
 
 /**
- * What the billing page is opened with when the proxy sends a founder there
- * to take up the plan their signup chose (§139 t-1096), and the outcomes it
- * comes back with (`applied`, `dropped`, `failed`).
+ * What the billing page is opened with when a signup goes on to start the
+ * paid plan it chose (§139 t-1096), and the outcomes it comes back with
+ * (`applied`, `dropped`, `failed`).
  */
 export const SIGNUP_PLAN_QUERY = { key: 'signup', value: 'plan' } as const;
 
-/** Where the proxy sends an owner whose org has a signup plan waiting. */
+/**
+ * Where a signup that chose a paid plan goes on to once the person is signed
+ * in: the page that starts its checkout.
+ */
 export const SIGNUP_PLAN_PAGE = `${ORG_BILLING_PAGE_PATH}?${SIGNUP_PLAN_QUERY.key}=${SIGNUP_PLAN_QUERY.value}`;
+
+/**
+ * The verification callback's query parameter naming where the signup goes
+ * on to (`/verify-email/callback?next=…`).
+ */
+export const SIGNUP_NEXT_PARAM = 'next';
+
+/**
+ * Where a signup may go on to from the verification callback, from its
+ * `next` parameter: {@link SIGNUP_PLAN_PAGE} only, so the link cannot be
+ * turned into a redirect to anywhere else. `null` for the landing route.
+ */
+export function signupNextOf(next: string | null): string | null {
+  return next === SIGNUP_PLAN_PAGE ? SIGNUP_PLAN_PAGE : null;
+}

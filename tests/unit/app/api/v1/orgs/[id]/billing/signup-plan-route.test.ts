@@ -1,5 +1,5 @@
 /**
- * Unit Tests: POST /api/v1/orgs/[id]/billing/signup-plan (§139 t-1096)
+ * Unit Tests: POST and DELETE /api/v1/orgs/[id]/billing/signup-plan (§139 t-1096)
  *
  * Runs the REAL `withAuth`, the REAL default policy (asked about the resource
  * kind `org.billing`) and the REAL owner-only narrowing. The take-up itself
@@ -61,9 +61,13 @@ vi.mock('@/lib/billing/config', () => ({
 }));
 
 const mockTakeUp = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/billing/signup-plan', () => ({ takeUpSignupPlan: mockTakeUp }));
+const mockDismiss = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/billing/signup-plan', () => ({
+  takeUpSignupPlan: mockTakeUp,
+  dismissSignupPlan: mockDismiss,
+}));
 
-import { POST } from '@/app/api/v1/orgs/[id]/billing/signup-plan/route';
+import { DELETE, POST } from '@/app/api/v1/orgs/[id]/billing/signup-plan/route';
 import { BillingCheckoutError } from '@/lib/billing/checkout';
 import { BillingPlanError } from '@/lib/billing/subscriptions';
 import { __resetAuthorizationPolicyForTests } from '@/lib/auth/authorization';
@@ -87,6 +91,13 @@ function takeUp(orgId = ORG) {
     method: 'POST',
   }) as unknown as NextRequest;
   return POST(request, { params: Promise.resolve({ id: orgId }) });
+}
+
+function dismiss(orgId = ORG) {
+  const request = new Request(`http://localhost/api/v1/orgs/${orgId}/billing/signup-plan`, {
+    method: 'DELETE',
+  }) as unknown as NextRequest;
+  return DELETE(request, { params: Promise.resolve({ id: orgId }) });
 }
 
 async function json(res: Response) {
@@ -126,7 +137,7 @@ describe('the org’s OWNER', () => {
       planKey: 'pro',
       url: 'https://co.test/s',
     });
-    expect(mockTakeUp).toHaveBeenCalledWith(ORG, { paid: true, actorUserId: USER_ID });
+    expect(mockTakeUp).toHaveBeenCalledWith(ORG, { actorUserId: USER_ID });
     expect(mockAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: USER_ID,
@@ -209,6 +220,55 @@ describe('a free plan that cannot be applied', () => {
 
     expect(res.status).toBe(500);
     expect(mockAudit).not.toHaveBeenCalled();
+  });
+});
+
+describe('DELETE — the owner chooses not to take it up', () => {
+  it('removes the waiting plan, audited as a dismissal', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockDismiss.mockResolvedValue('pro');
+
+    const res = await dismiss();
+
+    expect(res.status).toBe(200);
+    expect((await json(res)).data).toEqual({ removed: 'pro' });
+    expect(mockDismiss).toHaveBeenCalledWith(ORG);
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        action: 'org.billing.signup_plan.dismiss',
+        entityId: ORG,
+        metadata: { planKey: 'pro' },
+      })
+    );
+  });
+
+  it('answers removed: null, unaudited, when nothing was waiting', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockDismiss.mockResolvedValue(null);
+
+    expect((await json(await dismiss())).data).toEqual({ removed: null });
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+
+  it('is told billing is off, and nothing is removed', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    billing.on = false;
+
+    const res = await dismiss();
+
+    expect(res.status).toBe(409);
+    expect(mockDismiss).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an ADMIN', ORG_ADMIN_ROLE],
+    ['a MEMBER', DEFAULT_ORG_ROLE],
+  ])('refuses %s, and nothing is removed', async (_label, role) => {
+    actingAs(role);
+
+    expect((await dismiss()).status).toBe(403);
+    expect(mockDismiss).not.toHaveBeenCalled();
   });
 });
 

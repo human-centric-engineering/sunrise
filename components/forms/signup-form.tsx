@@ -44,9 +44,16 @@ export interface SignupFormProps {
    * the server checks it again.
    */
   signupPlan?: string | null;
+  /**
+   * Where the signup goes on to once the person is signed in, instead of the
+   * landing route: the page that starts a paid plan's checkout (§139
+   * t-1096), for the form and the OAuth callback. The verification link's
+   * own continuation is decided on the server, from the org (resends too).
+   */
+  continueTo?: string | null;
 }
 
-export function SignupForm({ signupPlan = null }: SignupFormProps = {}) {
+export function SignupForm({ signupPlan = null, continueTo = null }: SignupFormProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { track, identify } = useAnalytics();
@@ -116,7 +123,7 @@ export function SignupForm({ signupPlan = null }: SignupFormProps = {}) {
 
             if (session) {
               // Session created → verification not required or auto-verified (OAuth)
-              router.push(AUTH_LANDING_ROUTE);
+              router.push(continueTo ?? AUTH_LANDING_ROUTE);
             } else {
               // No session → verification required, show "check email" page
               router.push('/verify-email?email=' + encodeURIComponent(data.email));
@@ -141,7 +148,7 @@ export function SignupForm({ signupPlan = null }: SignupFormProps = {}) {
       <NoScriptNotice />
 
       {/* OAuth Buttons */}
-      <OAuthButtons callbackUrl={AUTH_LANDING_ROUTE} signupPlan={signupPlan} />
+      <OAuthButtons callbackUrl={continueTo ?? AUTH_LANDING_ROUTE} signupPlan={signupPlan} />
 
       {/* Email/Password Form */}
       <form

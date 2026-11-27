@@ -1469,7 +1469,12 @@
         "opening": "Taking you to the payment page for the plan you chose when you signed up…",
         "applied": "This organisation is now on the plan you chose when you signed up.",
         "dropped": "The plan you chose when you signed up is no longer offered. Choose one below.",
-        "failed": "The plan you chose when you signed up could not be set up. Choose one below."
+        "failed": "The payment page for the plan you chose could not be opened. Try again below.",
+        "waiting": "You chose the {plan} plan when you signed up, but have not subscribed to it yet.",
+        "continue": "Subscribe to {plan}",
+        "continuing": "Opening…",
+        "dismiss": "Choose a different plan",
+        "continueFailed": "The payment page could not be opened. Try again."
       }
     },
     "waitlist": {

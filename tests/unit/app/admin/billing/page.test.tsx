@@ -58,6 +58,13 @@ vi.mock('@/components/admin/billing/signup-plan-take-up', () => ({
     <div data-testid="signup-plan-take-up">{orgId}</div>
   ),
 }));
+vi.mock('@/components/admin/billing/signup-plan-notice', () => ({
+  SignupPlanNotice: ({ orgId, planLabel }: { orgId: string; planLabel: string }) => (
+    <div data-testid="signup-plan-notice">
+      {orgId}:{planLabel}
+    </div>
+  ),
+}));
 
 import BillingPage from '@/app/admin/billing/page';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
@@ -67,7 +74,9 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const ORG = { id: 'org-entered', name: 'Acme' };
-const BILLING = { orgId: ORG.id, plan: null, mayChange: true };
+const BILLING = { orgId: ORG.id, plan: null, mayChange: true, signupPlan: null };
+/** The org's signup chose Pro, and it has not subscribed yet. */
+const WAITING = { ...BILLING, signupPlan: { key: 'pro', label: 'Pro' } };
 
 const page = (query: Record<string, string> = {}) =>
   BillingPage({ searchParams: Promise.resolve(query) });
@@ -181,22 +190,45 @@ describe('BillingPage — a plan chosen at signup (§139 t-1096)', () => {
     vi.mocked(requestActingOrg).mockResolvedValue(ORG);
   });
 
-  it('takes the plan up for the owner the proxy sent here', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(BILLING));
+  it('starts the waiting plan’s checkout for the owner the signup sent here', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(WAITING));
 
     render(await page({ signup: 'plan' }));
 
     expect(screen.getByTestId('signup-plan-take-up')).toHaveTextContent(ORG.id);
+    expect(screen.queryByTestId('signup-plan-notice')).not.toBeInTheDocument();
   });
 
-  it('does not for a viewer who cannot pay, nor without the query', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ ...BILLING, mayChange: false }));
-    render(await page({ signup: 'plan' }));
+  it('does not for a viewer who cannot pay, nor with no paid plan waiting', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ ...WAITING, mayChange: false }));
+    const { unmount } = render(await page({ signup: 'plan' }));
     expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('signup-plan-notice')).not.toBeInTheDocument();
+    unmount();
 
     vi.mocked(serverFetch).mockResolvedValue(apiSuccess(BILLING));
-    render(await page());
+    render(await page({ signup: 'plan' }));
     expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
+  });
+
+  it('offers the waiting plan to the owner on any other visit, until it is settled', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(WAITING));
+
+    render(await page());
+
+    expect(screen.getByTestId('signup-plan-notice')).toHaveTextContent(`${ORG.id}:Pro`);
+    expect(screen.queryByTestId('signup-plan-take-up')).not.toBeInTheDocument();
+  });
+
+  it('offers it again beside a failed checkout', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(WAITING));
+
+    render(await page({ signup: 'failed' }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The payment page for the plan you chose could not be opened. Try again below.'
+    );
+    expect(screen.getByTestId('signup-plan-notice')).toBeInTheDocument();
   });
 
   it.each([
@@ -208,7 +240,7 @@ describe('BillingPage — a plan chosen at signup (§139 t-1096)', () => {
     ],
     [
       'failed',
-      'The plan you chose when you signed up could not be set up. Choose one below.',
+      'The payment page for the plan you chose could not be opened. Try again below.',
       'alert',
     ],
   ])('says what happened when it comes back with ?signup=%s', async (outcome, words, role) => {

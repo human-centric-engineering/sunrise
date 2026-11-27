@@ -70,6 +70,7 @@ vi.mock('@/lib/api/context', () => ({ getRouteLogger: vi.fn(async () => mockLog)
 vi.mock('@/lib/logging', () => ({ logger: mockLog }));
 
 vi.mock('@/lib/billing/plans', () => ({
+  billingPlansFailed: () => false,
   registeredPlans: () => [
     { key: 'free', label: 'Free', description: '', priceLookupKey: null },
     { key: 'pro', label: 'Pro', description: 'More of everything', priceLookupKey: 'pro_monthly' },
@@ -144,6 +145,7 @@ interface Answer {
     } | null;
     usage: Array<{ key: string; used: number | null; limit: number | null }> | null;
     plans: Array<{ key: string; current: boolean }>;
+    signupPlan: { key: string; label: string } | null;
     mayChange: boolean;
     portalAvailable: boolean;
     customerElsewhere: boolean;
@@ -203,6 +205,46 @@ beforeEach(() => {
       },
     ],
     unregistered: {},
+  });
+});
+
+describe('the plan a signup chose (§139 t-1096)', () => {
+  function signupChose(planKey: string) {
+    mockDb.org.findUnique.mockImplementation(async (args: { where: { id: string } }) => ({
+      id: args.where.id,
+      status: 'ACTIVE',
+      name: 'Acme',
+      settings: { signupPlan: planKey },
+    }));
+  }
+
+  it('offers a paid plan still waiting while the org has no subscription', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    signupChose('pro');
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue(null);
+
+    const { data } = await json(await read());
+
+    expect(data?.signupPlan).toEqual({ key: 'pro', label: 'Pro' });
+  });
+
+  it('offers nothing once the org subscribed: a subscription settles it', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    signupChose('pro');
+
+    const { data } = await json(await read());
+
+    expect(data?.signupPlan).toBeNull();
+  });
+
+  it('offers nothing for a free plan, which the setup applies', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    signupChose('free');
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue(null);
+
+    const { data } = await json(await read());
+
+    expect(data?.signupPlan).toBeNull();
   });
 });
 

@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 
 /**
- * SignupPlanTakeUp (§139 t-1096): on the billing page the proxy sent a
- * founder to, it asks the route once to take up the plan their signup chose.
+ * SignupPlanTakeUp (§139 t-1096): on the billing page a paid-plan signup goes
+ * on to, it asks the route once to take up the plan the signup chose.
  * A checkout is followed to the provider; anything else reloads the page with
  * what happened in the query, and nothing waiting with no query at all.
  *

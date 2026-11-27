@@ -46,6 +46,7 @@ import { logger } from '@/lib/logging';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { forgetOrgCap } from '@/lib/orchestration/llm/spend-caps';
 import { runAsCredentialLookup, runAsOrg } from '@/lib/tenancy/context';
+import { takeOrgSignupPlan } from '@/lib/tenancy/org-settings';
 
 /** What the ledger row says the webhook did with an event. */
 export type LedgerOutcome =
@@ -442,6 +443,9 @@ async function writeSubscription(
       writes = await applyPlan(orgId, plan, onTransaction(tx));
       toPlan = plan.key;
       planWritten = true;
+      // A subscription settles the plan the signup chose, whichever plan it
+      // is on, so the billing page stops offering it (§139 t-1096).
+      await takeOrgSignupPlan(orgId, () => true, onTransaction(tx));
     } else {
       logger.warn("billing: the subscription's price names no plan; the org's plan is unchanged", {
         provider: provider.key,

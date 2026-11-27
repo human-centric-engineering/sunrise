@@ -3,13 +3,14 @@
 /**
  * Takes up the plan an org's signup chose (§139 t-1096), on the billing page.
  *
- * The proxy sends the founder here (`/admin/billing?signup=plan`) on their
- * first visit to the landing route while their org has a signup plan
- * waiting. This asks `POST /api/v1/orgs/[id]/billing/signup-plan` once: a paid
- * plan answers a checkout, and the browser goes there. Anything else reloads
- * the page with what happened in the query (`?signup=applied`, `dropped`,
- * `failed`), which the page says; nothing waiting (already taken up, in
- * another tab say) reloads it with no query, saying nothing.
+ * A signup that chose a paid plan goes on to this page
+ * (`/admin/billing?signup=plan`) once the person is signed in: the email form,
+ * the Google button's callback, or the verification link's. This asks
+ * `POST /api/v1/orgs/[id]/billing/signup-plan` once: a paid plan answers a
+ * checkout, and the browser goes there. Anything else reloads the page with
+ * what happened in the query (`?signup=applied`, `dropped`, `failed`), which
+ * the page says; nothing to do reloads it with no query. While the plan still
+ * waits, the reloaded page offers it again (`<SignupPlanNotice>`).
  *
  * Rendered by the page only for the org's OWNER; the route refuses anyone
  * else whatever this renders.

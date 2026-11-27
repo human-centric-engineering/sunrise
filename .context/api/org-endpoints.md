@@ -736,6 +736,7 @@ What the console's billing page renders, in one call (§139 t-1095,
     }
   ],
   "plans": [{ "key": "pro", "label": "Pro", "description": "…", "current": true }],
+  "signupPlan": null,
   "mayChange": true,
   "portalAvailable": true,
   "customerElsewhere": false,
@@ -758,6 +759,9 @@ What the console's billing page renders, in one call (§139 t-1095,
   no longer uses, so its payments cannot be managed here, even after that
   subscription has ended.
 - `plans` holds only plans with a price.
+- `signupPlan` is the paid plan the org's signup chose, `{ key, label }`,
+  while it waits for its checkout (§139 t-1096), else `null`; never while the
+  org has a provider subscription.
 - `mayChange` is true for the org's OWNER acting in it, in a browser session:
   the caller the checkout and portal routes accept.
 - `portalAvailable` means the org has a customer at this install's provider
@@ -790,30 +794,36 @@ key); `already_subscribed` (the org has a live subscription: change plan in
 the portal); `no_customer` (portal only: the org has never been through a
 checkout); `install_org`.
 
-### Take up the plan chosen at signup
+### The plan chosen at signup
 
 ```
-POST /api/v1/orgs/[id]/billing/signup-plan
+POST   /api/v1/orgs/[id]/billing/signup-plan
+DELETE /api/v1/orgs/[id]/billing/signup-plan
 ```
 
-No body. When the org's signup link named a plan that has not been taken up
-(`Org.settings.signupPlan`), takes it up once (§139 t-1096,
-[Billing](../billing/billing.md#choosing-a-plan-at-signup)):
+The plan the org's signup link named, while it waits
+(`Org.settings.signupPlan`, §139 t-1096,
+[Billing](../billing/billing.md#choosing-a-plan-at-signup)). `POST` (no body)
+takes it up:
 
-| Answer                                  | When                                                             |
-| --------------------------------------- | ---------------------------------------------------------------- |
-| `{ outcome: 'checkout', planKey, url }` | A paid plan: the browser goes to `url`, as for checkout          |
-| `{ outcome: 'applied', planKey }`       | A free plan, now applied (`org.plan.assign`)                     |
-| `{ outcome: 'dropped', planKey }`       | The app no longer registers it                                   |
-| `{ outcome: 'none' }`                   | Nothing waiting, already taken up, or the org awaits its founder |
+| Answer                                  | When                                                                                                        |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `{ outcome: 'checkout', planKey, url }` | A paid plan: the browser goes to `url`, as for checkout. The plan stays waiting until a subscription starts |
+| `{ outcome: 'applied', planKey }`       | A free plan, now applied (`org.plan.assign`), the org's setup being finished                                |
+| `{ outcome: 'dropped', planKey }`       | The app no longer registers it                                                                              |
+| `{ outcome: 'none' }`                   | Nothing waiting, the setup not finished, the org awaits its founder, or it already has a subscription       |
 
-The billing page calls it when the proxy sends the founder there
-(`/admin/billing?signup=plan`). A checkout started writes an
+`DELETE` removes it, when the owner chooses a different plan: `{ removed:
+planKey | null }`, audited as `org.billing.signup_plan.dismiss`.
+
+A signup that chose a paid plan goes on to `/admin/billing?signup=plan`, which
+calls `POST`; while the plan waits, the billing read answers it as
+`signupPlan` and the page offers both. A checkout started writes an
 `org.billing.checkout` audit row with `metadata.source: 'signup'`.
 
 **Error Responses**: as checkout: `403 FORBIDDEN` (not the org's OWNER acting
 in it) · `409 CONFLICT` with `details.reason`: `billing_off`,
-`price_missing`, `install_org`.
+`price_missing`, `already_subscribed`, `install_org`.
 
 ### The billing webhook
 

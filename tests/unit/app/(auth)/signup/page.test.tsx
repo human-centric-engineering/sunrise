@@ -58,6 +58,8 @@ const mockOffer = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/billing/signup-plan', () => ({
   SIGNUP_PLAN_PARAM: 'plan',
   signupPlanOffer: mockOffer,
+  signupContinuation: (offer: { paid: boolean } | null) =>
+    offer?.paid ? '/admin/billing?signup=plan' : null,
 }));
 
 /** The page as Next renders it, with this query string. */

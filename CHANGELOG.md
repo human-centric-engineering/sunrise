@@ -82,19 +82,25 @@ release process.
   the org a self-serve signup founds (`Org.settings.signupPlan`,
   `ORG_SIGNUP_PLAN_KEY`, with `readOrgSignupPlan()`, `takeOrgSignupPlan()` and
   `restoreOrgSignupPlan()` in `lib/tenancy/org-settings.ts`). A free plan is
-  applied once the org's setup runs, after the app's org-created hooks; for a
-  paid one the proxy sends the org's OWNER from the landing route to
-  `/admin/billing?signup=plan`, before any welcome step, and the page starts
-  its checkout. The proxy sends an owner there at most once an hour per org
-  (the `sunrise-signup-plan-sent` cookie). New in `lib/tenancy/onboarding.ts`:
-  `landingRedirectFor()`, which `welcomeRedirectFor()` now wraps, answering
-  the location and the org whose plan it is for. New route
-  `POST /api/v1/orgs/[id]/billing/signup-plan` (the OWNER acting in the org,
-  as checkout). New module `lib/billing/signup-plan.ts` (`signupPlanOf()`,
-  `signupPlanOffer()`, `takeUpSignupPlan()`). Additive: `createSignupOrg()`
-  takes an optional `signupPlanKey`, and `signupOrgMemberships()` an optional
-  third argument. An unknown plan, an invited signup, an app resolver's `join`
-  or `install`, and billing off behave as before. See
+  applied once the org's setup is finished (no org-created hook this process
+  runs still owed): by `completeSignupOrg()`, else by the new `signupPlans`
+  maintenance task (15 min, system scope). A paid plan is the signup's next
+  step: the email form, the Google callback and the verification link go on
+  to `/admin/billing?signup=plan` (the verification callback follows only that
+  page from its `next` parameter), which starts its checkout. It waits until a
+  subscription starts (the webhook removes it) or the owner declines it; the
+  billing read answers it as `signupPlan` and the page offers it. New route
+  `POST` / `DELETE /api/v1/orgs/[id]/billing/signup-plan` (the OWNER acting in
+  the org, as checkout; `DELETE` audited as `org.billing.signup_plan.dismiss`).
+  New module `lib/billing/signup-plan.ts` (`signupPlanOf()`,
+  `signupPlanOffer()`, `signupContinuation()`, `signupContinuationForUser()`,
+  `pendingSignupPlan()`, `takeUpSignupPlan()`, `dismissSignupPlan()`,
+  `applyFreeSignupPlan()`, `applyWaitingFreeSignupPlans()`), and
+  `SIGNUP_PLAN_PAGE`, `SIGNUP_NEXT_PARAM` and `signupNextOf()` in
+  `lib/billing/routes.ts`. Additive: `createSignupOrg()` takes an optional
+  `signupPlanKey`, `signupOrgMemberships()` an optional third argument, and
+  `SignupForm` an optional `continueTo`. An unknown plan, an invited signup, an
+  app resolver's `join` or `install`, and billing off behave as before. See
   [`.context/billing/billing.md`](./.context/billing/billing.md#choosing-a-plan-at-signup).
 - **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
   0-based place in its document, written whenever chunks are (upload, rechunk,

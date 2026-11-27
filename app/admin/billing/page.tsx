@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 
 import { BillingSummary, type OrgBillingView } from '@/components/admin/billing/billing-summary';
+import { SignupPlanNotice } from '@/components/admin/billing/signup-plan-notice';
 import { SignupPlanTakeUp } from '@/components/admin/billing/signup-plan-take-up';
 import { API } from '@/lib/api/endpoints';
 import { loadServerData } from '@/lib/api/server-load';
@@ -26,9 +27,11 @@ export async function generateMetadata(): Promise<Metadata> {
  * `GET /api/v1/orgs/[id]/billing`, which says what the viewer may do: the
  * OWNER gets the checkout and portal buttons, everyone else the same page
  * read-only. It is where the provider sends the owner back to after a
- * checkout (`?checkout=success|cancelled`) or the portal, and where the proxy
- * sends a founder whose signup chose a plan (`?signup=plan`, §139 t-1096),
- * which it takes up.
+ * checkout (`?checkout=success|cancelled`) or the portal, and where a signup
+ * that chose a paid plan goes on to (`?signup=plan`, §139 t-1096), which
+ * starts its checkout. While that plan waits, the page offers it to the owner
+ * (`signupPlan` in the read), until a subscription starts or they choose
+ * another.
  *
  * With billing off the page does not exist, as its routes answer
  * `billing_off`, and its sidebar item is hidden. Billing that cannot be
@@ -86,9 +89,18 @@ export default async function BillingPage({
         </p>
       )}
 
-      {signup === SIGNUP_PLAN_QUERY.value && result?.ok && result.data.mayChange && (
-        <SignupPlanTakeUp orgId={result.data.orgId} />
-      )}
+      {/* The signup's continuation: start the paid plan's checkout at once. */}
+      {signup === SIGNUP_PLAN_QUERY.value &&
+        result?.ok &&
+        result.data.mayChange &&
+        result.data.signupPlan && <SignupPlanTakeUp orgId={result.data.orgId} />}
+      {/* Still waiting (checkout left or failed): offered until settled. */}
+      {signup !== SIGNUP_PLAN_QUERY.value &&
+        result?.ok &&
+        result.data.mayChange &&
+        result.data.signupPlan && (
+          <SignupPlanNotice orgId={result.data.orgId} planLabel={result.data.signupPlan.label} />
+        )}
       {(signup === 'applied' || signup === 'dropped' || signup === 'failed') && (
         <p
           role={signup === 'failed' ? 'alert' : 'status'}

@@ -370,9 +370,10 @@ export async function createSignupOrg(
  */
 export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {
   logger.info('Signup org founded', { orgId, ownerUserId });
-  // A free plan the signup chose goes on after the app's setup, so a default
-  // its org-created hook writes does not replace it (§139 t-1096). A paid one
-  // waits for the founder's first visit, which sends them to checkout.
+  // A free plan the signup chose goes on once the app's setup is done, so a
+  // default its org-created hook writes does not replace it; one a hook still
+  // owed holds back is applied by the `signupPlans` sweep (§139 t-1096). A
+  // paid one is the founder's to start: the signup goes on to its checkout.
   const setUp = async () => {
     await setUpCreatedOrg(orgId, ownerUserId);
     await applyFreeSignupPlan(orgId, ownerUserId);

@@ -1,19 +1,22 @@
 /**
- * Take up the plan an org's signup chose (§139 t-1096)
+ * The plan an org's signup chose (§139 t-1096)
  *
- * POST /api/v1/orgs/[id]/billing/signup-plan — no body. When the org's signup
- * link named a plan that has not been taken up yet, takes it up: a paid plan
- * answers `{ outcome: 'checkout', planKey, url }`, and the browser goes to
- * that checkout; a free one is applied, `{ outcome: 'applied', planKey }`.
- * Otherwise `{ outcome: 'none' }` (nothing waiting, already taken up, or a
- * free plan dropped because the owner has since subscribed), or
- * `{ outcome: 'dropped', planKey }` when the app no longer registers it. It is
- * taken up once: a second call answers `none`. The one exception is a free
- * plan whose assignment failed and changed nothing, which is put back for a
- * later call.
+ * POST /api/v1/orgs/[id]/billing/signup-plan — no body. Takes up the plan the
+ * org's signup link named: a paid plan answers `{ outcome: 'checkout',
+ * planKey, url }`, and the browser goes to that checkout. The plan **stays
+ * waiting** until a subscription starts (the webhook removes it), so an owner
+ * who leaves the checkout page can come back to it. A free one is applied,
+ * `{ outcome: 'applied', planKey }`, once the org's setup is done (it usually
+ * already was). Otherwise `{ outcome: 'none' }` (nothing waiting, setup not
+ * finished, or the org already subscribed), or `{ outcome: 'dropped',
+ * planKey }` when the app no longer registers it.
  *
- * The billing page calls it when the proxy sends the founder there
- * (`/admin/billing?signup=plan`) on their first visit to the landing route.
+ * DELETE /api/v1/orgs/[id]/billing/signup-plan — the owner chooses not to take
+ * it up: `{ removed: planKey | null }`. Audited as `org.billing.signup_plan.dismiss`.
+ *
+ * The signup's own continuation sends the founder to
+ * `/admin/billing?signup=plan`, which calls `POST`; the billing page offers it
+ * again while a paid plan waits.
  *
  * Only the org's OWNER, acting in it, in a browser session, as for a checkout
  * (`lib/billing/org-access.ts`). Refused: billing off (409 `billing_off`), and
@@ -30,7 +33,7 @@ import { BillingCheckoutError } from '@/lib/billing/checkout';
 import { billingEnabled, BILLING_OFF_MESSAGE } from '@/lib/billing/config';
 import { assertMayChangeBilling, billingGuard } from '@/lib/billing/org-access';
 import { billingErrorResponse } from '@/lib/billing/route-errors';
-import { takeUpSignupPlan } from '@/lib/billing/signup-plan';
+import { dismissSignupPlan, takeUpSignupPlan } from '@/lib/billing/signup-plan';
 import { BillingPlanError } from '@/lib/billing/subscriptions';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { getClientIP } from '@/lib/security/ip';
@@ -50,7 +53,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
 
   let result: Awaited<ReturnType<typeof takeUpSignupPlan>>;
   try {
-    result = await takeUpSignupPlan(id, { paid: true, actorUserId: session.user.id });
+    result = await takeUpSignupPlan(id, { actorUserId: session.user.id });
   } catch (error) {
     if (error instanceof BillingCheckoutError) return billingErrorResponse(error);
     if (error instanceof BillingPlanError) {
@@ -82,4 +85,32 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   }
   if (result.kind === 'none') return successResponse({ outcome: 'none' });
   return successResponse({ outcome: result.kind, planKey: result.planKey });
+}, RESOURCE);
+
+export const DELETE = withAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+  const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
+  assertMayChangeBilling(session, id);
+  if (!billingEnabled()) {
+    return billingErrorResponse(new BillingCheckoutError('BILLING_OFF', BILLING_OFF_MESSAGE));
+  }
+
+  const removed = await dismissSignupPlan(id);
+  if (removed !== null) {
+    logAdminAction({
+      userId: session.user.id,
+      action: 'org.billing.signup_plan.dismiss',
+      entityType: 'org',
+      entityId: id,
+      actingOrgId: id,
+      metadata: { planKey: removed },
+      clientIp: getClientIP(request),
+    });
+    log.info('Signup plan dismissed by the owner', {
+      orgId: id,
+      planKey: removed,
+      userId: session.user.id,
+    });
+  }
+  return successResponse({ removed });
 }, RESOURCE);

@@ -121,6 +121,14 @@ vi.mock('@/emails/change-email-approval', () => ({
   default: vi.fn(() => React.createElement('div', {}, 'Change Email Approval')),
 }));
 
+// Where a paid-plan signup goes on to (§139 t-1096); its own reads are
+// signup-plan.test.ts. Defaults to none, so every other case keeps its meaning.
+const mockContinuation = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/billing/signup-plan', () => ({
+  signupContinuationForUser: mockContinuation,
+  signupPlanOf: vi.fn(() => null),
+}));
+
 vi.mock('@/emails/reset-password', () => ({
   default: vi.fn(() => React.createElement('div', {}, 'Reset Password Email')),
 }));
@@ -173,8 +181,9 @@ describe('lib/auth/config - sendVerificationEmail callback', () => {
     VerifyEmailEmail = vi.mocked(verifyEmailTemplate.default);
     sendVerificationEmailHook = authConfig.sendVerificationEmailHook;
 
-    // Default: no invitation, email sending succeeds
+    // Default: no invitation, email sending succeeds, no paid plan waiting
     getValidInvitation.mockResolvedValue(null);
+    mockContinuation.mockResolvedValue(null);
     sendEmail.mockResolvedValue({ success: true, status: 'sent', id: 'email-123' });
   });
 
@@ -214,6 +223,32 @@ describe('lib/auth/config - sendVerificationEmail callback', () => {
             'https://example.com/verify?token=xyz&callbackURL=%2Fverify-email%2Fcallback',
         })
       );
+    });
+
+    it('sends a paid-plan signup’s link on to its checkout page, from the org', async () => {
+      const user = createMockUser({ id: 'user-40', email: 'pro@example.com', name: 'Pro' });
+      const url = 'https://example.com/verify?token=xyz&callbackURL=%2F';
+      mockContinuation.mockResolvedValue('/admin/billing?signup=plan');
+
+      await sendVerificationEmailHook({ user, url, token: 'xyz' });
+
+      expect(mockContinuation).toHaveBeenCalledWith('user-40');
+      const { verificationUrl } = VerifyEmailEmail.mock.calls[0][0] as { verificationUrl: string };
+      const callbackURL = new URL(verificationUrl).searchParams.get('callbackURL');
+      expect(callbackURL).toBe('/verify-email/callback?next=%2Fadmin%2Fbilling%3Fsignup%3Dplan');
+    });
+
+    it('does not ask for an email change: that link is not a signup', async () => {
+      parseEmailChangeToken.mockResolvedValue({ newEmail: 'x@example.com' });
+      const user = createMockUser({ id: 'user-41', email: 'x@example.com', name: 'X' });
+
+      await sendVerificationEmailHook({
+        user,
+        url: 'https://example.com/verify?token=xyz&callbackURL=%2F',
+        token: 'xyz',
+      });
+
+      expect(mockContinuation).not.toHaveBeenCalled();
     });
 
     it("should leave a caller's own callback path alone", async () => {

@@ -101,6 +101,14 @@ const mockApplyPlan = vi.hoisted(() =>
 );
 vi.mock('@/lib/billing/apply-plan', () => ({ applyPlan: mockApplyPlan }));
 
+// The settings slice's own read-modify-write is org-settings.test.ts; here,
+// that a subscription settles the plan a signup chose (§139 t-1096).
+const mockTakeSignupPlan = vi.hoisted(() => vi.fn(async () => null));
+vi.mock('@/lib/tenancy/org-settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tenancy/org-settings')>()),
+  takeOrgSignupPlan: mockTakeSignupPlan,
+}));
+
 // ─── The database ───────────────────────────────────────────────────────────
 
 interface RecordRow {
@@ -638,6 +646,33 @@ describe('lapsed subscriptions', () => {
     plans.list = plans.list.map((p) => (p.key === 'free' ? { ...p, aiBudgetUsd: 5 } : p));
     await deliver({ subscriptionRef: 'sub_1' });
     expect(mockForgetOrgCap).toHaveBeenCalledWith(ORG);
+  });
+});
+
+describe('the plan a signup chose (§139 t-1096)', () => {
+  it('is settled by a subscription that gives access, whichever plan it is on', async () => {
+    linkCustomer();
+    holds(sub('sub_1'));
+
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(mockTakeSignupPlan).toHaveBeenCalledTimes(1);
+    const [orgId, accept] = mockTakeSignupPlan.mock.calls[0] as unknown as [
+      string,
+      (key: string) => boolean,
+    ];
+    expect(orgId).toBe(ORG);
+    expect(accept('pro')).toBe(true);
+    expect(accept('team')).toBe(true);
+  });
+
+  it('is left waiting by an incomplete first payment, for the owner to try again', async () => {
+    linkCustomer();
+    holds(sub('sub_1', { status: 'incomplete', providerStatus: 'incomplete' }));
+
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(mockTakeSignupPlan).not.toHaveBeenCalled();
   });
 });
 

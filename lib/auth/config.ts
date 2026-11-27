@@ -13,6 +13,8 @@ import { resolveEmailTemplate } from '@/lib/email/registry';
 import { emailLocaleForUser } from '@/lib/email/locale';
 import { emailTranslator, type EmailLocale } from '@/lib/email/translate';
 import { logger } from '@/lib/logging';
+import { SIGNUP_NEXT_PARAM } from '@/lib/billing/routes';
+import { signupContinuationForUser } from '@/lib/billing/signup-plan';
 import { dispatchUserCreated, type RedeemedInvitation } from '@/lib/auth/user-created-hooks';
 import { linkWaitlistEntryToAccount } from '@/lib/waitlist/link';
 import type { InvitationMetadata } from '@/lib/validations/admin';
@@ -1006,9 +1008,16 @@ export async function sendVerificationEmailHook({
   // A change is marked, because the page cannot say "verified" or redirect for
   // one: the click may leave the user signed out, and on an unverified account
   // it moves the address without verifying it.
+  // A signup that chose a paid plan goes on to its checkout from the link
+  // (§139 t-1096), decided here from the org so a resend keeps it.
+  const next = emailChange ? null : await signupContinuationForUser(user.id);
   const callbackPath = emailChange
     ? '%2Fverify-email%2Fcallback%3FemailChanged%3D1'
-    : '%2Fverify-email%2Fcallback';
+    : next
+      ? encodeURIComponent(
+          `/verify-email/callback?${SIGNUP_NEXT_PARAM}=${encodeURIComponent(next)}`
+        )
+      : '%2Fverify-email%2Fcallback';
   // Only the default: a caller's own callback is left alone, not prefixed.
   const verificationUrl = url.replace(/callbackURL=%2F(?=&|$)/, `callbackURL=${callbackPath}`);
 
