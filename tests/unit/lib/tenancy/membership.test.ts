@@ -57,6 +57,7 @@ import {
   releaseFoundedSignupOrgs,
   writeNewUserMemberships,
 } from '@/lib/tenancy/membership';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 const mocks = {
   orgMembership: {
@@ -988,6 +989,42 @@ describe('the signup record (t-838)', () => {
       /^\(EXISTS \(SELECT 1 FROM "user" fu WHERE fu\.id = \? AND fu\."emailVerified"\) OR EXISTS \(SELECT 1 FROM session fs WHERE fs\."userId" = \?\)\)$/
     );
     expect(sqlValues(canAct)).toEqual([USER_ID, USER_ID]);
+  });
+
+  it('at multi, runs the founder’s batch in its own system scope: the raw clear is refused with none (t-1096)', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const scopes: unknown[] = [];
+    mocks.$transaction.mockImplementationOnce((ops: Promise<unknown>[]) => {
+      scopes.push(getTenantContext());
+      return Promise.all(ops);
+    });
+    mocks.$executeRaw.mockResolvedValueOnce(1);
+
+    const result = await writeNewUserMemberships(
+      USER_ID,
+      { membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE } },
+      db
+    );
+
+    expect(result).toEqual({ founded: OTHER_ORG });
+    expect(scopes).toEqual([{ orgId: null, source: 'system' }]);
+  });
+
+  it('at multi, enters no scope for a batch with no raw clear', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const scopes: unknown[] = [];
+    mocks.$transaction.mockImplementationOnce((ops: Promise<unknown>[]) => {
+      scopes.push(getTenantContext());
+      return Promise.all(ops);
+    });
+
+    await writeNewUserMemberships(
+      USER_ID,
+      { membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE } },
+      db
+    );
+
+    expect(scopes).toEqual([null]);
   });
 
   it('reports no founded org when the membership’s org carries no mark', async () => {

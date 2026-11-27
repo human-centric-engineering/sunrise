@@ -117,6 +117,10 @@ release process.
 
 ### Changed
 
+- **Billing audit rows record the plan as `metadata.plan` (§139 t-1096).**
+  `org.billing.checkout` wrote it as `planKey`, which the audit logger's secret
+  rule (a name ending in `key`) stored as `[REDACTED]`, so the row never said
+  which plan. A reader of `metadata.planKey` reads `metadata.plan` instead.
 - **The billing page says "set by platform staff" of a priced plan only
   (§139 t-1096).** `OrgBilling.subscription.assignedByHand` is now false for a
   plan with no price, which may be the one the founder chose at signup.
@@ -161,6 +165,14 @@ release process.
 
 ### Fixed
 
+- **A self-serve signup at `TENANCY_MODE=multi` writes its founder's
+  membership (§134 t-1062, found in §139 t-1096).** The batch that writes it
+  removes the signup org's awaiting-founder mark with raw SQL, on an auth
+  hook's stack that entered no org, and the data layer refuses raw SQL with
+  no tenant context at `multi`: the founder was left in no org, and the
+  sign-in heal failed the same way. The batch now runs in its own system
+  scope, `runAsFounderJoin()` (`lib/tenancy/context.ts`), with one caller,
+  `writeNewUserMemberships()`, pinned by `founder-release-sites.test.ts`.
 - **`runStructuredCompletion` keeps the cost of a call that fails (t-1105,
   #1260).** When neither attempt parses, the default error is now a
   `ProviderError` (code `structured_output_invalid`) whose `usage` is the

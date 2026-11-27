@@ -576,7 +576,8 @@ Decided at planning (2026-11-25):
   `not_applied` (recorded with a warning: the org holds another customer,
   already has a live subscription, or the subscription's metadata names
   another org), or `no_subscription`.
-- **Audit rows:** `org.billing.checkout` when an owner starts one, and
+- **Audit rows:** `org.billing.checkout` when an owner starts one (the plan
+  as `metadata.plan`), and
   `org.billing.sync`, with no user, when the webhook changed the org's plan
   or status: from and to, and what the plan wrote.
 - **`providerLive`** on the record is the adapter's `live`: whether the
@@ -803,7 +804,9 @@ it to the owner only.
 **Audit.** A free plan applied is `org.plan.assign` with
 `metadata.source: 'signup'`, the founder as the actor (none when the
 maintenance task applies it). A checkout started is `org.billing.checkout` with
-`source: 'signup'`; a plan declined is `org.billing.signup_plan.dismiss`.
+`metadata.plan` and `source: 'signup'`; a plan declined is
+`org.billing.signup_plan.dismiss` with `metadata.plan`. The field is `plan`, not
+`planKey`: the audit logger redacts a string under a name ending in `key`.
 
 **The billing page no longer says a free plan was "set by platform staff".**
 `assignedByHand` is now true only for a priced plan staff set by hand: a

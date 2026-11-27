@@ -180,7 +180,7 @@ describe('the org’s OWNER', () => {
         userId: USER_ID,
         action: 'org.billing.checkout',
         entityId: ORG,
-        metadata: { planKey: 'pro' },
+        metadata: { plan: 'pro' },
       })
     );
   });

@@ -143,7 +143,7 @@ describe('the org’s OWNER', () => {
         userId: USER_ID,
         action: 'org.billing.checkout',
         entityId: ORG,
-        metadata: { planKey: 'pro', source: 'signup' },
+        metadata: { plan: 'pro', source: 'signup' },
       })
     );
   });
@@ -238,7 +238,7 @@ describe('DELETE — the owner chooses not to take it up', () => {
         userId: USER_ID,
         action: 'org.billing.signup_plan.dismiss',
         entityId: ORG,
-        metadata: { planKey: 'pro' },
+        metadata: { plan: 'pro' },
       })
     );
   });

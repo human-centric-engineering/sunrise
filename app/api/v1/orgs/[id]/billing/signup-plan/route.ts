@@ -74,7 +74,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
       entityType: 'org',
       entityId: id,
       actingOrgId: id,
-      metadata: { planKey: result.planKey, source: 'signup' },
+      metadata: { plan: result.planKey, source: 'signup' },
       clientIp: getClientIP(request),
     });
     log.info('Billing checkout started for the signup plan', {
@@ -104,7 +104,7 @@ export const DELETE = withAuth<{ id: string }>(async (request, session, { params
       entityType: 'org',
       entityId: id,
       actingOrgId: id,
-      metadata: { planKey: removed },
+      metadata: { plan: removed },
       clientIp: getClientIP(request),
     });
     log.info('Signup plan dismissed by the owner', {

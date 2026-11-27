@@ -51,7 +51,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
     entityType: 'org',
     entityId: id,
     actingOrgId: id,
-    metadata: { planKey },
+    metadata: { plan: planKey },
     clientIp: getClientIP(request),
   });
   log.info('Billing checkout started', { orgId: id, planKey, userId: session.user.id });
