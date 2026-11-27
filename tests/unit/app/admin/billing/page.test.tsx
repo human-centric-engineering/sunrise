@@ -117,6 +117,30 @@ describe('BillingPage', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 
+  it('says a refusal is one, rather than telling the viewer to reload', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(403, 'FORBIDDEN'));
+
+    render(await page());
+
+    expect(
+      screen.getByText(/do not have access to this organisation's billing/)
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Reload the page/)).not.toBeInTheDocument();
+  });
+
+  it('says billing could not be loaded, and logs, when the acting org cannot be read', async () => {
+    vi.mocked(requestActingOrg).mockRejectedValue(new Error('connection refused'));
+
+    render(await page());
+
+    expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
+    expect(serverFetch).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      'billing page: could not read the acting org',
+      expect.any(Error)
+    );
+  });
+
   it('thanks the owner back from a paid checkout, and says the plan follows', async () => {
     render(await page({ checkout: 'success' }));
 

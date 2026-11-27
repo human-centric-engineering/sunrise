@@ -74,7 +74,10 @@ export interface OrgBilling {
   plans: OrgBillingPlan[];
   /** This viewer may start a checkout and open the portal: the org's OWNER, acting in it. */
   mayChange: boolean;
-  /** The org has a customer at this install's provider, so the portal has something to open. */
+  /**
+   * The org has a customer at this install's provider and a subscription to
+   * show, so the portal has something to open.
+   */
   portalAvailable: boolean;
   /**
    * The org's customer is at a provider this install no longer uses, so its
@@ -200,8 +203,13 @@ export async function loadOrgBilling(
         current: plan.key === planKey,
       })),
     mayChange: mayChangeBilling(session, orgId),
+    // A customer alone is not enough: a first checkout links one before any
+    // payment, and its portal would hold nothing.
     portalAvailable:
-      state.on && record !== null && record.hasCustomer && record.provider === state.providerKey,
+      state.on &&
+      hasSubscriptionToShow(record) &&
+      record.hasCustomer &&
+      record.provider === state.providerKey,
     customerElsewhere:
       record !== null && record.hasCustomer && record.provider !== state.providerKey,
     installOrg: orgId === INSTALL_ORG_ID,

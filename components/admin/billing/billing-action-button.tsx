@@ -11,7 +11,7 @@
  * whatever this renders.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { z } from 'zod';
 
@@ -40,6 +40,15 @@ export type BillingActionButtonProps =
 export function BillingActionButton(props: BillingActionButtonProps) {
   const t = useTranslations('admin.billing.actions');
   const [pending, setPending] = useState(false);
+  // Left pending as the page goes away; Back from the provider's page can
+  // restore it from the back-forward cache as it was, so clear it then.
+  useEffect(() => {
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) setPending(false);
+    };
+    window.addEventListener('pageshow', restored);
+    return () => window.removeEventListener('pageshow', restored);
+  }, []);
   const save = useSaveFailure({
     fallback: props.kind === 'checkout' ? t('checkoutFailed') : t('portalFailed'),
     fields: NO_SERVER_FIELDS,

@@ -9,7 +9,7 @@
  * URL, say) is never followed.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('@/lib/api/client', async (importOriginal) => ({
@@ -24,6 +24,11 @@ import {
 import { APIClientError, apiClient } from '@/lib/api/client';
 
 const ORG = 'cmorg000000000000000other';
+
+/** A `pageshow`; happy-dom's `PageTransitionEvent` does not carry `persisted` from its init. */
+function pageshow(persisted: boolean): Event {
+  return Object.assign(new Event('pageshow'), { persisted });
+}
 
 describe('BillingActionButton', () => {
   beforeEach(() => {
@@ -46,6 +51,23 @@ describe('BillingActionButton', () => {
     );
     // Left disabled while the page goes away.
     expect(screen.getByRole('button')).toBeDisabled();
+  });
+
+  it('can be pressed again when Back restores the page from the back-forward cache', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ url: 'https://checkout.stripe.test/c/1' });
+    render(<BillingActionButton orgId={ORG} kind="checkout" planKey="team" label="Choose Team" />);
+    await userEvent.click(screen.getByRole('button', { name: 'Choose Team' }));
+    await waitFor(() => expect(screen.getByRole('button')).toBeDisabled());
+
+    // A page loaded afresh changes nothing; one restored as it was is re-enabled.
+    act(() => {
+      window.dispatchEvent(pageshow(false));
+    });
+    expect(screen.getByRole('button')).toBeDisabled();
+    act(() => {
+      window.dispatchEvent(pageshow(true));
+    });
+    expect(screen.getByRole('button', { name: 'Choose Team' })).toBeEnabled();
   });
 
   it('opens the portal', async () => {

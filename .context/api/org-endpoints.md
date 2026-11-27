@@ -759,7 +759,9 @@ What the console's billing page renders, in one call (§139 t-1095,
 - `plans` holds only plans with a price.
 - `mayChange` is true for the org's OWNER acting in it, in a browser session:
   the caller the checkout and portal routes accept.
-- `portalAvailable` means the org has a customer at this install's provider.
+- `portalAvailable` means the org has a customer at this install's provider
+  and a subscription to show. A customer linked by a checkout that was never
+  paid is not enough.
 
 **Error Responses**: `403 FORBIDDEN` (not the org's OWNER or ADMIN acting in
 it, or no such org) · `409 CONFLICT` with `details.reason: billing_off`.

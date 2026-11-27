@@ -298,7 +298,8 @@ describe('the org’s OWNER, acting in it', () => {
 
     const { data } = await json(await read());
 
-    expect(data).toMatchObject({ plan: null, subscription: null, portalAvailable: true });
+    // The customer alone gives the portal nothing to show.
+    expect(data).toMatchObject({ plan: null, subscription: null, portalAvailable: false });
   });
 
   it('does not call the plan a lapsed subscription fell back to one staff set', async () => {

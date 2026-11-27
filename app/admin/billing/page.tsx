@@ -9,6 +9,7 @@ import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { billingEnabled } from '@/lib/billing/config';
 import { ORG_BILLING_PAGE_PATH } from '@/lib/billing/upgrade-url';
+import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -38,7 +39,16 @@ export default async function BillingPage({
 }) {
   if (!billingEnabled()) notFound();
 
-  const [org, query] = await Promise.all([requestActingOrg(), searchParams]);
+  // A failed lookup says billing could not be loaded, in the page's place.
+  const [acting, query] = await Promise.all([
+    requestActingOrg().catch((error: unknown) => {
+      logger.error('billing page: could not read the acting org', error);
+      return 'failed' as const;
+    }),
+    searchParams,
+  ]);
+  const orgReadFailed = acting === 'failed';
+  const org = orgReadFailed ? null : acting;
   const t = await getTranslations('admin.billing');
   const result =
     org && org.id !== INSTALL_ORG_ID
@@ -70,12 +80,19 @@ export default async function BillingPage({
         </p>
       )}
 
-      {!org ? (
+      {orgReadFailed ? (
+        <p role="alert" className="text-destructive text-sm">
+          {t('loadFailed')}
+        </p>
+      ) : !org ? (
         <p className="text-muted-foreground text-sm">{t('noOrg')}</p>
       ) : org.id === INSTALL_ORG_ID ? (
         <p className="text-muted-foreground text-sm">{t('installOrg')}</p>
       ) : result?.ok ? (
         <BillingSummary billing={result.data} />
+      ) : result && result.failure.kind === 'failed' && result.failure.status === 403 ? (
+        // Refused, not failed: reloading would not help.
+        <p className="text-muted-foreground text-sm">{t('noAccess')}</p>
       ) : (
         <p role="alert" className="text-destructive text-sm">
           {t('loadFailed')}

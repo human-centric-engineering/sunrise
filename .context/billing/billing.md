@@ -632,7 +632,9 @@ Decided at planning (2026-11-25):
   default, not anything that happened.
 - **Manage billing**, the customer portal: card, invoices, plan changes and
   cancellation, on the provider's pages. Offered once the org has a customer
-  at this install's provider. The page lists no invoices itself.
+  at this install's provider and a subscription to show (a checkout that was
+  never paid links a customer, with nothing in its portal). The page lists no
+  invoices itself.
 
 | Who                                   | Sees                                                         |
 | ------------------------------------- | ------------------------------------------------------------ |

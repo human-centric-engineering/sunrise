@@ -1492,12 +1492,13 @@ export function withAdminAuth(
                 // The billing page when the app gave no link (t-1095), to a
                 // viewer the policy admits to its tier: the question the
                 // sidebar's locked items ask too (`lockedSwitchesIn()`).
-                const upgradeUrl = upgradeUrlFor(switchUpgradeUrl(required), {
+                // Asked only when the app gave no link, which would win anyway.
+                const registered = switchUpgradeUrl(required);
+                const upgradeUrl = upgradeUrlFor(registered, {
                   orgId: principal.orgId,
-                  holdsOrgTier: await canAdminister(principal, null, {
-                    org: principal.orgId,
-                    tier: 'org',
-                  }),
+                  holdsOrgTier:
+                    registered === null &&
+                    (await canAdminister(principal, null, { org: principal.orgId, tier: 'org' })),
                 });
                 throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
                   reason: SWITCH_REQUIRED_REASON,

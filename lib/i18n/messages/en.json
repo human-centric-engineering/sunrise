@@ -1398,6 +1398,7 @@
       "noOrg": "You are not acting in an organisation, so there is no billing to show.",
       "installOrg": "The install organisation belongs to the platform and is never billed. Switch to a customer organisation to see its billing.",
       "loadFailed": "The billing for this organisation could not be loaded. Reload the page to try again.",
+      "noAccess": "You do not have access to this organisation's billing. Ask an owner of the organisation if you need it.",
       "ownerOnly": "Only an owner of this organisation can buy a plan or change how it pays.",
       "checkoutSuccess": "Thank you. Your payment went through. Your plan changes as soon as the payment provider confirms it, usually within a minute.",
       "checkoutRefresh": "See the updated plan",
