@@ -207,6 +207,8 @@ On Vercel, set `CRON_SECRET` and add the cron to `vercel.json` — see [Vercel: 
 | `orgCreatedHooks`          | 15 min     | system  | retries a failed org-created hook (t-1061); no read if none registered  |
 | `abandonedSignupOrgs`      | 1 hour     | system  | deletes orgs a failed signup left (t-1062); one is abandoned after 1 h  |
 | `signupPlans`              | 15 min     | system  | applies a free plan a signup chose once its setup is done (t-1096)      |
+| `usageReports`             | 5 min      | system  | counts and sends each closed billing period's usage (t-1097)            |
+| `usageNotices`             | 15 min     | system  | tells an org near or at a warn item's allowance (t-1097)                |
 
 **Tick duration grows with the org count, and the overlap guard does not.**
 `forEachOrg` is sequential, so at `multi` a per-org task costs roughly its
@@ -257,6 +259,8 @@ Forks add their own recurring work through `registerAppJob`, which shares the th
       "orgCreatedHooks",
       "abandonedSignupOrgs",
       "signupPlans",
+      "usageReports",
+      "usageNotices",
     ],
     "durationMs": 47,
   },
