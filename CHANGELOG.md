@@ -64,6 +64,17 @@ release process.
   `subscriptionsCancelled`. CI's `smoke-multi` job runs the new
   `smoke:billing-webhook` and a pinned `stripe/stripe-mock` service. See
   [`.context/billing/billing.md`](./.context/billing/billing.md#setting-up-stripe).
+- **The billing page in the org-admin console (§139 t-1095).** `/admin/billing`
+  shows the org's plan and status, the current period, usage against each
+  limit, the plans it could buy, and the checkout and portal buttons, to the
+  org's OWNER; an ADMIN sees it read-only. It and its sidebar item exist only
+  while billing is on. New route `GET /api/v1/orgs/[id]/billing` (OWNER and
+  ADMIN acting in the org; 409 `billing_off` while off). `OrgSubscriptionView`
+  gains `hasCustomer`. `/admin/billing` joins `ORG_TIER_ADMIN_PAGES`, and
+  `billing` joins `CORE_ADMIN_SECTIONS` and `CORE_ACCESS_AREAS`: **a fork with
+  its own page under `/admin/billing`** must move it, as registration now
+  refuses a page inside a core section. See
+  [`.context/billing/billing.md`](./.context/billing/billing.md#the-billing-page).
 - **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
   0-based place in its document, written whenever chunks are (upload, rechunk,
   the patterns seeder). Knowledge search returns it on each chunk, and
@@ -75,6 +86,12 @@ release process.
 
 ### Changed
 
+- **A switch with no `upgradeUrl` now links to the billing page while billing
+  is on (§139 t-1095).** The 403's `details.upgradeUrl`, and a locked item and
+  page, carry `/admin/billing` for a viewer admitted to the org tier (the
+  org's OWNER and ADMIN by default) when the app registered no link. A
+  named-tier holder and the install org get none, and the app's own link
+  always wins. With billing off nothing changes.
 - **A `package.json` script edit no longer runs the whole suite under
   `vitest --changed`, and CI's `test-changed` job runs `ALWAYS_RUN_TESTS`
   (t-1089, #1331, #1351).** `vitest.config.ts` now sets `forceRerunTriggers`

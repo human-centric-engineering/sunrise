@@ -84,6 +84,7 @@ export const CORE_ACCESS_AREAS: readonly Readonly<{ key: string; pages: readonly
     { key: 'orgOptions', pages: ['/admin/org-options'] },
     { key: 'providerKeys', pages: ['/admin/provider-keys'] },
     { key: 'supportAccess', pages: ['/admin/support-access'] },
+    { key: 'billing', pages: ['/admin/billing'] },
     { key: 'waitlist', pages: ['/admin/waitlist'] },
     { key: 'orchestration', pages: ['/admin/orchestration'] },
     {

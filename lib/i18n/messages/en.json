@@ -1140,6 +1140,8 @@
       "providerKeysDescription": "Run this organisation on its own AI provider accounts",
       "supportAccess": "Support access",
       "supportAccessDescription": "Let platform support into this organisation",
+      "billing": "Billing",
+      "billingDescription": "Your plan, what you have used, and paying for it",
       "waitlist": "Waitlist",
       "waitlistDescription": "People waiting to be let in",
       "access": "Roles and access",
@@ -1387,6 +1389,79 @@
         "pageOf": "{page} / {total}"
       }
     },
+    "billing": {
+      "metaTitle": "Billing",
+      "metaDescription": "This organisation's plan, what it has used this period, and paying for it.",
+      "title": "Billing",
+      "titleFor": "Billing for {org}",
+      "intro": "The plan this organisation is on, what it has used, and where to change how you pay.",
+      "noOrg": "You are not acting in an organisation, so there is no billing to show.",
+      "installOrg": "The install organisation belongs to the platform and is never billed. Switch to a customer organisation to see its billing.",
+      "loadFailed": "The billing for this organisation could not be loaded. Reload the page to try again.",
+      "noAccess": "You do not have access to this organisation's billing. Ask an owner of the organisation if you need it.",
+      "ownerOnly": "Only an owner of this organisation can buy a plan or change how it pays.",
+      "checkoutSuccess": "Thank you. Your payment went through. Your plan changes as soon as the payment provider confirms it, usually within a minute.",
+      "checkoutRefresh": "See the updated plan",
+      "checkoutCancelled": "Checkout was cancelled, and nothing was charged.",
+      "plan": {
+        "heading": "Your plan",
+        "none": "This organisation is not on a plan.",
+        "unknown": "A plan this app no longer offers ({key})",
+        "assigned": "Set by platform staff, not paid for here."
+      },
+      "status": {
+        "label": "Status",
+        "ACTIVE": "Active",
+        "PAST_DUE": "Payment overdue",
+        "INCOMPLETE": "Waiting for the first payment",
+        "ENDED": "Ended",
+        "pastDueHelp": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. To change the card, open Manage billing.",
+        "pastDueHelpAdmin": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. An owner of this organisation can change the card.",
+        "pastDueHelpNoPortal": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. The card cannot be changed here, so ask platform staff for help.",
+        "incompleteHelp": "Nothing changes until the first payment goes through. If it did not go through, an owner can choose the plan again to retry.",
+        "endedHelp": "The paid subscription has ended.",
+        "endedCollectingHelp": "The subscription has stopped, but the payment provider can still collect what is owed or resume it.",
+        "endsOn": "Ends on {date}. It will not renew."
+      },
+      "period": {
+        "label": "Current period",
+        "range": "{start} to {end}"
+      },
+      "usage": {
+        "heading": "Usage",
+        "intro": "What this organisation has used, against the limit its plan sets.",
+        "meter": "What",
+        "used": "Used",
+        "limit": "Limit",
+        "noLimit": "No limit",
+        "countFailed": "Could not be counted",
+        "thisMonth": "This month",
+        "standing": "At the moment",
+        "custom": "This period",
+        "none": "Nothing is counted on this install.",
+        "loadFailed": "Usage could not be counted. Reload the page to try again."
+      },
+      "plans": {
+        "heading": "Plans",
+        "none": "There are no plans to buy here. Platform staff set this organisation's plan.",
+        "current": "Your plan",
+        "choose": "Choose {plan}",
+        "changeInPortal": "To move to another plan, open Manage billing.",
+        "elsewhere": "This organisation's subscription is with a payment provider this install no longer uses. It has to end there before a plan can be bought here. Ask platform staff for help."
+      },
+      "portal": {
+        "heading": "Payments and invoices",
+        "intro": "Change your card, see your invoices, change plan or cancel, on the payment provider's own pages.",
+        "open": "Manage billing",
+        "notYet": "There is nothing to manage until this organisation buys a plan.",
+        "elsewhere": "This organisation's billing is with a payment provider this install no longer uses, so it cannot be managed here. Ask platform staff for help."
+      },
+      "actions": {
+        "opening": "Opening…",
+        "checkoutFailed": "Checkout could not be started.",
+        "portalFailed": "The billing portal could not be opened."
+      }
+    },
     "waitlist": {
       "metaTitle": "Waitlist",
       "metaDescription": "The people waiting to be let in, and whether each list is taking joins.",
@@ -1587,6 +1662,10 @@
         "supportAccess": {
           "label": "Support access",
           "description": "Let support staff into the organisation, and see who has been in."
+        },
+        "billing": {
+          "label": "Billing",
+          "description": "The organisation's plan and what it has used. Only an owner can buy a plan or change how it pays."
         },
         "waitlist": {
           "label": "Waitlist",

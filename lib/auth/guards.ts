@@ -84,6 +84,7 @@ import {
   switchUnverifiedMessage,
   switchUpgradeUrl,
 } from '@/lib/tenancy/entitlements';
+import { upgradeUrlFor } from '@/lib/billing/upgrade-url';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -1488,7 +1489,17 @@ export function withAdminAuth(
               if (state === 'off') {
                 // The app's own words and upgrade link when it registered
                 // them (t-1053); said only here, where the switch reads off.
-                const upgradeUrl = switchUpgradeUrl(required);
+                // The billing page when the app gave no link (t-1095), to a
+                // viewer the policy admits to its tier: the question the
+                // sidebar's locked items ask too (`lockedSwitchesIn()`).
+                // Asked only when the app gave no link, which would win anyway.
+                const registered = switchUpgradeUrl(required);
+                const upgradeUrl = upgradeUrlFor(registered, {
+                  orgId: principal.orgId,
+                  holdsOrgTier:
+                    registered === null &&
+                    (await canAdminister(principal, null, { org: principal.orgId, tier: 'org' })),
+                });
                 throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
                   reason: SWITCH_REQUIRED_REASON,
                   requires: required,

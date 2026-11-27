@@ -35,7 +35,8 @@ opens or closes a page.
 Then any sections the app registered (`appSections`).
 
 `/admin` itself is left out of the areas: it sends each viewer on and shows
-nothing. At `single` there is no `areas` section (it is left out of
+nothing. So is `/admin/billing` while billing is off, since the page does not
+exist then (§139 t-1095). At `single` there is no `areas` section (it is left out of
 `sections`, not sent empty) and `roles` is the platform admin alone, since
 no org role opens the console there (`model` still describes every role, with
 `tenancy` saying they are not in force). Leaving out the areas is deliberate: the

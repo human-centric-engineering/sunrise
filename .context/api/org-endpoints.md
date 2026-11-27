@@ -43,6 +43,7 @@ the per-admin export sub-cap noted below.
 | `GET/PATCH/DELETE …/orgs/[id]/entitlements` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH …/orgs/[id]/meters`              | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH …/orgs/[id]/plan`                | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET /api/v1/orgs/[id]/billing`             | `withAuth`      | The org's **OWNER** or **ADMIN** while acting in it, and a platform admin. `mayChange` says whether the caller may buy or open the portal.             |
 | `POST /api/v1/orgs/[id]/billing/checkout`   | `withAuth`      | The org's **OWNER** while acting in it. Browser session only; not a support session, a platform admin, or the install org.                             |
 | `POST /api/v1/orgs/[id]/billing/portal`     | `withAuth`      | As above.                                                                                                                                              |
 | `POST /api/v1/billing/webhook/[provider]`   | none            | The payment provider: its signature over the raw body. IP-keyed section cap.                                                                           |
@@ -700,6 +701,71 @@ do not apply on this install; `provider_managed` when a provider subscription
 that has not ended decides the org's plan; or, with no reason, another write
 to the org's settings landed at the same time, so assign the plan again).
 
+### An org's billing, for its own admins
+
+```
+GET /api/v1/orgs/[id]/billing
+```
+
+What the console's billing page renders, in one call (§139 t-1095,
+[Billing](../billing/billing.md#the-billing-page)):
+
+```json
+{
+  "orgId": "…",
+  "plan": { "key": "pro", "label": "Pro", "description": "…" },
+  "subscription": {
+    "status": "ACTIVE",
+    "providerManaged": true,
+    "elsewhere": false,
+    "assignedByHand": false,
+    "cancelAtPeriodEnd": false,
+    "periodStart": "2026-11-01T00:00:00.000Z",
+    "periodEnd": "2026-12-01T00:00:00.000Z"
+  },
+  "usage": [
+    {
+      "key": "seats",
+      "label": "Seats",
+      "description": "…",
+      "period": "standing",
+      "limit": 10,
+      "used": 3,
+      "countFailed": false
+    }
+  ],
+  "plans": [{ "key": "pro", "label": "Pro", "description": "…", "current": true }],
+  "mayChange": true,
+  "portalAvailable": true,
+  "customerElsewhere": false,
+  "installOrg": false
+}
+```
+
+- `plan` is `null` with no plan; its `label` is `null` for a key the app no
+  longer registers.
+- `subscription` is `null` when there is none to show: no record, or one
+  naming no plan that the provider never wrote to (a first checkout that was
+  abandoned, or a plan staff removed). `elsewhere` means the live
+  subscription is at a provider other than this install's, so neither the
+  portal nor a checkout can reach it. `assignedByHand` means platform staff
+  set the plan, with no provider subscription behind it.
+- `usage` is every meter's count and limit (`limit: null` is no limit), or
+  `null` when the counts could not be read. A failed usage read is logged and
+  answers `usage: null`; the rest of the billing still reads.
+- `customerElsewhere` means the org's customer is at a provider this install
+  no longer uses, so its payments cannot be managed here, even after that
+  subscription has ended.
+- `plans` holds only plans with a price.
+- `mayChange` is true for the org's OWNER acting in it, in a browser session:
+  the caller the checkout and portal routes accept.
+- `portalAvailable` means the org has a customer at this install's provider
+  and a subscription to show. A customer linked by a checkout that was never
+  paid is not enough.
+
+**Error Responses**: `403 FORBIDDEN` (not the org's OWNER or ADMIN acting in
+it, or no such org) · `409 CONFLICT` with `details.reason: billing_off`.
+
 ### Pay for a plan: checkout and the portal
 
 ```
@@ -708,8 +774,8 @@ POST /api/v1/orgs/[id]/billing/portal
 ```
 
 Both answer `{ url }` on the payment provider's own pages, and the browser
-goes there; the provider sends it back to `/admin/billing` (§139 t-1094,
-[Billing](../billing/billing.md#what-t-1094-built)). Checkout creates the
+goes there; the provider sends it back to `/admin/billing`, the billing page
+(§139 t-1094, [Billing](../billing/billing.md#what-t-1094-built)). Checkout creates the
 org's customer at the provider on first use. It does not put the org on the
 plan: the webhook does, from the subscription the provider holds. Each
 checkout started writes an `org.billing.checkout` audit row.

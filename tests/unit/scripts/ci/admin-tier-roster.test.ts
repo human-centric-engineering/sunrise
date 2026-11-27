@@ -128,7 +128,7 @@ describe('the pins', () => {
     expect(EVERY_VIEWER_ADMIN_PAGES).toEqual(['/admin/access']);
   });
 
-  it('opens exactly the customer’s sections, the mixed pages, Members, AI keys and Support access to an org admin (t-811, t-812, t-813, t-823, t-1045)', () => {
+  it('opens exactly the customer’s sections, the mixed pages, Members, AI keys, Support access and Billing to an org admin (t-811, t-812, t-813, t-823, t-1045, t-1095)', () => {
     // A page added here is a page every org OWNER/ADMIN can open: add it to
     // ORG_TIER_ADMIN_PAGES and here, in the same diff, and say why in the PR.
     expect(ORG_TIER_ADMIN_PAGES).toEqual([
@@ -180,6 +180,8 @@ describe('the pins', () => {
       '/admin/support-access',
       // §125 t-976: the org's waitlist — its list of people, not the platform's.
       '/admin/waitlist',
+      // §139 t-1095: the org's own billing; an ADMIN reads it, only the OWNER acts.
+      '/admin/billing',
     ]);
   });
 
@@ -415,6 +417,7 @@ describe('the core sections', () => {
     // check above fails for a core page or nav item in a section left out.
     expect(CORE_ADMIN_SECTIONS).toEqual([
       'access',
+      'billing',
       'features',
       'logs',
       'members',

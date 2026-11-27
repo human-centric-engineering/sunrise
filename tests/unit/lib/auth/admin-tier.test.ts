@@ -133,7 +133,7 @@ describe('registerOrgTierAdminPage (t-817)', () => {
     registerOrgTierAdminPage('/admin/reports'); // already listed: no change
     expect(registeredAppOrgTierAdminPages()).toBe(first);
 
-    registerOrgTierAdminPage('/admin/billing');
+    registerOrgTierAdminPage('/admin/invoices');
     expect(registeredAppOrgTierAdminPages()).not.toBe(first);
     expect(first).toEqual(['/admin/reports']); // a snapshot taken earlier is unchanged
   });

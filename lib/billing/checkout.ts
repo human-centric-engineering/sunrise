@@ -34,15 +34,10 @@ import { billingProvider } from '@/lib/billing/config';
 import { planOf } from '@/lib/billing/plans';
 import { BillingCustomerMissingError, BillingPriceMissingError } from '@/lib/billing/provider';
 import { lockOrgBilling } from '@/lib/billing/subscriptions';
+import { ORG_BILLING_PAGE_PATH } from '@/lib/billing/upgrade-url';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { runAsOrg } from '@/lib/tenancy/context';
-
-/**
- * Where the provider sends the owner back to: the billing page of the
- * org-admin console (t-1095).
- */
-export const ORG_BILLING_PAGE_PATH = '/admin/billing';
 
 /** Why a checkout or portal was refused. Nothing was created at the provider. */
 export type BillingCheckoutErrorCode =

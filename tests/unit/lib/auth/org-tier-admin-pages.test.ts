@@ -84,10 +84,10 @@ describe('orgTierAdminPages', () => {
     expect(orgTierAdminPages()).toBe(first);
 
     // A registration after the init settled (one at a module's top level).
-    registerOrgTierAdminPage('/admin/billing');
+    registerOrgTierAdminPage('/admin/invoices');
     const second = orgTierAdminPages();
     expect(second).not.toBe(first);
-    expect(second).toEqual([...ORG_TIER_ADMIN_PAGES, '/admin/reports', '/admin/billing']);
+    expect(second).toEqual([...ORG_TIER_ADMIN_PAGES, '/admin/reports', '/admin/invoices']);
   });
 
   it('opens none of the fork’s pages when its init throws part-way, and says so', () => {
@@ -145,6 +145,7 @@ describe('closing a core section to org admins (t-929)', () => {
       '/admin/provider-keys',
       '/admin/support-access',
       '/admin/waitlist',
+      '/admin/billing',
       '/admin/leads',
     ]);
     expect(adminPageTier('/admin/orchestration', pages)).toBeNull();

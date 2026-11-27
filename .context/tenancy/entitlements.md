@@ -217,6 +217,9 @@ registerEntitlementSwitch({
 - **`upgradeUrl`**: a path on this site starting `/`, or an `https://`
   address. The 403 carries it as `details.upgradeUrl`
   (`switchUpgradeUrl(key)` reads it), and the locked item and page link to it.
+  Left out while billing is on, the link is the console's billing page,
+  `/admin/billing`, for the org's OWNER and ADMIN; a named-tier holder gets
+  none ([Billing](../billing/billing.md#the-billing-page)).
 
 Each is optional and works without the others: a switch that hides can still
 give a refusal message and an upgrade link on its 403. A value that is not one

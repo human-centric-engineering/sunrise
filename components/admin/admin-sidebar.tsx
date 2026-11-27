@@ -41,6 +41,7 @@ import {
   UsersRound,
   KeySquare,
   LifeBuoy,
+  CreditCard,
   Hourglass,
   Lock,
   SlidersHorizontal,
@@ -131,6 +132,13 @@ export const coreNavSections: NavSection[] = [
         label: 'Support access',
         icon: LifeBuoy,
         description: 'Let platform support into this organisation',
+      },
+      {
+        href: '/admin/billing',
+        tier: 'org',
+        label: 'Billing',
+        icon: CreditCard,
+        description: 'Your plan, what you have used, and paying for it',
       },
       {
         href: '/admin/waitlist',
@@ -580,6 +588,11 @@ interface AdminSidebarProps {
    * Its item is hidden otherwise, as its routes answer 404.
    */
   waitlistEnabled?: boolean;
+  /**
+   * Billing is on (`billingEnabled()`, §139 t-1095). Its item is hidden
+   * otherwise, as its page does not exist and its routes answer `billing_off`.
+   */
+  billingEnabled?: boolean;
 }
 
 /**
@@ -615,14 +628,24 @@ export function sectionsForMode(sections: NavSection[], multiTenant: boolean): N
  * which every install has, whether or not the app registers an org-set switch.
  */
 const WAITLIST_ITEM = '/admin/waitlist';
+const BILLING_ITEM = '/admin/billing';
 
-/** The sections without the waitlist item when the app has no waitlist. */
+/**
+ * The sections without the waitlist item when the app has no waitlist, and
+ * without the billing item when billing is off.
+ */
 export function sectionsForCapabilities(
   sections: NavSection[],
-  { waitlistEnabled }: { waitlistEnabled: boolean }
+  {
+    waitlistEnabled,
+    billingEnabled = false,
+  }: { waitlistEnabled: boolean; billingEnabled?: boolean }
 ): NavSection[] {
-  if (waitlistEnabled) return sections;
-  const kept = (items: NavItem[]) => items.filter((item) => item.href !== WAITLIST_ITEM);
+  if (waitlistEnabled && billingEnabled) return sections;
+  const off = new Set<string>();
+  if (!waitlistEnabled) off.add(WAITLIST_ITEM);
+  if (!billingEnabled) off.add(BILLING_ITEM);
+  const kept = (items: NavItem[]) => items.filter((item) => !off.has(item.href));
   return sections.map((section) => ({
     ...section,
     ...(section.items ? { items: kept(section.items) } : {}),
@@ -642,6 +665,8 @@ export function sectionsForCapabilities(
 type NavKey =
   | 'access'
   | 'accessDescription'
+  | 'billing'
+  | 'billingDescription'
   | 'management'
   | 'members'
   | 'membersDescription'
@@ -660,6 +685,7 @@ const CATALOGUE_ITEMS: Readonly<Record<string, { label: NavKey; description: Nav
   '/admin/org-options': { label: 'orgOptions', description: 'orgOptionsDescription' },
   '/admin/provider-keys': { label: 'providerKeys', description: 'providerKeysDescription' },
   '/admin/support-access': { label: 'supportAccess', description: 'supportAccessDescription' },
+  '/admin/billing': { label: 'billing', description: 'billingDescription' },
   '/admin/waitlist': { label: 'waitlist', description: 'waitlistDescription' },
 };
 const CATALOGUE_SECTIONS: Readonly<Record<string, NavKey>> = { Management: 'management' };
@@ -894,6 +920,7 @@ export function AdminSidebar({
   lockedSwitches = NO_LOCKED_SWITCHES,
   multiTenant = false,
   waitlistEnabled = false,
+  billingEnabled = false,
 }: AdminSidebarProps) {
   const t = useTranslations('admin.shell');
   const tNav = useTranslations('admin.nav');
@@ -913,7 +940,7 @@ export function AdminSidebar({
           sectionsForViewer(
             sectionsForCapabilities(
               sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
-              { waitlistEnabled }
+              { waitlistEnabled, billingEnabled }
             ),
             reach,
             orgTierPages,
@@ -938,6 +965,7 @@ export function AdminSidebar({
       lockedSwitches,
       multiTenant,
       waitlistEnabled,
+      billingEnabled,
       tNav,
     ]
   );

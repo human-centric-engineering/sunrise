@@ -26,6 +26,7 @@ import { reachesTier } from '@/lib/auth/admin-tier';
 import { adminPageRequirements, namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
 import { heldTierLanding } from '@/lib/auth/admin-landing';
 import { logger } from '@/lib/logging';
+import { upgradeUrlFor } from '@/lib/billing/upgrade-url';
 import {
   loadOrgSwitches,
   registeredEntitlementSwitches,
@@ -116,22 +117,27 @@ export async function lockedSwitchesOf(
     });
     return [];
   }
-  return lockedSwitchesIn(reach, org);
+  return lockedSwitchesIn(reach, org, orgId);
 }
 
 /**
  * {@link lockedSwitchesOf} over switches the caller has already read, for a
  * caller that needs the org's switches for something else too and so reads
  * them once (`GET /api/v1/admin/access`). `org` is `loadOrgSwitches()`'s
- * answer: `null` (no such org) or an unreadable read gives nothing.
+ * answer: `null` (no such org) or an unreadable read gives nothing. `orgId`
+ * is the org they were read for, which the default upgrade link needs; with
+ * none, a lock carries only the app's own link.
  */
 export function lockedSwitchesIn(
   reach: AdminReach,
-  org: OrgSwitches | null
+  org: OrgSwitches | null,
+  orgId?: string | null
 ): readonly LockedAdminSwitch[] {
   const candidates = lockableSwitches(reach);
   if (candidates.length === 0 || !org || org.unreadable) return [];
   const on = new Set(org.on);
+  // Candidates exist only for a reach that holds tiers (`lockableSwitches()`).
+  const viewer = { orgId, holdsOrgTier: reach !== 'platform' && reach.tiers.includes('org') };
   return candidates
     .filter((s) => !on.has(s.key))
     .map((s) =>
@@ -139,7 +145,8 @@ export function lockedSwitchesIn(
         requires: s.key,
         label: s.label,
         message: switchRequiredMessage(s.key),
-        upgradeUrl: s.upgradeUrl,
+        // The billing page when the app gave no link (t-1095), to a viewer it opens for.
+        upgradeUrl: upgradeUrlFor(s.upgradeUrl, viewer),
       })
     );
 }

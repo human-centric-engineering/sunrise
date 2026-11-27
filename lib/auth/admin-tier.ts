@@ -343,6 +343,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   '/admin/provider-keys',
   '/admin/support-access',
   '/admin/waitlist',
+  '/admin/billing',
 ]);
 
 /** Where the access explainer lives (§143 t-1091): the sidebar and every link name it from here. */
@@ -385,6 +386,7 @@ export function isEveryViewerAdminPage(pathname: string | null | undefined): boo
  */
 export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
   'access',
+  'billing',
   'features',
   'logs',
   'members',
