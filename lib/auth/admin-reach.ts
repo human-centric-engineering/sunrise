@@ -26,6 +26,7 @@ import { reachesTier } from '@/lib/auth/admin-tier';
 import { adminPageRequirements, namedAdminTiers } from '@/lib/auth/org-tier-admin-pages';
 import { heldTierLanding } from '@/lib/auth/admin-landing';
 import { logger } from '@/lib/logging';
+import { upgradeUrlFor } from '@/lib/billing/upgrade-url';
 import {
   loadOrgSwitches,
   registeredEntitlementSwitches,
@@ -132,6 +133,8 @@ export function lockedSwitchesIn(
   const candidates = lockableSwitches(reach);
   if (candidates.length === 0 || !org || org.unreadable) return [];
   const on = new Set(org.on);
+  // Candidates exist only for a reach that holds tiers (`lockableSwitches()`).
+  const opensBilling = reach !== 'platform' && reach.tiers.includes('org');
   return candidates
     .filter((s) => !on.has(s.key))
     .map((s) =>
@@ -139,7 +142,8 @@ export function lockedSwitchesIn(
         requires: s.key,
         label: s.label,
         message: switchRequiredMessage(s.key),
-        upgradeUrl: s.upgradeUrl,
+        // The billing page when the app gave no link (t-1095), to an org admin.
+        upgradeUrl: upgradeUrlFor(s.upgradeUrl, opensBilling),
       })
     );
 }

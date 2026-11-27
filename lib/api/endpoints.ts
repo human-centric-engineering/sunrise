@@ -75,6 +75,8 @@ export const API = {
     entitlements: (id: string): string => `/api/v1/orgs/${id}/entitlements`,
     /** The org's own AI keys and their state (OWNER/ADMIN acting in the org, by default) */
     providerKeys: (id: string): string => `/api/v1/orgs/${id}/provider-keys`,
+    /** The org's plan, usage and the plans it could buy (OWNER/ADMIN acting in the org, §139) */
+    billing: (id: string): string => `/api/v1/orgs/${id}/billing`,
     /** Start a checkout for a plan, as the org's owner (§139) */
     billingCheckout: (id: string): string => `/api/v1/orgs/${id}/billing/checkout`,
     /** Open the payment provider's billing portal, as the org's owner (§139) */

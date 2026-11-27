@@ -47,6 +47,11 @@ export interface OrgSubscriptionView {
   provider: string | null;
   /** Whether a provider subscription that has not ended decides the plan. */
   providerManaged: boolean;
+  /**
+   * Whether the record holds a customer at {@link provider}: what the billing
+   * portal opens for (t-1095). The reference itself is not part of the view.
+   */
+  hasCustomer: boolean;
   status: BillingSubscriptionStatus;
   /** The provider's own word for it (`unpaid`, `trialing`); `null` when assigned by hand. */
   providerStatus: string | null;
@@ -120,6 +125,7 @@ function toView(row: SubscriptionRow): OrgSubscriptionView {
     planKey: row.planKey,
     provider: row.provider,
     providerManaged: isProviderManaged(row),
+    hasCustomer: row.provider !== null && row.customerRef !== null,
     status: row.status,
     providerStatus: row.providerStatus,
     cancelAtPeriodEnd: row.cancelAtPeriodEnd,

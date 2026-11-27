@@ -20,6 +20,7 @@ import {
 import { SupportBanner } from '@/components/admin/support-banner';
 import { MemberPlatformAdminBanner } from '@/components/layouts/member-platform-admin-banner';
 import { isWaitlistEnabled } from '@/lib/waitlist/config';
+import { billingEnabled } from '@/lib/billing/config';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import {
@@ -174,6 +175,7 @@ export default async function AdminLayout({
           pageRequirements={pageRequirements}
           lockedSwitches={lockedSwitches}
           waitlistEnabled={isWaitlistEnabled()}
+          billingEnabled={billingEnabled()}
         />
         <div className="flex flex-1 flex-col overflow-hidden">
           {supportSession && <SupportBanner view={supportSession} />}

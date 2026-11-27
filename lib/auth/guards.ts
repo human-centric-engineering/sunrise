@@ -84,6 +84,8 @@ import {
   switchUnverifiedMessage,
   switchUpgradeUrl,
 } from '@/lib/tenancy/entitlements';
+import { ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { upgradeUrlFor } from '@/lib/billing/upgrade-url';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -1488,7 +1490,12 @@ export function withAdminAuth(
               if (state === 'off') {
                 // The app's own words and upgrade link when it registered
                 // them (t-1053); said only here, where the switch reads off.
-                const upgradeUrl = switchUpgradeUrl(required);
+                // The billing page when the app gave no link (t-1095), to
+                // the org's OWNER or ADMIN, who can open it.
+                const upgradeUrl = upgradeUrlFor(
+                  switchUpgradeUrl(required),
+                  principal.orgRole === ORG_OWNER_ROLE || principal.orgRole === ORG_ADMIN_ROLE
+                );
                 throw new APIError(switchRequiredMessage(required), ErrorCodes.FORBIDDEN, 403, {
                   reason: SWITCH_REQUIRED_REASON,
                   requires: required,

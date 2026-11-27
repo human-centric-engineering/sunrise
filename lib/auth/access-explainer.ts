@@ -35,6 +35,8 @@
  */
 
 import { initAppAccessExplainer } from '@/lib/app/access-explainer';
+import { billingEnabled } from '@/lib/billing/config';
+import { ORG_BILLING_PAGE_PATH } from '@/lib/billing/upgrade-url';
 import { createAppInitGate } from '@/lib/fork-init';
 import {
   ACCESS_AUDIENCES,
@@ -685,6 +687,8 @@ function areasFor(
   for (const pattern of orgTierAdminPages()) {
     // `/admin` sends each viewer on and shows nothing itself.
     if (pattern === ADMIN_INDEX_PATH) continue;
+    // With billing off the billing page does not exist (t-1095).
+    if (pattern === ORG_BILLING_PAGE_PATH && !billingEnabled()) continue;
     const tier: DeclaredAdminTier = tierOf.get(pattern) ?? 'org';
     const requires = requiresOf.get(pattern) ?? null;
     // A holder sees their tiers' pages, not the org admin's.
