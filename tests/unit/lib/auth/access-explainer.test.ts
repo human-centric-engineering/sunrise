@@ -20,6 +20,9 @@ vi.mock('@/lib/app/access-explainer', () => ({ initAppAccessExplainer: () => app
 vi.mock('@/lib/logging', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+// Billing on, so every core org-tier page is listed; off is tested on its own (t-1095).
+const billing = vi.hoisted(() => ({ on: true }));
+vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => billing.on }));
 
 import { logger } from '@/lib/logging';
 import {
@@ -130,6 +133,7 @@ function registerAgencyApp(): void {
 
 beforeEach(() => {
   app.init = () => {};
+  billing.on = true;
   __resetAccessExplainerForTests();
   __resetAppOrgTierAdminPagesForTests();
   __resetEntitlementRegistryForTests();
@@ -173,6 +177,15 @@ describe('derived from the registrations', () => {
     expect(areas.map((area) => area.key).sort()).toEqual(
       CORE_ACCESS_AREAS.map((area) => area.key).sort()
     );
+  });
+
+  it('leaves out the billing page while billing is off (§139 t-1095)', () => {
+    const on = pagesOf(buildAccessExplainer(viewer(), translator()));
+    billing.on = false;
+    const off = pagesOf(buildAccessExplainer(viewer(), translator()));
+
+    expect(on).toContain('/admin/billing');
+    expect(off).toEqual(on.filter((page) => page !== '/admin/billing'));
   });
 
   it('puts a page in the narrowest area that claims it', () => {

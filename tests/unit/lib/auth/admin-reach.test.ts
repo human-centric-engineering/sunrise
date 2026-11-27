@@ -13,6 +13,8 @@ vi.mock('@/lib/auth/authorization', () => ({ canAdminister: vi.fn() }));
 vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+const billing = vi.hoisted(() => ({ on: false }));
+vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => billing.on }));
 
 import { canAdminister, type AuthorizationScope } from '@/lib/auth/authorization';
 import { adminReachOf, lockedSwitchesIn, lockedSwitchesOf } from '@/lib/auth/admin-reach';
@@ -35,6 +37,7 @@ const scope: AuthorizationScope = { org: ORG };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  billing.on = false;
   __resetAppOrgTierAdminPagesForTests();
   __resetEntitlementRegistryForTests();
   registerEntitlementSwitch({ key: 'lead_gen', label: 'Lead generation', description: '' });
@@ -116,5 +119,44 @@ describe('lockedSwitchesIn', () => {
     expect(lockedSwitchesIn(reach, null)).toEqual([]);
     expect(lockedSwitchesIn(reach, orgWith([], true))).toEqual([]);
     expect(lockedSwitchesIn('platform', orgWith([]))).toEqual([]);
+  });
+});
+
+describe('lockedSwitchesIn with no upgrade link of the app’s (t-1095)', () => {
+  const orgNothing = {
+    nothingSet: false,
+    unreadable: false,
+    on: [],
+    atDefault: [],
+    unregistered: [],
+  };
+
+  beforeEach(() => {
+    registerEntitlementSwitch({
+      key: 'lead_gen',
+      label: 'Lead generation',
+      description: '',
+      whenLacking: 'lock',
+    });
+  });
+
+  it('offers an org admin the billing page while billing is on', () => {
+    billing.on = true;
+    expect(lockedSwitchesIn({ tiers: ['org', 'designers'], landing: null }, orgNothing)).toEqual([
+      expect.objectContaining({ requires: 'lead_gen', upgradeUrl: '/admin/billing' }),
+    ]);
+  });
+
+  it('offers a named-tier holder nothing, since the page is not theirs to open', () => {
+    billing.on = true;
+    expect(lockedSwitchesIn({ tiers: ['designers'], landing: null }, orgNothing)).toEqual([
+      expect.objectContaining({ requires: 'lead_gen', upgradeUrl: null }),
+    ]);
+  });
+
+  it('offers nothing while billing is off', () => {
+    expect(lockedSwitchesIn({ tiers: ['org', 'designers'], landing: null }, orgNothing)).toEqual([
+      expect.objectContaining({ requires: 'lead_gen', upgradeUrl: null }),
+    ]);
   });
 });

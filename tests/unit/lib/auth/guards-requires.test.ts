@@ -45,6 +45,9 @@ vi.mock('@/lib/logging', () => ({
 const fork = vi.hoisted(() => ({ switches: (): void => {}, tiers: (): void => {} }));
 vi.mock('@/lib/app/entitlements', () => ({ initAppEntitlements: () => fork.switches() }));
 vi.mock('@/lib/app/admin-tier', () => ({ initAppOrgTierAdminPages: () => fork.tiers() }));
+// Off unless a test turns it on: the billing page is then the default upgrade link (t-1095).
+const billing = vi.hoisted(() => ({ on: false }));
+vi.mock('@/lib/billing/config', () => ({ billingEnabled: () => billing.on }));
 
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
@@ -126,6 +129,7 @@ function route(options: Parameters<typeof withAdminAuth>[1], path = '/api/v1/app
 
 beforeEach(() => {
   vi.clearAllMocks();
+  billing.on = false;
   mockEnv.TENANCY_MODE = 'multi';
   vi.mocked(headers).mockResolvedValue(new Headers());
   __resetEntitlementRegistryForTests();
@@ -256,6 +260,35 @@ describe('withAdminAuth({ tier, requires }) (t-1034)', () => {
       upgradeUrl: 'https://example.com/plans',
     });
     expect(ran).toEqual([]);
+  });
+
+  it.each([ORG_OWNER_ROLE, ORG_ADMIN_ROLE])(
+    'offers an org %s the billing page when billing is on and the app gave no link (t-1095)',
+    async (role) => {
+      billing.on = true;
+      signedIn('USER', role);
+      const { body } = await route(LEADS).call();
+      expect(body.error?.details).toEqual({
+        reason: SWITCH_REQUIRED_REASON,
+        requires: 'lead_gen',
+        upgradeUrl: '/admin/billing',
+      });
+    }
+  );
+
+  it("keeps the app's own upgrade link over the billing page (t-1095)", async () => {
+    billing.on = true;
+    fork.switches = () => {
+      registerEntitlementSwitch({
+        key: 'lead_gen',
+        label: 'Lead generation',
+        description: '',
+        upgradeUrl: '/pricing',
+      });
+    };
+    signedIn('USER', ORG_ADMIN_ROLE);
+    const { body } = await route(LEADS).call();
+    expect(body.error?.details?.upgradeUrl).toBe('/pricing');
   });
 
   it("does not use the app's refusal when the org's switches could not be read (t-1053)", async () => {

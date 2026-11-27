@@ -67,6 +67,7 @@ vi.mock('@/lib/db/client', () => ({
 import { POST as WEBHOOK } from '@/app/api/v1/billing/webhook/[provider]/route';
 import { POST as CHECKOUT } from '@/app/api/v1/orgs/[id]/billing/checkout/route';
 import { POST as PORTAL } from '@/app/api/v1/orgs/[id]/billing/portal/route';
+import { GET as READ } from '@/app/api/v1/orgs/[id]/billing/route';
 
 describe('BILLING_PROVIDER unset', () => {
   it('every billing route says billing is off, and the stripe package is never loaded', async () => {
@@ -94,9 +95,13 @@ describe('BILLING_PROVIDER unset', () => {
         }) as unknown as NextRequest,
         params
       ),
+      await READ(
+        new Request(`http://localhost/api/v1/orgs/${ORG}/billing`) as unknown as NextRequest,
+        params
+      ),
     ];
 
-    expect(answers.map((res) => res.status)).toEqual([404, 409, 409]);
+    expect(answers.map((res) => res.status)).toEqual([404, 409, 409, 409]);
     const bodies = await Promise.all(
       answers.map(
         (res) =>
@@ -106,6 +111,7 @@ describe('BILLING_PROVIDER unset', () => {
     expect(bodies[0].error.message).toBe('Billing is not switched on for this install');
     expect(bodies[1].error.details?.reason).toBe('billing_off');
     expect(bodies[2].error.details?.reason).toBe('billing_off');
+    expect(bodies[3].error.details?.reason).toBe('billing_off');
     expect(loaded.stripe).toBe(false);
     expect(db.touched).not.toHaveBeenCalled();
   });

@@ -768,15 +768,19 @@ describe('sectionsForCapabilities', () => {
     },
   ];
 
-  it('returns the very array it was given when the app has a waitlist', () => {
-    expect(sectionsForCapabilities(sections, { waitlistEnabled: true })).toBe(sections);
+  it('returns the very array it was given when the app has a waitlist and billing is on', () => {
+    expect(sectionsForCapabilities(sections, { waitlistEnabled: true, billingEnabled: true })).toBe(
+      sections
+    );
   });
 
   // Options carries the org's language (§138 t-1074), so it is shown whether
   // or not the app registers an org-set switch (t-1054 hid it when none was).
   it('keeps /admin/org-options with or without a waitlist', () => {
     const withOptions = [{ title: 'M', items: [item('/admin/org-options'), item('/o')] }];
-    expect(sectionsForCapabilities(withOptions, { waitlistEnabled: true })).toBe(withOptions);
+    expect(
+      sectionsForCapabilities(withOptions, { waitlistEnabled: true, billingEnabled: true })
+    ).toBe(withOptions);
     expect(sectionsForCapabilities(withOptions, { waitlistEnabled: false })).toEqual(withOptions);
   });
 
@@ -797,12 +801,34 @@ describe('sectionsForCapabilities', () => {
       secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
 
     const before = flat(coreNavSections).map((i) => i.href);
-    const after = flat(sectionsForCapabilities(coreNavSections, { waitlistEnabled: false })).map(
-      (i) => i.href
-    );
+    const after = flat(
+      sectionsForCapabilities(coreNavSections, { waitlistEnabled: false, billingEnabled: true })
+    ).map((i) => i.href);
 
     expect(before).toContain('/admin/waitlist');
     expect(after).toEqual(before.filter((h) => h !== '/admin/waitlist'));
+  });
+
+  // §139 t-1095: with billing off its page does not exist.
+  it('removes only the billing item from the real core sections when billing is off', async () => {
+    const { coreNavSections } = await import('@/components/admin/admin-sidebar');
+    const flat = (secs: typeof coreNavSections) =>
+      secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
+
+    const before = flat(coreNavSections).map((i) => i.href);
+    const after = flat(
+      sectionsForCapabilities(coreNavSections, { waitlistEnabled: true, billingEnabled: false })
+    ).map((i) => i.href);
+
+    expect(before).toContain('/admin/billing');
+    expect(after).toEqual(before.filter((h) => h !== '/admin/billing'));
+  });
+
+  it('removes the billing item when billingEnabled is left out', () => {
+    const withBilling = [{ title: 'M', items: [item('/admin/billing'), item('/o')] }];
+    expect(sectionsForCapabilities(withBilling, { waitlistEnabled: true })).toEqual([
+      { title: 'M', items: [item('/o')] },
+    ]);
   });
 });
 
@@ -830,6 +856,43 @@ describe('AdminSidebar — Waitlist (§125)', () => {
     render(<AdminSidebar reach="platform" orgTierPages={ORG_TIER_ADMIN_PAGES} />);
 
     expect(screen.queryByRole('link', { name: /Waitlist/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('AdminSidebar — Billing (§139 t-1095)', () => {
+  beforeEach(() => {
+    pathnameMock.mockReturnValue('/admin/overview');
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(countsResponse(ZERO_COUNTS)));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetNavRegistryForTests();
+  });
+
+  it('shows an org admin a Billing link to /admin/billing when billing is on', () => {
+    render(
+      <AdminSidebar
+        reach={{ tiers: ['org'], landing: null }}
+        multiTenant
+        billingEnabled
+        orgTierPages={ORG_TIER_ADMIN_PAGES}
+      />
+    );
+
+    expect(screen.getByRole('link', { name: /Billing/ })).toHaveAttribute('href', '/admin/billing');
+  });
+
+  it('hides the Billing link when billing is off', () => {
+    render(
+      <AdminSidebar
+        reach={{ tiers: ['org'], landing: null }}
+        multiTenant
+        orgTierPages={ORG_TIER_ADMIN_PAGES}
+      />
+    );
+
+    expect(screen.queryByRole('link', { name: /Billing/ })).not.toBeInTheDocument();
   });
 });
 
