@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { billingNavigation } from '@/components/admin/billing/billing-action-button';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_QUERY } from '@/lib/billing/upgrade-url';
+import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_QUERY } from '@/lib/billing/routes';
 
 /** The route's answer. A checkout's URL is over http(s) only. */
 const answerSchema = z.discriminatedUnion('outcome', [

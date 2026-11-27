@@ -9,7 +9,7 @@ import { API } from '@/lib/api/endpoints';
 import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { billingEnabled } from '@/lib/billing/config';
-import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_QUERY } from '@/lib/billing/upgrade-url';
+import { ORG_BILLING_PAGE_PATH, SIGNUP_PLAN_QUERY } from '@/lib/billing/routes';
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 

@@ -34,7 +34,7 @@ import { AUTH_LANDING_ROUTE, AUTH_WELCOME_ROUTE, routePathname } from '@/lib/aut
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE, orgAdministers } from '@/lib/tenancy/roles';
 import { billingEnabled } from '@/lib/billing/config';
-import { SIGNUP_PLAN_PAGE } from '@/lib/billing/upgrade-url';
+import { SIGNUP_PLAN_PAGE } from '@/lib/billing/routes';
 import { sessionActingOrgId } from '@/lib/tenancy/entry';
 import {
   clearOrgAwaitingOnboarding,
