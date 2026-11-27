@@ -88,6 +88,18 @@ describe('cancelOrgSubscriptionsAtProvider', () => {
     expect(error).toMatchObject({ status: 409, code: 'BILLING_NOT_CANCELLED' });
   });
 
+  it('refuses while billing is off and the org’s ended subscription can still be charged', async () => {
+    fake.provider = null;
+    record.row = {
+      provider: 'stripe',
+      customerRef: 'cus_a',
+      subscriptionRef: 'sub_1',
+      status: 'ENDED',
+      providerLive: true,
+    };
+    await expect(cancelOrgSubscriptionsAtProvider(ORG)).rejects.toBeInstanceOf(BillingErasureError);
+  });
+
   it('refuses the same when the subscription is at a provider other than the one on', async () => {
     record.row = {
       provider: 'paddle',

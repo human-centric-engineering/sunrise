@@ -6,12 +6,15 @@
  * webhook from the subscription the provider holds, never by the checkout.
  *
  * **One subscription per org.** A checkout takes the org's billing lock (the
- * one the webhook and a hand assignment take) and fetches the stored
- * subscription before deciding: an `active` or `past_due` one is refused,
- * and the owner is sent to the portal; an `incomplete` one, or one that has
- * ended and can still be resumed (a paused trial), is cancelled at the
- * provider and the checkout goes ahead; one that has ended for good, or none,
- * goes ahead. So the org never has two live subscriptions.
+ * one the webhook and a hand assignment take) and lists every live
+ * subscription of the org's customer at the provider, not only the stored
+ * one, whose webhook may not have landed: an `active` or `past_due` one is
+ * refused, and the owner is sent to the portal; an `incomplete` one, or one
+ * that has ended and can still be resumed or charged (paused, unpaid), is
+ * cancelled once the new checkout exists; one that has ended for good, or
+ * none, does not stop it. The adapter also closes the customer's other open
+ * checkout pages, so two tabs cannot both be paid. So the org never has two
+ * live subscriptions.
  *
  * Who may call these is the routes' business: an org OWNER, acting in the org.
  *
@@ -95,31 +98,22 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
       }
       const record = await tx.orgBillingSubscription.findUnique({
         where: { orgId },
-        select: { provider: true, customerRef: true, subscriptionRef: true },
+        select: { provider: true, customerRef: true },
       });
       const sameProvider = record?.provider === provider.key;
 
-      if (sameProvider && record.subscriptionRef !== null) {
-        // The stored status is the neutral one; the provider's says whether
-        // an ended subscription can still be resumed.
-        const current = await provider.fetchSubscription(record.subscriptionRef);
-        if (current && (current.status === 'active' || current.status === 'past_due')) {
-          throw new BillingCheckoutError(
-            'ALREADY_SUBSCRIBED',
-            'This organisation already has a subscription. Change its plan in the billing portal.'
-          );
-        }
-        if (current && (current.status === 'incomplete' || current.live)) {
-          // An unfinished first payment, or a paused trial: replaced, so the
-          // org never has two live subscriptions.
-          await provider.cancelSubscription(current.ref);
-          logger.info('billing: cancelled an unfinished subscription to start a new checkout', {
-            provider: provider.key,
-            orgId,
-            subscriptionRef: current.ref,
-            providerStatus: current.providerStatus,
-          });
-        }
+      const customerRef = sameProvider ? record.customerRef : null;
+
+      // Every live subscription of the customer, not only the stored one: a
+      // subscription whose webhook has not landed yet is not stored, and a
+      // second checkout over it would leave the org paying twice (review
+      // round 1). The stored status is the neutral one, so ask the provider.
+      const live = customerRef === null ? [] : await provider.listLiveSubscriptions(customerRef);
+      if (live.some((s) => s.status === 'active' || s.status === 'past_due')) {
+        throw new BillingCheckoutError(
+          'ALREADY_SUBSCRIBED',
+          'This organisation already has a subscription. Change its plan in the billing portal.'
+        );
       }
 
       let checkout: { url: string; customerRef: string };
@@ -127,7 +121,7 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
         checkout = await provider.createCheckout({
           orgId,
           orgName: org.name,
-          customerRef: sameProvider ? record.customerRef : null,
+          customerRef,
           priceLookupKey,
           successUrl: billingPage('?checkout=success'),
           cancelUrl: billingPage('?checkout=cancelled'),
@@ -145,6 +139,20 @@ export async function startCheckout(orgId: string, planKey: string): Promise<{ u
           );
         }
         throw error;
+      }
+
+      // An unfinished first payment, or a paused or unpaid subscription, is
+      // replaced so the org never has two live subscriptions. Only once the
+      // new checkout exists: cancelled first, a checkout that then failed
+      // would have cost the org its paused trial for nothing (review round 1).
+      for (const replaced of live) {
+        await provider.cancelSubscription(replaced.ref);
+        logger.info('billing: cancelled an unfinished subscription to start a new checkout', {
+          provider: provider.key,
+          orgId,
+          subscriptionRef: replaced.ref,
+          providerStatus: replaced.providerStatus,
+        });
       }
 
       if (!sameProvider || record.customerRef !== checkout.customerRef) {

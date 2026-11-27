@@ -238,6 +238,10 @@ model OrgBillingSubscription {
   /// The provider's own word for the subscription's state (`unpaid`,
   /// `trialing`, ...), as last fetched; null when assigned by hand.
   providerStatus    String?
+  /// Whether the provider can still charge or resume it (`live` in the
+  /// adapter): true for an `ended` subscription that is unpaid or paused.
+  /// Erasure reads it when billing is off (t-1094).
+  providerLive      Boolean                   @default(false)
   /// Whether the subscription ends when the current period does (t-1094).
   cancelAtPeriodEnd Boolean                   @default(false)
   /// When `planKey`'s entitlements were last written to the org. null while
@@ -255,9 +259,6 @@ model OrgBillingSubscription {
   @@map("org_billing_subscription")
 }
 
-/// A subscription's state as it bears on access (`.context/billing/billing.md#the-adapter`).
-/// ACTIVE and PAST_DUE keep the plan; INCOMPLETE has applied nothing yet;
-/// ENDED moves the org to the app's fallback plan.
 /// The billing webhook's event ledger (§139 t-1094,
 /// `.context/billing/billing.md#webhooks`): each provider event id, recorded
 /// once, in the same transaction as the change it made. A delivery whose id is
@@ -285,6 +286,9 @@ model BillingWebhookEvent {
   @@map("billing_webhook_event")
 }
 
+/// A subscription's state as it bears on access (`.context/billing/billing.md#the-adapter`).
+/// ACTIVE and PAST_DUE keep the plan; INCOMPLETE has applied nothing yet;
+/// ENDED moves the org to the app's fallback plan.
 enum BillingSubscriptionStatus {
   INCOMPLETE
   ACTIVE

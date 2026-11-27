@@ -3,8 +3,9 @@
  *
  * The real `startCheckout()` and `openBillingPortal()` over an in-memory
  * subscription record and a fake provider. Pins the "one subscription per
- * org" rule (a live one is refused; an incomplete or paused one is cancelled
- * first; an ended one is not), that the customer is created once and stored,
+ * org" rule (any live one of the customer is refused, stored or not; an
+ * incomplete, paused or unpaid one is cancelled once the new checkout
+ * exists, and not when it could not be made), that the customer is created once and stored,
  * the refusals, and where the provider sends the owner back to.
  *
  * @see lib/billing/checkout.ts
@@ -103,7 +104,7 @@ const provider = {
   key: 'stripe',
   createCheckout: vi.fn(),
   openPortal: vi.fn(),
-  fetchSubscription: vi.fn(),
+  listLiveSubscriptions: vi.fn(),
   cancelSubscription: vi.fn(),
 };
 
@@ -123,6 +124,7 @@ beforeEach(() => {
     customerRef: input.customerRef ?? 'cus_created',
   }));
   provider.openPortal.mockResolvedValue({ url: 'https://portal.test/p' });
+  provider.listLiveSubscriptions.mockResolvedValue([]);
 });
 
 describe('startCheckout', () => {
@@ -155,42 +157,59 @@ describe('startCheckout', () => {
   });
 
   it.each(['active', 'past_due'] as const)(
-    'refuses while the org has a %s subscription, creating nothing',
+    'refuses while the customer has a %s subscription, creating nothing',
     async (status) => {
       db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_a', subscriptionRef: 'sub_1' });
-      provider.fetchSubscription.mockResolvedValue(sub({ status }));
+      provider.listLiveSubscriptions.mockResolvedValue([sub({ status })]);
 
       expect(await refusal(startCheckout(ORG, 'pro'))).toBe('ALREADY_SUBSCRIBED');
+      expect(provider.listLiveSubscriptions).toHaveBeenCalledWith('cus_a');
       expect(provider.createCheckout).not.toHaveBeenCalled();
       expect(provider.cancelSubscription).not.toHaveBeenCalled();
     }
   );
 
+  it('refuses over a live subscription whose webhook has not been stored yet', async () => {
+    // The first checkout was paid; its webhook has not landed, so the record
+    // holds the customer and no subscription.
+    db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_a', subscriptionRef: null });
+    provider.listLiveSubscriptions.mockResolvedValue([sub({ ref: 'sub_unstored' })]);
+
+    expect(await refusal(startCheckout(ORG, 'pro'))).toBe('ALREADY_SUBSCRIBED');
+    expect(provider.createCheckout).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['an incomplete first payment', sub({ status: 'incomplete', providerStatus: 'incomplete' })],
     ['a paused trial', sub({ status: 'ended', providerStatus: 'paused', live: true })],
-  ])('cancels %s first, so the org never has two live subscriptions', async (_name, current) => {
+    ['an unpaid subscription', sub({ status: 'ended', providerStatus: 'unpaid', live: true })],
+  ])('cancels %s once the new checkout exists', async (_name, current) => {
     db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_a', subscriptionRef: 'sub_1' });
-    provider.fetchSubscription.mockResolvedValue(current);
+    provider.listLiveSubscriptions.mockResolvedValue([current]);
 
     await startCheckout(ORG, 'pro');
 
     expect(provider.cancelSubscription).toHaveBeenCalledWith('sub_1');
-    expect(provider.cancelSubscription.mock.invocationCallOrder[0]).toBeLessThan(
-      provider.createCheckout.mock.invocationCallOrder[0]
+    expect(provider.createCheckout.mock.invocationCallOrder[0]).toBeLessThan(
+      provider.cancelSubscription.mock.invocationCallOrder[0]
     );
   });
 
-  it('goes ahead over a subscription that ended for good, without cancelling it', async () => {
+  it('cancels nothing when the new checkout could not be made', async () => {
     db.records.set(ORG, { provider: 'stripe', customerRef: 'cus_a', subscriptionRef: 'sub_1' });
-    provider.fetchSubscription.mockResolvedValue(
-      sub({ status: 'ended', providerStatus: 'canceled', live: false })
-    );
+    provider.listLiveSubscriptions.mockResolvedValue([
+      sub({ status: 'ended', providerStatus: 'paused', live: true }),
+    ]);
+    provider.createCheckout.mockRejectedValue(new BillingPriceMissingError('pro_monthly'));
 
-    await startCheckout(ORG, 'pro');
-
+    expect(await refusal(startCheckout(ORG, 'pro'))).toBe('PRICE_MISSING');
     expect(provider.cancelSubscription).not.toHaveBeenCalled();
-    expect(provider.createCheckout).toHaveBeenCalled();
+  });
+
+  it('asks the provider nothing about subscriptions before the org has a customer', async () => {
+    await startCheckout(ORG, 'pro');
+    expect(provider.listLiveSubscriptions).not.toHaveBeenCalled();
+    expect(provider.cancelSubscription).not.toHaveBeenCalled();
   });
 
   it('refuses when billing is off, an unknown plan, and a plan with no price', async () => {

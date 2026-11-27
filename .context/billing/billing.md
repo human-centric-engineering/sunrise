@@ -430,16 +430,25 @@ version on the provider's object, is not available: a Stripe subscription
 carries no version.
 
 **One subscription per org.** The org's record holds one subscription
-reference. A checkout takes the same per-org lock as the webhook and fetches
-the stored subscription before deciding, since the local record holds only
-the neutral status:
+reference. A checkout takes the same per-org lock as the webhook and lists
+every `live` subscription of the org's customer at the provider, not only the
+stored one: a subscription whose webhook has not landed yet is not stored
+(review round 1).
 
-- `active` or `past_due`: refused, and the owner is sent to the portal.
+- Any `active` or `past_due`: refused, and the owner is sent to the portal.
 - `incomplete` (a first payment that failed or awaits authentication), or
-  `paused` (a trial ended with no card): cancelled at the provider, then the
-  checkout goes ahead. Stripe's portal may not offer to resume a paused
-  subscription, so replacing it is the one path that always works.
-- `ended` and not `live`, or none: the checkout goes ahead.
+  ended and still `live` (`paused`, a trial ended with no card; `unpaid`):
+  cancelled at the provider **once the new checkout has been made**, so a
+  checkout that fails (a price not set up) has cost nothing. Stripe's portal
+  may not offer to resume a paused subscription, so replacing it is the one
+  path that always works.
+- None live: the checkout goes ahead.
+
+The Stripe adapter also expires the customer's other open checkout pages
+before it makes a new one, so a page left open in another tab cannot be paid
+as well. One completed in the instant between the list and the expiry is the
+webhook's to record: it is refused (`not_applied`, with a warning) while the
+org's stored subscription is live, and has to be refunded at Stripe.
 
 So the org never has two live subscriptions.
 
@@ -479,6 +488,7 @@ Decided at planning (2026-11-25):
 | `active`, cancelling at period end | The same plan, until the period ends and Stripe sends the cancellation                 |
 | `past_due`                         | The same plan, through the provider's retries                                          |
 | `ended`                            | The app's fallback plan. With none, every switch the lapsed plan decided is turned off |
+| `ended`, never paid                | What it had: one that ends while `incomplete` gave nothing, so it takes nothing        |
 
 - **Past due keeps the plan** because Stripe is still collecting. Taking an
   area away from an org whose card was declined once would be harsher than the
@@ -493,6 +503,11 @@ Decided at planning (2026-11-25):
   unlimited, and a limit of zero on seats would stop the org adding or
   inviting anyone. This was decided here, not at planning. An app should name a
   fallback plan, and config health warns when billing is on and none is named.
+- **The lapse happens once**, on the way into `ended` from `active` or
+  `past_due`. A later delivery about the same ended subscription changes
+  nothing more, and one that ends while `incomplete` (Stripe's
+  `incomplete_expired`, or cancelled by a new checkout) leaves the org as it
+  was, a plan staff assigned included (review round 1).
 - **The org's data stays.** A lapsed org loses access to what its plan gave
   it, never the records it made there. Erasure is a separate request.
 
@@ -535,11 +550,15 @@ Decided at planning (2026-11-25):
 - **Audit rows:** `org.billing.checkout` when an owner starts one, and
   `org.billing.sync`, with no user, when the webhook changed the org's plan
   or status: from and to, and what the plan wrote.
+- **`providerLive`** on the record is the adapter's `live`: whether the
+  provider can still charge or resume the subscription. It is what tells
+  erasure, with billing off, that an `ended` one that is `unpaid` or
+  `paused` still has to be cancelled.
 - **A customer belongs to one org**: (`provider`, `customerRef`) is unique on
   `OrgBillingSubscription`, which is how the webhook finds the org.
 - **Erasure refuses** with 409 `BILLING_NOT_CANCELLED` while billing is off
   (or on with another provider) and the org's record holds a subscription
-  that has not ended: there is nothing to cancel it with. Switching billing
+  that has not ended, or has ended and is still `live` (unpaid, paused): there is nothing to cancel it with. Switching billing
   back on is the remedy. With an ended subscription, or none, erasure goes
   ahead and logs that it did not check the provider.
 - **Not in t-1094:** telling the owner a payment failed (the event is
@@ -685,7 +704,8 @@ Decided at planning:
   `cancelSubscription`), not only the stored one. So one that was recorded but
   not applied, and an `unpaid` or `paused` one, are ended too. A subscription
   that has already ended, or that the provider no longer has, counts as
-  cancelled, so a lapsed org's erasure is not stuck retrying. Any other
+  cancelled, and so does a customer deleted at the provider, so a lapsed
+  org's erasure is not stuck retrying. Any other
   refusal fails the erasure step, which is retried. It does not go on without
   it. A checkout started a minute before erasure may not be in the search yet;
   its webhook then names an org that no longer exists and is dropped, so that

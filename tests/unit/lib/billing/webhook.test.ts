@@ -670,6 +670,47 @@ describe('incomplete and unknown prices', () => {
   });
 });
 
+describe('the lapse happens once, and only after access', () => {
+  it('an incomplete subscription that ends leaves the org as it was, a hand-assigned plan included', async () => {
+    linkCustomer();
+    db.records.set(ORG, { ...db.records.get(ORG)!, planKey: 'team' });
+    holds(sub('sub_1', { status: 'incomplete', providerStatus: 'incomplete' }));
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    holds(sub('sub_1', { status: 'ended', providerStatus: 'incomplete_expired', live: false }));
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(stored()).toMatchObject({ status: 'ENDED', planKey: 'team', providerLive: false });
+    expect(mockApplyPlan).not.toHaveBeenCalled();
+  });
+
+  it('a later delivery about an ended subscription changes nothing more', async () => {
+    linkCustomer();
+    holds(sub('sub_1'));
+    await deliver({ subscriptionRef: 'sub_1' });
+    holds(sub('sub_1', { status: 'ended', providerStatus: 'canceled', live: false }));
+    await deliver({ subscriptionRef: 'sub_1' });
+    expect(stored()?.planKey).toBe('free');
+    mockApplyPlan.mockClear();
+
+    const again = await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(again).toMatchObject({ outcome: 'unchanged' });
+    expect(mockApplyPlan).not.toHaveBeenCalled();
+  });
+
+  it('records that an unpaid subscription can still be charged, for erasure', async () => {
+    linkCustomer();
+    holds(sub('sub_1'));
+    await deliver({ subscriptionRef: 'sub_1' });
+    holds(sub('sub_1', { status: 'ended', providerStatus: 'unpaid', live: true }));
+
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(stored()).toMatchObject({ status: 'ENDED', providerLive: true });
+  });
+});
+
 describe('one subscription per org', () => {
   it('when the stored one ends, adopts the customer’s other live subscription in the same delivery', async () => {
     linkCustomer();
@@ -688,6 +729,26 @@ describe('one subscription per org', () => {
       status: 'ACTIVE',
       planKey: 'team',
     });
+  });
+
+  it('forgets the cached budget when the lapse changed it, even if the adopted plan does not', async () => {
+    // pro ($100) lapses to free ($10), and team, adopted in the same
+    // delivery, is $10 too: only the first write moved the budget.
+    plans.list = plans.list.map((p) =>
+      p.key === 'free' || p.key === 'team' ? { ...p, aiBudgetUsd: 10 } : p
+    );
+    linkCustomer();
+    holds(sub('sub_old'));
+    await deliver({ subscriptionRef: 'sub_old' });
+    holds(sub('sub_new', { priceLookupKeys: ['team_monthly'] }));
+    await deliver({ subscriptionRef: 'sub_new' });
+    mockForgetOrgCap.mockClear();
+
+    holds(sub('sub_old', { status: 'ended', providerStatus: 'canceled', live: false }));
+    await deliver({ subscriptionRef: 'sub_old' });
+
+    expect(stored()).toMatchObject({ subscriptionRef: 'sub_new', planKey: 'team' });
+    expect(mockForgetOrgCap).toHaveBeenCalledWith(ORG);
   });
 
   it('a new live subscription replaces a stored one that has ended', async () => {

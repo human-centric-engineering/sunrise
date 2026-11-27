@@ -1,4 +1,4 @@
--- §139 t-1094: the billing webhook's event ledger; two fields the webhook
+-- §139 t-1094: the billing webhook's event ledger; three fields the webhook
 -- keeps on each org's subscription record; and one org per provider customer.
 --
 -- `billing_webhook_event` records each provider event id once, in the same
@@ -16,6 +16,7 @@
 
 -- AlterTable
 ALTER TABLE "org_billing_subscription" ADD COLUMN "providerStatus" TEXT,
+ADD COLUMN "providerLive" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN "cancelAtPeriodEnd" BOOLEAN NOT NULL DEFAULT false;
 
 -- A provider's customer belongs to one org: the webhook finds the org by it.

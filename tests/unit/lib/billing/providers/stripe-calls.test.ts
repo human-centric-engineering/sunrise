@@ -35,6 +35,8 @@ const sdk = vi.hoisted(() => {
     customersCreate: vi.fn(),
     customersSearch: vi.fn(),
     sessionsCreate: vi.fn(),
+    sessionsList: vi.fn(),
+    sessionsExpire: vi.fn(),
     portalCreate: vi.fn(),
     subsRetrieve: vi.fn(),
     subsList: vi.fn(),
@@ -53,7 +55,13 @@ vi.mock('stripe', () => {
     };
     prices = { list: sdk.calls.pricesList };
     customers = { create: sdk.calls.customersCreate, search: sdk.calls.customersSearch };
-    checkout = { sessions: { create: sdk.calls.sessionsCreate } };
+    checkout = {
+      sessions: {
+        create: sdk.calls.sessionsCreate,
+        list: sdk.calls.sessionsList,
+        expire: sdk.calls.sessionsExpire,
+      },
+    };
     billingPortal = { sessions: { create: sdk.calls.portalCreate } };
     subscriptions = {
       retrieve: sdk.calls.subsRetrieve,
@@ -96,6 +104,8 @@ beforeEach(() => {
   calls.constructed.length = 0;
   provider = createStripeProvider({ secretKey: 'sk_test_x', webhookSecret: 'whsec_x' });
   calls.pricesList.mockResolvedValue({ data: [{ id: 'price_1' }] });
+  calls.sessionsList.mockImplementation(() => sdk.pages([]));
+  calls.sessionsExpire.mockResolvedValue({});
   calls.customersCreate.mockResolvedValue({ id: 'cus_new' });
   calls.sessionsCreate.mockResolvedValue({ url: 'https://checkout.stripe.test/s' });
   calls.portalCreate.mockResolvedValue({ url: 'https://billing.stripe.test/p' });
@@ -143,6 +153,39 @@ describe('createCheckout', () => {
       subscription_data: { metadata: { sunrise_org_id: 'org_a' } },
     });
     expect(result).toEqual({ url: 'https://checkout.stripe.test/s', customerRef: 'cus_new' });
+  });
+
+  it('looks for no open checkouts for a customer it has just created', async () => {
+    await provider.createCheckout(input);
+    expect(calls.sessionsList).not.toHaveBeenCalled();
+  });
+
+  it('expires the stored customer’s other open checkouts, so two tabs cannot both be paid', async () => {
+    calls.sessionsList.mockImplementation(() => sdk.pages([{ id: 'cs_tab1' }, { id: 'cs_done' }]));
+    calls.sessionsExpire.mockImplementation(async (id: string) => {
+      // Completed between the list and the expire: no longer open.
+      if (id === 'cs_done') throw new sdk.StripeInvalidRequestError('checkout_session_not_open');
+      return {};
+    });
+
+    await provider.createCheckout({ ...input, customerRef: 'cus_old' });
+
+    expect(calls.sessionsList).toHaveBeenCalledWith({
+      customer: 'cus_old',
+      status: 'open',
+      limit: 100,
+    });
+    expect(calls.sessionsExpire).toHaveBeenCalledWith('cs_tab1');
+    expect(calls.sessionsCreate).toHaveBeenCalled();
+  });
+
+  it('does not make a checkout when an open one could not be expired for another reason', async () => {
+    calls.sessionsList.mockImplementation(() => sdk.pages([{ id: 'cs_tab1' }]));
+    calls.sessionsExpire.mockRejectedValue(new Error('network'));
+    await expect(provider.createCheckout({ ...input, customerRef: 'cus_old' })).rejects.toThrow(
+      'network'
+    );
+    expect(calls.sessionsCreate).not.toHaveBeenCalled();
   });
 
   it('reuses a stored customer', async () => {
@@ -241,6 +284,17 @@ describe('subscriptions', () => {
 
     expect(calls.subsList).toHaveBeenCalledWith({ customer: 'cus_1', status: 'all', limit: 100 });
     expect(live.map((s) => s.ref)).toEqual(['sub_active', 'sub_unpaid', 'sub_paused']);
+  });
+
+  it('reads a customer Stripe no longer has as having no live subscriptions', async () => {
+    calls.subsList.mockImplementation(() => {
+      throw new sdk.StripeInvalidRequestError('resource_missing');
+    });
+    expect(await provider.listLiveSubscriptions('cus_deleted')).toEqual([]);
+    calls.subsList.mockImplementation(() => {
+      throw new Error('network');
+    });
+    await expect(provider.listLiveSubscriptions('cus_1')).rejects.toThrow('network');
   });
 
   it('cancels a live one with what is owed invoiced, and treats ended or missing as done', async () => {

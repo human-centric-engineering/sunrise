@@ -94,6 +94,7 @@ type RecordRow = {
   subscriptionRef: string | null;
   status: BillingSubscriptionStatus;
   providerStatus: string | null;
+  providerLive: boolean;
   cancelAtPeriodEnd: boolean;
   periodStart: Date | null;
   periodEnd: Date | null;
@@ -106,6 +107,7 @@ const RECORD_SELECT = {
   subscriptionRef: true,
   status: true,
   providerStatus: true,
+  providerLive: true,
   cancelAtPeriodEnd: true,
   periodStart: true,
   periodEnd: true,
@@ -118,6 +120,8 @@ interface Applied {
   plan: { from: string | null; to: string | null } | null;
   status: { from: BillingSubscriptionStatus | null; to: BillingSubscriptionStatus } | null;
   writes: PlanApplied | null;
+  /** Whether any write in the delivery changed the AI budget, so the cache is forgotten. */
+  budgetChanged: boolean;
 }
 
 /**
@@ -193,7 +197,7 @@ export async function handleBillingWebhook(input: {
   if (result === 'replay') return { status: 'replay', eventId: event.id, orgId };
 
   // After the commit, so a re-read cannot cache the budget it replaced.
-  if (result.writes?.aiBudgetUsd) forgetOrgCap(orgId);
+  if (result.budgetChanged) forgetOrgCap(orgId);
   if (result.plan || result.status) {
     logAdminAction({
       // The provider acted, not a person.
@@ -254,7 +258,14 @@ async function findOrg(provider: BillingProvider, event: BillingEvent): Promise<
 
 function warnNotApplied(why: string, fields: Record<string, unknown>): Applied {
   logger.warn(`billing: webhook event recorded and not applied: ${why}`, fields);
-  return { outcome: 'not_applied', subscriptionRef: null, plan: null, status: null, writes: null };
+  return {
+    outcome: 'not_applied',
+    subscriptionRef: null,
+    plan: null,
+    status: null,
+    writes: null,
+    budgetChanged: false,
+  };
 }
 
 /** Inside the locked transaction, after the ledger row is in. */
@@ -276,6 +287,7 @@ async function applyEvent(
       plan: null,
       status: null,
       writes: null,
+      budgetChanged: false,
     };
   }
   const fields = { provider: provider.key, orgId, eventId: event.id, subscriptionRef: target };
@@ -311,6 +323,7 @@ async function applyEvent(
         plan: null,
         status: null,
         writes: null,
+        budgetChanged: false,
       };
     }
     const replaceable =
@@ -346,6 +359,9 @@ async function applyEvent(
         plan: applied.plan || adopted.plan ? { from, to: finalPlan } : null,
         status: { from: record?.status ?? null, to: STATUS[next.status] },
         writes: adopted.writes ?? applied.writes,
+        // Either write may have moved it: old plan to fallback, then fallback
+        // to the adopted plan (review round 1).
+        budgetChanged: applied.budgetChanged || adopted.budgetChanged,
       };
     }
   }
@@ -392,7 +408,15 @@ async function writeSubscription(
         priceLookupKeys: subscription.priceLookupKeys,
       });
     }
-  } else if (subscription.status === 'ended') {
+  } else if (
+    subscription.status === 'ended' &&
+    (record?.status === 'ACTIVE' || record?.status === 'PAST_DUE')
+  ) {
+    // The lapse happens once, on the way into `ended` from a subscription
+    // that gave access. One that ends while `incomplete` was never paid
+    // for, so the org keeps what it had, a plan staff assigned included; and
+    // a later delivery about one already ended changes nothing more (review
+    // round 1).
     const fallback = fallbackPlan();
     if (fallback) {
       writes = await applyPlan(orgId, fallback, onTransaction(tx));
@@ -416,6 +440,7 @@ async function writeSubscription(
     }
   }
   // `incomplete` applies nothing: the org keeps what it had before checkout.
+  // Nor does `ended` after `incomplete` or `ended` (above).
 
   if (writes === null && planWritten) {
     throw new Error('The organisation was deleted while its plan was being applied');
@@ -427,6 +452,7 @@ async function writeSubscription(
     subscriptionRef: subscription.ref,
     status,
     providerStatus: subscription.providerStatus,
+    providerLive: subscription.live,
     cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
     periodStart: subscription.periodStart,
     periodEnd: subscription.periodEnd,
@@ -439,6 +465,7 @@ async function writeSubscription(
     record.subscriptionRef === data.subscriptionRef &&
     record.status === data.status &&
     record.providerStatus === data.providerStatus &&
+    record.providerLive === data.providerLive &&
     record.cancelAtPeriodEnd === data.cancelAtPeriodEnd &&
     record.periodStart?.getTime() === data.periodStart.getTime() &&
     record.periodEnd?.getTime() === data.periodEnd.getTime() &&
@@ -461,5 +488,6 @@ async function writeSubscription(
     plan: fromPlan !== toPlan || settingsChanged ? { from: fromPlan, to: toPlan } : null,
     status: statusChanged ? { from: record?.status ?? null, to: status } : null,
     writes,
+    budgetChanged: (writes?.aiBudgetUsd ?? null) !== null,
   };
 }

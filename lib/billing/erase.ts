@@ -53,7 +53,8 @@ export interface ProviderCancellation {
  * Cancel every live subscription of every customer of the org.
  *
  * @throws {BillingErasureError} when billing is off (or on with another
- *   provider) and the org's record holds a subscription that has not ended
+ *   provider) and the org's record holds a subscription that has not ended,
+ *   or has ended and can still be charged or resumed
  * @throws whatever the provider throws on any other refusal, so the erasure
  *   stops and can be retried
  */
@@ -63,11 +64,22 @@ export async function cancelOrgSubscriptionsAtProvider(
   const record = await runAsOrg(orgId, () =>
     prisma.orgBillingSubscription.findUnique({
       where: { orgId },
-      select: { provider: true, customerRef: true, subscriptionRef: true, status: true },
+      select: {
+        provider: true,
+        customerRef: true,
+        subscriptionRef: true,
+        status: true,
+        providerLive: true,
+      },
     })
   );
   const provider = await billingProvider();
-  const holdsLive = record !== null && record.subscriptionRef !== null && record.status !== 'ENDED';
+  // Not ended, or ended and still chargeable (unpaid, paused): either may
+  // still be paying, or be resumed (review round 1).
+  const holdsLive =
+    record !== null &&
+    record.subscriptionRef !== null &&
+    (record.status !== 'ENDED' || record.providerLive);
 
   if (!provider || (record?.provider && record.provider !== provider.key)) {
     if (holdsLive) {

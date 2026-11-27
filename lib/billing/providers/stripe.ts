@@ -207,6 +207,22 @@ export function createStripeProvider(options: StripeProviderOptions): BillingPro
       const customerRef =
         input.customerRef ?? (await stripe.customers.create({ name: input.orgName, metadata })).id;
 
+      // One open checkout per customer: a page left open in another tab and
+      // paid after this one would start a second subscription. One that
+      // completed in the meantime can no longer be expired, and is the
+      // webhook's to record.
+      if (input.customerRef !== null) {
+        for await (const open of stripe.checkout.sessions.list({
+          customer: customerRef,
+          status: 'open',
+          limit: 100,
+        })) {
+          await stripe.checkout.sessions.expire(open.id).catch((error: unknown) => {
+            if (!(error instanceof Stripe.errors.StripeInvalidRequestError)) throw error;
+          });
+        }
+      }
+
       const session = await stripe.checkout.sessions.create({
         mode: 'subscription',
         customer: customerRef,
@@ -254,12 +270,19 @@ export function createStripeProvider(options: StripeProviderOptions): BillingPro
 
     async listLiveSubscriptions(customerRef) {
       const live: ProviderSubscription[] = [];
-      for await (const subscription of stripe.subscriptions.list({
-        customer: customerRef,
-        status: 'all',
-        limit: 100,
-      })) {
-        if (isLive(subscription.status)) live.push(toProviderSubscription(subscription));
+      try {
+        for await (const subscription of stripe.subscriptions.list({
+          customer: customerRef,
+          status: 'all',
+          limit: 100,
+        })) {
+          if (isLive(subscription.status)) live.push(toProviderSubscription(subscription));
+        }
+      } catch (error) {
+        // A customer deleted at Stripe has no subscriptions: deleting it
+        // cancels them. Read as none, so erasure is not stuck retrying.
+        if (isMissing(error)) return [];
+        throw error;
       }
       return live;
     },

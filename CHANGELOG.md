@@ -55,7 +55,7 @@ release process.
   org export) and applies the provider's current subscription under the
   lapsed rule: past due keeps the plan, cancelled or unpaid applies the
   fallback plan. `OrgBillingSubscription` gains `providerStatus`,
-  `cancelAtPeriodEnd` and a unique (`provider`, `customerRef`). Three
+  `providerLive`, `cancelAtPeriodEnd` and a unique (`provider`, `customerRef`). Three
   config-health checks (`billing_provider`, `billing_single_tenant`,
   `billing_fallback_plan`). **Org erasure now cancels the org's live
   subscriptions at the provider before it deletes anything**, and refuses

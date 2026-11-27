@@ -222,7 +222,7 @@ covered by the version contract.
     (`prisma/schema/platform.prisma`) — which plan an org is on, one row per
     org, and the provider subscription behind it; it names no person
     (§139 t-1093, see [`.context/billing/billing.md`](./.context/billing/billing.md));
-    its `providerStatus` and `cancelAtPeriodEnd`, and its unique
+    its `providerStatus`, `providerLive` and `cancelAtPeriodEnd`, and its unique
     (`provider`, `customerRef`) (§139 t-1094)
   - `BillingWebhookEvent` (`prisma/schema/platform.prisma`) — the billing
     webhook's event ledger, unique on (`provider`, `eventId`), org-owned, in

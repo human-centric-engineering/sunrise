@@ -77,7 +77,7 @@ const provider = vi.hoisted(() => ({
   key: 'stripe',
   createCheckout: vi.fn(),
   openPortal: vi.fn(),
-  fetchSubscription: vi.fn(),
+  listLiveSubscriptions: vi.fn(),
   cancelSubscription: vi.fn(),
 }));
 const billing = vi.hoisted(() => ({ on: true }));
@@ -159,6 +159,7 @@ beforeEach(() => {
     customerRef: 'cus_a',
   });
   provider.openPortal.mockResolvedValue({ url: 'https://portal.test/p' });
+  provider.listLiveSubscriptions.mockResolvedValue([]);
 });
 
 describe('the org’s OWNER', () => {
@@ -216,7 +217,9 @@ describe('the org’s OWNER', () => {
       customerRef: 'cus_a',
       subscriptionRef: 'sub_1',
     });
-    provider.fetchSubscription.mockResolvedValue({ ref: 'sub_1', status: 'active', live: true });
+    provider.listLiveSubscriptions.mockResolvedValue([
+      { ref: 'sub_1', status: 'active', live: true },
+    ]);
 
     const res = await checkout();
 
