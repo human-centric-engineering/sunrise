@@ -16,7 +16,7 @@
  * else whatever this renders.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { z } from 'zod';
@@ -34,12 +34,38 @@ const answerSchema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('none') }),
 ]);
 
-export function SignupPlanTakeUp({ orgId }: { orgId: string }) {
+/** How often, and how many times, the page asks again while the org is set up. */
+export const SETUP_POLL_MS = 2_000;
+export const SETUP_POLL_TRIES = 30;
+
+export interface SignupPlanTakeUpProps {
+  orgId: string;
+  /**
+   * The org's setup is finished, so the checkout may start. Until it is, the
+   * page says so and is asked again every {@link SETUP_POLL_MS}, up to
+   * {@link SETUP_POLL_TRIES} times; the org-created hooks it waits on run
+   * after the response that sent the founder here.
+   */
+  ready: boolean;
+}
+
+export function SignupPlanTakeUp({ orgId, ready }: SignupPlanTakeUpProps) {
   const t = useTranslations('admin.billing.signupPlan');
   const router = useRouter();
   // Once per page load: the route takes the plan up once, and a second ask
   // (React running the effect twice in development) would answer `none`.
   const asked = useRef(false);
+  const [tries, setTries] = useState(0);
+
+  // Not ready: ask the server again, until it is or the tries run out.
+  useEffect(() => {
+    if (ready || tries >= SETUP_POLL_TRIES) return;
+    const timer = window.setTimeout(() => {
+      setTries((n) => n + 1);
+      router.refresh();
+    }, SETUP_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [ready, tries, router]);
 
   // Restored by Back from the back-forward cache, the page is as it was when
   // it left ("Taking you…"): load the billing page afresh instead.
@@ -52,7 +78,7 @@ export function SignupPlanTakeUp({ orgId }: { orgId: string }) {
   }, []);
 
   useEffect(() => {
-    if (asked.current) return;
+    if (!ready || asked.current) return;
     asked.current = true;
     void (async () => {
       let shown: string;
@@ -80,11 +106,11 @@ export function SignupPlanTakeUp({ orgId }: { orgId: string }) {
           : `${ORG_BILLING_PAGE_PATH}?${SIGNUP_PLAN_QUERY.key}=${shown}`
       );
     })();
-  }, [orgId, router]);
+  }, [orgId, ready, router]);
 
   return (
     <p role="status" className="rounded-md border px-4 py-3 text-sm">
-      {t('opening')}
+      {ready ? t('opening') : tries >= SETUP_POLL_TRIES ? t('stillSettingUp') : t('settingUp')}
     </p>
   );
 }

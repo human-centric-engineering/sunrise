@@ -8,9 +8,9 @@
  *
  * @see components/admin/billing/signup-plan-take-up.tsx
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { StrictMode } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('@/lib/api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api/client')>()),
@@ -24,7 +24,11 @@ vi.mock('next/navigation', async (importOriginal) => ({
 }));
 
 import { billingNavigation } from '@/components/admin/billing/billing-action-button';
-import { SignupPlanTakeUp } from '@/components/admin/billing/signup-plan-take-up';
+import {
+  SETUP_POLL_MS,
+  SETUP_POLL_TRIES,
+  SignupPlanTakeUp,
+} from '@/components/admin/billing/signup-plan-take-up';
 import { APIClientError, apiClient } from '@/lib/api/client';
 
 const ORG = 'cmorg000000000000000other';
@@ -44,16 +48,60 @@ describe('SignupPlanTakeUp', () => {
 
   it('loads the billing page afresh when Back restores it from the back-forward cache', () => {
     vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
-    render(<SignupPlanTakeUp orgId={ORG} />);
+    render(<SignupPlanTakeUp orgId={ORG} ready />);
 
     window.dispatchEvent(pageshow(true));
 
     expect(billingNavigation.reload).toHaveBeenCalledWith('/admin/billing');
   });
 
+  describe('while the org is still being set up', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('says so, asks the route nothing, and asks the server again', () => {
+      render(<SignupPlanTakeUp orgId={ORG} ready={false} />);
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Setting up your organisation before taking you to payment…'
+      );
+      act(() => {
+        vi.advanceTimersByTime(SETUP_POLL_MS);
+      });
+      expect(router.refresh).toHaveBeenCalledTimes(1);
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it('stops asking after its tries, and says to reload', () => {
+      render(<SignupPlanTakeUp orgId={ORG} ready={false} />);
+
+      for (let i = 0; i < SETUP_POLL_TRIES + 3; i++)
+        act(() => {
+          vi.advanceTimersByTime(SETUP_POLL_MS);
+        });
+
+      expect(router.refresh).toHaveBeenCalledTimes(SETUP_POLL_TRIES);
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Your organisation is still being set up.'
+      );
+    });
+
+    it('starts the checkout once the server says it is ready', () => {
+      vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
+      const { rerender } = render(<SignupPlanTakeUp orgId={ORG} ready={false} />);
+
+      rerender(<SignupPlanTakeUp orgId={ORG} ready />);
+
+      expect(apiClient.post).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Taking you to the payment page for the plan you chose when you signed up…'
+      );
+    });
+  });
+
   it('does nothing on an ordinary page show', () => {
     vi.mocked(apiClient.post).mockReturnValue(new Promise(() => {}));
-    render(<SignupPlanTakeUp orgId={ORG} />);
+    render(<SignupPlanTakeUp orgId={ORG} ready />);
 
     window.dispatchEvent(pageshow(false));
 
@@ -70,7 +118,7 @@ describe('SignupPlanTakeUp', () => {
     // StrictMode runs the effect twice in development: still one ask.
     render(
       <StrictMode>
-        <SignupPlanTakeUp orgId={ORG} />
+        <SignupPlanTakeUp orgId={ORG} ready />
       </StrictMode>
     );
 
@@ -91,7 +139,7 @@ describe('SignupPlanTakeUp', () => {
   it.each(['applied', 'dropped'])('reloads the page saying it was %s', async (outcome) => {
     vi.mocked(apiClient.post).mockResolvedValue({ outcome, planKey: 'starter' });
 
-    render(<SignupPlanTakeUp orgId={ORG} />);
+    render(<SignupPlanTakeUp orgId={ORG} ready />);
 
     await waitFor(() =>
       expect(router.replace).toHaveBeenCalledWith(`/admin/billing?signup=${outcome}`)
@@ -102,7 +150,7 @@ describe('SignupPlanTakeUp', () => {
   it('reloads the page with no query when nothing was waiting', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ outcome: 'none' });
 
-    render(<SignupPlanTakeUp orgId={ORG} />);
+    render(<SignupPlanTakeUp orgId={ORG} ready />);
 
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/admin/billing'));
   });
@@ -111,7 +159,7 @@ describe('SignupPlanTakeUp', () => {
     vi.mocked(apiClient.post).mockRejectedValue(
       new APIClientError('not set up', 'CONFLICT', 409, { reason: 'price_missing' })
     );
-    const { unmount } = render(<SignupPlanTakeUp orgId={ORG} />);
+    const { unmount } = render(<SignupPlanTakeUp orgId={ORG} ready />);
     await waitFor(() =>
       expect(router.replace).toHaveBeenCalledWith('/admin/billing?signup=failed')
     );
@@ -122,7 +170,7 @@ describe('SignupPlanTakeUp', () => {
       outcome: 'checkout',
       url: 'javascript:alert(1)',
     });
-    render(<SignupPlanTakeUp orgId={ORG} />);
+    render(<SignupPlanTakeUp orgId={ORG} ready />);
     await waitFor(() =>
       expect(router.replace).toHaveBeenCalledWith('/admin/billing?signup=failed')
     );

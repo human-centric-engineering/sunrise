@@ -464,7 +464,7 @@ describe('createSignupOrg (§134 t-1062)', () => {
 
     await completeSignupOrg(ORG, OWNER);
 
-    expect(mockApplyFreePlan).toHaveBeenCalledWith(ORG, OWNER);
+    expect(mockApplyFreePlan).toHaveBeenCalledWith(ORG, OWNER, { fromSetup: true });
     expect(order).toEqual(['hooks', 'agents', 'plan']);
   });
 

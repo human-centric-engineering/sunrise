@@ -376,7 +376,7 @@ export async function completeSignupOrg(orgId: string, ownerUserId: string): Pro
   // paid one is the founder's to start: the signup goes on to its checkout.
   const setUp = async () => {
     await setUpCreatedOrg(orgId, ownerUserId);
-    await applyFreeSignupPlan(orgId, ownerUserId);
+    await applyFreeSignupPlan(orgId, ownerUserId, { fromSetup: true });
   };
   await (isMultiTenant() ? runAsOrg(orgId, setUp, { source: 'job' }) : setUp());
 }

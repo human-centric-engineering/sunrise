@@ -60,8 +60,10 @@ vi.mock('@/components/admin/billing/billing-summary', () => ({
 // The take-up's own behaviour is signup-plan-take-up.test.tsx; here, when the
 // page renders it (§139 t-1096).
 vi.mock('@/components/admin/billing/signup-plan-take-up', () => ({
-  SignupPlanTakeUp: ({ orgId }: { orgId: string }) => (
-    <div data-testid="signup-plan-take-up">{orgId}</div>
+  SignupPlanTakeUp: ({ orgId, ready }: { orgId: string; ready: boolean }) => (
+    <div data-testid="signup-plan-take-up" data-ready={String(ready)}>
+      {orgId}
+    </div>
   ),
 }));
 vi.mock('@/components/admin/billing/signup-plan-notice', () => ({
@@ -83,7 +85,7 @@ import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 const ORG = { id: 'org-entered', name: 'Acme' };
 const BILLING = { orgId: ORG.id, plan: null, mayChange: true, signupPlan: null };
 /** The org's signup chose Pro, and it has not subscribed yet. */
-const WAITING = { ...BILLING, signupPlan: { key: 'pro', label: 'Pro' } };
+const WAITING = { ...BILLING, signupPlan: { key: 'pro', label: 'Pro', ready: true } };
 
 const page = (query: Record<string, string> = {}) =>
   BillingPage({ searchParams: Promise.resolve(query) });
@@ -216,6 +218,14 @@ describe('BillingPage — a plan chosen at signup (§139 t-1096)', () => {
     await expect(page({ signup: 'plan' })).rejects.toThrow(`NEXT_REDIRECT ${AUTH_LANDING_ROUTE}`);
   });
 
+  it('sends a viewer of the install org, or with no org, on to the landing route', async () => {
+    vi.mocked(requestActingOrg).mockResolvedValue({ id: INSTALL_ORG_ID, name: 'Default' });
+    await expect(page({ signup: 'plan' })).rejects.toThrow(`NEXT_REDIRECT ${AUTH_LANDING_ROUTE}`);
+
+    vi.mocked(requestActingOrg).mockResolvedValue(null);
+    await expect(page({ signup: 'plan' })).rejects.toThrow(`NEXT_REDIRECT ${AUTH_LANDING_ROUTE}`);
+  });
+
   it('stays, showing why, when the billing could not be read', async () => {
     vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
@@ -231,6 +241,16 @@ describe('BillingPage — a plan chosen at signup (§139 t-1096)', () => {
     render(await page({ checkout: 'success' }));
 
     expect(screen.queryByTestId('signup-plan-notice')).not.toBeInTheDocument();
+  });
+
+  it('hands the take-up whether the org is set up, so it waits until it is', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      apiSuccess({ ...WAITING, signupPlan: { ...WAITING.signupPlan, ready: false } })
+    );
+
+    render(await page({ signup: 'plan' }));
+
+    expect(screen.getByTestId('signup-plan-take-up')).toHaveAttribute('data-ready', 'false');
   });
 
   it('offers the waiting plan to the owner on any other visit, until it is settled', async () => {

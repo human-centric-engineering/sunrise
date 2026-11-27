@@ -37,9 +37,11 @@ const takeUpSchema = z.discriminatedUnion('outcome', [
 export interface SignupPlanNoticeProps {
   orgId: string;
   planLabel: string;
+  /** The org's setup is finished. Until it is, the notice says so, with no buttons. */
+  ready: boolean;
 }
 
-export function SignupPlanNotice({ orgId, planLabel }: SignupPlanNoticeProps) {
+export function SignupPlanNotice({ orgId, planLabel, ready }: SignupPlanNoticeProps) {
   const t = useTranslations('admin.billing.signupPlan');
   const router = useRouter();
   const [pending, setPending] = useState<'continue' | 'dismiss' | null>(null);
@@ -65,13 +67,10 @@ export function SignupPlanNotice({ orgId, planLabel }: SignupPlanNoticeProps) {
         billingNavigation.go(answer.url);
         return; // Left pending: the page is going away.
       }
-      // The page says what happened, as after the signup's own take-up.
-      router.replace(
-        answer.outcome === 'none'
-          ? ORG_BILLING_PAGE_PATH
-          : `${ORG_BILLING_PAGE_PATH}?${SIGNUP_PLAN_QUERY.key}=${answer.outcome}`
-      );
-      router.refresh();
+      // The page says what happened, as after the signup's own take-up; with
+      // nothing to say, it is read again where it is.
+      if (answer.outcome === 'none') router.refresh();
+      else router.replace(`${ORG_BILLING_PAGE_PATH}?${SIGNUP_PLAN_QUERY.key}=${answer.outcome}`);
     } catch (err) {
       save.report(err);
     }
@@ -89,6 +88,14 @@ export function SignupPlanNotice({ orgId, planLabel }: SignupPlanNoticeProps) {
     }
     setPending(null);
   };
+
+  if (!ready) {
+    return (
+      <p role="status" className="rounded-md border px-4 py-3 text-sm">
+        {t('waitingSetup', { plan: planLabel })}
+      </p>
+    );
+  }
 
   return (
     <section

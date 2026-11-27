@@ -7,8 +7,8 @@
  * waiting** until a subscription starts (the webhook removes it), so an owner
  * who leaves the checkout page can come back to it. A free one is applied,
  * `{ outcome: 'applied', planKey }`, once the org's setup is done (it usually
- * already was). Otherwise `{ outcome: 'none' }` (nothing waiting, a free
- * plan's setup not finished, or the org already subscribed), or `{ outcome:
+ * already was). Otherwise `{ outcome: 'none' }` (nothing waiting, the org's
+ * setup not finished, or the org already subscribed), or `{ outcome:
  * 'dropped', planKey }` when the app no longer registers it or no longer
  * offers it at signup.
  *

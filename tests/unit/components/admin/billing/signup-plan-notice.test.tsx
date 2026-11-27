@@ -36,8 +36,19 @@ describe('SignupPlanNotice', () => {
     vi.spyOn(billingNavigation, 'go').mockImplementation(() => {});
   });
 
+  it('says the org is still being set up, with nothing to press, until it is', () => {
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready={false} />);
+
+    expect(
+      screen.getByText(
+        'You chose the Pro plan when you signed up. You can subscribe to it here once your organisation is set up.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
   it('names the plan the signup chose', () => {
-    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
     expect(
       screen.getByText(
@@ -54,7 +65,7 @@ describe('SignupPlanNotice', () => {
       planKey: 'pro',
       url: 'https://checkout.stripe.test/c/2',
     });
-    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Subscribe to Pro' }));
 
@@ -67,11 +78,12 @@ describe('SignupPlanNotice', () => {
 
   it('reloads the page when there was nothing left to start', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ outcome: 'none' });
-    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Subscribe to Pro' }));
 
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/admin/billing'));
+    await waitFor(() => expect(router.refresh).toHaveBeenCalled());
+    expect(router.replace).not.toHaveBeenCalled();
     expect(billingNavigation.go).not.toHaveBeenCalled();
   });
 
@@ -79,7 +91,7 @@ describe('SignupPlanNotice', () => {
     'reloads the page saying what happened when the route answers %s',
     async (outcome) => {
       vi.mocked(apiClient.post).mockResolvedValue({ outcome, planKey: 'pro' });
-      render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+      render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
       await userEvent.click(screen.getByRole('button', { name: 'Subscribe to Pro' }));
 
@@ -95,7 +107,7 @@ describe('SignupPlanNotice', () => {
       planKey: 'pro',
       url: 'javascript:alert(1)',
     });
-    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Subscribe to Pro' }));
 
@@ -109,7 +121,7 @@ describe('SignupPlanNotice', () => {
     vi.mocked(apiClient.post).mockRejectedValue(
       new APIClientError('The price for this plan is not set up yet', 'CONFLICT', 409)
     );
-    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Subscribe to Pro' }));
 
@@ -121,7 +133,7 @@ describe('SignupPlanNotice', () => {
 
   it('removes the plan and refreshes when the owner chooses another', async () => {
     vi.mocked(apiClient.delete).mockResolvedValue({ removed: 'pro' });
-    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Choose a different plan' }));
 
@@ -132,7 +144,7 @@ describe('SignupPlanNotice', () => {
 
   it('shows a failed removal beside the buttons', async () => {
     vi.mocked(apiClient.delete).mockRejectedValue(new Error('network down'));
-    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" />);
+    render(<SignupPlanNotice orgId={ORG} planLabel="Pro" ready />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Choose a different plan' }));
 

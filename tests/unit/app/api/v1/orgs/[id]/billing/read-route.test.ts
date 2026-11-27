@@ -226,7 +226,7 @@ describe('the plan a signup chose (§139 t-1096)', () => {
 
     const { data } = await json(await read());
 
-    expect(data?.signupPlan).toEqual({ key: 'pro', label: 'Pro' });
+    expect(data?.signupPlan).toEqual({ key: 'pro', label: 'Pro', ready: true });
   });
 
   it('offers nothing once the org subscribed: a subscription settles it', async () => {

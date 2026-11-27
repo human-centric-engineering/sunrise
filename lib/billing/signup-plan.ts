@@ -151,21 +151,27 @@ const OWNED_ORGS_READ = 10;
 export interface PendingSignupPlan {
   key: string;
   label: string;
+  /**
+   * The org's setup is finished, so its checkout may start. Until then the
+   * page says the org is still being set up, and asks again.
+   */
+  ready: boolean;
 }
 
 /**
  * The paid plan the org's signup chose that is still waiting, for the billing
  * page to offer, or `null`: none waiting, a free one (the setup's), or one the
- * app no longer registers or offers at signup. Offered while the org still
- * awaits its founder too: the owner's own session on the page proves they
- * can act there, as a sign-in does. The caller shows it only while the org
- * has no provider subscription.
+ * app no longer registers or offers at signup. `ready` once the org's setup
+ * is finished ({@link setupFinished}); until then its checkout does not
+ * start. The caller shows it only while the org has no provider subscription.
  */
 export function pendingSignupPlan(settings: unknown): PendingSignupPlan | null {
   const waiting = readOrgSignupPlan(settings);
   if (waiting === null || billingPlansFailed()) return null;
   const plan = offeredPlan(waiting);
-  return plan && plan.priceLookupKey !== null ? { key: plan.key, label: plan.label } : null;
+  return plan && plan.priceLookupKey !== null
+    ? { key: plan.key, label: plan.label, ready: setupFinished(settings) }
+    : null;
 }
 
 /** What {@link takeUpSignupPlan} did. */
@@ -195,10 +201,11 @@ const WRITE_ATTEMPTS = 3;
  * finished. A plan the app no longer registers, or no longer offers at
  * signup, is dropped.
  *
- * A paid plan is taken up while the org still awaits its founder too: the
- * owner's own session proves they can act there, as a sign-in does, and the
- * mark is released after the response that sent them here. An incomplete
- * subscription (checkout begun, not paid) leaves it waiting.
+ * Either kind waits for the org's setup to finish ({@link setupFinished}): a
+ * hook that ran after a paid plan was applied could write its defaults over
+ * what the founder paid for, as over a free one. The billing page says the
+ * org is still being set up meanwhile. An incomplete subscription (checkout
+ * begun, not paid) leaves a paid plan waiting.
  *
  * A checkout that fails, refused by the provider (`BillingCheckoutError`) or
  * not, throws for the route to answer; the plan stays waiting, and the owner
@@ -226,17 +233,18 @@ export async function takeUpSignupPlan(
     });
     return { kind: 'dropped', planKey };
   }
-  if (plan.priceLookupKey === null) return applyFree(orgId, plan, settings, options.actorUserId);
+  if (plan.priceLookupKey === null) {
+    return applyFree(orgId, plan, settings, options.actorUserId, { fromSetup: false });
+  }
+  if (!setupFinished(settings)) return { kind: 'none' };
 
-  // A subscription the provider holds: start no second checkout over it. One
-  // that gives access (active, past due) settles the choice, so it goes; the
-  // webhook removes it too. One not paid yet (incomplete) leaves it waiting,
-  // to be offered again if that subscription ends unpaid.
+  // A subscription the provider holds: start no second checkout over it. Any
+  // that was ever paid for settles the choice, so it goes (the webhook removes
+  // it too). One never paid (incomplete) leaves it waiting, to be offered
+  // again if that subscription ends unpaid.
   const subscription = await loadOrgSubscription(orgId);
   if (subscription?.providerManaged) {
-    if (subscription.status === 'ACTIVE' || subscription.status === 'PAST_DUE') {
-      await take(orgId, (key) => key === plan.key);
-    }
+    if (subscription.status !== 'INCOMPLETE') await take(orgId, (key) => key === plan.key);
     return { kind: 'none' };
   }
   const { url } = await startCheckout(orgId, plan.key);
@@ -263,18 +271,24 @@ export async function dismissSignupPlan(orgId: string): Promise<string | null> {
  * throws: a failure is logged, and the plan stays waiting for the sweep. A
  * paid plan is left alone; it is the owner's to start.
  *
+ * @param options.fromSetup the org's own setup is the caller, so a plan left
+ *   waiting on its hooks is said once, at `warn`, rather than on every sweep.
  * @returns whether it applied one.
  */
 export async function applyFreeSignupPlan(
   orgId: string,
-  founderUserId: string | null
+  founderUserId: string | null,
+  options: { fromSetup?: boolean } = {}
 ): Promise<boolean> {
   try {
     const waiting = await waitingPlan(orgId);
     if (waiting === null) return false;
     const plan = offeredPlan(waiting.planKey);
     if (!plan || plan.priceLookupKey !== null) return false;
-    return (await applyFree(orgId, plan, waiting.settings, founderUserId)).kind === 'applied';
+    const result = await applyFree(orgId, plan, waiting.settings, founderUserId, {
+      fromSetup: options.fromSetup === true,
+    });
+    return result.kind === 'applied';
   } catch (error) {
     logger.error('billing: could not apply the plan chosen at signup', error, { orgId });
     return false;
@@ -345,17 +359,18 @@ async function applyFree(
   orgId: string,
   plan: RegisteredPlan,
   settings: unknown,
-  actorUserId: string | null
+  actorUserId: string | null,
+  options: { fromSetup: boolean }
 ): Promise<SignupPlanTakeUp> {
   // The app's setup has not run while the org awaits its founder.
   if (hasKey(settings, ORG_AWAITING_FOUNDER_KEY)) return { kind: 'none' };
   if (setupOwesHooks(settings)) {
     // It waits however long the hooks take, so a default one of them writes
-    // cannot replace it; said once here, as the sweep skips such orgs.
-    logger.warn('billing: the free plan chosen at signup waits on org-created hooks still owed', {
-      orgId,
-      planKey: plan.key,
-    });
+    // cannot replace it. Said at `warn` once, as the setup ends.
+    const message = 'billing: the free plan chosen at signup waits on org-created hooks still owed';
+    const context = { orgId, planKey: plan.key };
+    if (options.fromSetup) logger.warn(message, context);
+    else logger.debug(message, context);
     return { kind: 'none' };
   }
   if ((await take(orgId, (key) => key === plan.key)) === null) return { kind: 'none' };
@@ -387,6 +402,15 @@ async function applyFree(
   }
   logger.info('billing: applied the plan chosen at signup', { orgId, planKey: plan.key });
   return { kind: 'applied', planKey: plan.key };
+}
+
+/**
+ * Whether the org's setup is finished, so a plan its signup chose may be taken
+ * up: its founder has joined (no `awaitingFounder` mark) and it owes no
+ * org-created hook this process runs.
+ */
+function setupFinished(settings: unknown): boolean {
+  return !hasKey(settings, ORG_AWAITING_FOUNDER_KEY) && !setupOwesHooks(settings);
 }
 
 /**

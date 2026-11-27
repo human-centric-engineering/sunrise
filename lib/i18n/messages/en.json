@@ -1474,7 +1474,10 @@
         "continue": "Subscribe to {plan}",
         "continuing": "Opening…",
         "dismiss": "Choose a different plan",
-        "continueFailed": "The payment page could not be opened. Try again."
+        "continueFailed": "The payment page could not be opened. Try again.",
+        "settingUp": "Setting up your organisation before taking you to payment…",
+        "stillSettingUp": "Your organisation is still being set up. Reload this page in a minute to continue to payment.",
+        "waitingSetup": "You chose the {plan} plan when you signed up. You can subscribe to it here once your organisation is set up."
       }
     },
     "waitlist": {

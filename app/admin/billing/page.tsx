@@ -68,10 +68,11 @@ export default async function BillingPage({
   // Sent here by a signup with nothing for this viewer to start (one whose
   // plan the server dropped, an existing account signing in from a pricing
   // link, an ADMIN): on to the landing route, as the signup would have gone.
+  // A failed read stays, to say so.
   if (
     signup === SIGNUP_PLAN_QUERY.value &&
-    result?.ok &&
-    !(result.data.mayChange && result.data.signupPlan)
+    !orgReadFailed &&
+    (result === null || (result.ok && !(result.data.mayChange && result.data.signupPlan)))
   ) {
     redirect(AUTH_LANDING_ROUTE);
   }
@@ -104,7 +105,9 @@ export default async function BillingPage({
       {signup === SIGNUP_PLAN_QUERY.value &&
         result?.ok &&
         result.data.mayChange &&
-        result.data.signupPlan && <SignupPlanTakeUp orgId={result.data.orgId} />}
+        result.data.signupPlan && (
+          <SignupPlanTakeUp orgId={result.data.orgId} ready={result.data.signupPlan.ready} />
+        )}
       {/* Still waiting (checkout left or failed): offered until settled. */}
       {/* Not just back from paying: the webhook settling it may lag the return. */}
       {signup !== SIGNUP_PLAN_QUERY.value &&
@@ -112,7 +115,11 @@ export default async function BillingPage({
         result?.ok &&
         result.data.mayChange &&
         result.data.signupPlan && (
-          <SignupPlanNotice orgId={result.data.orgId} planLabel={result.data.signupPlan.label} />
+          <SignupPlanNotice
+            orgId={result.data.orgId}
+            planLabel={result.data.signupPlan.label}
+            ready={result.data.signupPlan.ready}
+          />
         )}
       {(signup === 'applied' || signup === 'dropped' || signup === 'failed') && (
         <p

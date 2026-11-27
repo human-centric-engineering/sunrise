@@ -769,19 +769,23 @@ goes on to the page that starts the checkout, server-side, for that plan.
   server dropped, an ADMIN), the page sends them on to the landing route, as
   the signup would have gone. A plain MEMBER never reaches it: the admin
   layout sends them to the landing route first.
-- **While the org still awaits its founder,** a paid plan's checkout starts
-  anyway: the mark is released after the response that sent the founder
-  there, and the owner's own session proves they can act, as a sign-in does.
-  Only the free plan waits for the setup.
+- **It waits for the org's setup, as a free plan does.** A hook that ran after
+  the plan was paid for could write its defaults over it. The mark and the
+  hooks are released after the response that sent the founder to the page, so
+  the page often arrives first: it says the organisation is being set up and
+  asks the server again every 2 seconds, up to 30 times (the hooks' run budget
+  is 30 seconds), then starts the checkout once the read says `ready`. If the
+  setup is still not done it says so, and the billing page offers the plan
+  once it is.
 - **Nothing intercepts later visits.** There is no redirect from the landing
   route: a redirect there would be cached by the client router's prefetch and
   replayed after the plan was settled.
 - **It stays waiting until it is settled.** Starting the checkout does not
   remove it. A subscription that gives access removes it, in the webhook's own
   transaction, whichever plan it is on; so does the owner choosing a different
-  plan (`DELETE`, audited as `org.billing.signup_plan.dismiss`). A
-  subscription not paid yet (`incomplete`) leaves it waiting, to be offered
-  again if that subscription ends unpaid. Meanwhile the billing read answers it
+  plan (`DELETE`, audited as `org.billing.signup_plan.dismiss`). Any provider
+  subscription that was ever paid for settles it too; one never paid
+  (`incomplete`) leaves it waiting, to be offered again if it ends unpaid. Meanwhile the billing read answers it
   (`signupPlan`, never while the org has a provider subscription) and the page
   offers it, except straight back from a successful checkout, when the webhook
   that settles it may not have landed. So an owner who leaves the checkout
