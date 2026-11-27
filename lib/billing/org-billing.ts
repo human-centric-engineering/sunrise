@@ -17,7 +17,7 @@ import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { billingProviderState } from '@/lib/billing/config';
 import { assertMayChangeBilling } from '@/lib/billing/org-access';
 import { planOf, registeredPlans } from '@/lib/billing/plans';
-import { loadOrgSubscription } from '@/lib/billing/subscriptions';
+import { loadOrgSubscription, type OrgSubscriptionView } from '@/lib/billing/subscriptions';
 import { prisma } from '@/lib/db/client';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { loadOrgMeterUsage, type MeterUsage } from '@/lib/tenancy/meters';
@@ -45,11 +45,20 @@ export interface OrgBilling {
    * `null` for a key the app no longer registers (the key is kept).
    */
   plan: { key: string; label: string | null; description: string } | null;
-  /** The subscription's state; `null` when the org has never had a plan. */
+  /**
+   * The subscription's state; `null` when there is none to show: no record,
+   * or one naming no plan that the provider has never written to (a checkout
+   * that was abandoned, or a plan staff removed).
+   */
   subscription: {
     status: BillingSubscriptionStatus;
     /** Paid through the provider and not yet ended: change it in the portal. */
     providerManaged: boolean;
+    /**
+     * That subscription is at a provider other than this install's, so this
+     * install's portal cannot open it and its checkout refuses until it ends.
+     */
+    elsewhere: boolean;
     /** Platform staff put the org on it by hand: no provider subscription is behind it. */
     assignedByHand: boolean;
     /** Ends when the current period does (cancelled in the portal). */
@@ -80,6 +89,33 @@ function mayChangeBilling(session: AuthenticatedSession, orgId: string): boolean
 }
 
 /**
+ * Whether the record has a subscription state worth showing. A record that
+ * names no plan and that the provider has never written to holds only a
+ * customer: a first checkout abandoned (`startCheckout()` links the customer
+ * before payment) or a plan staff removed (`assignPlan(null)`). Its status is
+ * the schema's default, not anything that happened.
+ */
+function hasSubscriptionToShow(record: OrgSubscriptionView | null): record is OrgSubscriptionView {
+  return record !== null && (record.planKey !== null || record.providerStatus !== null);
+}
+
+/**
+ * Whether platform staff put the org on its plan. Every provider write
+ * records the provider's word for the state, and `assignPlan()` clears it and
+ * writes `ACTIVE`. A checkout's customer link clears it too but leaves the
+ * status, so a plan the webhook set when a subscription lapsed (status
+ * `ENDED`) is not mistaken for one staff assigned.
+ */
+function isAssignedByHand(record: OrgSubscriptionView): boolean {
+  return (
+    record.planKey !== null &&
+    record.providerStatus === null &&
+    record.status === 'ACTIVE' &&
+    !record.providerManaged
+  );
+}
+
+/**
  * The org's billing for this viewer, or `null` when there is no such org.
  * Call only while billing is on: the route answers `billing_off` before this.
  */
@@ -106,13 +142,12 @@ export async function loadOrgBilling(
             label: current?.label ?? null,
             description: current?.description ?? '',
           },
-    subscription: record
+    subscription: hasSubscriptionToShow(record)
       ? {
           status: record.status,
           providerManaged: record.providerManaged,
-          // Every write from the provider records its own word for the state;
-          // a hand assignment clears it (`assignPlan()`).
-          assignedByHand: record.planKey !== null && record.providerStatus === null,
+          elsewhere: record.providerManaged && record.provider !== state.providerKey,
+          assignedByHand: isAssignedByHand(record),
           cancelAtPeriodEnd: record.cancelAtPeriodEnd,
           periodStart: record.periodStart,
           periodEnd: record.periodEnd,

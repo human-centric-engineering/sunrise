@@ -88,9 +88,10 @@ release process.
 
 - **A switch with no `upgradeUrl` now links to the billing page while billing
   is on (§139 t-1095).** The 403's `details.upgradeUrl`, and a locked item and
-  page, carry `/admin/billing` for the org's OWNER and ADMIN when the app
-  registered no link. A named-tier holder still gets none, and the app's own
-  link always wins. With billing off nothing changes.
+  page, carry `/admin/billing` for a viewer admitted to the org tier (the
+  org's OWNER and ADMIN by default) when the app registered no link. A
+  named-tier holder and the install org get none, and the app's own link
+  always wins. With billing off nothing changes.
 - **A `package.json` script edit no longer runs the whole suite under
   `vitest --changed`, and CI's `test-changed` job runs `ALWAYS_RUN_TESTS`
   (t-1089, #1331, #1351).** `vitest.config.ts` now sets `forceRerunTriggers`

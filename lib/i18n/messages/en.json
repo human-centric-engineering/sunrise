@@ -1414,7 +1414,8 @@
         "INCOMPLETE": "Waiting for the first payment",
         "ENDED": "Ended",
         "pastDueHelp": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. To change the card, open Manage billing.",
-        "incompleteHelp": "Nothing changes until the first payment goes through.",
+        "pastDueHelpAdmin": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. An owner of this organisation can change the card.",
+        "incompleteHelp": "Nothing changes until the first payment goes through. If it did not go through, an owner can choose the plan again to retry.",
         "endedHelp": "The paid subscription has ended.",
         "endsOn": "Ends on {date}. It will not renew."
       },
@@ -1441,13 +1442,15 @@
         "none": "There are no plans to buy here. Platform staff set this organisation's plan.",
         "current": "Your plan",
         "choose": "Choose {plan}",
-        "changeInPortal": "To move to another plan, open Manage billing."
+        "changeInPortal": "To move to another plan, open Manage billing.",
+        "elsewhere": "This organisation's subscription is with a payment provider this install no longer uses. It has to end there before a plan can be bought here. Ask platform staff for help."
       },
       "portal": {
         "heading": "Payments and invoices",
         "intro": "Change your card, see your invoices, change plan or cancel, on the payment provider's own pages.",
         "open": "Manage billing",
-        "notYet": "There is nothing to manage until this organisation buys a plan."
+        "notYet": "There is nothing to manage until this organisation buys a plan.",
+        "elsewhere": "The subscription is with a payment provider this install no longer uses, so it cannot be managed here. Ask platform staff for help."
       },
       "actions": {
         "opening": "Opening…",

@@ -42,6 +42,7 @@ const BASE: OrgBillingView = {
   subscription: {
     status: 'PAST_DUE',
     providerManaged: false,
+    elsewhere: false,
     assignedByHand: false,
     cancelAtPeriodEnd: true,
     periodStart: '2026-11-01T00:00:00.000Z',

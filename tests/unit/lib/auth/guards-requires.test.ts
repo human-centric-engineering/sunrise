@@ -276,6 +276,14 @@ describe('withAdminAuth({ tier, requires }) (t-1034)', () => {
     }
   );
 
+  it('offers no billing page in the install org, which is never billed (t-1095)', async () => {
+    billing.on = true;
+    signedIn('USER', ORG_ADMIN_ROLE, INSTALL_ORG_ID);
+    const { status, body } = await route(LEADS).call();
+    expect(status).toBe(403);
+    expect(body.error?.details).toEqual({ reason: SWITCH_REQUIRED_REASON, requires: 'lead_gen' });
+  });
+
   it("keeps the app's own upgrade link over the billing page (t-1095)", async () => {
     billing.on = true;
     fork.switches = () => {

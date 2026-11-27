@@ -48,12 +48,31 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
   const date = (iso: string) => format.dateTime(new Date(iso), 'long');
   const statusHelp =
     subscription?.status === 'PAST_DUE'
-      ? t('status.pastDueHelp')
+      ? // Manage billing is the owner's: an ADMIN has no such button.
+        billing.mayChange
+        ? t('status.pastDueHelp')
+        : t('status.pastDueHelpAdmin')
       : subscription?.status === 'INCOMPLETE'
         ? t('status.incompleteHelp')
         : subscription?.status === 'ENDED'
           ? t('status.endedHelp')
           : null;
+
+  // A live subscription changes plan in the portal: the checkout route
+  // refuses a second one. One still waiting for its first payment is not
+  // live there, so the owner can choose again to retry it; one held at
+  // another provider has to end there first.
+  const elsewhere = subscription?.elsewhere ?? false;
+  const awaitingFirstPayment = subscription?.status === 'INCOMPLETE';
+  const mayCheckout =
+    billing.mayChange && !elsewhere && (!subscription?.providerManaged || awaitingFirstPayment);
+  const plansNote = !billing.mayChange
+    ? null
+    : elsewhere
+      ? t('plans.elsewhere')
+      : subscription?.providerManaged && !awaitingFirstPayment
+        ? t('plans.changeInPortal')
+        : null;
 
   return (
     <div className="space-y-6">
@@ -83,9 +102,11 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
                     {t(`status.${subscription.status}`)}
                   </Badge>
                   {statusHelp && <p className="text-muted-foreground">{statusHelp}</p>}
-                  {subscription.cancelAtPeriodEnd && subscription.periodEnd && (
-                    <p>{t('status.endsOn', { date: date(subscription.periodEnd) })}</p>
-                  )}
+                  {subscription.cancelAtPeriodEnd &&
+                    subscription.status !== 'ENDED' &&
+                    subscription.periodEnd && (
+                      <p>{t('status.endsOn', { date: date(subscription.periodEnd) })}</p>
+                    )}
                   {subscription.assignedByHand && (
                     <p className="text-muted-foreground">{t('plan.assigned')}</p>
                   )}
@@ -165,9 +186,7 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
       <Card>
         <CardHeader>
           <CardTitle>{t('plans.heading')}</CardTitle>
-          {billing.mayChange && subscription?.providerManaged && billing.plans.length > 0 && (
-            <CardDescription>{t('plans.changeInPortal')}</CardDescription>
-          )}
+          {plansNote && billing.plans.length > 0 && <CardDescription>{plansNote}</CardDescription>}
         </CardHeader>
         <CardContent>
           {billing.plans.length === 0 ? (
@@ -183,9 +202,7 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
                   {option.description && (
                     <p className="text-muted-foreground text-sm">{option.description}</p>
                   )}
-                  {/* A live subscription changes plan in the portal: the
-                      checkout route refuses a second one. */}
-                  {billing.mayChange && !option.current && !subscription?.providerManaged && (
+                  {mayCheckout && !option.current && (
                     <BillingActionButton
                       orgId={billing.orgId}
                       kind="checkout"
@@ -211,7 +228,9 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
             {billing.portalAvailable ? (
               <BillingActionButton orgId={billing.orgId} kind="portal" label={t('portal.open')} />
             ) : (
-              <p className="text-muted-foreground text-sm">{t('portal.notYet')}</p>
+              <p className="text-muted-foreground text-sm">
+                {elsewhere ? t('portal.elsewhere') : t('portal.notYet')}
+              </p>
             )}
           </CardContent>
         </Card>

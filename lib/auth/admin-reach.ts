@@ -117,7 +117,7 @@ export async function lockedSwitchesOf(
     });
     return [];
   }
-  return lockedSwitchesIn(reach, org);
+  return lockedSwitchesIn(reach, org, orgId);
 }
 
 /**
@@ -128,13 +128,14 @@ export async function lockedSwitchesOf(
  */
 export function lockedSwitchesIn(
   reach: AdminReach,
-  org: OrgSwitches | null
+  org: OrgSwitches | null,
+  orgId: string | null | undefined
 ): readonly LockedAdminSwitch[] {
   const candidates = lockableSwitches(reach);
   if (candidates.length === 0 || !org || org.unreadable) return [];
   const on = new Set(org.on);
   // Candidates exist only for a reach that holds tiers (`lockableSwitches()`).
-  const opensBilling = reach !== 'platform' && reach.tiers.includes('org');
+  const viewer = { orgId, holdsOrgTier: reach !== 'platform' && reach.tiers.includes('org') };
   return candidates
     .filter((s) => !on.has(s.key))
     .map((s) =>
@@ -142,8 +143,8 @@ export function lockedSwitchesIn(
         requires: s.key,
         label: s.label,
         message: switchRequiredMessage(s.key),
-        // The billing page when the app gave no link (t-1095), to an org admin.
-        upgradeUrl: upgradeUrlFor(s.upgradeUrl, opensBilling),
+        // The billing page when the app gave no link (t-1095), to a viewer it opens for.
+        upgradeUrl: upgradeUrlFor(s.upgradeUrl, viewer),
       })
     );
 }

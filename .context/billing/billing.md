@@ -621,7 +621,13 @@ Decided at planning (2026-11-25):
 - **The plans it could buy**: those with a price. The OWNER gets a checkout
   button on each plan the org is not on. While a subscription is live there is
   no checkout (the route would refuse `already_subscribed`), and the page
-  says to change plan in the portal.
+  says to change plan in the portal. One still waiting for its first payment
+  is not live, so the owner can choose again to retry it. One at a provider
+  this install no longer uses has to end there first, and the page says so in
+  place of both the buttons and the portal.
+- **A record with only a customer** (a first checkout abandoned, or a plan
+  staff removed) shows as no plan and no status: its status is the schema's
+  default, not anything that happened.
 - **Manage billing**, the customer portal: card, invoices, plan changes and
   cancellation, on the provider's pages. Offered once the org has a customer
   at this install's provider. The page lists no invoices itself.
@@ -647,8 +653,11 @@ Decided at planning (2026-11-25):
   ([entitlements](../tenancy/entitlements.md#hidden-or-locked)) links to this
   page while billing is on (`upgradeUrlFor()`, `lib/billing/upgrade-url.ts`).
   That is on the 403's `details.upgradeUrl` and on a locked item and page,
-  for the org's OWNER and ADMIN. A named-tier holder gets no link, since the
-  page is not theirs. The app's own link always wins.
+  for a viewer the policy admits to the org tier (the org's OWNER and ADMIN
+  by default), the page's own tier. The 403 and the locked items ask that one
+  question. A named-tier holder gets no link, since the page is not theirs,
+  and nor does anyone in the install org, which is never billed. The app's
+  own link always wins.
 - **The words** are the platform catalogue's, `admin.billing`, so a fork
   rewords them with `overridePlatformMessages()`. Plan and meter labels are the
   app's, as it registered them.

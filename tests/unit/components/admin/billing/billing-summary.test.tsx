@@ -32,6 +32,7 @@ function billing(overrides: Partial<OrgBillingView> = {}): OrgBillingView {
     subscription: {
       status: 'ACTIVE',
       providerManaged: true,
+      elsewhere: false,
       assignedByHand: false,
       cancelAtPeriodEnd: false,
       periodStart: '2026-11-01T00:00:00.000Z',
@@ -142,6 +143,37 @@ describe('BillingSummary', () => {
       expect(screen.queryByRole('button', { name: 'Choose Pro' })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Choose Team' })).toBeInTheDocument();
     });
+
+    it('offers a checkout again while the first payment is still waiting', () => {
+      render(
+        <BillingSummary
+          billing={billing({ subscription: { ...billing().subscription!, status: 'INCOMPLETE' } })}
+        />
+      );
+
+      expect(screen.getByText('Waiting for the first payment')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Choose Team' })).toBeInTheDocument();
+      expect(screen.queryByText(/To move to another plan/)).not.toBeInTheDocument();
+    });
+
+    it('says a subscription at another provider has to end there, with nothing to press', () => {
+      render(
+        <BillingSummary
+          billing={billing({
+            subscription: { ...billing().subscription!, elsewhere: true },
+            portalAvailable: false,
+          })}
+        />
+      );
+
+      expect(screen.queryAllByRole('button')).toEqual([]);
+      expect(
+        screen.getByText(/It has to end there before a plan can be bought here/)
+      ).toBeInTheDocument();
+      expect(screen.getByText(/so it cannot be managed here/)).toBeInTheDocument();
+      expect(screen.queryByText(/To move to another plan/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/nothing to manage until/)).not.toBeInTheDocument();
+    });
   });
 
   describe('for an ADMIN', () => {
@@ -161,6 +193,22 @@ describe('BillingSummary', () => {
       expect(screen.getByText('Team')).toBeInTheDocument();
       expect(screen.getByRole('row', { name: /Seats/ })).toBeInTheDocument();
     });
+
+    it('tells them an owner changes the card when a payment failed, not to press a button', () => {
+      render(
+        <BillingSummary
+          billing={billing({
+            mayChange: false,
+            subscription: { ...billing().subscription!, status: 'PAST_DUE' },
+          })}
+        />
+      );
+
+      expect(
+        screen.getByText(/An owner of this organisation can change the card/)
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/open Manage billing/)).not.toBeInTheDocument();
+    });
   });
 
   it('says a plan staff set is not paid for here', () => {
@@ -170,6 +218,7 @@ describe('BillingSummary', () => {
           subscription: {
             status: 'ACTIVE',
             providerManaged: false,
+            elsewhere: false,
             assignedByHand: true,
             cancelAtPeriodEnd: false,
             periodStart: null,
@@ -208,6 +257,19 @@ describe('BillingSummary', () => {
     expect(screen.getByText('Ended')).toBeInTheDocument();
     expect(screen.getByText('The paid subscription has ended.')).toBeInTheDocument();
     expect(screen.queryByText(/Current period/)).not.toBeInTheDocument();
+  });
+
+  it('says nothing about ending on a date once a cancelled subscription has ended', () => {
+    render(
+      <BillingSummary
+        billing={billing({
+          subscription: { ...billing().subscription!, status: 'ENDED', cancelAtPeriodEnd: true },
+        })}
+      />
+    );
+
+    expect(screen.getByText('Ended')).toBeInTheDocument();
+    expect(screen.queryByText(/Ends on/)).not.toBeInTheDocument();
   });
 
   it('names a plan the app no longer offers by its key', () => {

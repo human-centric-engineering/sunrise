@@ -136,6 +136,7 @@ interface Answer {
     subscription: {
       status: string;
       providerManaged: boolean;
+      elsewhere: boolean;
       assignedByHand: boolean;
       cancelAtPeriodEnd: boolean;
       periodStart: string | null;
@@ -218,6 +219,7 @@ describe('the org’s OWNER, acting in it', () => {
       subscription: {
         status: 'ACTIVE',
         providerManaged: true,
+        elsewhere: false,
         assignedByHand: false,
         cancelAtPeriodEnd: false,
         periodStart: '2026-11-01T00:00:00.000Z',
@@ -269,11 +271,50 @@ describe('the org’s OWNER, acting in it', () => {
     expect(data?.plans.every((plan) => !plan.current)).toBe(true);
   });
 
-  it('has no portal while the customer is at another provider', async () => {
+  it('has no portal while the customer is at another provider, and says the subscription is there', async () => {
     actingAs(ORG_OWNER_ROLE);
     mockDb.orgBillingSubscription.findUnique.mockResolvedValue({ ...PAID, provider: 'paddle' });
 
-    expect((await json(await read())).data?.portalAvailable).toBe(false);
+    const { data } = await json(await read());
+
+    expect(data?.portalAvailable).toBe(false);
+    expect(data?.subscription).toMatchObject({ providerManaged: true, elsewhere: true });
+  });
+
+  it('shows no subscription for a customer linked by a checkout that was never paid', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    // `startCheckout()` links the customer before payment; the status is the schema default.
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({
+      ...PAID,
+      planKey: null,
+      subscriptionRef: null,
+      providerStatus: null,
+      providerLive: false,
+      periodStart: null,
+      periodEnd: null,
+    });
+
+    const { data } = await json(await read());
+
+    expect(data).toMatchObject({ plan: null, subscription: null, portalAvailable: true });
+  });
+
+  it('does not call the plan a lapsed subscription fell back to one staff set', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    // The webhook wrote the fallback plan as the subscription ended; a later
+    // checkout's customer link then cleared the provider's word for it.
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({
+      ...PAID,
+      planKey: 'free',
+      subscriptionRef: null,
+      status: 'ENDED',
+      providerStatus: null,
+      providerLive: false,
+    });
+
+    const { data } = await json(await read());
+
+    expect(data?.subscription).toMatchObject({ status: 'ENDED', assignedByHand: false });
   });
 
   it('with no record: no plan, no subscription', async () => {

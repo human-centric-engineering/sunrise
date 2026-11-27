@@ -717,6 +717,7 @@ What the console's billing page renders, in one call (§139 t-1095,
   "subscription": {
     "status": "ACTIVE",
     "providerManaged": true,
+    "elsewhere": false,
     "assignedByHand": false,
     "cancelAtPeriodEnd": false,
     "periodStart": "2026-11-01T00:00:00.000Z",
@@ -742,9 +743,12 @@ What the console's billing page renders, in one call (§139 t-1095,
 
 - `plan` is `null` with no plan; its `label` is `null` for a key the app no
   longer registers.
-- `subscription` is `null` when the org has never had a plan.
-  `assignedByHand` means platform staff set the plan, with no provider
-  subscription behind it.
+- `subscription` is `null` when there is none to show: no record, or one
+  naming no plan that the provider never wrote to (a first checkout that was
+  abandoned, or a plan staff removed). `elsewhere` means the live
+  subscription is at a provider other than this install's, so neither the
+  portal nor a checkout can reach it. `assignedByHand` means platform staff
+  set the plan, with no provider subscription behind it.
 - `usage` is every meter's count and limit (`limit: null` is no limit), or
   `null` when the counts could not be read.
 - `plans` holds only plans with a price.

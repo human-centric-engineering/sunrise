@@ -513,8 +513,9 @@ renders on the server, so it reads its rows through its routes. `refusalMessage`
 the locked item and page, and `upgradeUrl` (a path on this site or an
 `https://` address, checked at registration) rides on the 403 as
 `details.upgradeUrl` and is the locked item's and page's link. With no
-`upgradeUrl` and billing on, the org's OWNER and ADMIN get `/admin/billing`
-instead (§139 t-1095). Neither is used
+`upgradeUrl` and billing on, a viewer the policy admits to the org tier gets
+`/admin/billing` instead, except in the install org, which is never billed
+(§139 t-1095). Neither is used
 when the org's switches could not be read: the route says it could not check,
 and the item and page stay hidden, so nobody is told to buy what their org may
 have. A surface is locked only when the tier admits the viewer and the org's

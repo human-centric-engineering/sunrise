@@ -56,7 +56,7 @@ export const GET = withAuth(
     // One read of the org's switches, so what the org has and what it is
     // shown locked come from the same answer.
     const org = await readOrgSwitches(orgId, log);
-    const locked = org === 'failed' ? [] : lockedSwitchesIn(reach, org);
+    const locked = org === 'failed' ? [] : lockedSwitchesIn(reach, org, orgId);
     const switchesOn = switchesOnOf(org);
 
     const t = await getTranslations();

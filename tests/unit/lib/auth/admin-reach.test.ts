@@ -20,6 +20,7 @@ import { canAdminister, type AuthorizationScope } from '@/lib/auth/authorization
 import { adminReachOf, lockedSwitchesIn, lockedSwitchesOf } from '@/lib/auth/admin-reach';
 import { registerAdminTier, registerOrgTierAdminPage } from '@/lib/auth/admin-tier';
 import { __resetAppOrgTierAdminPagesForTests } from '@/lib/auth/org-tier-admin-pages';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
   __resetEntitlementRegistryForTests,
   registerEntitlementSwitch,
@@ -109,16 +110,16 @@ describe('lockedSwitchesIn', () => {
   });
 
   it('locks a lock switch the org was read for and found off', () => {
-    expect(lockedSwitchesIn(reach, orgWith([]))).toEqual([
+    expect(lockedSwitchesIn(reach, orgWith([]), 'org-1')).toEqual([
       expect.objectContaining({ requires: 'lead_gen', upgradeUrl: '/pricing' }),
     ]);
   });
 
   it('locks nothing the org has, for no such org, or for an unreadable read', () => {
-    expect(lockedSwitchesIn(reach, orgWith(['lead_gen']))).toEqual([]);
-    expect(lockedSwitchesIn(reach, null)).toEqual([]);
-    expect(lockedSwitchesIn(reach, orgWith([], true))).toEqual([]);
-    expect(lockedSwitchesIn('platform', orgWith([]))).toEqual([]);
+    expect(lockedSwitchesIn(reach, orgWith(['lead_gen']), 'org-1')).toEqual([]);
+    expect(lockedSwitchesIn(reach, null, 'org-1')).toEqual([]);
+    expect(lockedSwitchesIn(reach, orgWith([], true), 'org-1')).toEqual([]);
+    expect(lockedSwitchesIn('platform', orgWith([]), 'org-1')).toEqual([]);
   });
 });
 
@@ -142,21 +143,28 @@ describe('lockedSwitchesIn with no upgrade link of the app’s (t-1095)', () => 
 
   it('offers an org admin the billing page while billing is on', () => {
     billing.on = true;
-    expect(lockedSwitchesIn({ tiers: ['org', 'designers'], landing: null }, orgNothing)).toEqual([
-      expect.objectContaining({ requires: 'lead_gen', upgradeUrl: '/admin/billing' }),
-    ]);
+    expect(
+      lockedSwitchesIn({ tiers: ['org', 'designers'], landing: null }, orgNothing, 'org-1')
+    ).toEqual([expect.objectContaining({ requires: 'lead_gen', upgradeUrl: '/admin/billing' })]);
   });
 
   it('offers a named-tier holder nothing, since the page is not theirs to open', () => {
     billing.on = true;
-    expect(lockedSwitchesIn({ tiers: ['designers'], landing: null }, orgNothing)).toEqual([
+    expect(lockedSwitchesIn({ tiers: ['designers'], landing: null }, orgNothing, 'org-1')).toEqual([
       expect.objectContaining({ requires: 'lead_gen', upgradeUrl: null }),
     ]);
   });
 
+  it('offers nothing in the install org, which is never billed', () => {
+    billing.on = true;
+    expect(lockedSwitchesIn({ tiers: ['org'], landing: null }, orgNothing, INSTALL_ORG_ID)).toEqual(
+      [expect.objectContaining({ requires: 'lead_gen', upgradeUrl: null })]
+    );
+  });
+
   it('offers nothing while billing is off', () => {
-    expect(lockedSwitchesIn({ tiers: ['org', 'designers'], landing: null }, orgNothing)).toEqual([
-      expect.objectContaining({ requires: 'lead_gen', upgradeUrl: null }),
-    ]);
+    expect(
+      lockedSwitchesIn({ tiers: ['org', 'designers'], landing: null }, orgNothing, 'org-1')
+    ).toEqual([expect.objectContaining({ requires: 'lead_gen', upgradeUrl: null })]);
   });
 });
