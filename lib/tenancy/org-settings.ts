@@ -341,6 +341,80 @@ export async function clearOrgAwaitingOnboarding(
 }
 
 /**
+ * The key a self-serve signup's chosen plan waits under (§139 t-1096): the
+ * plan key from the signup link, written in the INSERT of the org a signup
+ * founds (`createSignupOrg()`), and removed when the plan is taken up
+ * ({@link takeOrgSignupPlan}): a free plan applied, a paid one sent to
+ * checkout. Only ever a registered plan's key, checked at signup; checked
+ * again when it is taken up, since the app may have dropped it since.
+ */
+export const ORG_SIGNUP_PLAN_KEY = 'signupPlan';
+
+/** The plan a signup chose that has not been taken up yet, or `null`. */
+export function readOrgSignupPlan(settings: unknown): string | null {
+  if (!isJsonObject(settings)) return null;
+  const value = settings[ORG_SIGNUP_PLAN_KEY];
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+/**
+ * Remove the org's waiting signup plan and answer it, when `accept` takes it,
+ * in one SERIALIZABLE read-modify-write: two callers at once cannot both take
+ * it (the later one fails with `P2034`, {@link isSettingsWriteConflict}).
+ * `accept` must not do I/O; it runs inside the transaction. Never taken while
+ * the org still awaits its founder: the app's setup has not run yet, and a
+ * plan applied before it would be overwritten by it.
+ *
+ * @returns the key taken, or `null` when there was none, `accept` declined
+ *   it, the org awaits its founder, or the org does not exist.
+ */
+export async function takeOrgSignupPlan(
+  orgId: string,
+  accept: (planKey: string) => boolean,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<string | null> {
+  let taken: string | null = null;
+  const result = await updateSettingsSlice(
+    orgId,
+    ORG_SIGNUP_PLAN_KEY,
+    (settings) => {
+      const planKey = readOrgSignupPlan(settings);
+      if (planKey === null) return LEAVE_AS_IS;
+      if (isJsonObject(settings) && ORG_AWAITING_FOUNDER_KEY in settings) return LEAVE_AS_IS;
+      if (!accept(planKey)) return LEAVE_AS_IS;
+      taken = planKey;
+      return null;
+    },
+    db
+  );
+  return result?.written ? taken : null;
+}
+
+/**
+ * Put back a free signup plan {@link takeOrgSignupPlan} took, after its
+ * assignment failed and changed nothing (§139 t-1096). Writes only when no
+ * plan is waiting, so a newer one is never replaced. Never for a paid plan
+ * after a failed checkout: a later visit would start a checkout the owner did
+ * not ask for.
+ *
+ * @returns whether it was written; `false` when a plan is already waiting or
+ *   the org does not exist.
+ */
+export async function restoreOrgSignupPlan(
+  orgId: string,
+  planKey: string,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<boolean> {
+  const result = await updateSettingsSlice(
+    orgId,
+    ORG_SIGNUP_PLAN_KEY,
+    (settings) => (readOrgSignupPlan(settings) === null ? planKey : LEAVE_AS_IS),
+    db
+  );
+  return result?.written ?? false;
+}
+
+/**
  * The key an org's default interface language lives under in `Org.settings`
  * (§138 t-1071): a BCP 47 tag, or absent for "no default".
  */

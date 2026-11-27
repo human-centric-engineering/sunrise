@@ -501,7 +501,9 @@ has the numbers.
   (§107 t-752). `runAsLivenessProbe` is the same for the database health
   probe's `SELECT 1`, at `debug` and confined to `lib/db/utils.ts` (#1262),
   and `runAsFounderRelease` the same for releasing a founder's signup orgs at
-  sign-in, at `debug` and confined to `lib/tenancy/lifecycle.ts` (t-1084).
+  sign-in, at `debug` and confined to `lib/tenancy/lifecycle.ts` (t-1084), and
+  `runAsFounderJoin` for writing a founder's own membership, at `debug` and
+  confined to `lib/tenancy/membership.ts` (t-1096).
   Nothing else should run inside any of them.
 - **Nested creates are stamped; raw inserts are not.** The injection walks
   every write and stamps create-shaped nodes at any depth. A raw `INSERT`

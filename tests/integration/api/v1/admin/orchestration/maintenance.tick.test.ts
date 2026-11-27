@@ -253,6 +253,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'waitlistRetention',
       'orgCreatedHooks',
       'abandonedSignupOrgs',
+      'signupPlans',
     ]);
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });

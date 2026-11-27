@@ -75,8 +75,10 @@ import {
   orgCreatedSettings,
   ORG_AWAITING_FOUNDER_KEY,
   ORG_AWAITING_ONBOARDING_KEY,
+  ORG_SIGNUP_PLAN_KEY,
   type OrgCreatedSource,
 } from '@/lib/tenancy/org-settings';
+import { applyFreeSignupPlan } from '@/lib/billing/signup-plan';
 import { orgCreatedHookKeys, runOrgCreatedHooks } from '@/lib/tenancy/org-created-hooks';
 import { invitationTakesSeat, refuseOverSeatsLimit } from '@/lib/tenancy/meters';
 import { pendingInvitationsFor } from '@/lib/utils/invitation-token';
@@ -330,15 +332,18 @@ export async function createOrg(
  * tells it from a live org that has lost its members: it never had one.
  */
 export async function createSignupOrg(
-  input: { slug: string; name: string },
+  input: { slug: string; name: string; signupPlanKey?: string | null },
   db: LifecycleDb = prisma
 ): Promise<OrgRecord> {
   await requireSlugFree(input.slug, null, db);
   const settings = {
     ...orgCreatedSettings(orgCreatedHookKeys(), 'signup'),
     [ORG_AWAITING_FOUNDER_KEY]: true,
+    // The plan the signup link chose, already checked against the registered
+    // plans; taken up once the founder can act (§139 t-1096).
+    ...(input.signupPlanKey ? { [ORG_SIGNUP_PLAN_KEY]: input.signupPlanKey } : {}),
   };
-  const org = await insertOrg(input, settings, null, db);
+  const org = await insertOrg({ slug: input.slug, name: input.name }, settings, null, db);
   logger.info('Org created for a signup, awaiting its founder', {
     orgId: org.id,
     slug: org.slug,
@@ -365,7 +370,14 @@ export async function createSignupOrg(
  */
 export async function completeSignupOrg(orgId: string, ownerUserId: string): Promise<void> {
   logger.info('Signup org founded', { orgId, ownerUserId });
-  const setUp = () => setUpCreatedOrg(orgId, ownerUserId);
+  // A free plan the signup chose goes on once the app's setup is done, so a
+  // default its org-created hook writes does not replace it; one a hook still
+  // owed holds back is applied by the `signupPlans` sweep (§139 t-1096). A
+  // paid one is the founder's to start: the signup goes on to its checkout.
+  const setUp = async () => {
+    await setUpCreatedOrg(orgId, ownerUserId);
+    await applyFreeSignupPlan(orgId, ownerUserId, { fromSetup: true });
+  };
   await (isMultiTenant() ? runAsOrg(orgId, setUp, { source: 'job' }) : setUp());
 }
 

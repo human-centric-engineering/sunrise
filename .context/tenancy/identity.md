@@ -370,6 +370,13 @@ healed in later (at sign-in, or by `healSignupRecord()` when an admin adds them
 elsewhere) has the mark removed the same way, and that org's setup runs after
 the response. Only an `OWNER` membership removes a mark.
 
+**A plan from the signup link rides along.** While billing is on, a signup
+from `/signup?plan=pro` that gets an org of its own has the plan recorded on
+that org (`Org.settings.signupPlan`), in the same INSERT. A free plan is applied
+once the org's setup is done; for a paid one, signup goes on to checkout. An invited signup, a `join` or `install`
+answer, and an unknown plan ignore it. See
+[Choosing a plan at signup](../billing/billing.md#choosing-a-plan-at-signup).
+
 **Nothing of the person is copied onto the org.** With no app-chosen `name`,
 the org is called "My organisation" (`DEFAULT_SIGNUP_ORG_NAME`) and its slug is
 `org-<random>`: never from the person's name or address. `eraseUser()` does not

@@ -75,6 +75,37 @@ release process.
   its own page under `/admin/billing`** must move it, as registration now
   refuses a page inside a core section. See
   [`.context/billing/billing.md`](./.context/billing/billing.md#the-billing-page).
+- **Choosing a plan at signup (§139 t-1096).** A pricing page links to
+  `/signup?plan=<key>`. While billing is on, a key naming a registered plan is
+  shown on the signup page, carried through the signup (the email form's body,
+  or the OAuth state), checked again in the user-create hook, and recorded on
+  the org a self-serve signup founds (`Org.settings.signupPlan`,
+  `ORG_SIGNUP_PLAN_KEY`, with `readOrgSignupPlan()`, `takeOrgSignupPlan()` and
+  `restoreOrgSignupPlan()` in `lib/tenancy/org-settings.ts`). A free plan is
+  applied once the org's setup is finished (no org-created hook this process
+  runs still owed): by `completeSignupOrg()`, else by the new `signupPlans`
+  maintenance task (15 min, system scope). A paid plan is the signup's next
+  step: the email form, the Google callback and the verification link go on
+  to `/admin/billing?signup=plan` (the verification callback follows only that
+  page from its `next` parameter), which starts its checkout. It waits until a
+  subscription starts (the webhook removes it) or the owner declines it; the
+  billing read answers it as `signupPlan` and the page offers it. New route
+  `POST` / `DELETE /api/v1/orgs/[id]/billing/signup-plan` (the OWNER acting in
+  the org, as checkout; `DELETE` audited as `org.billing.signup_plan.dismiss`).
+  New module `lib/billing/signup-plan.ts` (`signupPlanOf()`,
+  `signupPlanOffer()`, `signupContinuation()`, `signupContinuationForUser()`,
+  `pendingSignupPlan()`, `takeUpSignupPlan()`, `dismissSignupPlan()`,
+  `applyFreeSignupPlan()`, `applyWaitingFreeSignupPlans()`), and
+  `SIGNUP_PLAN_PAGE`, `SIGNUP_NEXT_PARAM` and `signupNextOf()` in
+  `lib/billing/routes.ts`. New optional plan field `availableAtSignup`
+  (`PlanDefinition`; `RegisteredPlan.availableAtSignup` is always set): whether
+  a signup link may choose the plan. Left out, a priced plan may and an
+  unpriced one may not, so a plan staff assign by hand cannot be taken from a
+  link; set `true` on the free tier a pricing page offers. Additive: `createSignupOrg()` takes an optional
+  `signupPlanKey`, `signupOrgMemberships()` an optional third argument, and
+  `SignupForm` an optional `continueTo`. An unknown plan, an invited signup, an
+  app resolver's `join` or `install`, and billing off behave as before. See
+  [`.context/billing/billing.md`](./.context/billing/billing.md#choosing-a-plan-at-signup).
 - **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
   0-based place in its document, written whenever chunks are (upload, rechunk,
   the patterns seeder). Knowledge search returns it on each chunk, and
@@ -86,6 +117,13 @@ release process.
 
 ### Changed
 
+- **Billing audit rows record the plan as `metadata.plan` (§139 t-1096).**
+  `org.billing.checkout` wrote it as `planKey`, which the audit logger's secret
+  rule (a name ending in `key`) stored as `[REDACTED]`, so the row never said
+  which plan. A reader of `metadata.planKey` reads `metadata.plan` instead.
+- **The billing page says "set by platform staff" of a priced plan only
+  (§139 t-1096).** `OrgBilling.subscription.assignedByHand` is now false for a
+  plan with no price, which may be the one the founder chose at signup.
 - **A switch with no `upgradeUrl` now links to the billing page while billing
   is on (§139 t-1095).** The 403's `details.upgradeUrl`, and a locked item and
   page, carry `/admin/billing` for a viewer admitted to the org tier (the
@@ -127,6 +165,14 @@ release process.
 
 ### Fixed
 
+- **A self-serve signup at `TENANCY_MODE=multi` writes its founder's
+  membership (§134 t-1062, found in §139 t-1096).** The batch that writes it
+  removes the signup org's awaiting-founder mark with raw SQL, on an auth
+  hook's stack that entered no org, and the data layer refuses raw SQL with
+  no tenant context at `multi`: the founder was left in no org, and the
+  sign-in heal failed the same way. The batch now runs in its own system
+  scope, `runAsFounderJoin()` (`lib/tenancy/context.ts`), with one caller,
+  `writeNewUserMemberships()`, pinned by `founder-release-sites.test.ts`.
 - **`runStructuredCompletion` keeps the cost of a call that fails (t-1105,
   #1260).** When neither attempt parses, the default error is now a
   `ProviderError` (code `structured_output_invalid`) whose `usage` is the

@@ -37,6 +37,10 @@ vi.mock('@/lib/tenancy/lifecycle', () => ({ createSignupOrg: mockCreateSignupOrg
 const mockRefuseSeats = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('@/lib/tenancy/meters', () => ({ refuseOverSeatsLimit: mockRefuseSeats }));
 
+// Whether a key names a plan is signup-plan.test.ts; here, what is recorded.
+const mockSignupPlanOf = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/billing/signup-plan', () => ({ signupPlanOf: mockSignupPlanOf }));
+
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -78,6 +82,7 @@ beforeEach(() => {
   }));
   db.org.findUnique.mockResolvedValue(null);
   db.$queryRaw.mockResolvedValue([]);
+  mockSignupPlanOf.mockImplementation((raw: unknown) => (raw === 'pro' ? { key: 'pro' } : null));
 });
 
 afterEach(() => {
@@ -387,5 +392,66 @@ describe('sweepAbandonedSignupOrgs', () => {
   it('says nothing when there is nothing to delete', async () => {
     expect(await sweepAbandonedSignupOrgs()).toEqual({ deleted: 0 });
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('signupOrgMemberships — a plan chosen at signup (§139 t-1096)', () => {
+  it('records a plan that names a registered plan on the org of their own', async () => {
+    const result = await signupOrgMemberships(person, EMAIL, { plan: 'pro' });
+
+    expect(result).toEqual({ membership: { orgId: NEW_ORG, role: ORG_OWNER_ROLE } });
+    expect(mockSignupPlanOf).toHaveBeenCalledWith('pro');
+    expect(mockCreateSignupOrg).toHaveBeenCalledWith(
+      expect.objectContaining({ signupPlanKey: 'pro' })
+    );
+  });
+
+  it('drops a plan that is not one, and the signup lands as it does today', async () => {
+    const result = await signupOrgMemberships(person, EMAIL, { plan: 'platinum' });
+
+    expect(result).toEqual({ membership: { orgId: NEW_ORG, role: ORG_OWNER_ROLE } });
+    expect(mockCreateSignupOrg).toHaveBeenCalledWith(
+      expect.not.objectContaining({ signupPlanKey: expect.anything() })
+    );
+  });
+
+  it('records nothing and checks nothing when no plan was carried', async () => {
+    await signupOrgMemberships(person, EMAIL);
+
+    expect(mockSignupPlanOf).not.toHaveBeenCalled();
+    expect(mockCreateSignupOrg).toHaveBeenCalledWith(
+      expect.not.objectContaining({ signupPlanKey: expect.anything() })
+    );
+  });
+
+  it('still gives them an org of their own when checking the plan throws', async () => {
+    mockSignupPlanOf.mockImplementation(() => {
+      throw new Error('app billing init blew up');
+    });
+
+    const result = await signupOrgMemberships(person, EMAIL, { plan: 'pro' });
+
+    expect(result).toEqual({ membership: { orgId: NEW_ORG, role: ORG_OWNER_ROLE } });
+    expect(mockCreateSignupOrg).toHaveBeenCalledWith(
+      expect.not.objectContaining({ signupPlanKey: expect.anything() })
+    );
+  });
+
+  it('ignores the plan when the resolver sends them to an existing org', async () => {
+    registerSignupOrgResolver(() => ({ kind: 'join', orgId: CUSTOMER_ORG }));
+    db.org.findUnique.mockResolvedValue({ id: CUSTOMER_ORG, status: 'ACTIVE', settings: null });
+
+    const result = await signupOrgMemberships(person, EMAIL, { plan: 'pro' });
+
+    expect(result).toEqual({ membership: { orgId: CUSTOMER_ORG, role: DEFAULT_ORG_ROLE } });
+    expect(mockCreateSignupOrg).not.toHaveBeenCalled();
+    expect(mockSignupPlanOf).not.toHaveBeenCalled();
+  });
+
+  it('ignores the plan when the resolver keeps them in the install org', async () => {
+    registerSignupOrgResolver(() => ({ kind: 'install' }));
+
+    expect(await signupOrgMemberships(person, EMAIL, { plan: 'pro' })).toBeNull();
+    expect(mockCreateSignupOrg).not.toHaveBeenCalled();
   });
 });

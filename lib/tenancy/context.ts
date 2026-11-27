@@ -394,6 +394,32 @@ export function runAsFounderRelease<T>(userId: string, fn: () => Promise<T>): Pr
 }
 
 /**
+ * Run `fn` as the system scope for the one transaction that writes a
+ * founder's own membership and removes their signup org's awaiting-founder
+ * mark (§134 t-1062, found in §139 t-1096).
+ *
+ * `writeNewUserMemberships()` sends that mark's removal as a raw `UPDATE` in
+ * the batch beside the membership upserts, and it runs on an auth hook's
+ * stack (the user-create hook, and the sign-in heal), which entered no org.
+ * At `multi` the data layer refuses raw SQL with no tenant context, so every
+ * self-serve signup that founded an org lost its membership, and its heal
+ * failed the same way. The scope is the same as {@link runAsSystem}'s, with
+ * the same `app.bypass_rls` setter; every table in the batch (`org`,
+ * `org_membership`, `user`) is a system table with no row policy.
+ *
+ * Logged at debug, as {@link runAsFounderRelease} is, for its reason: it runs
+ * on every self-serve signup at `multi`. The trade is only safe while that one
+ * batch is the thing inside, so it has one caller, `writeNewUserMemberships()`
+ * in `lib/tenancy/membership.ts`, and
+ * `tests/unit/lib/tenancy/founder-release-sites.test.ts` (always-run) fails
+ * naming any other.
+ */
+export function runAsFounderJoin<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  logger.debug('Entering system tenant scope to write a founder’s membership', { userId });
+  return inSystemScope(fn);
+}
+
+/**
  * Run `fn` outside every tenant scope, whatever the caller is inside.
  *
  * **For arming something whose lifetime is the PROCESS's from inside a

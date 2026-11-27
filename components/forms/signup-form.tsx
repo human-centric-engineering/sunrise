@@ -37,7 +37,23 @@ import { useSaveFailure } from '@/lib/hooks/use-save-failure';
  *   - If session created (no verification required) → redirect to dashboard
  *   - If no session (verification required) → redirect to verify-email page
  */
-export function SignupForm() {
+export interface SignupFormProps {
+  /**
+   * The plan the signup link chose, already checked by the page (§139
+   * t-1096), or `null`. Sent with the signup, in the body or the OAuth state;
+   * the server checks it again.
+   */
+  signupPlan?: string | null;
+  /**
+   * Where the signup goes on to once the person is signed in, instead of the
+   * landing route: the page that starts a paid plan's checkout (§139
+   * t-1096), for the form and the OAuth callback. The verification link's
+   * own continuation is decided on the server, from the org (resends too).
+   */
+  continueTo?: string | null;
+}
+
+export function SignupForm({ signupPlan = null, continueTo = null }: SignupFormProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { track, identify } = useAnalytics();
@@ -87,6 +103,8 @@ export function SignupForm() {
           email: data.email,
           password: data.password,
           name: data.name,
+          // Not a user field: the user-create hook reads it from the body.
+          ...(signupPlan ? { signupPlan } : {}),
         },
         {
           onRequest: () => {
@@ -105,7 +123,7 @@ export function SignupForm() {
 
             if (session) {
               // Session created → verification not required or auto-verified (OAuth)
-              router.push(AUTH_LANDING_ROUTE);
+              router.push(continueTo ?? AUTH_LANDING_ROUTE);
             } else {
               // No session → verification required, show "check email" page
               router.push('/verify-email?email=' + encodeURIComponent(data.email));
@@ -130,7 +148,7 @@ export function SignupForm() {
       <NoScriptNotice />
 
       {/* OAuth Buttons */}
-      <OAuthButtons callbackUrl={AUTH_LANDING_ROUTE} />
+      <OAuthButtons callbackUrl={continueTo ?? AUTH_LANDING_ROUTE} signupPlan={signupPlan} />
 
       {/* Email/Password Form */}
       <form

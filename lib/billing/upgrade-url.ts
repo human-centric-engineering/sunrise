@@ -11,10 +11,12 @@
  */
 
 import { billingEnabled } from '@/lib/billing/config';
+import { ORG_BILLING_PAGE_PATH } from '@/lib/billing/routes';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
-/** The org-admin console's billing page, where the provider also sends an owner back to. */
-export const ORG_BILLING_PAGE_PATH = '/admin/billing';
+// Re-exported where it has always been imported from; it lives in a module a
+// client component can import (lib/billing/routes.ts).
+export { ORG_BILLING_PAGE_PATH };
 
 /** Who is asking, for {@link upgradeUrlFor}. */
 export interface UpgradeViewer {

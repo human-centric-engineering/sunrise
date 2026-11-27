@@ -8,6 +8,8 @@ interface OAuthButtonsProps {
   errorCallbackUrl?: string;
   invitationToken?: string;
   invitationEmail?: string;
+  /** The plan a signup link chose (§139 t-1096), carried in the OAuth state. */
+  signupPlan?: string | null;
   mode?: 'signin' | 'invitation';
 }
 
@@ -44,6 +46,7 @@ export function OAuthButtons({
   errorCallbackUrl,
   invitationToken,
   invitationEmail,
+  signupPlan,
   mode = 'signin',
 }: OAuthButtonsProps) {
   const t = useTranslations('forms.oauth');
@@ -70,6 +73,7 @@ export function OAuthButtons({
           errorCallbackUrl={errorCallbackUrl}
           invitationToken={invitationToken}
           invitationEmail={invitationEmail}
+          signupPlan={signupPlan ?? undefined}
         >
           <GoogleIcon />
           <span className="ml-2">{buttonText}</span>

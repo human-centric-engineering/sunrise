@@ -13,6 +13,8 @@ import { resolveEmailTemplate } from '@/lib/email/registry';
 import { emailLocaleForUser } from '@/lib/email/locale';
 import { emailTranslator, type EmailLocale } from '@/lib/email/translate';
 import { logger } from '@/lib/logging';
+import { SIGNUP_NEXT_PARAM } from '@/lib/billing/routes';
+import { signupContinuationForUser } from '@/lib/billing/signup-plan';
 import { dispatchUserCreated, type RedeemedInvitation } from '@/lib/auth/user-created-hooks';
 import { linkWaitlistEntryToAccount } from '@/lib/waitlist/link';
 import type { InvitationMetadata } from '@/lib/validations/admin';
@@ -102,7 +104,7 @@ export type UserCreateData = {
  * Context passed to database hooks. `null` when better-auth invokes the hook
  * outside a request context; optional `path` identifies OAuth callbacks.
  */
-export type DatabaseHookContext = { path?: string } | null;
+export type DatabaseHookContext = { path?: string; body?: unknown } | null;
 
 /**
  * Session shape passed to `databaseHooks.session.create.before` by better-auth
@@ -173,7 +175,8 @@ async function recordPendingMembership(
   user: UserCreateData,
   invitation: InvitationMetadata | null,
   viaInvitation: boolean,
-  signupMethod: 'email' | 'oauth'
+  signupMethod: 'email' | 'oauth',
+  signupPlan: unknown = null
 ): Promise<SignupRecord> {
   // Three steps, each with its own failure: the fallback below is for a
   // decision that failed, and must not narrow a role when only recording did.
@@ -193,10 +196,12 @@ async function recordPendingMembership(
     // A self-serve signup at `multi` is asked where it lands (§134 t-1062):
     // by default an org of their own. `null` is the decision below, as before.
     const selfServe = asksSignupOrg(user, invitation, viaInvitation)
-      ? await signupOrgMemberships(user, {
-          signupMethod,
-          waitlistEntryId: invitation?.waitlistEntryId ?? null,
-        })
+      ? await signupOrgMemberships(
+          user,
+          { signupMethod, waitlistEntryId: invitation?.waitlistEntryId ?? null },
+          // The plan a signup link chose (§139 t-1096), checked there.
+          { plan: signupPlan }
+        )
       : null;
     memberships = selfServe ?? (await membershipsForNewUser(user, invitation));
   } catch (error) {
@@ -265,6 +270,31 @@ function membershipsWithoutRecord(
   if (isInvitedSignup()) return undecidedMembershipsForNewUser(user, invitedSignupInvitation());
   if (isOAuthSignup && isMultiTenant()) return null;
   return { membership: initialMembershipFor(user) };
+}
+
+/** The plan a signup link chose, as the sign-up request carries it. */
+const carriedPlanSchema = z.object({ signupPlan: z.string().max(64) });
+
+/**
+ * The plan a signup link chose (§139 t-1096), unchecked, or `null`: the email
+ * form sends it in the sign-up body, and a Google signup in the OAuth state
+ * (`additionalData`). Whether it names a plan is decided where it is used
+ * (`signupPlanOf()`). Never throws: a plan never refuses a signup.
+ */
+async function carriedSignupPlan(
+  ctx: DatabaseHookContext,
+  isOAuthSignup: boolean
+): Promise<string | null> {
+  try {
+    const source = isOAuthSignup ? await getOAuthState() : ctx?.body;
+    const parsed = carriedPlanSchema.safeParse(source);
+    return parsed.success ? parsed.data.signupPlan : null;
+  } catch (error) {
+    logger.warn('Could not read the plan a signup carried; ignored', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 /**
@@ -503,7 +533,8 @@ export async function userCreateBeforeHook(
     user,
     invitedSignupInvitation(),
     oauthInvitationAccepted || isInvitedSignup(),
-    signupMethod
+    signupMethod,
+    await carriedSignupPlan(ctx, isOAuthSignup)
   );
   return { data: { ...user, ...record } };
 }
@@ -977,9 +1008,16 @@ export async function sendVerificationEmailHook({
   // A change is marked, because the page cannot say "verified" or redirect for
   // one: the click may leave the user signed out, and on an unverified account
   // it moves the address without verifying it.
+  // A signup that chose a paid plan goes on to its checkout from the link
+  // (§139 t-1096), decided here from the org so a resend keeps it.
+  const next = emailChange ? null : await signupContinuationForUser(user.id);
   const callbackPath = emailChange
     ? '%2Fverify-email%2Fcallback%3FemailChanged%3D1'
-    : '%2Fverify-email%2Fcallback';
+    : next
+      ? encodeURIComponent(
+          `/verify-email/callback?${SIGNUP_NEXT_PARAM}=${encodeURIComponent(next)}`
+        )
+      : '%2Fverify-email%2Fcallback';
   // Only the default: a caller's own callback is left alone, not prefixed.
   const verificationUrl = url.replace(/callbackURL=%2F(?=&|$)/, `callbackURL=${callbackPath}`);
 

@@ -571,6 +571,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'waitlistRetention',
       'orgCreatedHooks',
       'abandonedSignupOrgs',
+      'signupPlans',
     ]);
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
@@ -594,6 +595,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data).not.toHaveProperty('waitlistRetention');
     expect(body.data).not.toHaveProperty('orgCreatedHooks');
     expect(body.data).not.toHaveProperty('abandonedSignupOrgs');
+    expect(body.data).not.toHaveProperty('signupPlans');
   });
 
   it('still invokes all seven maintenance tasks (six in background)', async () => {
@@ -696,8 +698,8 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     // (13 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in
     // §108, platformAgents added in §116, pendingErasures in t-842,
     // waitlistRetention in §125 t-976/t-977, orgCreatedHooks in §134 t-1061,
-    // abandonedSignupOrgs in §134 t-1062).
-    expect(body.data.backgroundTasks).toHaveLength(14);
+    // abandonedSignupOrgs in §134 t-1062, signupPlans in §139 t-1096).
+    expect(body.data.backgroundTasks).toHaveLength(15);
   });
 
   it('returns a readable schedules.error when processDueSchedules rejects a non-Error', async () => {

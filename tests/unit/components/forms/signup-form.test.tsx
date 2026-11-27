@@ -26,6 +26,9 @@ vi.mock('@/lib/auth/client', () => ({
     signUp: {
       email: vi.fn(),
     },
+    signIn: {
+      social: vi.fn(),
+    },
     getSession: vi.fn(),
   },
 }));
@@ -307,6 +310,84 @@ describe('components/forms/signup-form', () => {
         // The password strength component should render when password is not empty
         const strengthText = screen.queryByText(/weak|fair|good|strong/i);
         expect(strengthText).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('a plan chosen at signup (§139 t-1096)', () => {
+    it('sends the plan the page checked with the signup', async () => {
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+
+      render(<SignupForm signupPlan="pro" />);
+      await user.type(screen.getByLabelText(/full name/i), 'John Doe');
+      await user.type(screen.getByLabelText(/email/i), 'test@example.com');
+      await user.type(screen.getByLabelText(/^password$/i), 'Password123!');
+      await user.type(screen.getByLabelText(/confirm password/i), 'Password123!');
+      await user.click(screen.getByRole('button', { name: /create account/i }));
+
+      await waitFor(() => {
+        expect(authClient.signUp.email).toHaveBeenCalledWith(
+          {
+            name: 'John Doe',
+            email: 'test@example.com',
+            password: 'Password123!',
+            signupPlan: 'pro',
+          },
+          expect.any(Object)
+        );
+      });
+    });
+  });
+
+  describe('where a paid-plan signup goes on to (§139 t-1096)', () => {
+    async function signUpSignedIn(props: Parameters<typeof SignupForm>[0]) {
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+      vi.mocked(authClient.signUp.email).mockImplementation(async (_data, callbacks) => {
+        void callbacks?.onSuccess?.(
+          {} as unknown as Parameters<NonNullable<typeof callbacks.onSuccess>>[0]
+        );
+      });
+      vi.mocked(authClient.getSession).mockResolvedValue({ data: { user: { id: '1' } } });
+
+      render(<SignupForm {...props} />);
+      await user.type(screen.getByLabelText(/full name/i), 'John Doe');
+      await user.type(screen.getByLabelText(/email/i), 'test@example.com');
+      await user.type(screen.getByLabelText(/^password$/i), 'Password123!');
+      await user.type(screen.getByLabelText(/confirm password/i), 'Password123!');
+      await user.click(screen.getByRole('button', { name: /create account/i }));
+    }
+
+    it('goes on to the checkout page once signed in, instead of the landing route', async () => {
+      await signUpSignedIn({ signupPlan: 'pro', continueTo: '/admin/billing?signup=plan' });
+
+      await waitFor(() => {
+        expect(mockRouter.push).toHaveBeenCalledWith('/admin/billing?signup=plan');
+      });
+      expect(mockRouter.push).not.toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
+    });
+
+    it('goes to the landing route for a free plan, which needs no step', async () => {
+      await signUpSignedIn({ signupPlan: 'starter', continueTo: null });
+
+      await waitFor(() => {
+        expect(mockRouter.push).toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
+      });
+    });
+
+    it('sends the Google signup to the same place', async () => {
+      const user = userEvent.setup();
+      const { authClient } = await import('@/lib/auth/client');
+      vi.mocked(authClient.signIn.social).mockResolvedValue(undefined);
+
+      render(<SignupForm signupPlan="pro" continueTo="/admin/billing?signup=plan" />);
+      await user.click(screen.getByRole('button', { name: /google/i }));
+
+      await waitFor(() => {
+        expect(authClient.signIn.social).toHaveBeenCalledWith(
+          expect.objectContaining({ callbackURL: '/admin/billing?signup=plan' })
+        );
       });
     });
   });

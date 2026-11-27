@@ -45,6 +45,7 @@
  *     switches: { reports: false, leads: true },
  *     meterLimits: { seats: 3, completed_conversations: 100 },
  *     aiBudgetUsd: 5,
+ *     availableAtSignup: true, // a pricing page's "Start free" may link to it
  *   });
  *   registerPlan({
  *     key: 'pro',

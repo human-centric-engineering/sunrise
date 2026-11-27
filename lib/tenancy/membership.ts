@@ -29,7 +29,7 @@ import { serviceAccountWhere } from '@/lib/auth/account';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { requiresEmailVerification } from '@/lib/auth/verification-status';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { isMultiTenant } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsFounderJoin } from '@/lib/tenancy/context';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE, type OrgRole } from '@/lib/tenancy/roles';
 import { ORG_AWAITING_FOUNDER_KEY } from '@/lib/tenancy/org-settings';
 
@@ -597,8 +597,11 @@ export async function writeNewUserMemberships(
     await db.$transaction([...writes, cleared]);
     return { founded: null };
   }
-  // After the membership writes, so the mark goes with the founder's row.
-  const results = await db.$transaction([...writes, clear, cleared]);
+  // After the membership writes, so the mark goes with the founder's row. The
+  // mark's removal is raw SQL, which the data layer refuses at `multi` on an
+  // auth hook's stack, which entered no org: the batch runs in its own scope.
+  const batch = () => db.$transaction([...writes, clear, cleared]);
+  const results = isMultiTenant() ? await runAsFounderJoin(userId, batch) : await batch();
   const unmarked = results[writes.length] as number;
   return { founded: unmarked > 0 ? orgId : null };
 }
@@ -611,7 +614,9 @@ export async function writeNewUserMemberships(
  * mark) never removes it. One conditional statement because Prisma cannot
  * remove a key from a JSON column, and so it can sit in the membership write's
  * batch transaction. `org` is a system table, with no row policy, so this is
- * the same write at `single` and `multi`.
+ * the same write at `single` and `multi`; at `multi` the batch runs in
+ * {@link runAsFounderJoin}'s scope, since the data layer refuses raw SQL with
+ * no tenant context.
  */
 function clearAwaitingFounder(
   membership: InitialMembership,

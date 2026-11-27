@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { authLandingLabel, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { SIGNUP_NEXT_PARAM, signupNextOf } from '@/lib/billing/routes';
 import { SaveError } from '@/components/forms/form-error';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { isRecord } from '@/lib/utils';
@@ -35,6 +36,8 @@ function VerifyEmailCallbackContent() {
   const router = useRouter();
 
   const error = searchParams.get('error');
+  // Where the signup goes on to, when it chose a paid plan (§139 t-1096).
+  const next = signupNextOf(searchParams.get(SIGNUP_NEXT_PARAM));
   const emailChanged = searchParams.get('emailChanged') === '1';
 
   const [email, setEmail] = useState('');
@@ -47,9 +50,9 @@ function VerifyEmailCallbackContent() {
   // If no error, verification succeeded - redirect to dashboard
   useEffect(() => {
     if (!error && !emailChanged) {
-      router.replace(AUTH_LANDING_ROUTE);
+      router.replace(next ?? AUTH_LANDING_ROUTE);
     }
-  }, [error, emailChanged, router]);
+  }, [error, emailChanged, next, router]);
 
   // An email change: the click may have signed the user out everywhere, and on
   // an unverified account it moves the address without verifying it. So no

@@ -578,6 +578,17 @@ describe('logAdminAction — counts, prices and dates', () => {
     });
   });
 
+  it('records a billing row’s plan under `plan`, which `planKey` would redact (§139 t-1096)', async () => {
+    const data = await storedRow({
+      userId: 'u1',
+      action: 'org.billing.checkout',
+      entityType: 'org',
+      metadata: { plan: 'pro', source: 'signup', planKey: 'pro' },
+    });
+
+    expect(data.metadata).toEqual({ plan: 'pro', source: 'signup', planKey: '[REDACTED]' });
+  });
+
   it('still redacts a string under a key/token-suffixed name, and a mixed pair', async () => {
     const data = await storedRow({
       userId: 'u1',

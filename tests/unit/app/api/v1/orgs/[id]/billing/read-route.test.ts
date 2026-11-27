@@ -70,6 +70,7 @@ vi.mock('@/lib/api/context', () => ({ getRouteLogger: vi.fn(async () => mockLog)
 vi.mock('@/lib/logging', () => ({ logger: mockLog }));
 
 vi.mock('@/lib/billing/plans', () => ({
+  billingPlansFailed: () => false,
   registeredPlans: () => [
     { key: 'free', label: 'Free', description: '', priceLookupKey: null },
     { key: 'pro', label: 'Pro', description: 'More of everything', priceLookupKey: 'pro_monthly' },
@@ -83,6 +84,7 @@ vi.mock('@/lib/billing/plans', () => ({
         label: 'Pro',
         description: 'More of everything',
         priceLookupKey: 'pro_monthly',
+        availableAtSignup: true,
       },
     })[key],
 }));
@@ -144,6 +146,7 @@ interface Answer {
     } | null;
     usage: Array<{ key: string; used: number | null; limit: number | null }> | null;
     plans: Array<{ key: string; current: boolean }>;
+    signupPlan: { key: string; label: string } | null;
     mayChange: boolean;
     portalAvailable: boolean;
     customerElsewhere: boolean;
@@ -206,6 +209,46 @@ beforeEach(() => {
   });
 });
 
+describe('the plan a signup chose (§139 t-1096)', () => {
+  function signupChose(planKey: string) {
+    mockDb.org.findUnique.mockImplementation(async (args: { where: { id: string } }) => ({
+      id: args.where.id,
+      status: 'ACTIVE',
+      name: 'Acme',
+      settings: { signupPlan: planKey },
+    }));
+  }
+
+  it('offers a paid plan still waiting while the org has no subscription', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    signupChose('pro');
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue(null);
+
+    const { data } = await json(await read());
+
+    expect(data?.signupPlan).toEqual({ key: 'pro', label: 'Pro', ready: true });
+  });
+
+  it('offers nothing once the org subscribed: a subscription settles it', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    signupChose('pro');
+
+    const { data } = await json(await read());
+
+    expect(data?.signupPlan).toBeNull();
+  });
+
+  it('offers nothing for a free plan, which the setup applies', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    signupChose('free');
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue(null);
+
+    const { data } = await json(await read());
+
+    expect(data?.signupPlan).toBeNull();
+  });
+});
+
 describe('the org’s OWNER, acting in it', () => {
   it('reads the plan, the period, usage and the plans, and may act on them', async () => {
     actingAs(ORG_OWNER_ROLE);
@@ -252,23 +295,34 @@ describe('the org’s OWNER, acting in it', () => {
     expect(meters.usage).not.toHaveBeenCalled();
   });
 
-  it('sees a plan staff set by hand as such, with no portal to open', async () => {
+  const HAND_SET = {
+    ...PAID,
+    provider: null,
+    customerRef: null,
+    subscriptionRef: null,
+    providerStatus: null,
+    providerLive: false,
+    periodStart: null,
+    periodEnd: null,
+  };
+
+  it('sees a priced plan staff set by hand as such, with no portal to open', async () => {
     actingAs(ORG_OWNER_ROLE);
-    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({
-      ...PAID,
-      planKey: 'free',
-      provider: null,
-      customerRef: null,
-      subscriptionRef: null,
-      providerStatus: null,
-      providerLive: false,
-      periodStart: null,
-      periodEnd: null,
-    });
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({ ...HAND_SET, planKey: 'team' });
 
     const { data } = await json(await read());
 
     expect(data?.subscription).toMatchObject({ assignedByHand: true, providerManaged: false });
+    expect(data?.portalAvailable).toBe(false);
+  });
+
+  it('does not say staff set a free plan, which the founder may have chosen at signup (t-1096)', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({ ...HAND_SET, planKey: 'free' });
+
+    const { data } = await json(await read());
+
+    expect(data?.subscription).toMatchObject({ assignedByHand: false, providerManaged: false });
     expect(data?.portalAvailable).toBe(false);
     expect(data?.plans.every((plan) => !plan.current)).toBe(true);
   });

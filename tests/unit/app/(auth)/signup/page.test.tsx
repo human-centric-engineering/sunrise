@@ -52,9 +52,25 @@ vi.mock('@/lib/auth/client', () => ({
  *
  * Tests the signup page server component wrapper and overall page structure.
  */
+// Which keys name a plan is signup-plan.test.ts; here, what the page does with
+// the answer (§139 t-1096).
+const mockOffer = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/billing/signup-plan', () => ({
+  SIGNUP_PLAN_PARAM: 'plan',
+  signupPlanOffer: mockOffer,
+  signupContinuation: (offer: { paid: boolean } | null) =>
+    offer?.paid ? '/admin/billing?signup=plan' : null,
+}));
+
+/** The page as Next renders it, with this query string. */
+async function page(query: Record<string, string> = {}) {
+  return SignupPage({ searchParams: Promise.resolve(query) });
+}
+
 describe('SignupPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockOffer.mockReturnValue(null);
   });
 
   /**
@@ -80,17 +96,17 @@ describe('SignupPage', () => {
    * Tests that the page renders without crashing and contains expected elements.
    */
   describe('rendering', () => {
-    it('should render without crashing', () => {
+    it('should render without crashing', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Page renders successfully
       expect(screen.getByText('Create an account')).toBeInTheDocument();
     });
 
-    it('should render page title "Create an account"', () => {
+    it('should render page title "Create an account"', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Title is visible
       const title = screen.getByText('Create an account');
@@ -98,35 +114,35 @@ describe('SignupPage', () => {
       expect(title.tagName).toBe('DIV'); // CardTitle renders as div
     });
 
-    it('should render page description', () => {
+    it('should render page description', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Description is visible
       expect(screen.getByText('Enter your information to create your account')).toBeInTheDocument();
     });
 
-    it('should render within a Card component', () => {
+    it('should render within a Card component', async () => {
       // Arrange & Act
-      const { container } = render(<SignupPage />);
+      const { container } = render(await page());
 
       // Assert: Card structure is present (Card has specific class patterns)
       const cardElement = container.querySelector('[class*="border"]');
       expect(cardElement).toBeInTheDocument();
     });
 
-    it('should render CardHeader with proper structure', () => {
+    it('should render CardHeader with proper structure', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: CardHeader contains both title and description
       expect(screen.getByText('Create an account')).toBeInTheDocument();
       expect(screen.getByText('Enter your information to create your account')).toBeInTheDocument();
     });
 
-    it('should render CardContent with proper spacing', () => {
+    it('should render CardContent with proper spacing', async () => {
       // Arrange & Act
-      const { container } = render(<SignupPage />);
+      const { container } = render(await page());
 
       // Assert: CardContent has space-y-4 class for vertical spacing
       const cardContent = container.querySelector('[class*="space-y-4"]');
@@ -141,9 +157,9 @@ describe('SignupPage', () => {
    * SignupForm uses useSearchParams() which requires Suspense boundary.
    */
   describe('Suspense boundary', () => {
-    it('should wrap SignupForm in Suspense boundary', () => {
+    it('should wrap SignupForm in Suspense boundary', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: SignupForm renders successfully (wrapped in Suspense)
       // We can verify by checking for elements that only appear in SignupForm
@@ -151,9 +167,9 @@ describe('SignupPage', () => {
       expect(screen.queryByText('Create an account')).toBeInTheDocument();
     });
 
-    it('should have fallback UI for Suspense', () => {
+    it('should have fallback UI for Suspense', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Page renders without errors
       // The fallback is <div>Loading...</div> but won't be visible in tests
@@ -171,7 +187,7 @@ describe('SignupPage', () => {
   describe('SignupForm integration', () => {
     it('should render SignupForm component', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: SignupForm elements are present
       // Check for OAuth buttons (rendered by SignupForm)
@@ -184,7 +200,7 @@ describe('SignupPage', () => {
 
     it('should render name input field from SignupForm', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Name field is present
       await waitFor(() => {
@@ -196,7 +212,7 @@ describe('SignupPage', () => {
 
     it('should render email input field from SignupForm', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Email field is present
       await waitFor(() => {
@@ -208,7 +224,7 @@ describe('SignupPage', () => {
 
     it('should render password input fields from SignupForm', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Password fields are present
       await waitFor(() => {
@@ -219,7 +235,7 @@ describe('SignupPage', () => {
 
     it('should render submit button from SignupForm', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Submit button is present
       await waitFor(() => {
@@ -236,17 +252,17 @@ describe('SignupPage', () => {
    * Tests the "Already have an account? Sign in" link.
    */
   describe('login link', () => {
-    it('should render login link text', () => {
+    it('should render login link text', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Login link text is visible
       expect(screen.getByText(/already have an account\?/i)).toBeInTheDocument();
     });
 
-    it('should render "Sign in" link with correct href', () => {
+    it('should render "Sign in" link with correct href', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: "Sign in" link is present and points to /login
       const signInLink = screen.getByRole('link', { name: /sign in/i });
@@ -254,9 +270,9 @@ describe('SignupPage', () => {
       expect(signInLink).toHaveAttribute('href', '/login');
     });
 
-    it('should render login link with correct styling', () => {
+    it('should render login link with correct styling', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: "Sign in" link has primary color and hover underline
       const signInLink = screen.getByRole('link', { name: /sign in/i });
@@ -264,9 +280,9 @@ describe('SignupPage', () => {
       expect(signInLink.className).toContain('hover:underline');
     });
 
-    it('should render login link as centered text', () => {
+    it('should render login link as centered text', async () => {
       // Arrange & Act
-      const { container } = render(<SignupPage />);
+      const { container } = render(await page());
 
       // Assert: Login link container has text-center class
       const loginContainer = container.querySelector('.text-center');
@@ -274,9 +290,9 @@ describe('SignupPage', () => {
       expect(loginContainer?.textContent).toContain('Already have an account?');
     });
 
-    it('should render muted text for "Already have an account?"', () => {
+    it('should render muted text for "Already have an account?"', async () => {
       // Arrange & Act
-      const { container } = render(<SignupPage />);
+      const { container } = render(await page());
 
       // Assert: "Already have an account?" text has muted color
       // Find the specific span with muted text that contains our login link text
@@ -295,9 +311,9 @@ describe('SignupPage', () => {
    * Tests that the page is accessible and follows best practices.
    */
   describe('accessibility', () => {
-    it('should have proper heading hierarchy', () => {
+    it('should have proper heading hierarchy', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Page title is visible and prominent
       const title = screen.getByText('Create an account');
@@ -306,9 +322,9 @@ describe('SignupPage', () => {
       expect(title.className).toContain('font-bold');
     });
 
-    it('should have descriptive text for screen readers', () => {
+    it('should have descriptive text for screen readers', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Description provides context for screen readers
       const description = screen.getByText('Enter your information to create your account');
@@ -317,7 +333,7 @@ describe('SignupPage', () => {
 
     it('should have accessible form inputs with labels', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: All form inputs have associated labels
       await waitFor(() => {
@@ -329,7 +345,7 @@ describe('SignupPage', () => {
 
     it('should have accessible submit button', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Submit button has accessible name
       await waitFor(() => {
@@ -338,9 +354,9 @@ describe('SignupPage', () => {
       });
     });
 
-    it('should have accessible navigation link', () => {
+    it('should have accessible navigation link', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Login link is accessible
       const signInLink = screen.getByRole('link', { name: /sign in/i });
@@ -354,9 +370,9 @@ describe('SignupPage', () => {
    * Tests the overall layout structure and spacing.
    */
   describe('layout and structure', () => {
-    it('should render CardHeader before CardContent', () => {
+    it('should render CardHeader before CardContent', async () => {
       // Arrange & Act
-      const { container } = render(<SignupPage />);
+      const { container } = render(await page());
 
       // Assert: Title appears before form content in DOM order
       const allText = container.textContent;
@@ -366,9 +382,9 @@ describe('SignupPage', () => {
       expect(titleIndex).toBeLessThan(formIndex || Infinity);
     });
 
-    it('should render SignupForm before login link', () => {
+    it('should render SignupForm before login link', async () => {
       // Arrange & Act
-      const { container } = render(<SignupPage />);
+      const { container } = render(await page());
 
       // Assert: Form appears before "Already have an account?" in DOM order
       const allText = container.textContent;
@@ -378,18 +394,18 @@ describe('SignupPage', () => {
       expect(formIndex).toBeLessThan(linkIndex || Infinity);
     });
 
-    it('should have vertical spacing between form and login link', () => {
+    it('should have vertical spacing between form and login link', async () => {
       // Arrange & Act
-      const { container } = render(<SignupPage />);
+      const { container } = render(await page());
 
       // Assert: CardContent has space-y-4 class for vertical spacing
       const cardContent = container.querySelector('[class*="space-y-4"]');
       expect(cardContent).toBeInTheDocument();
     });
 
-    it('should render all content within CardContent', () => {
+    it('should render all content within CardContent', async () => {
       // Arrange & Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Both SignupForm and login link are visible
       expect(screen.getByRole('button', { name: /create account/i })).toBeDefined();
@@ -414,7 +430,7 @@ describe('SignupPage', () => {
       );
 
       // Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Page renders without crashing (error handling is in SignupForm)
       await waitFor(() => {
@@ -430,7 +446,7 @@ describe('SignupPage', () => {
       );
 
       // Act
-      render(<SignupPage />);
+      render(await page());
 
       // Assert: Page renders normally
       await waitFor(() => {
@@ -438,5 +454,41 @@ describe('SignupPage', () => {
         expect(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument();
       });
     });
+  });
+});
+
+describe('SignupPage — a plan from the signup link (§139 t-1096)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('says which paid plan they are signing up for, and that payment follows', async () => {
+    mockOffer.mockReturnValue({ key: 'pro', label: 'Pro', paid: true });
+
+    render(await page({ plan: 'pro' }));
+
+    expect(mockOffer).toHaveBeenCalledWith('pro');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'You are signing up for the Pro plan. Once your account is set up, you go to the payment page to pay for it.'
+    );
+  });
+
+  it('says which free plan, with no word of payment', async () => {
+    mockOffer.mockReturnValue({ key: 'starter', label: 'Starter', paid: false });
+
+    render(await page({ plan: 'starter' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'You are signing up for the Starter plan.'
+    );
+    expect(screen.getByRole('status')).not.toHaveTextContent(/payment/);
+  });
+
+  it('shows nothing for a plan that is not offered, or none', async () => {
+    mockOffer.mockReturnValue(null);
+
+    render(await page({ plan: 'platinum' }));
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

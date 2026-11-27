@@ -27,7 +27,7 @@ table says what exists.
 | Plans as bundles of entitlements; the org's subscription record; staff assign | t-1093 | **Built**     |
 | The provider adapter, Stripe, checkout, portal, the webhook, lapsed handling  | t-1094 | **Built**     |
 | The billing page in the org-admin console                                     | t-1095 | **Built**     |
-| Choosing a plan at signup                                                     | t-1096 | Not built yet |
+| Choosing a plan at signup                                                     | t-1096 | **Built**     |
 | Usage reported each period; the overage rule                                  | t-1097 | Not built yet |
 
 ## Who owns what
@@ -136,6 +136,12 @@ the shape it must hold:
   price ids differ between test and live mode; a lookup key (`pro_monthly`) is
   set by the operator on both. A plan with no price is one staff assign by
   hand or give away; it never goes through checkout.
+- **Whether a signup link may choose it** (`availableAtSignup`). Left out, yes
+  for a plan with a price and no for one without: an unpriced plan is
+  otherwise assigned by hand or given away, and a link must not hand it to
+  anyone. The app sets `true` on the free tier its pricing page offers, or
+  `false` to keep a priced plan off signup links
+  ([Choosing a plan at signup](#choosing-a-plan-at-signup)).
 - **The app's fallback plan**, named once for the app, not per plan: what an
   org moves to when its subscription ends ([Lapsed subscriptions](#lapsed-subscriptions)).
 
@@ -570,7 +576,8 @@ Decided at planning (2026-11-25):
   `not_applied` (recorded with a warning: the org holds another customer,
   already has a live subscription, or the subscription's metadata names
   another org), or `no_subscription`.
-- **Audit rows:** `org.billing.checkout` when an owner starts one, and
+- **Audit rows:** `org.billing.checkout` when an owner starts one (the plan
+  as `metadata.plan`), and
   `org.billing.sync`, with no user, when the webhook changed the org's plan
   or status: from and to, and what the plan wrote.
 - **`providerLive`** on the record is the adapter's `live`: whether the
@@ -665,6 +672,151 @@ Decided at planning (2026-11-25):
 - **The words** are the platform catalogue's, `admin.billing`, so a fork
   rewords them with `overridePlatformMessages()`. Plan and meter labels are the
   app's, as it registered them.
+
+## Choosing a plan at signup
+
+Someone who clicks "Buy Pro" on a pricing page should not have to find the
+billing page and choose again after signing up (t-1096). A pricing page links
+to signup with the plan's key, and the plan is carried to the new org:
+
+```
+/signup?plan=pro
+```
+
+| Step                    | What happens                                                                                                                                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The signup page         | `signupPlanOffer()` checks the key. A registered plan, while billing is on, is named on the page ("You are signing up for the Pro plan…"); anything else shows nothing and is not sent                                                                                                                             |
+| The signup request      | The email form sends `signupPlan` in the sign-up body; the Google button sends it in the OAuth state (`additionalData`). Neither is a user field                                                                                                                                                                   |
+| The user-create hook    | `userCreateBeforeHook` reads it (`carriedSignupPlan()`) and hands it to `signupOrgMemberships()`, which checks it again (`signupPlanOf()`) and records it on the new org, in the same INSERT: `Org.settings.signupPlan` (`ORG_SIGNUP_PLAN_KEY`)                                                                    |
+| A free plan: the setup  | Applied once the org's setup is finished (below): by `completeSignupOrg()` as it ends, and otherwise by the `signupPlans` maintenance task                                                                                                                                                                         |
+| A paid plan: next step  | The signup goes on to `/admin/billing?signup=plan` once the person is signed in, instead of the landing route: the email form, the Google button's `callbackURL`, and the verification link (`/verify-email/callback?next=…`). The page asks `POST /api/v1/orgs/[id]/billing/signup-plan` and follows the checkout |
+| A paid plan: still open | Until a subscription starts or the owner declines it, the billing page offers it: "Subscribe to Pro" (the same `POST`) or "Choose a different plan" (`DELETE`, which removes it)                                                                                                                                   |
+
+**Why on the org, not a cookie or the session.** The plan has to survive email
+verification, which may be on another device a day later, and an OAuth round
+trip. The org exists from the moment the user row does, so it is the one place
+every later step can read. A plan key is not personal data, so nothing new
+goes into the per-person export or erasure.
+
+**Nothing changes unless all of these hold:** billing is on (`billingEnabled()`),
+the key names a registered plan the app offers at signup (`availableAtSignup`),
+and the signup gets an org of its own (`asksSignupOrg()`, and the resolver
+answers `own`). So:
+
+- **An unknown plan, or one not offered at signup,** is dropped, logged at
+  `info`, and the signup lands as it does today. It is never trusted: the hook
+  checks the key whatever the page or the request body said, and every later
+  step checks it again, so a plan the app stops offering is dropped rather
+  than applied. An unpriced plan is not offered unless the app says so, so
+  `/signup?plan=enterprise` cannot give away a plan staff assign by hand.
+- **An invited signup** ignores it: it joins the inviting org, which is
+  already on a plan. So does one an app's resolver sends to an existing org
+  (`join`) or the install org, and platform staff. The Google button does not
+  even send it alongside an invitation.
+- **Billing off** at signup records nothing. Switched off after the signup, or
+  while the app's plans failed to register (`billingPlansFailed()`), the plan
+  stays waiting and nothing takes it up, since a valid choice would look
+  retired.
+- **Checking the plan can never move the signup.** A throw there is logged and
+  the plan dropped; the person still gets their own org.
+
+### A free plan is part of the org's setup
+
+A free plan needs nothing from the person, so it is applied as provisioning,
+not as a step they take. It goes on once the setup is **finished**: the
+founder has joined (`awaitingFounder` is gone) and no org-created hook this
+process runs is still owed. Applied any earlier, a hook that runs later (a
+retry, or the run of an instance that held the lease) could write a default
+plan over it.
+
+- **When.** `completeSignupOrg()` applies it as the setup ends. If a hook
+  failed, or another runner held the hooks, it waits; the `signupPlans`
+  maintenance task (every 15 minutes, system scope) applies it once the hooks
+  have run. That task selects only the orgs waiting on a free plan offered at
+  signup, not awaiting their founder and owing no hook this process runs, in a
+  random order, so an org waiting on a hook is not re-read every tick and none
+  it cannot finish holds up the rest.
+- **However long it takes.** A hook that keeps failing holds the plan back for
+  as long as it fails: applying it anyway would let that hook's next run write
+  its default over the founder's choice. Said once at `warn` when it starts to
+  wait (`the free plan chosen at signup waits on org-created hooks still
+owed`), beside the hook's own `error` on every failed run.
+- **What holds it back.** A registered hook still owed, and an owed record this
+  version cannot read (a newer version wrote it, and runs its hooks). A key no
+  process registers any more does not: it stays owed by design, but nothing
+  will ever run it.
+- **How.** Removed first by a serializable read-modify-write
+  (`takeOrgSignupPlan()`), so of two callers only one applies it, then applied
+  with `assignPlan()`. An assignment that fails changed nothing, so the plan is
+  put back (`restoreOrgSignupPlan()`, which never replaces a plan already
+  waiting) for the next run. If the provider manages the org's plan (the owner
+  subscribed meanwhile), it is dropped.
+
+### A paid plan is the next step of the signup
+
+Checkout needs the person, so for a paid plan it is the signup's own next step,
+as a pricing-page "Buy" flow normally is: once they are signed in, the signup
+goes on to the page that starts the checkout, server-side, for that plan.
+
+- **Every way a signup ends goes on to it.** The email form when it signs the
+  person in, the Google button's callback, and the verification link. The link's
+  continuation is decided on the server when the email is sent
+  (`signupContinuationForUser()`, from the founder's org), so a resent link
+  keeps it and it works on whichever device the link is opened. The callback
+  page follows `next` only when it is exactly that page (`signupNextOf()`), so
+  the link is not an open redirect.
+- **The page decides, on the server.** Sent there with nothing for this viewer
+  to start (an existing account signing in from a pricing link, a plan the
+  server dropped, an ADMIN), the page sends them on to the landing route, as
+  the signup would have gone. A plain MEMBER never reaches it: the admin
+  layout sends them to the landing route first.
+- **It waits for the org's setup, as a free plan does.** A hook that ran after
+  the plan was paid for could write its defaults over it. The mark and the
+  hooks are released after the response that sent the founder to the page, so
+  the page often arrives first: it says the organisation is being set up and
+  asks the server again every 2 seconds, up to 30 times (the hooks' run budget
+  is 30 seconds), then starts the checkout once the read says `ready`. If the
+  setup is still not done it says so, and the billing page offers the plan
+  once it is.
+- **Nothing intercepts later visits.** There is no redirect from the landing
+  route: a redirect there would be cached by the client router's prefetch and
+  replayed after the plan was settled.
+- **It stays waiting until it is settled.** Starting the checkout does not
+  remove it. A subscription that gives access removes it, in the webhook's own
+  transaction, whichever plan it is on; so does the owner choosing a different
+  plan (`DELETE`, audited as `org.billing.signup_plan.dismiss`). Any provider
+  subscription that was ever paid for settles it too; one never paid
+  (`incomplete`) leaves it waiting, to be offered again if it ends unpaid. Meanwhile the billing read answers it
+  (`signupPlan`, never while the org has a provider subscription) and the page
+  offers it, except straight back from a successful checkout, when the webhook
+  that settles it may not have landed. So an owner who leaves the checkout
+  page, or whose checkout failed, finds it there, and nothing is started that
+  they did not ask for.
+- **Back from the provider's page** comes to the billing page, which offers it,
+  not to the take-up, which would start another checkout: the take-up replaces
+  its own history entry before it leaves, and a page Back restores from the
+  back-forward cache is loaded afresh.
+
+**Only the OWNER** may take it up or decline it, and the route refuses anyone
+else, as the checkout route does (`assertMayChangeBilling()`); the page offers
+it to the owner only.
+
+**Audit.** A free plan applied is `org.plan.assign` with
+`metadata.source: 'signup'`, the founder as the actor (none when the
+maintenance task applies it). A checkout started is `org.billing.checkout` with
+`metadata.plan` and `source: 'signup'`; a plan declined is
+`org.billing.signup_plan.dismiss` with `metadata.plan`. The field is `plan`, not
+`planKey`: the audit logger redacts a string under a name ending in `key`.
+
+**The billing page no longer says a free plan was "set by platform staff".**
+`assignedByHand` is now true only for a priced plan staff set by hand: a
+plan with no price may be the one the founder chose at signup, and has
+nothing to pay for anyway.
+
+**Not built:** carrying a plan through an invitation, a price or a trial chosen
+on the link (the plan's own price is used), and a plan on the login page for a
+person who already has an account (a signed-in visitor is sent from `/signup`
+to the landing route, as before).
 
 ## Usage reporting
 

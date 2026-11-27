@@ -66,6 +66,7 @@ function billing(overrides: Partial<OrgBillingView> = {}): OrgBillingView {
     portalAvailable: true,
     customerElsewhere: false,
     installOrg: false,
+    signupPlan: null,
     ...overrides,
   };
 }

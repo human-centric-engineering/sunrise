@@ -78,6 +78,15 @@ export interface PlanDefinition {
    * checkout.
    */
   priceLookupKey?: string;
+  /**
+   * Whether a signup link may choose it (`/signup?plan=<key>`, §139 t-1096).
+   * Left out: yes for a plan with a price, which the founder then pays for at
+   * checkout; no for one without, since an unpriced plan is assigned by hand
+   * or given away and a link would otherwise give it to anyone. Set `true` on
+   * the free tier a pricing page offers, or `false` to keep a priced plan off
+   * signup links.
+   */
+  availableAtSignup?: boolean;
 }
 
 /** A registered plan, frozen, with its optional fields filled in. */
@@ -90,6 +99,8 @@ export interface RegisteredPlan {
   /** `undefined` when the plan does not decide the budget. */
   readonly aiBudgetUsd: number | null | undefined;
   readonly priceLookupKey: string | null;
+  /** Whether a signup link may choose it; see {@link PlanDefinition.availableAtSignup}. */
+  readonly availableAtSignup: boolean;
 }
 
 /** The most plans an app may register. A sanity limit, not a design one. */
@@ -223,6 +234,13 @@ export function registerPlan(definition: PlanDefinition): void {
   if (!plans.has(key) && plans.size >= MAX_PLANS) {
     throw new Error(`At most ${MAX_PLANS} plans can be registered; "${key}" is one too many`);
   }
+  const rawAtSignup: unknown = definition.availableAtSignup;
+  if (rawAtSignup !== undefined && typeof rawAtSignup !== 'boolean') {
+    throw new Error(
+      `Plan "${key}" has availableAtSignup ${JSON.stringify(rawAtSignup)}; it must be true, false or left out`
+    );
+  }
+  const availableAtSignup = rawAtSignup ?? priceLookupKey !== null;
   const description =
     typeof definition.description === 'string' ? definition.description.trim() : '';
   plans.set(
@@ -235,6 +253,7 @@ export function registerPlan(definition: PlanDefinition): void {
       meterLimits: Object.freeze(meterLimits),
       aiBudgetUsd: budget as number | null | undefined,
       priceLookupKey,
+      availableAtSignup,
     })
   );
 }

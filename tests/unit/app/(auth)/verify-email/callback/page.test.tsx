@@ -148,6 +148,37 @@ describe('VerifyCallbackClientContent', () => {
       });
     });
 
+    it('goes on to a paid-plan signup’s checkout page when the link names it (§139 t-1096)', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('next=%2Fadmin%2Fbilling%3Fsignup%3Dplan') as unknown as ReturnType<
+          typeof useSearchParams
+        >
+      );
+
+      render(<VerifyCallbackClientContent />);
+
+      await waitFor(() => {
+        expect(mockRouter.replace).toHaveBeenCalledWith('/admin/billing?signup=plan');
+      });
+    });
+
+    it.each(['https://evil.example/', '//evil.example', '/settings', '/admin/billing'])(
+      'goes to the landing route for any other next (%s): the link is no open redirect',
+      async (next) => {
+        const { useSearchParams } = await import('next/navigation');
+        vi.mocked(useSearchParams).mockReturnValue(
+          new URLSearchParams({ next }) as unknown as ReturnType<typeof useSearchParams>
+        );
+
+        render(<VerifyCallbackClientContent />);
+
+        await waitFor(() => {
+          expect(mockRouter.replace).toHaveBeenCalledWith(AUTH_LANDING_ROUTE);
+        });
+      }
+    );
+
     it('should not show error message or resend form on success', async () => {
       // Arrange & Act
       render(<VerifyCallbackClientContent />);

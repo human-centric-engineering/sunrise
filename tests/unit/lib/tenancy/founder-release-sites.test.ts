@@ -1,6 +1,12 @@
 /**
- * Tests: `runAsFounderRelease` is called from one file (t-1084). The whole
- * checkout is read — root files like `proxy.ts` too.
+ * Tests: `runAsFounderRelease` (t-1084) and `runAsFounderJoin` (t-1096) are
+ * each called from one file. The whole checkout is read — root files like
+ * `proxy.ts` too.
+ *
+ * `runAsFounderJoin` is the same trade for the batch that writes a founder's
+ * own membership and removes their org's awaiting-founder mark, entered by
+ * `writeNewUserMemberships()` in `lib/tenancy/membership.ts`. The cases below
+ * read the release's name; the join's is checked by the same scan.
  *
  * The scope is the audited bypass, logged at debug instead of info because it
  * runs on every sign-in at `multi`. That trade is only safe while the one
@@ -30,6 +36,13 @@ const ALLOWED = new Set([
   'lib/tenancy/lifecycle.ts', // the caller: completeFoundedSignupOrgs()
 ]);
 
+const JOIN_NAME = 'runAsFounderJoin';
+
+const JOIN_ALLOWED = new Set([
+  'lib/tenancy/context.ts', // the definition
+  'lib/tenancy/membership.ts', // the caller: writeNewUserMemberships()
+]);
+
 /** Every source file in the checkout — root files like `proxy.ts` included — but tests. */
 function sourceFiles(): string[] {
   return execSync('git ls-files --cached --others --exclude-standard', { encoding: 'utf8' })
@@ -45,9 +58,9 @@ function sourceFiles(): string[] {
 const STAR_REEXPORT = /\bexport\s*\*\s*(?:as\s+\w+\s*)?from\s*['"]@\/lib\/tenancy\/context['"]/;
 
 /** Does this source use the scope in code, or re-export everything beside it? */
-function uses(path: string, source: string): boolean {
+function uses(path: string, source: string, name = NAME): boolean {
   if (STAR_REEXPORT.test(source)) return true;
-  if (!source.includes(NAME)) return false;
+  if (!source.includes(name)) return false;
   const scanner = ts.createScanner(
     ts.ScriptTarget.Latest,
     /* skipTrivia */ true,
@@ -55,7 +68,7 @@ function uses(path: string, source: string): boolean {
     source
   );
   for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
-    if (kind === ts.SyntaxKind.Identifier && scanner.getTokenText() === NAME) return true;
+    if (kind === ts.SyntaxKind.Identifier && scanner.getTokenText() === name) return true;
   }
   return false;
 }
@@ -66,6 +79,19 @@ function callersIn(
 ): string[] {
   return files.filter((p) => !ALLOWED.has(p) && uses(p, text(p)));
 }
+
+describe('runAsFounderJoin', () => {
+  it('is entered only by the founder’s membership write', () => {
+    const files = sourceFiles();
+    const callers = files.filter(
+      (p) => !JOIN_ALLOWED.has(p) && uses(p, readFileSync(p, 'utf8'), JOIN_NAME)
+    );
+    // A star re-export of the context module is counted by both scans, and
+    // the release's own allow-list does not cover it either.
+    expect(callers).toEqual([]);
+    for (const p of JOIN_ALLOWED) expect(uses(p, readFileSync(p, 'utf8'), JOIN_NAME)).toBe(true);
+  });
+});
 
 describe('runAsFounderRelease', () => {
   it('is entered only by the founder release at sign-in', () => {

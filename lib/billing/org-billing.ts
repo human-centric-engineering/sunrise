@@ -18,6 +18,7 @@ import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { billingProviderState } from '@/lib/billing/config';
 import { assertMayChangeBilling } from '@/lib/billing/org-access';
 import { planOf, registeredPlans } from '@/lib/billing/plans';
+import { pendingSignupPlan, type PendingSignupPlan } from '@/lib/billing/signup-plan';
 import { loadOrgSubscription, type OrgSubscriptionView } from '@/lib/billing/subscriptions';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -61,7 +62,11 @@ export interface OrgBilling {
      * install's portal cannot open it and its checkout refuses until it ends.
      */
     elsewhere: boolean;
-    /** Platform staff put the org on it by hand: no provider subscription is behind it. */
+    /**
+     * Platform staff put the org on a priced plan by hand: no provider
+     * subscription is behind it. Never said of a plan with no price, which
+     * staff or the founder's signup may have set.
+     */
     assignedByHand: boolean;
     /** Ends when the current period does (cancelled in the portal). */
     cancelAtPeriodEnd: boolean;
@@ -72,6 +77,12 @@ export interface OrgBilling {
   usage: OrgBillingUsage[] | null;
   /** The plans with a price, which an owner can buy. */
   plans: OrgBillingPlan[];
+  /**
+   * The paid plan the org's signup chose, still waiting for its checkout
+   * (§139 t-1096), or `null`. Never shown while the org has a provider
+   * subscription: a subscription settles the choice.
+   */
+  signupPlan: PendingSignupPlan | null;
   /** This viewer may start a checkout and open the portal: the org's OWNER, acting in it. */
   mayChange: boolean;
   /**
@@ -155,7 +166,10 @@ export async function loadOrgBilling(
   session: AuthenticatedSession
 ): Promise<OrgBilling | null> {
   // `Org` is a system model, so this read needs no tenant scope.
-  const org = await prisma.org.findUnique({ where: { id: orgId }, select: { id: true } });
+  const org = await prisma.org.findUnique({
+    where: { id: orgId },
+    select: { id: true, settings: true },
+  });
   if (!org) return null;
 
   const [record, usage] = await Promise.all([loadOrgSubscription(orgId), loadUsage(orgId)]);
@@ -178,7 +192,10 @@ export async function loadOrgBilling(
           status: record.status,
           providerManaged: record.providerManaged,
           elsewhere: record.providerManaged && record.provider !== state.providerKey,
-          assignedByHand: isAssignedByHand(record),
+          // A free plan has nothing to pay, and may be one the founder chose
+          // at signup (t-1096): "set by staff, not paid for here" is said of
+          // a priced plan only.
+          assignedByHand: isAssignedByHand(record) && current?.priceLookupKey !== null,
           cancelAtPeriodEnd: record.cancelAtPeriodEnd,
           periodStart: record.periodStart,
           periodEnd: record.periodEnd,
@@ -202,6 +219,7 @@ export async function loadOrgBilling(
         description: plan.description,
         current: plan.key === planKey,
       })),
+    signupPlan: record?.providerManaged ? null : pendingSignupPlan(org.settings),
     mayChange: mayChangeBilling(session, orgId),
     // A customer alone is not enough: a first checkout links one before any
     // payment, and its portal would hold nothing.

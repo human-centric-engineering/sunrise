@@ -170,6 +170,13 @@ level.
   `lib/tenancy/lifecycle.ts` (`completeFoundedSignupOrgs()`), and
   `tests/unit/lib/tenancy/founder-release-sites.test.ts` (always-run) fails
   naming any other.
+- **`runAsFounderJoin(userId, fn)`** (found in §139 t-1096) — the same, for
+  the batch `writeNewUserMemberships()` sends when a founder's own membership
+  is written: the membership upserts and the raw removal of their signup org's
+  awaiting-founder mark. It runs on an auth hook's stack (the user-create hook,
+  the sign-in heal), which entered no org; without it every self-serve signup
+  at `multi` lost its founder's membership. Logged at `debug`, called from one
+  file, `lib/tenancy/membership.ts`, and pinned by the same test.
 - **`runDetached(fn)`** (§108 t-715) — runs `fn` outside every scope, for
   arming something whose lifetime is the **process's** from inside a request.
   Synchronous and unawaited, unlike the runners above: a caller arms a timer

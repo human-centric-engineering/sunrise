@@ -36,6 +36,7 @@ function plan(overrides: Partial<RegisteredPlan> = {}): RegisteredPlan {
     meterLimits: { seats: 25 },
     aiBudgetUsd: 100,
     priceLookupKey: null,
+    availableAtSignup: false,
     ...overrides,
   };
 }
