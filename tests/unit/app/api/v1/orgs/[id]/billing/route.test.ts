@@ -225,6 +225,23 @@ describe('the org’s OWNER', () => {
   });
 });
 
+describe('a provider failure', () => {
+  it('is a 500 that, in production, tells the owner nothing of the provider’s error', async () => {
+    // Outside production the guard's handler shows an unknown error's
+    // message, as it does on every route; production hides it.
+    envOverrides.NODE_ENV = 'production';
+    actingAs(ORG_OWNER_ROLE);
+    provider.createCheckout.mockRejectedValue(new Error('Stripe: api key sk_test_leak invalid'));
+    provider.openPortal.mockRejectedValue(new Error('Stripe: api key sk_test_leak invalid'));
+
+    for (const res of [await checkout(), await portal()]) {
+      expect(res.status).toBe(500);
+      expect(await res.text()).not.toContain('sk_test_leak');
+    }
+    expect(mockAudit).not.toHaveBeenCalled();
+  });
+});
+
 describe('everyone else is refused, and reaches no provider', () => {
   it.each([
     ['an ADMIN of the org', ORG_ADMIN_ROLE, 403],
