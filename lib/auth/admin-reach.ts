@@ -124,12 +124,14 @@ export async function lockedSwitchesOf(
  * {@link lockedSwitchesOf} over switches the caller has already read, for a
  * caller that needs the org's switches for something else too and so reads
  * them once (`GET /api/v1/admin/access`). `org` is `loadOrgSwitches()`'s
- * answer: `null` (no such org) or an unreadable read gives nothing.
+ * answer: `null` (no such org) or an unreadable read gives nothing. `orgId`
+ * is the org they were read for, which the default upgrade link needs; with
+ * none, a lock carries only the app's own link.
  */
 export function lockedSwitchesIn(
   reach: AdminReach,
   org: OrgSwitches | null,
-  orgId: string | null | undefined
+  orgId?: string | null
 ): readonly LockedAdminSwitch[] {
   const candidates = lockableSwitches(reach);
   if (candidates.length === 0 || !org || org.unreadable) return [];

@@ -1399,7 +1399,8 @@
       "installOrg": "The install organisation belongs to the platform and is never billed. Switch to a customer organisation to see its billing.",
       "loadFailed": "The billing for this organisation could not be loaded. Reload the page to try again.",
       "ownerOnly": "Only an owner of this organisation can buy a plan or change how it pays.",
-      "checkoutSuccess": "Thank you. Your payment went through. Your plan changes as soon as the payment provider confirms it, usually within a minute. Reload the page to see it.",
+      "checkoutSuccess": "Thank you. Your payment went through. Your plan changes as soon as the payment provider confirms it, usually within a minute.",
+      "checkoutRefresh": "See the updated plan",
       "checkoutCancelled": "Checkout was cancelled, and nothing was charged.",
       "plan": {
         "heading": "Your plan",
@@ -1415,8 +1416,10 @@
         "ENDED": "Ended",
         "pastDueHelp": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. To change the card, open Manage billing.",
         "pastDueHelpAdmin": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. An owner of this organisation can change the card.",
+        "pastDueHelpNoPortal": "The last payment failed. The payment provider is trying again, and you keep your plan in the meantime. The card cannot be changed here, so ask platform staff for help.",
         "incompleteHelp": "Nothing changes until the first payment goes through. If it did not go through, an owner can choose the plan again to retry.",
         "endedHelp": "The paid subscription has ended.",
+        "endedCollectingHelp": "The subscription has stopped, but the payment provider can still collect what is owed or resume it.",
         "endsOn": "Ends on {date}. It will not renew."
       },
       "period": {
@@ -1450,7 +1453,7 @@
         "intro": "Change your card, see your invoices, change plan or cancel, on the payment provider's own pages.",
         "open": "Manage billing",
         "notYet": "There is nothing to manage until this organisation buys a plan.",
-        "elsewhere": "The subscription is with a payment provider this install no longer uses, so it cannot be managed here. Ask platform staff for help."
+        "elsewhere": "This organisation's billing is with a payment provider this install no longer uses, so it cannot be managed here. Ask platform staff for help."
       },
       "actions": {
         "opening": "Opening…",

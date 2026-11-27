@@ -121,6 +121,11 @@ describe('BillingPage', () => {
     render(await page({ checkout: 'success' }));
 
     expect(screen.getByRole('status')).toHaveTextContent('Your payment went through');
+    // A plain reload would keep the query, and this note with it.
+    expect(screen.getByRole('link', { name: 'See the updated plan' })).toHaveAttribute(
+      'href',
+      '/admin/billing'
+    );
     expect(screen.getByTestId('billing-summary')).toBeInTheDocument();
   });
 

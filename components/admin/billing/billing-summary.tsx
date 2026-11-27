@@ -48,14 +48,19 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
   const date = (iso: string) => format.dateTime(new Date(iso), 'long');
   const statusHelp =
     subscription?.status === 'PAST_DUE'
-      ? // Manage billing is the owner's: an ADMIN has no such button.
-        billing.mayChange
-        ? t('status.pastDueHelp')
-        : t('status.pastDueHelpAdmin')
+      ? // Manage billing is the owner's, and only when the portal can open.
+        !billing.mayChange
+        ? t('status.pastDueHelpAdmin')
+        : billing.portalAvailable
+          ? t('status.pastDueHelp')
+          : t('status.pastDueHelpNoPortal')
       : subscription?.status === 'INCOMPLETE'
         ? t('status.incompleteHelp')
         : subscription?.status === 'ENDED'
-          ? t('status.endedHelp')
+          ? // Ended but still chargeable or resumable (unpaid, paused).
+            subscription.providerManaged
+            ? t('status.endedCollectingHelp')
+            : t('status.endedHelp')
           : null;
 
   // A live subscription changes plan in the portal: the checkout route
@@ -229,7 +234,9 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
               <BillingActionButton orgId={billing.orgId} kind="portal" label={t('portal.open')} />
             ) : (
               <p className="text-muted-foreground text-sm">
-                {elsewhere ? t('portal.elsewhere') : t('portal.notYet')}
+                {elsewhere || billing.customerElsewhere
+                  ? t('portal.elsewhere')
+                  : t('portal.notYet')}
               </p>
             )}
           </CardContent>

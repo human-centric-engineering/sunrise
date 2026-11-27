@@ -65,6 +65,7 @@ const BASE: OrgBillingView = {
   ],
   mayChange: true,
   portalAvailable: true,
+  customerElsewhere: false,
   installOrg: false,
 };
 

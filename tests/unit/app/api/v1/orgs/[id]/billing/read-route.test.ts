@@ -146,6 +146,7 @@ interface Answer {
     plans: Array<{ key: string; current: boolean }>;
     mayChange: boolean;
     portalAvailable: boolean;
+    customerElsewhere: boolean;
     installOrg: boolean;
   };
   error?: { code: string; details?: { reason?: string } };
@@ -228,6 +229,7 @@ describe('the org’s OWNER, acting in it', () => {
       usage: [{ key: 'seats', used: 3, limit: 10 }],
       mayChange: true,
       portalAvailable: true,
+      customerElsewhere: false,
       installOrg: false,
     });
     // Only plans with a price can be bought; the one the org is on is marked.
@@ -342,6 +344,37 @@ describe('the org’s OWNER, acting in it', () => {
     meters.usage.mockResolvedValue(null);
 
     expect((await json(await read())).data?.usage).toBeNull();
+  });
+
+  it('still reads the plan and the portal when usage cannot be read, and logs it', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    meters.usage.mockRejectedValue(new Error('connection reset'));
+
+    const res = await read();
+
+    expect(res.status).toBe(200);
+    const { data } = await json(res);
+    expect(data).toMatchObject({ usage: null, plan: { key: 'pro' }, portalAvailable: true });
+    expect(mockLog.error).toHaveBeenCalledWith(
+      expect.stringContaining("could not read the org's usage"),
+      expect.objectContaining({ orgId: ORG, error: 'connection reset' })
+    );
+  });
+
+  it('says the customer is at another provider once that subscription has ended', async () => {
+    actingAs(ORG_OWNER_ROLE);
+    mockDb.orgBillingSubscription.findUnique.mockResolvedValue({
+      ...PAID,
+      provider: 'paddle',
+      status: 'ENDED',
+      providerStatus: 'canceled',
+      providerLive: false,
+    });
+
+    const { data } = await json(await read());
+
+    expect(data).toMatchObject({ portalAvailable: false, customerElsewhere: true });
+    expect(data?.subscription).toMatchObject({ providerManaged: false, elsewhere: false });
   });
 });
 

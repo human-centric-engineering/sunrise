@@ -617,7 +617,9 @@ Decided at planning (2026-11-25):
   by platform staff" for a plan assigned by hand.
 - **The current period**, from the provider's subscription.
 - **Usage against each limit**, every meter `loadOrgMeterUsage()` counts. A
-  meter that could not be counted says so and never shows 0.
+  meter that could not be counted says so and never shows 0. When usage
+  cannot be read at all, only that card says so: the plan, status and portal
+  still show.
 - **The plans it could buy**: those with a price. The OWNER gets a checkout
   button on each plan the org is not on. While a subscription is live there is
   no checkout (the route would refuse `already_subscribed`), and the page

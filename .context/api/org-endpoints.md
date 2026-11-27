@@ -737,6 +737,7 @@ What the console's billing page renders, in one call (§139 t-1095,
   "plans": [{ "key": "pro", "label": "Pro", "description": "…", "current": true }],
   "mayChange": true,
   "portalAvailable": true,
+  "customerElsewhere": false,
   "installOrg": false
 }
 ```
@@ -750,7 +751,11 @@ What the console's billing page renders, in one call (§139 t-1095,
   portal nor a checkout can reach it. `assignedByHand` means platform staff
   set the plan, with no provider subscription behind it.
 - `usage` is every meter's count and limit (`limit: null` is no limit), or
-  `null` when the counts could not be read.
+  `null` when the counts could not be read. A failed usage read is logged and
+  answers `usage: null`; the rest of the billing still reads.
+- `customerElsewhere` means the org's customer is at a provider this install
+  no longer uses, so its payments cannot be managed here, even after that
+  subscription has ended.
 - `plans` holds only plans with a price.
 - `mayChange` is true for the org's OWNER acting in it, in a browser session:
   the caller the checkout and portal routes accept.

@@ -64,6 +64,7 @@ function billing(overrides: Partial<OrgBillingView> = {}): OrgBillingView {
     ],
     mayChange: true,
     portalAvailable: true,
+    customerElsewhere: false,
     installOrg: false,
     ...overrides,
   };
@@ -250,13 +251,56 @@ describe('BillingSummary', () => {
   it('shows no current period once the subscription has ended', () => {
     render(
       <BillingSummary
-        billing={billing({ subscription: { ...billing().subscription!, status: 'ENDED' } })}
+        billing={billing({
+          subscription: { ...billing().subscription!, status: 'ENDED', providerManaged: false },
+        })}
       />
     );
 
     expect(screen.getByText('Ended')).toBeInTheDocument();
     expect(screen.getByText('The paid subscription has ended.')).toBeInTheDocument();
     expect(screen.queryByText(/Current period/)).not.toBeInTheDocument();
+  });
+
+  it('says an ended subscription the provider can still collect on has not simply ended', () => {
+    render(
+      <BillingSummary
+        billing={billing({ subscription: { ...billing().subscription!, status: 'ENDED' } })}
+      />
+    );
+
+    expect(screen.getByText(/can still collect what is owed or resume it/)).toBeInTheDocument();
+    expect(screen.queryByText('The paid subscription has ended.')).not.toBeInTheDocument();
+  });
+
+  it('sends an owner with no portal to open to platform staff about a failed payment', () => {
+    render(
+      <BillingSummary
+        billing={billing({
+          subscription: { ...billing().subscription!, status: 'PAST_DUE', elsewhere: true },
+          portalAvailable: false,
+          customerElsewhere: true,
+        })}
+      />
+    );
+
+    expect(screen.getByText(/ask platform staff for help/)).toBeInTheDocument();
+    expect(screen.queryByText(/open Manage billing/)).not.toBeInTheDocument();
+  });
+
+  it('says billing at a provider no longer used cannot be managed here, not that nothing was bought', () => {
+    render(
+      <BillingSummary
+        billing={billing({
+          subscription: { ...billing().subscription!, status: 'ENDED', providerManaged: false },
+          portalAvailable: false,
+          customerElsewhere: true,
+        })}
+      />
+    );
+
+    expect(screen.getByText(/so it cannot be managed here/)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing to manage until/)).not.toBeInTheDocument();
   });
 
   it('says nothing about ending on a date once a cancelled subscription has ended', () => {

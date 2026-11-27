@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 
@@ -7,6 +8,7 @@ import { API } from '@/lib/api/endpoints';
 import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg } from '@/lib/auth/admin-page-viewer';
 import { billingEnabled } from '@/lib/billing/config';
+import { ORG_BILLING_PAGE_PATH } from '@/lib/billing/upgrade-url';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -55,7 +57,11 @@ export default async function BillingPage({
 
       {returned === 'success' && (
         <p role="status" className="rounded-md border px-4 py-3 text-sm">
-          {t('checkoutSuccess')}
+          {t('checkoutSuccess')}{' '}
+          {/* Not a plain reload: that keeps `?checkout=success` and this note. */}
+          <Link href={ORG_BILLING_PAGE_PATH} className="underline">
+            {t('checkoutRefresh')}
+          </Link>
         </p>
       )}
       {returned === 'cancelled' && (

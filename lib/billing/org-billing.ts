@@ -13,12 +13,14 @@
 
 import type { BillingSubscriptionStatus } from '@prisma/client';
 
+import { ConflictError, ForbiddenError } from '@/lib/api/errors';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { billingProviderState } from '@/lib/billing/config';
 import { assertMayChangeBilling } from '@/lib/billing/org-access';
 import { planOf, registeredPlans } from '@/lib/billing/plans';
 import { loadOrgSubscription, type OrgSubscriptionView } from '@/lib/billing/subscriptions';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { loadOrgMeterUsage, type MeterUsage } from '@/lib/tenancy/meters';
 
@@ -74,17 +76,43 @@ export interface OrgBilling {
   mayChange: boolean;
   /** The org has a customer at this install's provider, so the portal has something to open. */
   portalAvailable: boolean;
+  /**
+   * The org's customer is at a provider this install no longer uses, so its
+   * payments and invoices cannot be managed here, live subscription or not.
+   */
+  customerElsewhere: boolean;
   /** The install org, which is the vendor's own and is never billed. */
   installOrg: boolean;
 }
 
-/** Whether {@link assertMayChangeBilling} lets this session change the org's billing. */
+/**
+ * Whether {@link assertMayChangeBilling} lets this session change the org's
+ * billing. Only its refusals mean no; anything else it throws is a fault, and
+ * is thrown on rather than shown as a read-only page.
+ */
 function mayChangeBilling(session: AuthenticatedSession, orgId: string): boolean {
   try {
     assertMayChangeBilling(session, orgId);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof ForbiddenError || error instanceof ConflictError) return false;
+    throw error;
+  }
+}
+
+/**
+ * The org's usage, or `null` when it could not be read. A failed count is the
+ * usage card's to report: the plan, its status and the portal still show.
+ */
+async function loadUsage(orgId: string): Promise<Awaited<ReturnType<typeof loadOrgMeterUsage>>> {
+  try {
+    return await loadOrgMeterUsage(orgId);
+  } catch (error) {
+    logger.error("billing: could not read the org's usage for its billing page", {
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   }
 }
 
@@ -127,7 +155,7 @@ export async function loadOrgBilling(
   const org = await prisma.org.findUnique({ where: { id: orgId }, select: { id: true } });
   if (!org) return null;
 
-  const [record, usage] = await Promise.all([loadOrgSubscription(orgId), loadOrgMeterUsage(orgId)]);
+  const [record, usage] = await Promise.all([loadOrgSubscription(orgId), loadUsage(orgId)]);
   const state = billingProviderState();
   const planKey = record?.planKey ?? null;
   const current = planKey === null ? undefined : planOf(planKey);
@@ -174,6 +202,8 @@ export async function loadOrgBilling(
     mayChange: mayChangeBilling(session, orgId),
     portalAvailable:
       state.on && record !== null && record.hasCustomer && record.provider === state.providerKey,
+    customerElsewhere:
+      record !== null && record.hasCustomer && record.provider !== state.providerKey,
     installOrg: orgId === INSTALL_ORG_ID,
   };
 }
