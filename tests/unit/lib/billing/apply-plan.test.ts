@@ -37,6 +37,7 @@ function plan(overrides: Partial<RegisteredPlan> = {}): RegisteredPlan {
     aiBudgetUsd: 100,
     priceLookupKey: null,
     availableAtSignup: false,
+    meteredItems: {},
     ...overrides,
   };
 }

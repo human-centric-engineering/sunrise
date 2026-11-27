@@ -33,8 +33,10 @@ import {
   registeredPlans,
   registerPlan,
   setFallbackPlan,
+  appUsageNoticeHandler,
   type PlanDefinition,
 } from '@/lib/billing/plans';
+import { setUsageNoticeHandler } from '@/lib/billing/overage';
 import {
   __resetEntitlementRegistryForTests,
   registerEntitlementSwitch,
@@ -100,6 +102,7 @@ describe('registering plans', () => {
       aiBudgetUsd: null,
       priceLookupKey: 'pro_monthly',
       availableAtSignup: true,
+      meteredItems: {},
     });
     expect(planOf('free')?.aiBudgetUsd).toBe(5);
     expect(fallbackPlan()?.key).toBe('free');
@@ -164,6 +167,66 @@ describe('registering plans', () => {
     ['a budget out of range', { aiBudgetUsd: 2_000_000 }, /aiBudgetUsd/],
     ['a price lookup key with a space', { priceLookupKey: 'pro monthly' }, /priceLookupKey/],
     ['availableAtSignup that is not a boolean', { availableAtSignup: 'yes' }, /availableAtSignup/],
+    [
+      'a metered item on a meter nothing registers',
+      { meteredItems: { convo: { overage: 'warn', allowance: 5 } } },
+      /metered item "convo" names a meter nothing registers/,
+    ],
+    [
+      'an overage rule that is not one',
+      { meterLimits: { seats: 25 }, meteredItems: { convos: { overage: 'block', allowance: 5 } } },
+      /overage "block"/,
+    ],
+    [
+      'a fractional allowance',
+      {
+        meterLimits: { seats: 25 },
+        meteredItems: { convos: { overage: 'hard_cap', allowance: 1.5 } },
+      },
+      /allowance 1.5/,
+    ],
+    [
+      'a warn allowance of zero, which would be reached at no usage',
+      { meterLimits: { seats: 25 }, meteredItems: { convos: { overage: 'warn', allowance: 0 } } },
+      /at least 1/,
+    ],
+    [
+      'a warn threshold outside 1 to 99',
+      {
+        meterLimits: { seats: 25 },
+        meteredItems: { convos: { overage: 'warn', allowance: 10, warnAtPercent: 100 } },
+      },
+      /warnAtPercent 100/,
+    ],
+    [
+      'a soft cap with no provider meter',
+      {
+        meterLimits: { seats: 25 },
+        meteredItems: { convos: { overage: 'soft_cap', allowance: 10 } },
+      },
+      /needs the provider's meter name/,
+    ],
+    [
+      'a soft cap on a plan with no price',
+      {
+        priceLookupKey: undefined,
+        meterLimits: { seats: 25 },
+        meteredItems: {
+          convos: { overage: 'soft_cap', allowance: 10, providerMeter: 'convos_overage' },
+        },
+      },
+      /no priceLookupKey/,
+    ],
+    [
+      'a hard cap on AI spend, which the budget caps',
+      { meteredItems: { ai_spend_cents: { overage: 'hard_cap', allowance: 500 } } },
+      /aiBudgetUsd/,
+    ],
+    [
+      'a metered item whose meter the plan also limits',
+      { meteredItems: { seats: { overage: 'hard_cap', allowance: 10 } } },
+      /also in the plan's meterLimits/,
+    ],
   ])('refuses %s, and registers no plan at all', (_name, override, message) => {
     appRegisters(() => {
       registerPlan(FREE);
@@ -214,6 +277,70 @@ describe('registering plans', () => {
         error: expect.stringMatching(/entitlement switches failed to register/),
       })
     );
+  });
+});
+
+describe('metered items (t-1097)', () => {
+  it('holds each item with its rule, and writes a hard cap’s allowance as the meter’s limit', () => {
+    appRegisters(() => {
+      registerPlan({
+        ...FREE,
+        meterLimits: {},
+        meteredItems: { convos: { overage: 'hard_cap', allowance: 100 } },
+      });
+      registerPlan({
+        ...PRO,
+        meterLimits: { seats: 25 },
+        meteredItems: {
+          convos: { overage: 'soft_cap', allowance: 1000, providerMeter: 'convos_overage' },
+          ai_spend_cents: { overage: 'warn', allowance: 5000, warnAtPercent: 90 },
+        },
+      });
+    });
+
+    expect(planOf('free')?.meterLimits).toEqual({ convos: 100 });
+    // Soft cap and warn clear the limit, so moving off the hard-cap plan does
+    // not leave its limit refusing what this plan allows. AI spend has no
+    // meter limit, so it writes none.
+    expect(planOf('pro')?.meterLimits).toEqual({ seats: 25, convos: null });
+    expect(planOf('pro')?.meteredItems).toEqual({
+      convos: {
+        meterKey: 'convos',
+        overage: 'soft_cap',
+        allowance: 1000,
+        providerMeter: 'convos_overage',
+        warnAtPercent: null,
+      },
+      ai_spend_cents: {
+        meterKey: 'ai_spend_cents',
+        overage: 'warn',
+        allowance: 5000,
+        providerMeter: null,
+        warnAtPercent: 90,
+      },
+    });
+  });
+
+  it('defaults a warn item’s threshold to 80 percent', () => {
+    appRegisters(() =>
+      registerPlan({ ...FREE, meteredItems: { convos: { overage: 'warn', allowance: 10 } } })
+    );
+    expect(planOf('free')?.meteredItems.convos?.warnAtPercent).toBe(80);
+  });
+
+  it('rolls the app’s usage-notice handler back with the plans when the init throws', () => {
+    appRegisters(() => {
+      setUsageNoticeHandler(() => {});
+      throw new Error('the app failed after setting its handler');
+    });
+
+    expect(appUsageNoticeHandler()).toBeNull();
+  });
+
+  it('keeps the handler the init set', () => {
+    const handler = vi.fn();
+    appRegisters(() => setUsageNoticeHandler(handler));
+    expect(appUsageNoticeHandler()).toBe(handler);
   });
 });
 
