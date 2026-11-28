@@ -5,6 +5,7 @@ import { getTranslations } from 'next-intl/server';
 import { AccessExplainerLink } from '@/components/admin/access-explainer/access-explainer-link';
 import { MemberInviteForm } from '@/components/admin/members/member-invite-form';
 import { MembersTable, type OrgMember } from '@/components/admin/members/members-table';
+import type { GrantableTier } from '@/components/admin/members/tier-checklist';
 import { API } from '@/lib/api/endpoints';
 import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
@@ -26,14 +27,24 @@ export async function generateMetadata(): Promise<Metadata> {
  * A roster that cannot be loaded says so in the table's place, never as an
  * empty roster; `loadServerData` logs the failure (#518).
  */
-async function getMembers(orgId: string): Promise<OrgMember[] | null> {
-  const result = await loadServerData<{ members: OrgMember[] }>(API.ORGS.members(orgId));
-  return result.ok && Array.isArray(result.data?.members) ? result.data.members : null;
+async function getMembers(
+  orgId: string
+): Promise<{ members: OrgMember[]; grantableTiers: GrantableTier[] } | null> {
+  const result = await loadServerData<{ members: OrgMember[]; grantableTiers?: GrantableTier[] }>(
+    API.ORGS.members(orgId)
+  );
+  if (!result.ok || !Array.isArray(result.data?.members)) return null;
+  // The named tiers an org admin may grant here (t-1123): none, unless the
+  // app registered one, and then the invite form and the roster offer them.
+  const grantableTiers = Array.isArray(result.data.grantableTiers)
+    ? result.data.grantableTiers
+    : [];
+  return { members: result.data.members, grantableTiers };
 }
 
 export default async function MembersPage() {
   const [org, entry] = await Promise.all([requestActingOrg(), requestPrincipal()]);
-  const members = org ? await getMembers(org.id) : null;
+  const roster = org ? await getMembers(org.id) : null;
   const t = await getTranslations('admin.members');
 
   return (
@@ -61,12 +72,13 @@ export default async function MembersPage() {
               })}
             </p>
           )}
-          <MemberInviteForm orgId={org.id} />
-          {members ? (
+          <MemberInviteForm orgId={org.id} grantableTiers={roster?.grantableTiers ?? []} />
+          {roster ? (
             <MembersTable
               orgId={org.id}
-              members={members}
+              members={roster.members}
               currentUserId={entry?.principal.userId ?? null}
+              grantableTiers={roster.grantableTiers}
             />
           ) : (
             <p role="alert" className="text-destructive text-sm">

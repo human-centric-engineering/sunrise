@@ -8,6 +8,11 @@
  * changing an OWNER, demoting the last OWNER, or touching the install org's
  * members are refused there, and the refusal is shown as the API words it.
  * The roster comes from the server page; a successful change refreshes it.
+ *
+ * When the app lets org admins grant named tiers (t-1123), a Console access
+ * column shows what each MEMBER may use, and opens a dialog to change it.
+ * Owners and admins read "All": their role already opens every tier. With no
+ * grantable tier the column is not shown at all.
  */
 
 import { useState } from 'react';
@@ -42,18 +47,23 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { OrgRoleHelp } from '@/components/admin/members/org-role-help';
+import { MemberTiersDialog } from '@/components/admin/members/member-tiers-dialog';
+import type { GrantableTier } from '@/components/admin/members/tier-checklist';
+import { FieldHelp } from '@/components/ui/field-help';
 import { SaveError } from '@/components/forms/form-error';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { NO_SERVER_FIELDS, useSaveFailure } from '@/lib/hooks/use-save-failure';
 import { useCommittedDialog } from '@/lib/hooks/use-committed-dialog';
-import { isOrgRole, ORG_ROLES, type OrgRole } from '@/lib/tenancy/roles';
+import { DEFAULT_ORG_ROLE, isOrgRole, ORG_ROLES, type OrgRole } from '@/lib/tenancy/roles';
 
 export interface OrgMember {
   id: string;
   name: string | null;
   email: string;
   role: OrgRole;
+  /** The named tiers the member's grant lists (t-1123); absent or empty for none. */
+  tiers?: string[];
   joinedAt: string;
 }
 
@@ -61,9 +71,16 @@ export interface MembersTableProps {
   orgId: string;
   members: OrgMember[];
   currentUserId: string | null;
+  /** The tiers an org admin may grant here (t-1123); empty hides the column. */
+  grantableTiers?: GrantableTier[];
 }
 
-export function MembersTable({ orgId, members, currentUserId }: MembersTableProps) {
+export function MembersTable({
+  orgId,
+  members,
+  currentUserId,
+  grantableTiers = [],
+}: MembersTableProps) {
   const t = useTranslations('admin.members');
   const tShell = useTranslations('admin.shell');
   const format = useFormatter();
@@ -71,6 +88,13 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [removing, setRemoving] = useState<OrgMember | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [changingTiers, setChangingTiers] = useState<OrgMember | null>(null);
+  const showTiers = grantableTiers.length > 0;
+  const tierLabel = new Map(grantableTiers.map((tier) => [tier.name, tier.label]));
+  // A tier the app no longer offers is shown by its name, not hidden: it is
+  // still in the grant, and saving the dialog drops it.
+  const tiersOf = (member: OrgMember) =>
+    (member.tiers ?? []).map((name) => tierLabel.get(name) ?? name);
   // A role change reports above the table; the remove dialog has its own.
   const listSave = useSaveFailure({
     fallback: t('table.roleChangeFailed'),
@@ -135,6 +159,16 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                   {t('table.role')} <OrgRoleHelp />
                 </span>
               </TableHead>
+              {showTiers && (
+                <TableHead>
+                  <span className="flex items-center gap-1">
+                    {t('tiers.label')}{' '}
+                    <FieldHelp title={t('tiers.helpTitle')}>
+                      <p>{t('tiers.help')}</p>
+                    </FieldHelp>
+                  </span>
+                </TableHead>
+              )}
               <TableHead>{t('table.joined')}</TableHead>
               <TableHead className="w-12">
                 <span className="sr-only">{tShell('actions')}</span>
@@ -144,7 +178,10 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
           <TableBody>
             {members.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
+                <TableCell
+                  colSpan={showTiers ? 6 : 5}
+                  className="text-muted-foreground py-8 text-center"
+                >
                   {t('table.empty')}
                 </TableCell>
               </TableRow>
@@ -179,6 +216,24 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
                       </SelectContent>
                     </Select>
                   </TableCell>
+                  {showTiers && (
+                    <TableCell>
+                      {member.role === DEFAULT_ORG_ROLE ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 max-w-56 justify-start truncate"
+                          disabled={busyUserId === member.id}
+                          onClick={() => setChangingTiers(member)}
+                          aria-label={t('tiers.edit', { who: member.name || member.email })}
+                        >
+                          {tiersOf(member).join(', ') || t('tiers.none')}
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">{t('tiers.all')}</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell>{format.dateTime(new Date(member.joinedAt), 'short')}</TableCell>
                   <TableCell>
                     <Button
@@ -197,6 +252,15 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
           </TableBody>
         </Table>
       </div>
+
+      {showTiers && (
+        <MemberTiersDialog
+          orgId={orgId}
+          member={changingTiers}
+          grantableTiers={grantableTiers}
+          onClose={() => setChangingTiers(null)}
+        />
+      )}
 
       <AlertDialog open={!!removing} onOpenChange={removeDialog.onOpenChange}>
         <AlertDialogContent>

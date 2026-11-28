@@ -7,6 +7,10 @@
  * invited (an ADMIN cannot invite an OWNER, the install org takes no
  * invitations from here) and the form shows its answer as given. When an
  * invitation is already pending for the email, the form offers to re-send it.
+ *
+ * When the app lets org admins grant named tiers (t-1123), a MEMBER invitation
+ * can carry some: ticks under the role, shown only while the role is Member,
+ * and written as the member's grant when they accept.
  */
 
 import { useMemo, useState } from 'react';
@@ -31,6 +35,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { FormError, SaveError } from '@/components/forms/form-error';
 import { OrgRoleHelp } from '@/components/admin/members/org-role-help';
+import { TierChecklist, type GrantableTier } from '@/components/admin/members/tier-checklist';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { useSaveFailure } from '@/lib/hooks/use-save-failure';
@@ -65,9 +70,11 @@ interface OrgInvitationResponse {
 
 export interface MemberInviteFormProps {
   orgId: string;
+  /** The tiers an org admin may grant here (t-1123); empty shows no ticks. */
+  grantableTiers?: GrantableTier[];
 }
 
-export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
+export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFormProps) {
   const t = useTranslations('admin.members');
   const tv = useTranslations('validation');
   const inviteFormSchema = useMemo(() => inviteFormSchemaFor(tv), [tv]);
@@ -90,9 +97,12 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   } = useForm<InviteFormData>({
     resolver: zodResolver(inviteFormSchema),
     mode: 'onTouched',
-    defaultValues: { name: '', email: '', orgRole: DEFAULT_ORG_ROLE },
+    defaultValues: { name: '', email: '', orgRole: DEFAULT_ORG_ROLE, tiers: [] },
   });
   const orgRole = watch('orgRole');
+  const tiers = watch('tiers') ?? [];
+  // Tiers widen a Member only; any other role sends none.
+  const offersTiers = grantableTiers.length > 0 && orgRole === DEFAULT_ORG_ROLE;
   // One failure for both sends: "Send it again" is a save of the same form.
   const save = useSaveFailure({
     fallback: t('invite.failed'),
@@ -137,7 +147,18 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
       <CardContent>
         <form
           method="post"
-          onSubmit={save.submit(handleSubmit((data) => send(data, false), save.invalid))}
+          onSubmit={save.submit(
+            handleSubmit(
+              ({ tiers: picked, ...data }) =>
+                send(
+                  data.orgRole === DEFAULT_ORG_ROLE && picked && picked.length > 0
+                    ? { ...data, tiers: picked }
+                    : data,
+                  false
+                ),
+              save.invalid
+            )
+          )}
           className="space-y-4"
           noValidate
         >
@@ -185,6 +206,25 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
               {submitting ? t('invite.sending') : t('invite.send')}
             </Button>
           </div>
+
+          {offersTiers && (
+            <fieldset className="space-y-2">
+              <legend className="flex items-center gap-1 text-sm font-medium">
+                {t('tiers.label')}{' '}
+                <FieldHelp title={t('tiers.helpTitle')}>
+                  <p>{t('tiers.help')}</p>
+                  <p className="mt-2">{t('tiers.memberOnly')}</p>
+                </FieldHelp>
+              </legend>
+              <TierChecklist
+                tiers={grantableTiers}
+                value={tiers}
+                onChange={(next) => setValue('tiers', next)}
+                idPrefix="invite-tier"
+                disabled={submitting}
+              />
+            </fieldset>
+          )}
 
           {/* Under Send, and above "Send it again" when that is offered */}
           <SaveError failure={save.failure} />
