@@ -1024,53 +1024,57 @@ describe('callMcpTool: rich content blocks', () => {
 describe('toolArgumentsAuditable (#1349)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('clears a capability that declares no personal data', () => {
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: false } as never);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(true);
+    expect(capabilityDispatcher.getHandler).toHaveBeenCalledWith('search_knowledge');
+    expect(registerBuiltInCapabilities).toHaveBeenCalled();
+  });
+
+  it('withholds a capability that processes personal data', () => {
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: true } as never);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(false);
+  });
+
+  it('withholds a slug with no registered handler', () => {
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue(undefined);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(false);
+  });
+});
+
+describe('callMcpTool: onResolved (#1349)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
     clearMcpToolCache();
     vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
       makeSuccessfulParse() as never
     );
   });
 
-  it('clears a known tool whose capability declares no personal data', async () => {
-    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
-    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: false } as never);
-
-    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(true);
-    expect(capabilityDispatcher.getHandler).toHaveBeenCalledWith('search_knowledge');
-    expect(registerBuiltInCapabilities).toHaveBeenCalled();
-  });
-
-  it('withholds a tool whose capability processes personal data', async () => {
-    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
-    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: true } as never);
-
-    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(false);
-  });
-
-  it('resolves a custom name to its capability, as a call does', async () => {
+  it('reports the slug a custom name resolved to, before anything runs', async () => {
     vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([
       makeExposedTool({ customName: 'kb' }),
     ] as never);
-    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: true } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
+    const onResolved = vi.fn();
 
-    await expect(toolArgumentsAuditable('kb')).resolves.toBe(false);
-    expect(capabilityDispatcher.getHandler).toHaveBeenCalledWith('search_knowledge');
+    await callMcpTool('kb', {}, { userId: 'user-1' }, onResolved);
+
+    expect(onResolved).toHaveBeenCalledWith('search_knowledge');
+    expect(capabilityDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it('withholds a name no tool answers to, and one with no registered handler', async () => {
+  it('reports nothing for a name no tool answers to', async () => {
     vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
-    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue(undefined);
+    const onResolved = vi.fn();
 
-    await expect(toolArgumentsAuditable('no_such_tool')).resolves.toBe(false);
-    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(false);
-  });
+    await callMcpTool('no_such_tool', {}, { userId: 'user-1' }, onResolved);
 
-  it('withholds when the lookup itself fails, and says it could not look', async () => {
-    vi.mocked(prisma.mcpExposedTool.findMany).mockRejectedValue(new Error('pool exhausted'));
-
-    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(false);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('withholding its arguments'),
-      expect.objectContaining({ toolName: 'search_knowledge', error: 'pool exhausted' })
-    );
+    expect(onResolved).not.toHaveBeenCalled();
   });
 });

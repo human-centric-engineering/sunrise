@@ -190,16 +190,21 @@ header: ignore what you no longer honour.
 ### What the audit log keeps of a tool call's arguments
 
 `McpAuditLog` has no org column and erasure does not reach it, so it must not
-hold personal data. For `tools/call`, `auditParamsOf()` in `protocol-handler.ts`
-asks `toolArgumentsAuditable(name)` (`tool-registry.ts`) before both audit
-writes, success and error. The arguments are kept as sent only when the name
-resolves (as `callMcpTool` resolves it, `customName` included) to a registered
-capability that does **not** declare `processesPii`. Otherwise `arguments` is
-replaced with `WITHHELD_TOOL_ARGUMENTS`. That covers a personal-data tool, an
-unknown name, a capability with no handler, and a lookup that throws (which is
-also logged as a warning). The tool name, result code, duration, IP and user
-agent are kept either way. Other methods' params go through `sanitizeParams`
-unchanged: secret-looking keys stripped, size capped.
+hold personal data. For `tools/call`, `callMcpTool` reports the capability slug
+it resolved the name to (`customName` included) through its `onResolved`
+callback, and `auditParamsOf()` in `protocol-handler.ts` asks
+`toolArgumentsAuditable(slug)` (`tool-registry.ts`) about that slug before both
+audit writes, success and error. Deciding from the slug the call ran, not by
+resolving the name again afterwards, means a cache refresh or a `customName`
+rename mid-call cannot change the answer. The params are kept as sent only when
+that slug has a registered handler that does **not** declare `processesPii`.
+Otherwise the row keeps only `{ name, arguments: WITHHELD_TOOL_ARGUMENTS }`:
+every other key the client sent (`_meta`, extras) is dropped with the
+arguments. That covers a personal-data tool, a capability with no handler, and a
+call that never resolved (unknown name, invalid params, scope refused). The tool
+name, result code, duration, IP and user agent are kept either way. Other
+methods' params go through `sanitizeParams` unchanged: secret-looking keys
+stripped, size capped.
 
 So a capability author's `processesPii = true` (see
 [`security/pii-redaction.md`](../security/pii-redaction.md)) is what keeps its

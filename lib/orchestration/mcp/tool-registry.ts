@@ -185,11 +185,17 @@ async function getMcpSystemAgentId(): Promise<string | null> {
  * agent for unscoped keys, preserving prior behaviour. An optional `scope`
  * carrier is threaded through to `execute()` (see `CapabilityContext.scope`);
  * it is undefined until a caller supplies it.
+ *
+ * `onResolved`, when given, is told the capability slug the name resolved to,
+ * before anything runs. The audit log decides from it (see
+ * {@link toolArgumentsAuditable}), so it judges the tool this call ran rather
+ * than whatever the name resolves to by the time the call returns.
  */
 export async function callMcpTool(
   toolName: string,
   args: Record<string, unknown> | undefined,
-  caller: { userId: string | null; scopedAgentId?: string | null; scope?: Record<string, string> }
+  caller: { userId: string | null; scopedAgentId?: string | null; scope?: Record<string, string> },
+  onResolved?: (slug: string) => void
 ): Promise<McpToolCallResult> {
   // Resolve the actual capability slug from tool name (custom names are
   // supported, so we look up by either). Resolve against the UNSCOPED global
@@ -206,6 +212,7 @@ export async function callMcpTool(
       isError: true,
     };
   }
+  onResolved?.(tool.slug);
 
   // Honour the key's scoped agent when bound; otherwise fall back to the
   // shared mcp-system agent (which every backend caller can dispatch under).
@@ -289,34 +296,20 @@ export async function callMcpTool(
 }
 
 /**
- * Whether a tool call's arguments may be written to the MCP audit log as sent.
+ * Whether a tool call's arguments may be written to the MCP audit log as sent,
+ * given the capability slug the call resolved to (from `callMcpTool`'s
+ * `onResolved`).
  *
- * `false` when the tool resolves to a capability that declares
- * `processesPii` (its arguments carry personal data), and also when the name
- * resolves to no registered capability or the lookup fails, since nothing then
- * vouches for what the arguments hold. `true` only for a known capability that
- * declares no personal data. The audit log is install-wide (no org column) and
- * outside every org's erasure, so it fails closed.
- *
- * Resolves the advertised name the way {@link callMcpTool} does (the cached
- * global list), so a `customName` is honoured.
+ * `true` only for a registered capability that does not declare
+ * `processesPii`. `false` when it declares it (its arguments carry personal
+ * data) and when no handler is registered for the slug, since nothing then
+ * vouches for what the arguments hold. The audit log is install-wide (no org
+ * column) and outside every org's erasure, so it fails closed.
  */
-export async function toolArgumentsAuditable(toolName: string): Promise<boolean> {
-  try {
-    const tool = (await listMcpTools()).find((t) => t.name === toolName);
-    if (!tool) return false;
-    registerBuiltInCapabilities();
-    const handler = capabilityDispatcher.getHandler(tool.slug);
-    return handler !== undefined && !handler.processesPii;
-  } catch (err) {
-    // Withholding is the safe answer, but say we could not look rather than
-    // let a broken lookup read as a tool that processes personal data.
-    logger.warn('MCP audit: could not resolve tool, withholding its arguments', {
-      toolName,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return false;
-  }
+export function toolArgumentsAuditable(slug: string): boolean {
+  registerBuiltInCapabilities();
+  const handler = capabilityDispatcher.getHandler(slug);
+  return handler !== undefined && !handler.processesPii;
 }
 
 /** Clear the tool cache (after admin mutations) */
