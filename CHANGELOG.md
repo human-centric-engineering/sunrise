@@ -18,6 +18,14 @@ release process.
 
 ### Added
 
+- **Embedding results say whether the org's own key paid (#1369).**
+  `EmbedTextResult` and `EmbedBatchResult` (`lib/orchestration/knowledge/embedder.ts`)
+  carry `ownKey: boolean`: the flag their cost row already records. It is
+  `true` for a call on the org's own provider key (§137), and for a batch run
+  only when every batch was. A caller keeping its own spend tally can now tell
+  own-key spend from platform spend. **A fork with a test double typed as
+  either result** adds `ownKey` to it.
+
 - **Granting named admin tiers to a MEMBER (t-1123).** A new model,
   `OrgMembershipGrant` (one per membership, `onDelete: Cascade` with it),
   lists the named tiers a MEMBER holds in their org. `registerAdminTier()`'s

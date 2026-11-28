@@ -422,8 +422,12 @@ describe('the cost row of a call on an org’s own key is marked, and one on the
   });
 
   it('for an embedding', async () => {
-    await runAsOrg(OWN, () => embedText('a document'));
-    await runAsOrg(SHARED, () => embedText('a document'));
+    const own = await runAsOrg(OWN, () => embedText('a document'));
+    const shared = await runAsOrg(SHARED, () => embedText('a document'));
+
+    // The result says what the row records, so a caller's own tally can
+    // tell the two apart (#1369).
+    expect([own.ownKey, shared.ownKey]).toEqual([true, false]);
 
     const rows = await settled();
     expect(rows.map((r) => [r.orgId, r.operation, r.ownKey])).toEqual([
@@ -457,10 +461,15 @@ describe('the cost row of a call on an org’s own key is marked, and one on the
 
   it('for every batch of an embedding run, in its one row', async () => {
     const { embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
-    await runAsOrg(OWN, () => embedBatch(['a', 'b', 'c'], 1, 'document'));
+    const own = await runAsOrg(OWN, () => embedBatch(['a', 'b', 'c'], 1, 'document'));
+    const shared = await runAsOrg(SHARED, () => embedBatch(['a', 'b'], 1, 'document'));
 
     const rows = await settled();
-    expect(rows.map((r) => [r.operation, r.ownKey])).toEqual([['embedding', true]]);
+    expect(rows.map((r) => [r.operation, r.ownKey])).toEqual([
+      ['embedding', true],
+      ['embedding', false],
+    ]);
+    expect([own.ownKey, shared.ownKey]).toEqual([true, false]);
   });
 });
 

@@ -49,9 +49,10 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   })),
 }));
 
+// The platform's key, never an org's own (§137), unless a test says so.
+const mockUsesOrgOwnKey = vi.hoisted(() => vi.fn(() => false));
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  // The platform's key, never an org's own (§137).
-  usesOrgOwnKey: () => false,
+  usesOrgOwnKey: mockUsesOrgOwnKey,
   getProvider: vi.fn(),
   isApiKeyEnvVarSet: vi.fn(),
 }));
@@ -293,5 +294,42 @@ describe('a call refused for its width is still costed (t-1011)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('the result says which key paid (#1369)', () => {
+  beforeEach(() => {
+    mockUsesOrgOwnKey.mockReset().mockReturnValue(false);
+    installEmbedMany();
+  });
+
+  it('embedText: true on the org’s own key, as its cost row says', async () => {
+    mockUsesOrgOwnKey.mockReturnValue(true);
+    const result = await embedText('hello');
+    expect(result.ownKey).toBe(true);
+    expect(costParams().ownKey).toBe(true);
+  });
+
+  it('embedText: false on the install’s key', async () => {
+    expect((await embedText('hello')).ownKey).toBe(false);
+  });
+
+  it('embedBatch: true only when every batch went out on the own key', async () => {
+    mockUsesOrgOwnKey.mockReturnValue(true);
+    const result = await embedBatch(['a', 'b', 'c'], 1);
+    expect(result.ownKey).toBe(true);
+    expect(costParams().ownKey).toBe(true);
+  });
+
+  it('embedBatch: false for a mix, matching its one row', async () => {
+    mockUsesOrgOwnKey.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    const result = await embedBatch(['a', 'b'], 1);
+    expect(result.ownKey).toBe(false);
+    expect(costParams().ownKey).toBe(false);
+  });
+
+  it('embedBatch: false for a run with no batches', async () => {
+    mockUsesOrgOwnKey.mockReturnValue(true);
+    expect((await embedBatch([], 1)).ownKey).toBe(false);
   });
 });
