@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { SaveError } from '@/components/forms/form-error';
+import { FieldHelp } from '@/components/ui/field-help';
 import { TierChecklist, type GrantableTier } from '@/components/admin/members/tier-checklist';
 import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -52,12 +53,16 @@ export function MemberTiersDialog({
   const { clear } = save;
 
   // Each opening starts from that member's grant, with no earlier failure.
+  // Only the tiers still offered: one the app stopped offering has no tick,
+  // so the admin could not untick it, and sending it would be refused.
+  // Saving drops it.
   useEffect(() => {
     if (member) {
-      setValue(member.tiers ?? []);
+      const offered = new Set(grantableTiers.map((tier) => tier.name));
+      setValue((member.tiers ?? []).filter((name) => offered.has(name)));
       clear();
     }
-  }, [member, clear]);
+  }, [member, grantableTiers, clear]);
 
   const who = member ? member.name || member.email : '';
 
@@ -88,6 +93,13 @@ export function MemberTiersDialog({
           <DialogTitle>{t('dialogTitle', { who })}</DialogTitle>
           <DialogDescription>{t('dialogDescription', { who })}</DialogDescription>
         </DialogHeader>
+        <p className="flex items-center gap-1 text-sm font-medium">
+          {t('label')}{' '}
+          <FieldHelp title={t('helpTitle')}>
+            <p>{t('help')}</p>
+            <p className="mt-2">{t('memberOnly')}</p>
+          </FieldHelp>
+        </p>
         <TierChecklist
           tiers={grantableTiers}
           value={value}

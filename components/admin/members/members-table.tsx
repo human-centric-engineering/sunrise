@@ -92,7 +92,8 @@ export function MembersTable({
   const showTiers = grantableTiers.length > 0;
   const tierLabel = new Map(grantableTiers.map((tier) => [tier.name, tier.label]));
   // A tier the app no longer offers is shown by its name, not hidden: it is
-  // still in the grant, and saving the dialog drops it.
+  // still in the grant, admits nobody, and the dialog starts without it, so
+  // saving drops it.
   const tiersOf = (member: OrgMember) =>
     (member.tiers ?? []).map((name) => tierLabel.get(name) ?? name);
   // A role change reports above the table; the remove dialog has its own.

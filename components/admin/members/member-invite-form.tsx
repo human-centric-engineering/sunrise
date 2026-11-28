@@ -64,7 +64,7 @@ const SERVER_FIELDS: Partial<Record<string, keyof InviteFormData>> = {
 
 interface OrgInvitationResponse {
   message: string;
-  invitation: { email: string; name: string; orgRole?: string | null };
+  invitation: { email: string; name: string; orgRole?: string | null; tiers?: string[] };
   emailStatus: 'sent' | 'failed' | 'disabled' | 'pending';
 }
 
@@ -103,6 +103,7 @@ export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFor
   const tiers = watch('tiers') ?? [];
   // Tiers widen a Member only; any other role sends none.
   const offersTiers = grantableTiers.length > 0 && orgRole === DEFAULT_ORG_ROLE;
+  const pendingHasAccess = (result?.invitation.tiers?.length ?? 0) > 0;
   // One failure for both sends: "Send it again" is a save of the same form.
   const save = useSaveFailure({
     fallback: t('invite.failed'),
@@ -233,13 +234,13 @@ export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFor
         {result?.emailStatus === 'pending' && pending && (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
             <span>
-              {/* Console access is named only where the page offers it (t-1123). */}
+              {/* Console access is named only when the pending invitation carries some (t-1123). */}
               {result.invitation.orgRole && isOrgRole(result.invitation.orgRole)
-                ? t(grantableTiers.length > 0 ? 'invite.pendingAsWithAccess' : 'invite.pendingAs', {
+                ? t(pendingHasAccess ? 'invite.pendingAsWithAccess' : 'invite.pendingAs', {
                     email: result.invitation.email,
                     role: t(`roles.${result.invitation.orgRole}`),
                   })
-                : t(grantableTiers.length > 0 ? 'invite.pendingWithAccess' : 'invite.pending', {
+                : t(pendingHasAccess ? 'invite.pendingWithAccess' : 'invite.pending', {
                     email: result.invitation.email,
                   })}
             </span>

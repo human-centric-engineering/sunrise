@@ -248,6 +248,25 @@ describe('MemberTiersDialog — leaving without saving', () => {
     ).toBeInTheDocument();
   });
 
+  it('starts without a tier the app no longer offers, so Save is not refused and drops it', async () => {
+    vi.mocked(apiClient.put).mockResolvedValue({});
+    const user = userEvent.setup();
+    const stale: OrgMember = { ...members[2], tiers: ['retired_tier', 'media'] };
+    render(
+      <MembersTable orgId={ORG_ID} members={[stale]} currentUserId={null} grantableTiers={TIERS} />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Change console access for Mo Member' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(apiClient.put).toHaveBeenCalledWith('/api/v1/orgs/org-1/members/u-3/tiers', {
+        body: { tiers: ['media'] },
+      })
+    );
+  });
+
   it('shows a granted tier the app no longer offers by its name', () => {
     const stale: OrgMember = { ...members[2], tiers: ['retired_tier'] };
     render(
@@ -269,6 +288,25 @@ describe('MemberInviteForm — console access', () => {
     invitation: { email: 'new@example.com', name: 'New Person' },
     emailStatus: 'sent' as const,
   };
+
+  it('says a resend keeps console access only when the pending invitation carries some', async () => {
+    const user = userEvent.setup();
+    const pendingWith = (tiers: string[]) => ({
+      message: 'Invitation already pending',
+      invitation: { email: 'new@example.com', name: 'New Person', orgRole: 'MEMBER', tiers },
+      emailStatus: 'pending' as const,
+    });
+    vi.mocked(apiClient.post).mockResolvedValueOnce(pendingWith([]));
+    render(<MemberInviteForm orgId={ORG_ID} grantableTiers={TIERS} />);
+
+    await fill(user);
+    await user.click(screen.getByRole('button', { name: /send invitation/i }));
+    expect(await screen.findByText(/keeps that role\.$/)).toBeInTheDocument();
+
+    vi.mocked(apiClient.post).mockResolvedValueOnce(pendingWith(['media']));
+    await user.click(screen.getByRole('button', { name: /send invitation/i }));
+    expect(await screen.findByText(/keeps that role and its console access\./)).toBeInTheDocument();
+  });
 
   it('offers no ticks when the app offers no tier', () => {
     render(<MemberInviteForm orgId={ORG_ID} />);
