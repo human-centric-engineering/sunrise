@@ -413,16 +413,18 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * real init with `vi.importActual` only to check the pin replaces it. A test that needs a seam filled mocks it itself, as
  * `org-tier-admin-pages.test.ts`, `user-created-hooks.test.ts`,
  * `erasure-hooks-seam.test.ts`, `org-created-hooks.test.ts`,
- * `signup-org.test.ts` and `app-pins.test.ts` do.
+ * `signup-org.test.ts`, `app-pins.test.ts`, `authorization-safe-mode.test.ts`,
+ * `authorization-async.test.ts` and `sealed-stores.test.ts` do.
  * A fork tests its own filled seam in `tests/unit/lib/app/<seam>.test.ts`,
  * which may read the real seam too. `defaults.test.ts` fails any other file
  * that reads a pinned seam past its pin, or unmocks one.
  *
- * Thirteen seams are pinned in this file, not every lazy init in `lib/app/`:
- * the four above (llm-providers, brand, emails, waitlist-config) and the nine
+ * Fifteen seams are pinned in this file, not every lazy init in `lib/app/`:
+ * the four above (llm-providers, brand, emails, waitlist-config) and the eleven
  * inits below (admin-tier, user-created, erasure, org-created, signup-org,
- * model-pins, entitlements, access-explainer, billing). The rest are #636's sweep.
- * `tests/unit/setup-seam-pins.test.ts` fails if one of the nine inits stops
+ * model-pins, entitlements, access-explainer, billing, authorization,
+ * sealed-stores). The rest are #636's sweep.
+ * `tests/unit/setup-seam-pins.test.ts` fails if one of the eleven inits stops
  * being replaced.
  */
 // Each keeps the module's other exports, as the brand pin derives its keys: a
@@ -500,6 +502,25 @@ vi.mock('@/lib/app/billing', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   initAppBilling: () => {
     // Registers no plan: Sunrise's shipped default.
+  },
+}));
+// From a fork's fill (#1361): `getAuthorizationPolicy()` runs the app's init at
+// the top of every guarded path, so a fork's policy decided who could reach
+// what in core tests that assert Sunrise's own decision (about 158 cases across
+// 36 files in the reporting fork).
+vi.mock('@/lib/app/authorization', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  initAppAuthorizationPolicy: () => {
+    // Registers no policy: Sunrise's shipped default.
+  },
+}));
+// From a fork's fill (#1359): the sealed-stores registry runs the app's init on
+// its first read, so a fork's stores were walked by `resealSealedStores()` in
+// `org-provider-keys.test.ts`, whose mocks cannot know the fork's tables.
+vi.mock('@/lib/app/sealed-stores', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  initAppSealedStores: () => {
+    // Registers no store: Sunrise's shipped default.
   },
 }));
 

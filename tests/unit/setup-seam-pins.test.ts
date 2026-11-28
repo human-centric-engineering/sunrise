@@ -33,6 +33,8 @@ const PINNED_INITS = [
   ['@/lib/app/entitlements', 'initAppEntitlements'],
   ['@/lib/app/access-explainer', 'initAppAccessExplainer'],
   ['@/lib/app/billing', 'initAppBilling'],
+  ['@/lib/app/authorization', 'initAppAuthorizationPolicy'],
+  ['@/lib/app/sealed-stores', 'initAppSealedStores'],
 ] as const;
 
 describe('tests/setup.ts seam pins', () => {

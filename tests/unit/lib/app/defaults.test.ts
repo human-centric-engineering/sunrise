@@ -188,6 +188,8 @@ vi.mock('@/lib/app/model-pins', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/entitlements', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/access-explainer', (importOriginal) => importOriginal());
 vi.mock('@/lib/app/billing', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/authorization', (importOriginal) => importOriginal());
+vi.mock('@/lib/app/sealed-stores', (importOriginal) => importOriginal());
 
 /**
  * One row per `lib/app/*` seam.
@@ -858,6 +860,8 @@ describe('lib/app/ seams ship empty', () => {
     ['model-pins', 'model-pins', [PINS]],
     ['entitlements', 'entitlements', [ROSTER, PINS]],
     ['billing', 'billing', [PINS]],
+    ['authorization', 'authorization', [PINS]],
+    ['sealed-stores', 'sealed-stores', [PINS]],
     ['erasure', 'erasure', [STALE, PINS]],
   ])('nothing but its readers escapes the suite-wide %s-seam pin', (seam, label, readers) => {
     // tests/setup.ts mocks `@/lib/app/brand` to null for EVERY test file, so
