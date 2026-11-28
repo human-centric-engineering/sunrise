@@ -51,6 +51,7 @@ import {
 } from '@/lib/billing/plans';
 import { countUsage } from '@/lib/billing/usage-report';
 import { runAsOrg } from '@/lib/tenancy/context';
+import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { meterOf, meterWindow } from '@/lib/tenancy/meters';
 
 /** The org's record, as far as a window needs it. */
@@ -301,7 +302,7 @@ export async function emailOwners(notice: UsageNotice): Promise<void> {
     // `Org` and `OrgMembership` are system models: no tenant scope is needed.
     prisma.org.findUnique({ where: { id: notice.orgId }, select: { name: true } }),
     prisma.orgMembership.findMany({
-      where: { orgId: notice.orgId, role: 'OWNER' },
+      where: { orgId: notice.orgId, role: ORG_OWNER_ROLE },
       select: { user: { select: { id: true, email: true } } },
     }),
   ]);
