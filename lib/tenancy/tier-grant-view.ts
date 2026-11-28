@@ -10,10 +10,18 @@
  * label is shown by its name in words (`page_designs` → "Page designs").
  *
  * Server-side: reads the request's locale through `next-intl/server`.
+ *
+ * Never throws (t-1124). The roster this rides beside did not depend on the
+ * tier registry before t-1123, so a failure here — the app's tier init, a
+ * translation lookup — must not take the Members page down with it. It is
+ * logged and answers `[]`: the tier pickers disappear and the people still
+ * load. Nothing is opened by that, because every write path checks grantable
+ * tiers itself.
  */
 
 import { getTranslations } from 'next-intl/server';
 import { humanise, textResolver, type AccessTranslator } from '@/lib/auth/access-explainer';
+import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { grantableAdminTiers } from '@/lib/tenancy/tier-grants';
 
@@ -31,6 +39,18 @@ export interface GrantableTierView {
  */
 export async function grantableTiersFor(orgId: string): Promise<GrantableTierView[]> {
   if (orgId === INSTALL_ORG_ID) return [];
+  try {
+    return await namedGrantableTiers();
+  } catch (err) {
+    logger.error('Grantable tiers could not be read; the roster is served without them', {
+      orgId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+async function namedGrantableTiers(): Promise<GrantableTierView[]> {
   const tiers = grantableAdminTiers();
   if (tiers.length === 0) return [];
 

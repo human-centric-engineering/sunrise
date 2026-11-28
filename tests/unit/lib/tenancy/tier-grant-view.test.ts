@@ -20,6 +20,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { registerAdminTier, restoreNamedAdminTiers } from '@/lib/auth/admin-tier';
+import { logger } from '@/lib/logging';
 import { env } from '@/lib/env';
 import { grantableTiersFor } from '@/lib/tenancy/tier-grant-view';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -78,5 +79,31 @@ describe('grantableTiersFor', () => {
     registerAdminTier('reports', { holds: () => true });
     expect(await grantableTiersFor(ORG)).toEqual([]);
     expect(getTranslations).not.toHaveBeenCalled();
+  });
+
+  it('answers [] and logs at error when the translations cannot be read, rather than throw (t-1124)', async () => {
+    registerAdminTier('media', { label: { message: 'app.tiers.media' } });
+    getTranslations.mockReset().mockRejectedValue(new Error('no request locale'));
+
+    await expect(grantableTiersFor(ORG)).resolves.toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Grantable tiers could not be read; the roster is served without them',
+      { orgId: ORG, error: 'no request locale' }
+    );
+  });
+
+  it('answers [] when resolving a tier label throws', async () => {
+    registerAdminTier('media', { label: { message: 'app.tiers.media' } });
+    getTranslations.mockReset().mockResolvedValue(
+      Object.assign(
+        () => {
+          throw new Error('bad message');
+        },
+        { has: () => true, raw: () => 'x' }
+      )
+    );
+
+    await expect(grantableTiersFor(ORG)).resolves.toEqual([]);
+    expect(logger.error).toHaveBeenCalled();
   });
 });
