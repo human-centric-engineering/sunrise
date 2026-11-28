@@ -27,8 +27,17 @@ afterEach(() => {
   __resetAppMessagesForTests();
 });
 
+// An app's keys are not in the platform's message types, so these tests read
+// the translators untyped, as an app's own typed augmentation would allow.
+type Plain = ((key: string) => string) & { has: (key: string) => boolean };
+const plain = (t: unknown): Plain => t as Plain;
+const useAppTranslations = (namespace: string): Plain =>
+  plain((useTranslations as unknown as (ns: string) => unknown)(namespace));
+const getAppTranslations = async (namespace: string): Promise<Plain> =>
+  plain(await (getTranslations as unknown as (ns: string) => Promise<unknown>)(namespace));
+
 function ClientsHeading() {
-  const t = useTranslations('app.clients');
+  const t = useAppTranslations('app.clients');
   return <h1>{t('title')}</h1>;
 }
 
@@ -50,18 +59,20 @@ describe('the test catalogue', () => {
   it('serves the app’s strings beside the platform’s, on the client and the server', async () => {
     registerAppMessages('en', { app: { clients: { title: 'Your clients' } } });
 
-    expect(translatorFor('app.clients')('title')).toBe('Your clients');
-    expect((await getTranslations('app.clients'))('title')).toBe('Your clients');
+    expect(plain(translatorFor('app.clients'))('title')).toBe('Your clients');
+    expect((await getAppTranslations('app.clients'))('title')).toBe('Your clients');
     // The platform's own strings are still there.
-    expect(translatorFor()('common.save')).toBe(translatorFor(undefined, en)('common.save'));
+    expect(plain(translatorFor())('common.save')).toBe(
+      plain(translatorFor(undefined, en))('common.save')
+    );
     expect(useMessages()).toMatchObject({ app: { clients: { title: 'Your clients' } } });
   });
 
   it('reads the catalogue on every call, so a string registered after a render is seen', () => {
-    expect(translatorFor('app.clients').has('title')).toBe(false);
+    expect(plain(translatorFor('app.clients')).has('title')).toBe(false);
 
     registerAppMessages('en', { app: { clients: { title: 'Your clients' } } });
 
-    expect(translatorFor('app.clients')('title')).toBe('Your clients');
+    expect(plain(translatorFor('app.clients'))('title')).toBe('Your clients');
   });
 });

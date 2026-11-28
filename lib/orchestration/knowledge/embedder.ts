@@ -779,8 +779,11 @@ export interface EmbedTextResult {
    * same spend as `costUsd`, and the flag its cost row records. `false` on
    * the install's key or a local provider. A caller keeping its own spend
    * tally reads it to tell own-key spend from platform spend (#1369).
+   *
+   * Always set here. Optional so a fork's test double built before it still
+   * type-checks; read absent as `false` (platform spend).
    */
-  ownKey: boolean;
+  ownKey?: boolean;
 }
 
 /**
@@ -862,8 +865,9 @@ export interface EmbedBatchResult {
    * Whether the run went out on the org's own provider key (§137): `true`
    * only when every batch did, the rule its one cost row records. `false` for
    * a run on the install's key, a local provider, a mix, or no batches (#1369).
+   * Always set here; optional for the reason on {@link EmbedTextResult.ownKey}.
    */
-  ownKey: boolean;
+  ownKey?: boolean;
 }
 
 /**
