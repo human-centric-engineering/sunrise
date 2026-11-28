@@ -675,7 +675,7 @@ describe('org-data source manifest', () => {
       );
     });
 
-    it('returns the roster with each member’s id, name and email — nothing else of theirs', async () => {
+    it('returns the roster with each member’s id, name and email — nothing else of theirs — and their tier grant (t-1123)', async () => {
       prismaMock.orgMembership.findMany.mockResolvedValue([]);
       const source = ORG_DATA_SOURCES.find((candidate) => candidate.model === 'OrgMembership');
       await source!.fetch({ orgId: 'cmorg000000000000000other' });
@@ -683,7 +683,12 @@ describe('org-data source manifest', () => {
       expect(prismaMock.orgMembership.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { orgId: 'cmorg000000000000000other' },
-          include: { user: { select: { id: true, name: true, email: true } } },
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+            // The grant carries no orgId, so the column scan cannot see it:
+            // this is the only place the org's export carries it.
+            grant: { select: { tiers: true, createdAt: true, updatedAt: true } },
+          },
         })
       );
     });

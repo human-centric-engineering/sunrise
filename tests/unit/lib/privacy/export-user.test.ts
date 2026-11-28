@@ -993,8 +993,10 @@ describe('exportUserData', () => {
      * every relation is named here, with why it is still the subject's.
      */
     const RELATION_READS: Record<string, string[]> = {
-      // The org row of each of the subject's own memberships: id, slug, name.
-      OrgMembership: ['org'],
+      // The org row of each of the subject's own memberships: id, slug, name;
+      // and that membership's named-tier grant (t-1123), one row per
+      // membership, so the subject's own.
+      OrgMembership: ['grant', 'org'],
       // The name of the org each grant the subject gave or revoked was for.
       OrgSupportGrant: ['org'],
       // The org, and the provider row's name, of each key the subject last saved (§137).

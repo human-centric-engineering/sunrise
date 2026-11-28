@@ -522,10 +522,21 @@ export const updateOrgSchema = z
 export type UpdateOrgInput = z.infer<typeof updateOrgSchema>;
 
 /** `POST /api/v1/orgs/[id]/members` body — add an existing user. */
+/**
+ * The named admin tiers a MEMBER is granted (t-1123): tier names as
+ * `registerAdminTier()` takes them. Whether each is registered and grantable
+ * is the lifecycle's check (`setMemberTiers`), which names any that is not.
+ */
+export const orgTierListSchema = z
+  .array(z.string().regex(/^[a-z][a-z0-9_-]{0,47}$/, 'Not a tier name'))
+  .max(32);
+
 export const addOrgMemberSchema = z.object({
   userId: cuidSchema,
   /** Defaults to MEMBER. Refused on the install org, whose roles follow the platform role. */
   role: z.enum(ORG_ROLES).optional(),
+  /** Named tiers granted with the membership (t-1123); written only beside a MEMBER. */
+  tiers: orgTierListSchema.optional(),
 });
 
 export type AddOrgMemberInput = z.infer<typeof addOrgMemberSchema>;
@@ -537,6 +548,13 @@ export const updateOrgMemberSchema = z.object({
 
 export type UpdateOrgMemberInput = z.infer<typeof updateOrgMemberSchema>;
 
+/** `PUT /api/v1/orgs/[id]/members/[userId]/tiers` body (t-1123). An empty list removes the grant. */
+export const setOrgMemberTiersSchema = z.object({
+  tiers: orgTierListSchema,
+});
+
+export type SetOrgMemberTiersInput = z.infer<typeof setOrgMemberTiersSchema>;
+
 /**
  * `POST /api/v1/orgs/[id]/invitations` body (§111 t-813). No platform role and
  * no org: the invitee joins the org the URL names, as a platform USER. Keys
@@ -546,6 +564,7 @@ type InviteOrgMemberShape = {
   name: z.ZodString;
   email: z.ZodString;
   orgRole: z.ZodOptional<z.ZodEnum<{ [K in (typeof ORG_ROLES)[number]]: K }>>;
+  tiers: z.ZodOptional<typeof orgTierListSchema>;
 };
 
 /** The invitation body, with its messages from `t` (§138 t-1074): the form passes its translator. */
@@ -555,6 +574,11 @@ export function createInviteOrgMemberSchema(t: ValidationT): z.ZodObject<InviteO
     email: createEmailSchema(t),
     /** Absent ⇒ MEMBER on acceptance. OWNER needs the inviter's owner standing. */
     orgRole: z.enum(ORG_ROLES).optional(),
+    /**
+     * Named tiers the invitee holds once they join (t-1123). A MEMBER
+     * invitation only; absent on a resend ⇒ the pending invitation's.
+     */
+    tiers: orgTierListSchema.optional(),
   });
 }
 export const inviteOrgMemberSchema = createInviteOrgMemberSchema(englishValidation);

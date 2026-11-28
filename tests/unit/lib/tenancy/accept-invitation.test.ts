@@ -10,7 +10,7 @@
  * What is asserted here is what acceptance hands it, and what it leaves in
  * the store.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'crypto';
 import { DEFAULT_USER_ROLE, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -151,6 +151,42 @@ beforeEach(() => {
   addMember.mockImplementation((orgId: string, _userId: string, role: string) =>
     Promise.resolve(membershipFor(orgId, role))
   );
+});
+
+describe('acceptInvitationAsExistingUser — named tiers (t-1123)', () => {
+  beforeEach(async () => {
+    const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+    registerAdminTier('media', {});
+  });
+
+  afterEach(async () => {
+    const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+  });
+
+  it('hands addMember the tiers a MEMBER invitation grants, so they are written with it', async () => {
+    invite('tok-a', { orgId: ORG_A, tiers: ['media', 'gone'] });
+
+    await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
+
+    expect(addMember).toHaveBeenCalledWith(
+      ORG_A,
+      'user-1',
+      DEFAULT_ORG_ROLE,
+      expect.anything(),
+      undefined,
+      { seatHeld: true, tiers: ['media'] }
+    );
+  });
+
+  it('hands none for an ADMIN invitation', async () => {
+    invite('tok-a', { orgId: ORG_A, orgRole: ORG_ADMIN_ROLE, tiers: ['media'] });
+
+    await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
+
+    expect(addMember.mock.calls[0][5]).toEqual({ seatHeld: true });
+  });
 });
 
 describe('acceptInvitationAsExistingUser', () => {

@@ -685,3 +685,73 @@ describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', ()
     expect(prisma.orgMembership.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — no limit set, so nothing is counted
   });
 });
+
+describe('POST /api/v1/orgs/[id]/invitations — named tiers (t-1123)', () => {
+  beforeEach(async () => {
+    const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+    registerAdminTier('media', {});
+    registerAdminTier('brand', {});
+    registerAdminTier('reports', { holds: () => true });
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+  });
+
+  afterEach(async () => {
+    const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+  });
+
+  it('stores the tiers a MEMBER invitation grants, in registration order, and answers them', async () => {
+    const res = await post({ ...invitee, orgRole: DEFAULT_ORG_ROLE, tiers: ['brand', 'media'] });
+
+    expect(res.status).toBe(201);
+    expect(writtenMetadata()).toMatchObject({ orgId: ORG, tiers: ['media', 'brand'] });
+    expect((await json(res)).data.invitation.tiers).toEqual(['media', 'brand']);
+  });
+
+  it('stores no tiers key for an invitation that grants none', async () => {
+    await post(invitee);
+    expect(writtenMetadata()).not.toHaveProperty('tiers');
+  });
+
+  it('refuses a tier that cannot be granted, naming it, and sends nothing', async () => {
+    const res = await post({ ...invitee, tiers: ['media', 'reports'] });
+    const body = await json(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error.code).toBe('TIER_NOT_GRANTABLE');
+    expect(body.error.message).toContain('reports');
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('refuses tiers on an ADMIN invitation, whose role already opens every one', async () => {
+    const res = await post({ ...invitee, orgRole: ORG_ADMIN_ROLE, tiers: ['media'] });
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error.code).toBe('GRANT_NEEDS_MEMBER');
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps the pending invitation’s tiers still grantable on a resend that names none', async () => {
+    pending({ orgId: ORG, tiers: ['media', 'gone'] });
+
+    await post(invitee, ORG, '?resend=true');
+
+    expect(updateInvitationToken).toHaveBeenCalledWith(
+      'jane@example.com',
+      expect.objectContaining({ orgId: ORG, tiers: ['media'] })
+    );
+  });
+
+  it('drops the pending tiers on a resend that moves the invitation to ADMIN', async () => {
+    pending({ orgId: ORG, tiers: ['media'] });
+
+    await post({ ...invitee, orgRole: ORG_ADMIN_ROLE }, ORG, '?resend=true');
+
+    const metadata = vi.mocked(updateInvitationToken).mock.calls[0][1];
+    expect(metadata).toMatchObject({ orgRole: ORG_ADMIN_ROLE });
+    expect(metadata).not.toHaveProperty('tiers');
+  });
+});

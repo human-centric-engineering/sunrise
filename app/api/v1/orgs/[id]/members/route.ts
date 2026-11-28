@@ -44,6 +44,7 @@ import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { orgIdParamSchema, addOrgMemberSchema } from '@/lib/validations/tenancy';
 import { addMember, resolveOrgResource, membershipActorOf } from '@/lib/tenancy/lifecycle';
 import { getRouteLogger } from '@/lib/api/context';
+import { grantableTiersFor } from '@/lib/tenancy/tier-grant-view';
 
 const RESOURCE = {
   resource: async (_request: unknown, context?: { params: Promise<{ id: string }> }) =>
@@ -72,6 +73,7 @@ export const GET = withAuth<{ id: string }>(async (request, session, { params })
       role: true,
       createdAt: true,
       user: { select: { id: true, name: true, email: true, image: true } },
+      grant: { select: { tiers: true } },
     },
     orderBy: { createdAt: 'asc' },
   });
@@ -81,8 +83,14 @@ export const GET = withAuth<{ id: string }>(async (request, session, { params })
     members: members.map((membership) => ({
       ...membership.user,
       role: membership.role,
+      // The named tiers the member's grant lists (t-1123); empty for none.
+      tiers: membership.grant?.tiers ?? [],
       joinedAt: membership.createdAt,
     })),
+    // What may be granted here, named in the viewer's language: empty unless
+    // the app registered a grantable tier, and always empty for the install
+    // org, whose memberships take no grant.
+    grantableTiers: await grantableTiersFor(id),
   });
 }, RESOURCE);
 
@@ -99,7 +107,11 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
 
   // An org's own admin may not add past its seats limit (§135 t-1035);
   // addMember refuses that, after its own checks.
-  const membership = await addMember(id, body.userId, body.role, membershipActorOf(session));
+  const actor = membershipActorOf(session);
+  // Named tiers granted with the membership (t-1123), when the body names any.
+  const membership = body.tiers
+    ? await addMember(id, body.userId, body.role, actor, undefined, { tiers: body.tiers })
+    : await addMember(id, body.userId, body.role, actor);
 
   log.info('Org member added', {
     orgId: id,

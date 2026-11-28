@@ -141,11 +141,17 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     section: 'members',
     disposition: 'export',
     description:
-      'Who belongs to the organisation and with what role. Each member’s id, name and email ride along so the roster reads as people rather than ids; the members’ other data is theirs, not the org’s, and is not included.',
+      'Who belongs to the organisation, with what role, and which parts of the console each member was granted. Each member’s id, name and email ride along so the roster reads as people rather than ids; the members’ other data is theirs, not the org’s, and is not included.',
+    // The named-tier grant (`OrgMembershipGrant`, t-1123) is part of the
+    // membership and carries no `orgId`, so it rides along here rather than
+    // as a source of its own.
     fetch: ({ orgId }) =>
       prisma.orgMembership.findMany({
         where: { orgId },
-        include: { user: { select: { id: true, name: true, email: true } } },
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+          grant: { select: { tiers: true, createdAt: true, updatedAt: true } },
+        },
         orderBy: byCreatedAt,
       }),
   },

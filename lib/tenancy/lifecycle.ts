@@ -669,7 +669,7 @@ export async function addMember(
   options: { seatHeld?: boolean; tiers?: readonly string[] } = {}
 ): Promise<MembershipRecord> {
   if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'add a member as an owner');
-  const tiers = await checkedTiers(options.tiers ?? []);
+  const tiers = await checkGrantableTiers(options.tiers ?? []);
   await requireOrg(orgId, db);
   const user = await requireManageableUser(userId, db);
 
@@ -908,7 +908,7 @@ export async function setMemberTiers(
       'Tiers cannot be granted in the install organisation'
     );
   }
-  const granted = await checkedTiers(tiers);
+  const granted = await checkGrantableTiers(tiers);
 
   await db.$transaction(async (tx) => {
     const membership = await tx.orgMembership.findUnique({
@@ -935,10 +935,12 @@ export async function setMemberTiers(
 
 /**
  * `asked`, checked against the grantable tiers and put in registration order;
- * throws `TIER_NOT_GRANTABLE` naming any that is not. Loaded lazily: the tier
- * registry runs the app's init, whose scaffold may import this module.
+ * throws `TIER_NOT_GRANTABLE` naming any that is not. What every write a
+ * person asked for goes through: `setMemberTiers`, `addMember`, and the org
+ * invite route. Loaded lazily: the tier registry runs the app's init, whose
+ * scaffold may import this module.
  */
-async function checkedTiers(asked: readonly string[]): Promise<string[]> {
+export async function checkGrantableTiers(asked: readonly string[]): Promise<string[]> {
   if (asked.length === 0) return [];
   const { grantableTiersAmong, ungrantableTiersAmong } = await import('@/lib/tenancy/tier-grants');
   const refused = ungrantableTiersAmong(asked);
