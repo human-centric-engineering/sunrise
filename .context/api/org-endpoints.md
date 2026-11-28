@@ -30,6 +30,7 @@ the per-admin export sub-cap noted below.
 | `GET /api/v1/orgs/[id]`                      | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
 | `GET/POST /api/v1/orgs/[id]/members`         | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
 | `PATCH/DELETE …/members/[userId]`            | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `PUT …/members/[userId]/tiers`               | `withAuth`      | As above. A MEMBER's named-tier grant (t-1123); an ADMIN may set it.                                                                                   |
 | `PUT /api/v1/orgs/[id]/locale`               | `withAuth`      | The org's OWNER/ADMIN **while acting in it**. Browser session only; not a support session.                                                             |
 | `GET /api/v1/orgs/[id]/audit-log`            | `withAuth`      | As the roster: the org's OWNER/ADMIN while acting in it, or a platform admin. Browser session only (every row names a person).                         |
 | `POST /api/v1/orgs/[id]/invitations`         | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
@@ -220,12 +221,20 @@ GET /api/v1/orgs/[id]/members
         "email": "jane@acme.example",
         "image": null,
         "role": "OWNER",
+        "tiers": [],
         "joinedAt": "…"
       }
-    ]
+    ],
+    "grantableTiers": [{ "name": "media", "label": "Media library", "description": "…" }]
   }
 }
 ```
+
+- `tiers`: the named tiers the member's grant lists (t-1123), empty for none.
+- `grantableTiers`: the tiers an org admin may grant here, in registration
+  order, named in the viewer's language. Empty unless the app registered a
+  grantable tier, and always empty for the install org. See
+  [Granting named tiers](../auth/authorization.md#granting-named-tiers).
 
 ### Add a member
 
@@ -248,6 +257,9 @@ POST /api/v1/orgs/[id]/members
   included, does), when the caller holds owner standing. `OWNER` needs OWNER
   standing.
   On the install org a `role` is refused: roles there follow the platform role.
+- `tiers`: optional, named tiers granted with the membership (t-1123). Written
+  only beside a `MEMBER` membership; each must be grantable
+  (`400 TIER_NOT_GRANTABLE` otherwise, before anything is written).
 
 Adding by id enrols the user without asking them — it mirrors the platform
 admin naming an owner at creation, and the org's administrators already see
@@ -287,18 +299,24 @@ it. See [identity.md](../tenancy/identity.md#accepting-as-an-existing-account).
 **Request Body** (`inviteOrgMemberSchema`):
 
 ```json
-{ "name": "Ada", "email": "ada@example.com", "orgRole": "ADMIN" }
+{ "name": "Ada", "email": "ada@example.com", "orgRole": "MEMBER", "tiers": ["media"] }
 ```
 
 - `orgRole`: optional, default `MEMBER` on acceptance. `OWNER` needs OWNER
   standing.
+- `tiers`: optional, named tiers a `MEMBER` invitation grants (t-1123),
+  written as the membership's grant when it is accepted. Refused beside
+  another role (`409 GRANT_NEEDS_MEMBER`) and for a tier that is not
+  grantable (`400 TIER_NOT_GRANTABLE`). A resend that names none keeps the
+  pending invitation's that are still grantable, and drops them if the
+  resend moves the invitation to another role.
 - No platform `role` and no `orgId`. A `role` key is dropped.
 - `?resend=true` re-issues this org's pending invitation. It keeps the
   pending `orgRole` unless the body names one. Replacing a pending `OWNER`
   invitation needs OWNER standing, whatever role the body sends.
 
 **Response** (201 Created): `{ message, invitation: { email, name, orgId,
-orgRole, invitedAt, expiresAt }, emailStatus }`. That is the platform route's
+orgRole, tiers, invitedAt, expiresAt }, emailStatus }`. That is the platform route's
 shape without `role` and **without `link`**. The token in the link is all
 `accept-invite` asks for before it creates a verified account with a
 password the caller chooses. An inviter who held it could therefore open an
@@ -317,6 +335,26 @@ seat; a resend and a platform admin are not refused) ·
 platform invitation for this email is pending, carrying a platform role or
 naming no org, or one this route cannot read; it is left untouched and not
 named) · `429` (invite sub-cap).
+
+### A member's console access (named tiers)
+
+```
+PUT /api/v1/orgs/[id]/members/[userId]/tiers    { "tiers": ["media", "brand"] }
+```
+
+Sets the named tiers a MEMBER holds in the org (t-1123): the grant lists
+exactly these, in registration order. `[]` removes it. Same admission as the
+members routes; an ADMIN may set it, since every named tier is narrower than
+their role. Browser session only. See
+[Granting named tiers](../auth/authorization.md#granting-named-tiers).
+
+**Response** (200 OK): `{ orgId, userId, tiers }`.
+
+**Error Responses**: `400` validation (not a list of tier names) ·
+`400 INSTALL_ORG_MEMBERSHIP` · `400 TIER_NOT_GRANTABLE` (names each) ·
+`404 NOT_A_MEMBER` · `409 GRANT_NEEDS_MEMBER` (the member is an OWNER or
+ADMIN, whose role already opens every tier). A role change away from MEMBER
+deletes the grant.
 
 ### Accept or decline an invitation
 

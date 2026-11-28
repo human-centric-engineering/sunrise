@@ -18,6 +18,27 @@ release process.
 
 ### Added
 
+- **Granting named admin tiers to a MEMBER (t-1123).** A new model,
+  `OrgMembershipGrant` (one per membership, `onDelete: Cascade` with it),
+  lists the named tiers a MEMBER holds in their org. `registerAdminTier()`'s
+  `holds` is now **optional**: a tier registered without one is held by a
+  MEMBER whose grant lists it, and the new `grantable` option (default `true`
+  with no `holds()`, `false` with one) says whether org admins may grant it.
+  An org admin sets a grant with `PUT /api/v1/orgs/[id]/members/[userId]/tiers`
+  or on the Members page; `POST /api/v1/orgs/[id]/invitations` and
+  `POST /api/v1/orgs/[id]/members` take `tiers`, and an accepted invitation
+  writes the grant with the membership (`InvitationMetadata.tiers`,
+  `User.signupOrgTiers` for the t-838 heal). A role change away from MEMBER
+  deletes the grant. `GET /api/v1/orgs/[id]/members` returns each member's
+  `tiers` and the `grantableTiers`. New helpers in `lib/tenancy/tier-grants.ts`
+  (`membershipGrantHolds()`, `grantableAdminTiers()`) and
+  `setMemberTiers()` in `lib/tenancy/lifecycle.ts`. Both export manifests
+  carry the grant inside the membership rows. With no grantable tier
+  registered nothing changes. A fork that built its own grant (ConQuest's
+  agency access) can move to this one. Migration
+  `20261130090000_org_membership_grant`. A fork that edited `OrgMembership`
+  merges one new relation line.
+
 - **Billing plans, and each org's plan (§139 t-1093).** A new seam,
   `lib/app/billing.ts` → `initAppBilling()`, shipped empty: an app registers
   plans with `registerPlan()` (every switch the plan decides, on or off; meter
