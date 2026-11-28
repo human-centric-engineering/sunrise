@@ -192,6 +192,16 @@ release process.
 
 ### Fixed
 
+- **A fork's authorization policy and sealed stores no longer run inside
+  Sunrise's own tests (#1361, #1359).** **A fork's tests**: `tests/setup.ts`
+  now pins `initAppAuthorizationPolicy` and `initAppSealedStores` to no-ops, as
+  it does the other lazy `lib/app/*` inits. A test of your filled policy or
+  stores goes in `tests/unit/lib/app/authorization.test.ts` or
+  `sealed-stores.test.ts` (or `<seam>.<aspect>.test.ts`) and restores the seam
+  with `vi.mock(…, (importOriginal) => importOriginal())`; anywhere else, mock
+  the init yourself, as `authorization-safe-mode.test.ts` does. A local
+  `vi.mock('@/lib/app/sealed-stores')` you carry in `org-provider-keys.test.ts`
+  can go.
 - **A self-serve signup at `TENANCY_MODE=multi` writes its founder's
   membership (§134 t-1062, found in §139 t-1096).** The batch that writes it
   removes the signup org's awaiting-founder mark with raw SQL, on an auth

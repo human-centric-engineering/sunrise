@@ -192,6 +192,14 @@ describe('undeclaredRepoRootedTests', () => {
     // locally and fails in full CI, as a fork's PR did.
     const target = 'tests/unit/emails/pseudo-locale.test.tsx';
     const source = readFileSync(resolve(process.cwd(), target), 'utf8');
+    // Declared by name, so the guard holds even if the detector below stops
+    // recognising how the test reads the directory.
+    expect(alwaysRunPaths()).toContain(target);
+    // And the detector still sees its real source as tree-reading, so the
+    // empty answer under its real name is the list subtracting it.
+    expect(
+      undeclaredRepoRootedTests(['tests/unit/pretend-undeclared.test.tsx'], () => source)
+    ).toEqual(['tests/unit/pretend-undeclared.test.tsx']);
     expect(undeclaredRepoRootedTests([target], () => source)).toEqual([]);
   });
 });

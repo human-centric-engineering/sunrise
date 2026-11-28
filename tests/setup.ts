@@ -413,7 +413,8 @@ vi.mock('@/lib/app/waitlist-config', () => ({ waitlistConfig: null }));
  * real init with `vi.importActual` only to check the pin replaces it. A test that needs a seam filled mocks it itself, as
  * `org-tier-admin-pages.test.ts`, `user-created-hooks.test.ts`,
  * `erasure-hooks-seam.test.ts`, `org-created-hooks.test.ts`,
- * `signup-org.test.ts` and `app-pins.test.ts` do.
+ * `signup-org.test.ts`, `app-pins.test.ts`, `authorization-safe-mode.test.ts`,
+ * `authorization-async.test.ts` and `sealed-stores.test.ts` do.
  * A fork tests its own filled seam in `tests/unit/lib/app/<seam>.test.ts`,
  * which may read the real seam too. `defaults.test.ts` fails any other file
  * that reads a pinned seam past its pin, or unmocks one.
