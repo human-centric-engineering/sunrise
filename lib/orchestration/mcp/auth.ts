@@ -13,8 +13,7 @@ import { logger } from '@/lib/logging';
 import { mcpKeyScopeSchema } from '@/lib/validations/mcp';
 import { resolveCredentialOrg, verifiedMembership } from '@/lib/tenancy/entry';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { isMultiTenant } from '@/lib/tenancy/context';
-import { runAsCredentialLookup } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsCredentialLookup } from '@/lib/tenancy/context';
 import type { McpAuthContext } from '@/types/mcp';
 
 /** Prefix every MCP API key carries; the rate-limit credential lookup reads it too. */

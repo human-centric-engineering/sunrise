@@ -291,13 +291,14 @@ describe('authenticateMcpRequest — the org the key acts for (§106, t-673)', (
     } as never);
   });
 
-  it('reads the org’s status with the key — one query, no second read', async () => {
+  it('reads the org’s status with the key — one key read, then only the creator’s membership', async () => {
     vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
       makeMcpApiKey({ orgId: OTHER, org: { status: 'ACTIVE' } }) as never
     );
     const result = await authenticateMcpRequest('smcp_bound', CLIENT_IP, USER_AGENT);
     expect(result?.orgId).toBe(OTHER);
     expect(prisma.mcpApiKey.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.orgMembership.findUnique).toHaveBeenCalledTimes(1);
     expect(prisma.mcpApiKey.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ include: { org: { select: { status: true } } } })
     );

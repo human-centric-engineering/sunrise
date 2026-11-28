@@ -89,9 +89,10 @@ export const POST = withAdminAuth(
         expiresAt: body.expiresAt ?? null,
         rateLimitOverride: body.rateLimitOverride ?? null,
         createdBy: session.user.id,
-        // The org the request acts in (§106, t-673). The key outlives its
-        // creator (`createdBy` is SetNull) but not its org (Cascade), and
-        // `authenticateMcpRequest` enters this org for every request it admits.
+        // The org the request acts in (§106, t-673). The key is deleted with
+        // its org (Cascade) and refused once its creator leaves the org or is
+        // erased (#1358); `authenticateMcpRequest` enters this org for every
+        // request it admits.
         orgId: orgForMint(),
       },
     });
