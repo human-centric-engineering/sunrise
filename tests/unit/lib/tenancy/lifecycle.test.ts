@@ -12,7 +12,7 @@
  * is asserted on the same mocks. `revokeUserSessions` is mocked at the
  * module — its own test covers the filter.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { INSTALL_ORG_ID, INSTALL_ORG_SLUG } from '@/lib/tenancy/constants';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -30,6 +30,8 @@ const db = vi.hoisted(() => ({
     upsert: vi.fn(),
   },
   user: { findUnique: vi.fn(), update: vi.fn() },
+  // A member's named-tier grant (t-1123).
+  orgMembershipGrant: { deleteMany: vi.fn(), upsert: vi.fn() },
   $transaction: vi.fn(),
   // A healed signup record removes its org's awaiting-founder mark (t-1062).
   $executeRaw: vi.fn(),
@@ -86,6 +88,7 @@ import {
   OrgLifecycleError,
   removeMember,
   resolveOrgResource,
+  setMemberTiers,
   syncInstallMembershipRole,
   updateOrg,
   updateOrgReportingPrevious,
@@ -616,7 +619,7 @@ describe('addMember', () => {
     );
     expect(db.user.update).toHaveBeenCalledWith({
       where: { id: OTHER },
-      data: { signupOrgId: null, signupOrgRole: null },
+      data: { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] },
     });
   });
 
@@ -1396,4 +1399,260 @@ describe('checkInvitationInto (§111 t-813)', () => {
       });
     }
   );
+});
+
+/**
+ * Named-tier grants (t-1123). Real registrations, so the grantable check is
+ * the registry's own: `media` and `brand` are held by the grant, `reports`
+ * answers with its own holds() and is not grantable.
+ */
+describe('named-tier grants (t-1123)', () => {
+  // Named tiers admit anyone only at multi, so only there is one grantable.
+  let previousMode: string;
+  beforeEach(async () => {
+    const { env } = await import('@/lib/env');
+    previousMode = env.TENANCY_MODE;
+    env.TENANCY_MODE = 'multi';
+    const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+    registerAdminTier('media', {});
+    registerAdminTier('brand', {});
+    registerAdminTier('reports', { holds: () => false });
+  });
+
+  afterEach(async () => {
+    const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+    const { env } = await import('@/lib/env');
+    env.TENANCY_MODE = previousMode as typeof env.TENANCY_MODE;
+  });
+
+  describe('setMemberTiers', () => {
+    it('refuses every tier at single, where a grant would open nothing', async () => {
+      const { env } = await import('@/lib/env');
+      env.TENANCY_MODE = 'single';
+      db.orgMembership.findUnique.mockResolvedValue({ id: 'm1', role: DEFAULT_ORG_ROLE });
+
+      const error = await refusal(() => setMemberTiers(ORG, OTHER, ['media']));
+
+      expect(error.code).toBe('TIER_NOT_GRANTABLE');
+      expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('writes exactly the tiers asked, in registration order, on the membership', async () => {
+      db.orgMembership.findUnique.mockResolvedValue({ id: 'm1', role: DEFAULT_ORG_ROLE });
+
+      const record = await setMemberTiers(ORG, OTHER, ['brand', 'media', 'brand']);
+
+      expect(record).toEqual({ orgId: ORG, userId: OTHER, tiers: ['media', 'brand'] });
+      expect(db.orgMembershipGrant.upsert).toHaveBeenCalledWith({
+        where: { membershipId: 'm1' },
+        create: { membershipId: 'm1', tiers: ['media', 'brand'] },
+        update: { tiers: ['media', 'brand'] },
+      });
+      expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    });
+
+    it('removes the grant for an empty list, and writes none', async () => {
+      db.orgMembership.findUnique.mockResolvedValue({ id: 'm1', role: DEFAULT_ORG_ROLE });
+
+      const record = await setMemberTiers(ORG, OTHER, []);
+
+      expect(record.tiers).toEqual([]);
+      expect(db.orgMembershipGrant.deleteMany).toHaveBeenCalledWith({
+        where: { membershipId: 'm1' },
+      });
+      expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a tier that is not registered, or not grantable, naming it, and writes nothing', async () => {
+      db.orgMembership.findUnique.mockResolvedValue({ id: 'm1', role: DEFAULT_ORG_ROLE });
+
+      const error = await refusal(() => setMemberTiers(ORG, OTHER, ['media', 'reports', 'nope']));
+
+      expect(error.code).toBe('TIER_NOT_GRANTABLE');
+      expect(error.status).toBe(400);
+      expect(error.message).toContain('reports, nope');
+      expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+      expect(db.orgMembershipGrant.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it.each([ORG_ADMIN_ROLE, ORG_OWNER_ROLE])(
+      'refuses a grant beside %s, whose role already opens every tier',
+      async (role) => {
+        db.orgMembership.findUnique.mockResolvedValue({ id: 'm1', role });
+
+        const error = await refusal(() => setMemberTiers(ORG, OTHER, ['media']));
+
+        expect(error.code).toBe('GRANT_NEEDS_MEMBER');
+        expect(error.status).toBe(409);
+        expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses someone who is not a member (404)', async () => {
+      db.orgMembership.findUnique.mockResolvedValue(null);
+
+      const error = await refusal(() => setMemberTiers(ORG, OTHER, ['media']));
+
+      expect(error.code).toBe('NOT_A_MEMBER');
+      expect(error.status).toBe(404);
+    });
+
+    it('refuses the install org before reading anything', async () => {
+      const error = await refusal(() => setMemberTiers(INSTALL_ORG_ID, OTHER, ['media']));
+
+      expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
+      expect(db.orgMembership.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('changeMemberRole clears the grant when the role leaves MEMBER', () => {
+    beforeEach(() => {
+      db.orgMembership.update.mockImplementation(({ data }: { data: { role: string } }) =>
+        Promise.resolve({
+          id: 'm1',
+          orgId: ORG,
+          userId: OTHER,
+          role: data.role,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+      );
+    });
+
+    it.each([ORG_ADMIN_ROLE, ORG_OWNER_ROLE])(
+      'deletes the grant on a move to %s, in the same transaction',
+      async (role) => {
+        db.orgMembership.findUnique.mockResolvedValue({ role: DEFAULT_ORG_ROLE });
+
+        await changeMemberRole(ORG, OTHER, role, AS_OWNER);
+
+        expect(db.orgMembershipGrant.deleteMany).toHaveBeenCalledWith({
+          where: { membershipId: 'm1' },
+        });
+        expect(db.$transaction).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('keeps the grant when the role stays MEMBER', async () => {
+      db.orgMembership.findUnique.mockResolvedValue({ role: DEFAULT_ORG_ROLE });
+
+      await changeMemberRole(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER);
+
+      expect(db.orgMembershipGrant.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('addMember with tiers', () => {
+    beforeEach(() => {
+      db.org.findUnique.mockResolvedValue(orgRow());
+      db.user.findUnique.mockResolvedValue(human(OTHER));
+      db.orgMembership.findUnique.mockResolvedValue(null);
+      db.orgMembership.create.mockImplementation(({ data }: { data: object }) =>
+        Promise.resolve({ id: 'm1', createdAt: new Date(), updatedAt: new Date(), ...data })
+      );
+    });
+
+    it('writes the grant with a MEMBER membership', async () => {
+      await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN, undefined, {
+        tiers: ['brand', 'media'],
+      });
+
+      expect(db.orgMembershipGrant.upsert).toHaveBeenCalledWith({
+        where: { membershipId: 'm1' },
+        create: { membershipId: 'm1', tiers: ['media', 'brand'] },
+        update: { tiers: ['media', 'brand'] },
+      });
+    });
+
+    it('refuses tiers asked beside an ADMIN role, writing nothing', async () => {
+      const error = await refusal(() =>
+        addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER, undefined, { tiers: ['media'] })
+      );
+
+      expect(error.code).toBe('GRANT_NEEDS_MEMBER');
+      expect(db.orgMembership.create).not.toHaveBeenCalled();
+      expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses tiers in the install org before reading anything', async () => {
+      const error = await refusal(() =>
+        addMember(INSTALL_ORG_ID, OTHER, undefined, AS_PLATFORM, undefined, { tiers: ['media'] })
+      );
+
+      expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
+      expect(db.org.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('writes no grant when the first-owner bootstrap makes the newcomer OWNER', async () => {
+      db.orgMembership.count.mockResolvedValue(0);
+
+      const membership = await addMember(ORG, OTHER, undefined, AS_OWNER, undefined, {
+        tiers: ['media'],
+      });
+
+      expect(membership.role).toBe(ORG_OWNER_ROLE);
+      expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a tier that cannot be granted before writing the membership', async () => {
+      const error = await refusal(() =>
+        addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN, undefined, { tiers: ['reports'] })
+      );
+
+      expect(error.code).toBe('TIER_NOT_GRANTABLE');
+      expect(db.orgMembership.create).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('addMember over a healed membership (t-1123)', () => {
+  beforeEach(() => {
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.user.findUnique.mockResolvedValue(human(OTHER));
+    db.orgMembership.update.mockImplementation(({ data }: { data: { role: string } }) =>
+      Promise.resolve({
+        id: 'm1',
+        orgId: ORG,
+        userId: OTHER,
+        role: data.role,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    );
+  });
+
+  const healedAs = (role: string) =>
+    db.orgMembership.findUnique
+      .mockResolvedValueOnce(null) // the ALREADY_MEMBER check, before the heal
+      .mockResolvedValueOnce({
+        id: 'm1',
+        orgId: ORG,
+        userId: OTHER,
+        role,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+  it('deletes the grant when the role asked for moves the healed membership off MEMBER', async () => {
+    healedAs(DEFAULT_ORG_ROLE);
+
+    await addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER);
+
+    expect(db.orgMembership.update).toHaveBeenCalled();
+    expect(db.orgMembershipGrant.deleteMany).toHaveBeenCalledWith({
+      where: { membershipId: 'm1' },
+    });
+  });
+
+  it('keeps it when the healed membership stays MEMBER', async () => {
+    healedAs(DEFAULT_ORG_ROLE);
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER);
+
+    expect(db.orgMembershipGrant.deleteMany).not.toHaveBeenCalled();
+  });
 });

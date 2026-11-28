@@ -1,8 +1,10 @@
 /**
  * Invite someone into an org, for the people who administer it (§111 t-813)
  *
- * POST /api/v1/orgs/[id]/invitations — `{ name, email, orgRole? }`. The
- * invitee joins this org on acceptance, as a platform USER.
+ * POST /api/v1/orgs/[id]/invitations — `{ name, email, orgRole?, tiers? }`.
+ * The invitee joins this org on acceptance, as a platform USER. `tiers` are
+ * named admin tiers (t-1123) a MEMBER invitation grants: acceptance writes
+ * them as the membership's grant, with the membership.
  * POST /api/v1/orgs/[id]/invitations?resend=true — re-send this org's pending
  * invitation to that email, with a new token.
  *
@@ -58,13 +60,15 @@ import { ErrorCodes, ForbiddenError } from '@/lib/api/errors';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { orgIdParamSchema, inviteOrgMemberSchema } from '@/lib/validations/tenancy';
 import {
+  checkGrantableTiers,
   checkInvitationInto,
   OrgLifecycleError,
   resolveOrgResource,
   membershipActorOf,
 } from '@/lib/tenancy/lifecycle';
 import { isPlatformInvitation, pendingInvitationsFor } from '@/lib/utils/invitation-token';
-import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { grantableTiersAmong } from '@/lib/tenancy/tier-grants';
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -152,6 +156,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
         name: existingInvitation.metadata.name,
         orgId: id,
         orgRole: existingInvitation.metadata.orgRole ?? null,
+        tiers: existingInvitation.metadata.tiers ?? [],
         invitedAt: existingInvitation.metadata.invitedAt,
         expiresAt: existingInvitation.expiresAt.toISOString(),
       },
@@ -177,6 +182,24 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
     await checkInvitationInto(id, ORG_OWNER_ROLE, actor);
   }
 
+  // Named tiers (t-1123) widen a MEMBER, so an invitation at another role
+  // carries none: asking for them there is refused, and a resend that moves
+  // a pending MEMBER invitation to another role drops them. Tiers the caller
+  // names are checked, and refused by name; a resend that names none keeps
+  // the pending invitation's that are still grantable.
+  const asMember = (orgRole ?? DEFAULT_ORG_ROLE) === DEFAULT_ORG_ROLE;
+  if (body.tiers && body.tiers.length > 0 && !asMember) {
+    throw new OrgLifecycleError(
+      'GRANT_NEEDS_MEMBER',
+      'Only a member invitation can grant tiers; owners and admins already open every one'
+    );
+  }
+  const tiers = !asMember
+    ? []
+    : body.tiers
+      ? await checkGrantableTiers(body.tiers)
+      : grantableTiersAmong(existingInvitation?.metadata.tiers ?? []);
+
   const invitedAt = new Date().toISOString();
   const delivered = await deliverInvitation({
     email: body.email,
@@ -188,6 +211,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
       invitedAt,
       orgId: id,
       ...(orgRole ? { orgRole } : {}),
+      ...(tiers.length > 0 ? { tiers } : {}),
     },
     isResend: !!existingInvitation,
     inviterName: session.user.name,
@@ -200,6 +224,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
     orgId: id,
     email: body.email,
     orgRole: orgRole ?? null,
+    tiers,
     invitedBy: session.user.id,
   });
 
@@ -211,6 +236,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
         name: body.name,
         orgId: id,
         orgRole: orgRole ?? null,
+        tiers,
         invitedAt,
         expiresAt: delivered.expiresAt.toISOString(),
         // No `link`: the token in it is the only proof acceptance asks for,

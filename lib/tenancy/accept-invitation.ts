@@ -17,6 +17,9 @@
  * anyone else is refused, and told so, rather than redeeming the invitation
  * into the wrong account.
  *
+ * An invitation that grants named tiers (t-1123) writes its grant with the
+ * membership, in `addMember`'s transaction, as a new account's signup does.
+ *
  * Only an org invitation with no platform role can be accepted here. One that
  * grants a platform role, or names no org, is the platform's invitation from
  * Users. It is written to create an account, and an existing account is not
@@ -141,13 +144,16 @@ export async function acceptInvitationAsExistingUser(
   // org role, default MEMBER, and OWNER by the first-owner bootstrap.
   // `accepter.role` is the account's own platform role: a platform ADMIN
   // accepting here is staff, and does not take that bootstrap (#1178).
-  const { role } = await membershipForNewUser({ role: accepter.role }, metadata);
+  // `tiers`: the named tiers the invitation grants, when the membership is a
+  // MEMBER one (t-1123), written with it by `addMember`.
+  const { role, tiers } = await membershipForNewUser({ role: accepter.role }, metadata);
 
   let membership: MembershipRecord;
   try {
     // The invitation's seat was counted when it was issued.
     membership = await addMember(orgId, accepter.id, role, ISSUED_INVITATION_ACTOR, undefined, {
       seatHeld: true,
+      ...(tiers ? { tiers } : {}),
     });
   } catch (error) {
     // Already a member: the invitation has nothing left to grant.

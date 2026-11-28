@@ -1822,7 +1822,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         expect(ops).toHaveLength(3);
         expect(mocks.prisma.user.update).toHaveBeenCalledWith({
           where: { id: 'tx-user' },
-          data: { signupOrgId: null, signupOrgRole: null },
+          data: { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] },
         });
       });
 

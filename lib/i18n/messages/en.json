@@ -1185,7 +1185,9 @@
         "sending": "Sending…",
         "failed": "An unexpected error occurred",
         "pending": "An invitation to {email} is already pending. Sending it again keeps its role.",
+        "pendingWithAccess": "An invitation to {email} is already pending. Sending it again keeps its role and console access.",
         "pendingAs": "An invitation to {email} is already pending as {role}. Sending it again keeps that role.",
+        "pendingAsWithAccess": "An invitation to {email} is already pending as {role}. Sending it again keeps that role and its console access.",
         "sendAgain": "Send it again",
         "sent": "Invitation sent to {email}.",
         "saved": "Invitation saved for {email}.",
@@ -1207,6 +1209,20 @@
         "removeSelf": "You will lose access to this organisation, including this page, and be signed out of it. Your account and your access to other organisations are not affected.",
         "removeOther": "{who} will lose access to this organisation and be signed out of it. Their account and their access to other organisations are not affected.",
         "removeConfirm": "Remove"
+      },
+      "tiers": {
+        "label": "Console access",
+        "helpTitle": "Console access",
+        "help": "A member can't open the admin console. Tick the parts of it they should be able to use. Owners and admins can already use every part.",
+        "memberOnly": "Only for the Member role. Owners and admins can already use every part.",
+        "none": "None",
+        "all": "All",
+        "edit": "Change console access for {who}",
+        "dialogTitle": "Console access for {who}",
+        "dialogDescription": "Tick the parts of the console {who} can use. Untick them all to take their access away.",
+        "save": "Save",
+        "saving": "Saving…",
+        "saveFailed": "Could not change console access. Try again."
       }
     },
     "orgOptions": {

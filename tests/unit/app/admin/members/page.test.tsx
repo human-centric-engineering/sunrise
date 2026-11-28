@@ -80,8 +80,20 @@ describe('MembersPage', () => {
       orgId: 'org-entered',
       members: MEMBERS,
       currentUserId: 'u-1',
+      grantableTiers: [],
     });
-    expect(formProps).toHaveBeenCalledWith({ orgId: 'org-entered' });
+    expect(formProps).toHaveBeenCalledWith({ orgId: 'org-entered', grantableTiers: [] });
+  });
+
+  it('hands the tiers the API offers to the invite form and the table (t-1123)', async () => {
+    actAs({ id: 'org-entered', name: 'Acme' });
+    const grantableTiers = [{ name: 'media', label: 'Media library' }];
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ members: MEMBERS, grantableTiers }));
+
+    render(await MembersPage());
+
+    expect(tableProps).toHaveBeenCalledWith(expect.objectContaining({ grantableTiers }));
+    expect(formProps).toHaveBeenCalledWith({ orgId: 'org-entered', grantableTiers });
   });
 
   it('links to roles and access, from the page an org admin may land on (t-1091)', async () => {

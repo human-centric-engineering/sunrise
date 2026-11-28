@@ -99,6 +99,7 @@ describe('POST /api/auth/send-verification-email', () => {
     preferences: {},
     signupOrgId: null,
     signupOrgRole: null,
+    signupOrgTiers: [],
     erasureRequestedAt: null,
     erasureRequestedBy: null,
     erasureReason: null,

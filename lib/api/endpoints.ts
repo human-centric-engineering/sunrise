@@ -62,6 +62,9 @@ export const API = {
     members: (id: string): string => `/api/v1/orgs/${id}/members`,
     /** One membership (OWNER/ADMIN of that org) */
     member: (id: string, userId: string): string => `/api/v1/orgs/${id}/members/${userId}`,
+    /** One member's named-tier grant (t-1123) */
+    memberTiers: (id: string, userId: string): string =>
+      `/api/v1/orgs/${id}/members/${userId}/tiers`,
     /** Invite someone into the org (OWNER/ADMIN of that org) */
     invitations: (id: string): string => `/api/v1/orgs/${id}/invitations`,
     /** The org's support grants (OWNER grants; OWNER/ADMIN or a platform admin reads and revokes) */

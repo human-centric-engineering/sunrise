@@ -115,12 +115,46 @@ model OrgMembership {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  org  Org  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  user User @relation("OrgMembershipUser", fields: [userId], references: [id], onDelete: Cascade)
+  org   Org                 @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user  User                @relation("OrgMembershipUser", fields: [userId], references: [id], onDelete: Cascade)
+  /// The named tiers this membership opens beyond its role (t-1123), if any.
+  grant OrgMembershipGrant?
 
   @@unique([orgId, userId])
   @@index([userId])
   @@map("org_membership")
+}
+
+/// The named admin tiers a MEMBER holds in their org (t-1123): part of the
+/// console, not all of it, without making them an org ADMIN. See
+/// `.context/auth/authorization.md`, "Granting named tiers".
+///
+/// One per membership, and only beside a MEMBER one: it widens a MEMBER and
+/// never narrows anyone, so it fails closed. Written directly by an org admin
+/// (`setMemberTiers()`, `lib/tenancy/lifecycle.ts`) or from the org
+/// invitation the member accepted, when the membership is written; nothing
+/// binds on read. Cleared when the membership's role leaves MEMBER, and goes
+/// with the membership (cascade), so removing the person or erasing them or
+/// their org removes it.
+///
+/// Its own model rather than a column on `OrgMembership`, so the grant can
+/// gain fields without widening the membership, and a fork can hang its own
+/// fields (an agency's name, say) off `membershipId`.
+///
+/// A system model, as `OrgMembership` is: it is read with the membership that
+/// decides the tenant, and carries no `orgId` of its own (the membership's is
+/// the org). Exported inside the membership rows of both export manifests.
+model OrgMembershipGrant {
+  id           String   @id @default(cuid())
+  membershipId String   @unique
+  /// Named tiers (`registerAdminTier()`), each one grantable when written.
+  tiers        String[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  membership OrgMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@map("org_membership_grant")
 }
 
 /// An org's consent for the vendor's support staff to act inside it, for a

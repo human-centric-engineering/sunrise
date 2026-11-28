@@ -969,7 +969,11 @@ merge-impact section promises forks.
 
 - **Not a fourth org role.** The enum is closed upstream. A "billing admin"
   or "viewer" is a product-layer concept on your side of the FK, not a value
-  on `OrgMembership.role`.
+  on `OrgMembership.role`. To open part of the console to a MEMBER, register
+  a named tier and let org admins grant it: the grant is core's
+  (`OrgMembershipGrant`, one per MEMBER membership, cascading with it;
+  [Granting named tiers](../auth/authorization.md#granting-named-tiers)).
+  Fields of your own about it go in your table, keyed on the membership.
 - **Not a second "install" org.** `INSTALL_ORG_ID` is a fixed literal the
   guard, the hook and the migration all name; it can never be suspended or
   deleted (ruling b on the feature).

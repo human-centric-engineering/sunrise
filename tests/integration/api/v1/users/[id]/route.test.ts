@@ -211,6 +211,7 @@ function makeUserFixture(overrides: Record<string, unknown> = {}) {
     preferences: {},
     signupOrgId: null,
     signupOrgRole: null,
+    signupOrgTiers: [],
     erasureRequestedAt: null,
     erasureRequestedBy: null,
     erasureReason: null,

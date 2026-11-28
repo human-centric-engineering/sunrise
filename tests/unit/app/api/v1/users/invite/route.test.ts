@@ -14,6 +14,12 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+
+// Which named tiers are still grantable is tier-grants.test.ts's; here, that
+// a resend carries what it answers. `media` is grantable, anything else is not.
+vi.mock('@/lib/tenancy/tier-grants', () => ({
+  grantableTiersAmong: (asked: readonly string[]) => asked.filter((name) => name === 'media'),
+}));
 import type { NextRequest } from 'next/server';
 
 vi.mock('@/lib/auth/config', () => ({
@@ -353,6 +359,30 @@ describe('POST /api/v1/users/invite — org axis', () => {
       expect(prisma.org.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: OTHER_ORG } })
       );
+    });
+
+    describe('named tiers (t-1123)', () => {
+      it('keeps the tiers an org admin granted with a MEMBER invitation, those still grantable', async () => {
+        pending({ orgId: OTHER_ORG, tiers: ['media', 'gone'] });
+
+        const res = await POST(
+          request({ ...invitee, role: 'USER', orgId: OTHER_ORG }, '?resend=true')
+        );
+
+        expect(res.status).toBe(201);
+        expect(rewritten()).toMatchObject({ orgId: OTHER_ORG, tiers: ['media'] });
+      });
+
+      it('drops them when the resend moves the invitation to ADMIN', async () => {
+        pending({ orgId: OTHER_ORG, tiers: ['media'] });
+
+        await POST(
+          request({ ...invitee, role: 'USER', orgId: OTHER_ORG, orgRole: 'ADMIN' }, '?resend=true')
+        );
+
+        expect(rewritten()).toMatchObject({ orgRole: 'ADMIN' });
+        expect(rewritten()).not.toHaveProperty('tiers');
+      });
     });
 
     it('a body naming another org writes that org its own invitation, leaving the pending one', async () => {

@@ -129,6 +129,7 @@ import { isMultiTenant } from '@/lib/tenancy/context';
 import { createAppInitGate } from '@/lib/fork-init';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
 import { namedAdminTier } from '@/lib/auth/org-tier-admin-pages';
+import { membershipGrantHolds } from '@/lib/tenancy/tier-grants';
 import { orgHasSwitch } from '@/lib/tenancy/entitlements';
 
 /**
@@ -617,7 +618,13 @@ async function administersOrgTier(
     // enough here: the principal's one nested value is an API key's
     // `scopes`, and a key never reaches this line (refused above).
     const orgId = viewer.orgId;
-    return (await named.holds(Object.freeze({ ...viewer, orgId }))) === true;
+    const frozen = Object.freeze({ ...viewer, orgId });
+    // A tier the app registered without a holds() is held by the grant
+    // (t-1123): a MEMBER whose membership's grant lists it.
+    const holds = named.holds
+      ? await named.holds(frozen)
+      : await membershipGrantHolds(frozen, tier);
+    return holds === true;
   } catch (error) {
     logger.error(
       'authorization: a named admin tier could not say who holds it, so it admits nobody',

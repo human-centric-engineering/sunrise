@@ -46,7 +46,7 @@ import {
   type AdminPageRequirement,
   type ClosableCoreOrgTierSection,
   type NamedAdminTier,
-  type NamedAdminTierDefinition,
+  type RegisteredNamedAdminTier,
   type NamedTierAdminPage,
 } from '@/lib/auth/admin-tier';
 
@@ -163,7 +163,7 @@ export function namedAdminTiers(): readonly NamedAdminTier[] {
  * that name. What the default policy asks before it admits anyone to a
  * surface declared for the tier; a name nobody registered admits nobody.
  */
-export function namedAdminTier(name: string): Readonly<NamedAdminTierDefinition> | undefined {
+export function namedAdminTier(name: string): RegisteredNamedAdminTier | undefined {
   appInit.ensure();
   return registeredNamedAdminTier(name);
 }

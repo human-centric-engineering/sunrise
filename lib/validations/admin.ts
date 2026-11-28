@@ -211,6 +211,13 @@ export const invitationMetadataSchema = z.object({
    * the new account by this id, never by the address.
    */
   waitlistEntryId: z.string().min(1).optional(),
+  /**
+   * The named admin tiers the invitee holds once they join as a MEMBER
+   * (t-1123). Absent for every other invitation. Checked against the
+   * grantable tiers when written and again at acceptance, which keeps only
+   * those still grantable.
+   */
+  tiers: z.array(z.string().min(1).max(48)).max(32).optional(),
 });
 
 export type InvitationMetadata = z.infer<typeof invitationMetadataSchema>;

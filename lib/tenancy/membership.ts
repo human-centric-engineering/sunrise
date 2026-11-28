@@ -25,6 +25,7 @@
  */
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { serviceAccountWhere } from '@/lib/auth/account';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { requiresEmailVerification } from '@/lib/auth/verification-status';
@@ -62,12 +63,24 @@ export interface AcceptedInvitation {
    * then ({@link takesFirstOwnership}, #1235); absent ⇒ they do not.
    */
   invitedBy?: string | null;
+  /**
+   * The named tiers the invitation grants a MEMBER (t-1123); absent ⇒ none.
+   * Written as the membership's grant only when the membership is MEMBER in a
+   * non-install org, and only the tiers still grantable at acceptance.
+   */
+  tiers?: readonly string[] | null;
 }
 
 /** Where a new user lands, and as what. */
 export interface InitialMembership {
   orgId: string;
   role: OrgRole;
+  /**
+   * The named tiers the membership's grant lists (t-1123). Present only on a
+   * MEMBER membership of a non-install org whose invitation granted some;
+   * written in the same statement as the membership.
+   */
+  tiers?: readonly string[];
 }
 
 /**
@@ -134,7 +147,44 @@ export async function membershipForNewUser(
   const issuerStanding =
     (nonStaff === 0 || invitation?.orgRole === ORG_OWNER_ROLE) &&
     (await hasOwnerStandingIn(orgId, invitation?.invitedBy ?? null, db));
-  return membershipGiven(user, invitation, nonStaff, issuerStanding);
+  return withInvitedTiers(membershipGiven(user, invitation, nonStaff, issuerStanding), invitation);
+}
+
+/**
+ * `membership` with the named tiers its invitation grants (t-1123), when it
+ * is a MEMBER membership of a non-install org: a grant widens a MEMBER and
+ * nobody else, so an invitation that became an OWNER one by the first-owner
+ * bootstrap carries none. Only the tiers grantable now are kept, so a tier
+ * the app stopped registering since the invitation was sent is not written.
+ *
+ * Only on the decided path. A decision that failed
+ * (`undecidedMembershipsForNewUser`) writes a plain MEMBER: the grant fails
+ * closed, and an org admin can grant the tiers afterwards.
+ */
+async function withInvitedTiers(
+  membership: InitialMembership,
+  invitation: AcceptedInvitation | null
+): Promise<InitialMembership> {
+  const asked = invitation?.tiers ?? [];
+  if (asked.length === 0) return membership;
+  if (membership.orgId === INSTALL_ORG_ID || membership.role !== DEFAULT_ORG_ROLE) {
+    return membership;
+  }
+  // Lazily: the tier registry runs the app's init, whose scaffold may import
+  // modules that import this one. A registry that fails writes a plain
+  // MEMBER, logged, rather than refusing the person the org: the grant fails
+  // closed, and an org admin can grant the tiers afterwards.
+  try {
+    const { grantableTiersAmong } = await import('@/lib/tenancy/tier-grants');
+    const tiers = grantableTiersAmong(asked);
+    return tiers.length > 0 ? { ...membership, tiers } : membership;
+  } catch (error) {
+    logger.error('Could not read the grantable tiers; the invitation’s tiers are not granted', {
+      orgId: membership.orgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return membership;
+  }
 }
 
 /** The reads the first-owner bootstrap makes. */
@@ -437,8 +487,7 @@ export async function backfillInstallMemberships(
         id: true,
         role: true,
         accountType: true,
-        signupOrgId: true,
-        signupOrgRole: true,
+        ...signupRecordSelect,
       },
       orderBy: { id: 'asc' },
       take: INSTALL_BACKFILL_BATCH,
@@ -490,18 +539,38 @@ export const INSTALL_BACKFILL_BATCH = 500;
 export interface SignupRecord {
   signupOrgId: string | null;
   signupOrgRole: OrgRole | null;
+  /**
+   * The named tiers that membership's grant lists (t-1123); empty or absent
+   * for none. Optional so a record built before it existed still reads.
+   */
+  signupOrgTiers?: string[];
 }
 
 /** The record {@link SignupRecord} describes, for the decided memberships. */
 export function signupRecordFor(memberships: NewUserMemberships): SignupRecord {
+  const tiers = memberships.membership.tiers ?? [];
   return {
     signupOrgId: memberships.membership.orgId,
     signupOrgRole: memberships.membership.role,
+    // Only when there are some: every other signup writes exactly what it
+    // did before, and the column's default is the empty list.
+    ...(tiers.length > 0 ? { signupOrgTiers: [...tiers] } : {}),
   };
 }
 
 /** The cleared record, written once the membership it names exists. */
-const CLEARED_SIGNUP_RECORD: SignupRecord = { signupOrgId: null, signupOrgRole: null };
+const CLEARED_SIGNUP_RECORD: SignupRecord = {
+  signupOrgId: null,
+  signupOrgRole: null,
+  signupOrgTiers: [],
+};
+
+/** The columns of a user row that make up its {@link SignupRecord}. */
+const signupRecordSelect = {
+  signupOrgId: true,
+  signupOrgRole: true,
+  signupOrgTiers: true,
+} as const;
 
 /**
  * Pay what `userId`'s {@link SignupRecord} owes, if one is set, and clear it.
@@ -530,7 +599,7 @@ export async function healSignupRecord(
 ): Promise<string | null> {
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { role: true, accountType: true, signupOrgId: true, signupOrgRole: true },
+    select: { role: true, accountType: true, ...signupRecordSelect },
   });
   if (!user?.signupOrgId) return null;
   const recorded = await recordedMemberships(userId, user, db);
@@ -555,9 +624,11 @@ export function membershipsFromSignupRecord(
   record: SignupRecord
 ): NewUserMemberships | null {
   if (!record.signupOrgId || !record.signupOrgRole) return null;
+  const tiers = record.signupOrgTiers ?? [];
   return withInstallFloor(user, null, {
     orgId: record.signupOrgId,
     role: record.signupOrgRole,
+    ...(tiers.length > 0 ? { tiers } : {}),
   });
 }
 
@@ -759,7 +830,7 @@ export async function activeOrgForSession(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { role: true, accountType: true, signupOrgId: true, signupOrgRole: true },
+    select: { role: true, accountType: true, ...signupRecordSelect },
   });
   // No user row means no session can be minted for it either; the FK on the
   // membership would refuse the write, so answer the mode's default and let
@@ -852,9 +923,18 @@ function upsertMembership(
   membership: InitialMembership,
   db: Pick<PrismaClient, 'orgMembership'>
 ) {
+  // The grant rides in the membership's own INSERT (t-1123), so the two land
+  // together or not at all; a membership already there is left as it is,
+  // grant included. Only beside a MEMBER: a grant widens nobody else.
+  const tiers = membership.role === DEFAULT_ORG_ROLE ? (membership.tiers ?? []) : [];
   return db.orgMembership.upsert({
     where: { orgId_userId: { orgId: membership.orgId, userId } },
     update: {},
-    create: { orgId: membership.orgId, userId, role: membership.role },
+    create: {
+      orgId: membership.orgId,
+      userId,
+      role: membership.role,
+      ...(tiers.length > 0 ? { grant: { create: { tiers: [...tiers] } } } : {}),
+    },
   });
 }

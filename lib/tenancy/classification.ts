@@ -53,7 +53,9 @@ import { logger } from '@/lib/logging';
  * `Session` / `Account` are the user's under multi-membership, not any one
  * org's (§107 planning decision, 2026-09-18). `OrgSupportGrant` (§121 t-823)
  * is `OrgMembership`'s other half: it decides whether a non-member may enter,
- * so it is read before any org is.
+ * so it is read before any org is. `OrgMembershipGrant` (t-1123) is part of
+ * the membership: the named tiers a MEMBER holds, read with the membership
+ * and carrying no `orgId` of its own.
  */
 export const SYSTEM_MODELS = [
   'User',
@@ -62,6 +64,7 @@ export const SYSTEM_MODELS = [
   'Verification',
   'Org',
   'OrgMembership',
+  'OrgMembershipGrant',
   'OrgSupportGrant',
   'AuthBootstrap',
   'SeedHistory',

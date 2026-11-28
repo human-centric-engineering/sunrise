@@ -78,7 +78,8 @@ import { getClientIP } from '@/lib/security/ip';
 import { DEFAULT_USER_ROLE, isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
-import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { grantableTiersAmong } from '@/lib/tenancy/tier-grants';
 
 /**
  * POST /api/v1/users/invite
@@ -360,6 +361,17 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
+  // A resend of an org's MEMBER invitation keeps the named tiers its org
+  // admin granted with it (t-1123), those still grantable: this route has no
+  // way to name tiers, so without this a platform resend would quietly drop
+  // them. Any other invitation carries none.
+  const keptTiers =
+    existingInvitation &&
+    !writesPlatform &&
+    (target.orgRole ?? DEFAULT_ORG_ROLE) === DEFAULT_ORG_ROLE
+      ? grantableTiersAmong(existingInvitation.metadata.tiers ?? [])
+      : [];
+
   // 7. Generate or regenerate invitation token
   const invitationMetadata = {
     name: body.name,
@@ -370,6 +382,7 @@ export const POST = withAdminAuth(async (request, session) => {
     // byte-identical to one written before these keys existed.
     ...(target.orgId ? { orgId: target.orgId } : {}),
     ...(target.orgRole ? { orgRole: target.orgRole } : {}),
+    ...(keptTiers.length > 0 ? { tiers: keptTiers } : {}),
   };
 
   // 7–8. Store the token (replacing the pending one on a resend) and send the email

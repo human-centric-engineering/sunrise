@@ -378,13 +378,18 @@ export function initAppOrgTierAdminPages(): void {
 | Page     | `registerOrgTierAdminPage(pattern, { tier: 'page_designs' })`    | the registration is the listing                        |
 | Nav item | `tier: 'page_designs'` on the `NavItem` (`lib/app/admin-nav.ts`) | (none)                                                 |
 
+A tier registered **without** a `holds()` is held by the platform's grant
+instead (t-1123): see [Granting named tiers](#granting-named-tiers) below.
+Give a `holds()` only when who holds the tier is decided by your own rows.
+
 **Who opens a named-tier surface.** The default policy admits:
 
 - the org's `OWNER`/`ADMIN`, as on an `'org'` surface, without asking `holds()`.
   This is the owner's ruling on t-999. It means moving a page from `'org'` to a
   named tier only adds people, and never locks the client's own admins out of
   it;
-- whoever `holds(viewer)` says holds the tier;
+- whoever `holds(viewer)` says holds the tier, or, for a tier registered
+  without one, a MEMBER whose grant lists it;
 - a platform admin, as everywhere.
 
 **What a holder does not open.** `holds()` is asked about the tier the surface
@@ -455,6 +460,69 @@ init throws.
 - a landing that is not its own tier's page.
 
 It also holds named-tier routes and pages to every check an `'org'` one meets.
+
+<a id="granting-named-tiers"></a>
+
+**Granting named tiers: the platform's record of who holds them** (t-1123).
+Most apps that register a tier need the same record: which tiers a person
+holds in an org. Sunrise keeps it, so an app's tiers only need names. It is an
+`OrgMembershipGrant` beside a MEMBER membership, listing the tiers it opens
+(`lib/tenancy/tier-grants.ts`).
+
+```ts
+// lib/app/admin-tier.ts — no holds(): the grant answers
+registerAdminTier('media', {
+  label: 'Media library',
+  description: 'Upload and manage the images used across the site.',
+});
+registerOrgTierAdminPage('/admin/media', { tier: 'media' });
+```
+
+- **It widens a MEMBER and nobody else.** A MEMBER reaches nothing in the
+  console; a grant only adds tiers to that, so it fails closed. OWNER/ADMIN
+  already open every named tier. A grant beside another role is refused (409
+  `GRANT_NEEDS_MEMBER`), and **a role change away from MEMBER deletes it**,
+  so demoting someone later cannot quietly hand back tiers granted long ago.
+  The default `holds()` also re-reads the row's role, not only the session's.
+- **A closed list, checked on write.** Only a registered tier that is
+  `grantable` can be written (400 `TIER_NOT_GRANTABLE`, naming the rest).
+  **Nothing is grantable at `TENANCY_MODE=single`**: the tier arm admits
+  nobody there, so a grant would open nothing, and the Members page offers
+  no ticks. A
+  tier with no `holds()` is grantable; one with its own is not unless it
+  sets `grantable: true`, which it should do only when that `holds()` calls
+  `membershipGrantHolds(viewer, tier)` to read the grant as part of its
+  answer. `grantable: false` with no `holds()` is refused at registration:
+  nobody but the org's admins could ever hold it.
+- **Written, never bound on read.** An org admin sets it with
+  `PUT /api/v1/orgs/[id]/members/[userId]/tiers` (or the Members page), or
+  the org invitation carries it (`tiers` on `POST /api/v1/orgs/[id]/invitations`,
+  stored in the invitation's metadata) and acceptance writes it **with the
+  membership**: a new account in the membership's own INSERT
+  (`membershipForNewUser`), an existing one in `addMember`'s transaction.
+  Acceptance keeps only the tiers still grantable then. A signup whose
+  membership write failed keeps its tiers on the user row
+  (`User.signupOrgTiers`, beside t-838's `signupOrgId` / `signupOrgRole`), so
+  the sign-in heal writes the grant too. A signup decision that failed
+  (`undecidedMembershipsForNewUser`) writes a plain MEMBER: fails closed.
+- **Erased and exported with the membership.** The grant cascades with its
+  membership, so removing the member or erasing them or their org removes
+  it. It has no `userId` or `orgId` of its own, so it rides inside the
+  `OrgMembership` rows of both export manifests rather than as a source.
+- **On the Members page** it shows only when the app registered a grantable
+  tier: ticks under the role on the invite form (Member only), and a Console
+  access column whose MEMBER rows open a dialog. `GET /api/v1/orgs/[id]/members`
+  returns each member's `tiers` and the `grantableTiers`, named in the
+  viewer's language from the tier's `label` / `description`.
+- **What stays yours:** what a grant is called on your screens, bundles of
+  tiers ("presets"), and any fields of your own (an agency's name), in your
+  own table keyed on `OrgMembershipGrant.membershipId` or the membership.
+
+**`registerAdminTier` must stay client-safe.** Client components (the sidebar,
+the tier gate) import `lib/auth/admin-tier.ts`, so it may not reference the
+grant reader, even lazily: Turbopack bundles a lazy `import()` for the browser
+too, and Prisma there fails the page. The policy reads the grant instead, and
+`tests/unit/lib/auth/admin-tier.test.ts` holds the file to that.
 
 **If you replace `canAdminister`,** a named tier arrives as `scope.tier`, the
 same as `'org'`. Delegate to `DEFAULT_AUTHORIZATION_POLICY.canAdminister`

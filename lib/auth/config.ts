@@ -227,6 +227,7 @@ async function recordPendingMembership(
 const signupRecordSchema = z.object({
   signupOrgId: z.string().min(1).nullish(),
   signupOrgRole: z.enum(ORG_ROLES).nullish(),
+  signupOrgTiers: z.array(z.string()).nullish(),
 });
 
 /**
@@ -241,6 +242,7 @@ function membershipsFromCreatedRow(user: UserCreateData): NewUserMemberships | n
   return membershipsFromSignupRecord(user, {
     signupOrgId: parsed.data.signupOrgId ?? null,
     signupOrgRole: parsed.data.signupOrgRole ?? null,
+    signupOrgTiers: parsed.data.signupOrgTiers ?? [],
   });
 }
 
@@ -1390,6 +1392,14 @@ export const auth = betterAuth({
       },
       signupOrgRole: {
         type: 'string',
+        required: false,
+        input: false,
+        returned: false,
+      },
+      // The named tiers that membership's grant lists (t-1123). As above: a
+      // body-settable list would let anyone sign up holding any tier.
+      signupOrgTiers: {
+        type: 'string[]',
         required: false,
         input: false,
         returned: false,

@@ -307,7 +307,11 @@ describe('registerAdminTier (t-999)', () => {
     // The same definition again is a no-op, as under HMR.
     registerAdminTier('media', { holds });
     expect(registeredNamedAdminTiers().map(([name]) => name)).toEqual(['page_designs', 'media']);
-    expect(registeredNamedAdminTiers()[0][1]).toEqual({ holds, landing: '/admin/designs' });
+    expect(registeredNamedAdminTiers()[0][1]).toEqual({
+      holds,
+      grantable: false,
+      landing: '/admin/designs',
+    });
     expect(Object.isFrozen(registeredNamedAdminTiers()[0][1])).toBe(true);
   });
 
@@ -324,10 +328,13 @@ describe('registerAdminTier (t-999)', () => {
     expect(registeredNamedAdminTiers()).toEqual([]);
   });
 
-  it('refuses a tier with no holds(), or with a landing that is not a plain admin path', () => {
-    expect(() => registerAdminTier('media', {} as unknown as { holds: () => boolean })).toThrow(
-      /no holds\(\)/
-    );
+  it('refuses a holds that is not a function, a grantable that is not a boolean, or a landing that is not a plain admin path', () => {
+    expect(() =>
+      registerAdminTier('media', { holds: 'yes' } as unknown as { holds: () => boolean })
+    ).toThrow(/holds that is not a function/);
+    expect(() =>
+      registerAdminTier('media', { grantable: 'yes' } as unknown as { grantable: boolean })
+    ).toThrow(/grantable that is not true or false/);
     for (const landing of ['/designs', '/admin/designs/[id]', '/admin/designs/', '/admin/x?y=1']) {
       expect(() => registerAdminTier('media', { holds, landing })).toThrow(/landing/);
     }
@@ -341,9 +348,41 @@ describe('registerAdminTier (t-999)', () => {
     registerAdminTier('media', { holds: reloaded, landing: '/admin/media' });
     // One tier, in its first place, answering with the new holds().
     expect(registeredNamedAdminTiers()).toEqual([
-      ['media', { holds: reloaded, landing: '/admin/media' }],
+      ['media', { holds: reloaded, grantable: false, landing: '/admin/media' }],
     ]);
     expect(registeredNamedAdminTiers()).not.toBe(view);
+  });
+});
+
+describe('registerAdminTier without a holds() (t-1123)', () => {
+  it('is grantable, with no holds() of its own: the policy reads the grant', () => {
+    // The policy's reading of it is authorization-tier-grant.test.ts. Nothing
+    // here may reach the grant's reader: client components import this module.
+    registerAdminTier('media', {});
+    const [[, definition]] = registeredNamedAdminTiers();
+    expect(definition).toEqual({ grantable: true, landing: undefined });
+    expect(definition.holds).toBeUndefined();
+  });
+
+  it('keeps an app’s own holds() not grantable unless it says so', () => {
+    registerAdminTier('own', { holds });
+    registerAdminTier('both', { holds, grantable: true });
+    const tiers = Object.fromEntries(registeredNamedAdminTiers());
+    expect(tiers.own.grantable).toBe(false);
+    expect(tiers.both.grantable).toBe(true);
+    expect(tiers.both.holds).toBe(holds);
+  });
+
+  it('refuses a tier nobody could hold: no holds() and not grantable', () => {
+    expect(() => registerAdminTier('media', { grantable: false })).toThrow(/nobody but the org/);
+    expect(registeredNamedAdminTiers()).toEqual([]);
+  });
+
+  it('is a no-op registered again with no holds(), as under HMR', () => {
+    registerAdminTier('media', {});
+    const view = registeredNamedAdminTiers();
+    registerAdminTier('media', {});
+    expect(registeredNamedAdminTiers()).toBe(view);
   });
 });
 
@@ -694,5 +733,18 @@ describe('lockedSwitchFor / lockedAdminPageOf (§135 t-1053)', () => {
     expect(lockedSwitchFor({ tiers: [], landing: null }, 'org', 'lead_gen', [LOCK])).toBeNull();
     expect(lockedAdminPageOf(lacks, '/admin/users', null, null, [LOCK])).toBeNull();
     expect(lockedSwitchFor(lacks, 'org', 'other', [LOCK])).toBeNull();
+  });
+});
+
+describe('lib/auth/admin-tier.ts stays client-safe (t-1123)', () => {
+  it('never imports the grant reader or the database, even lazily', async () => {
+    // Client components (the sidebar, the tier gate) import this module, so a
+    // reference to a server module here, even inside `import()`, is bundled
+    // for the browser: Turbopack fails the page on `node:async_hooks`. The
+    // grant is read by the policy instead (lib/auth/authorization.ts).
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(`${process.cwd()}/lib/auth/admin-tier.ts`, 'utf8');
+    expect(source).not.toMatch(/['"]@\/lib\/tenancy\/tier-grants['"]/);
+    expect(source).not.toMatch(/['"]@\/lib\/db\//);
   });
 });

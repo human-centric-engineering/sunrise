@@ -150,14 +150,19 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     section: 'orgMemberships',
     disposition: 'export',
     description:
-      'The organisations the subject belongs to, and their role in each. The org itself is not personal data; the membership is.',
+      'The organisations the subject belongs to, their role in each, and any parts of the console they were granted there. The org itself is not personal data; the membership is.',
     // The org's name rides along so the row reads as "member of X" rather than
     // an opaque id — one column of a row the subject is entitled to anyway,
-    // not the org's settings.
+    // not the org's settings. The membership's named-tier grant
+    // (`OrgMembershipGrant`, t-1123) is part of it, so it rides along too: it
+    // has no `userId` of its own, and is reached only through the membership.
     fetch: ({ userId }) =>
       prisma.orgMembership.findMany({
         where: { userId },
-        include: { org: { select: { id: true, slug: true, name: true } } },
+        include: {
+          org: { select: { id: true, slug: true, name: true } },
+          grant: { select: { tiers: true, createdAt: true, updatedAt: true } },
+        },
         orderBy: byCreatedAt,
       }),
   },

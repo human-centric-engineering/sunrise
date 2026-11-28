@@ -137,6 +137,7 @@ const mockUserData = {
   preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
   signupOrgId: null,
   signupOrgRole: null,
+  signupOrgTiers: [],
   erasureRequestedAt: null,
   erasureRequestedBy: null,
   erasureReason: null,

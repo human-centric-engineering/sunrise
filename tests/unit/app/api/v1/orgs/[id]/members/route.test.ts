@@ -14,7 +14,7 @@
  * verifies the membership for any non-install org, which is the read these
  * cases arm.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
@@ -231,7 +231,89 @@ describe('GET /api/v1/orgs/[id]/members — who the policy admits', () => {
   });
 });
 
+describe('GET /api/v1/orgs/[id]/members — named tiers (t-1123)', () => {
+  beforeEach(async () => {
+    // Named tiers admit anyone only at multi, so only there is one grantable.
+    mockEnv.TENANCY_MODE = 'multi';
+    const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+  });
+
+  afterEach(async () => {
+    const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+  });
+
+  it('lists each member’s granted tiers from the same read, empty for none', async () => {
+    vi.mocked(prisma.orgMembership.findMany).mockResolvedValue([
+      { ...roster[0], grant: null },
+      {
+        role: DEFAULT_ORG_ROLE,
+        createdAt: new Date('2026-09-02'),
+        user: { id: NEW_MEMBER, name: 'Designer', email: 'd@example.com', image: null },
+        grant: { tiers: ['media'] },
+      },
+    ] as never);
+
+    const json = JSON.parse(await (await get()).text());
+
+    expect(json.data.members.map((m: { tiers: string[] }) => m.tiers)).toEqual([[], ['media']]);
+    expect(prisma.orgMembership.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ grant: { select: { tiers: true } } }),
+      })
+    );
+  });
+
+  it('offers no tiers at single, where a grant would open nothing', async () => {
+    const { registerAdminTier } = await import('@/lib/auth/admin-tier');
+    registerAdminTier('media', {});
+    mockEnv.TENANCY_MODE = 'single';
+
+    const json = JSON.parse(await (await get()).text());
+
+    expect(json.data.grantableTiers).toEqual([]);
+  });
+
+  it('offers no tiers when the app registered none: the page shows no picker', async () => {
+    const json = JSON.parse(await (await get()).text());
+    expect(json.data.grantableTiers).toEqual([]);
+  });
+
+  it('offers the grantable tiers, named for the reader', async () => {
+    const { registerAdminTier } = await import('@/lib/auth/admin-tier');
+    registerAdminTier('media', { label: 'Media library', description: 'Upload images.' });
+    registerAdminTier('page_designs', {});
+    registerAdminTier('reports', { holds: () => true });
+
+    const json = JSON.parse(await (await get()).text());
+
+    expect(json.data.grantableTiers).toEqual([
+      { name: 'media', label: 'Media library', description: 'Upload images.' },
+      { name: 'page_designs', label: 'Page designs' },
+    ]);
+  });
+});
+
 describe('POST /api/v1/orgs/[id]/members', () => {
+  it('hands the lifecycle the tiers the body grants (t-1123)', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+
+    await post({ userId: NEW_MEMBER, tiers: ['media'] });
+
+    expect(mockAddMember).toHaveBeenCalledWith(
+      ORG,
+      NEW_MEMBER,
+      undefined,
+      { platformAdmin: false, orgRole: ORG_ADMIN_ROLE },
+      undefined,
+      { tiers: ['media'] }
+    );
+  });
+
   it('adds a member through the lifecycle, keyed on the resolved org', async () => {
     mockGetSession.mockResolvedValue(session('USER', ORG));
     memberOf(ORG_ADMIN_ROLE);

@@ -19,7 +19,7 @@
  * Prisma is a hand-built mock with only the three calls these functions make,
  * so a new query shows up as a TypeError rather than an unexplained pass.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import {
@@ -740,7 +740,7 @@ describe('backfillInstallMemberships (t-835)', () => {
       );
       expect(store.user.update).toHaveBeenCalledWith({
         where: { id: 'u-recorded' },
-        data: { signupOrgId: null, signupOrgRole: null },
+        data: { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] },
       });
     } finally {
       users.splice(
@@ -838,7 +838,7 @@ describe('undecidedMembershipsForNewUser', () => {
 // write is healed into the org that invited them rather than a default.
 describe('the signup record (t-838)', () => {
   const human = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
-  const cleared = { signupOrgId: null, signupOrgRole: null };
+  const cleared = { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] };
 
   it('records the decided membership, not the floor', () => {
     expect(
@@ -1070,7 +1070,7 @@ describe('activeOrgForSession — healing from the signup record (t-838)', () =>
     signupOrgId: orgId,
     signupOrgRole: role,
   });
-  const cleared = { signupOrgId: null, signupOrgRole: null };
+  const cleared = { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] };
 
   beforeEach(() => {
     mockEnv.TENANCY_MODE = 'multi';
@@ -1227,5 +1227,152 @@ describe('releaseFoundedSignupOrgs (§134 t-1062)', () => {
     // Each owner's own rows, not a bound value.
     expect(sqlText(values[3])).toMatch(/fu\.id = m\."userId" AND fu\."emailVerified"/);
     expect(sqlText(values[3])).toMatch(/fs\."userId" = m\."userId"/);
+  });
+});
+
+/**
+ * Named-tier grants carried by the invitation (t-1123). The registry is the
+ * real one: `media` and `brand` may be granted, `reports` answers with its own
+ * holds() and may not.
+ */
+describe('the invitation’s named tiers (t-1123)', () => {
+  const MEMBER_INVITE = { orgId: OTHER_ORG, ...BY_ISSUER };
+  const user = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+
+  beforeEach(async () => {
+    const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+    registerAdminTier('media', {});
+    registerAdminTier('brand', {});
+    registerAdminTier('reports', { holds: () => true });
+    // Named tiers admit anyone only at multi, so only there is one grantable.
+    mockEnv.TENANCY_MODE = 'multi';
+    // A populated org, so the first-owner bootstrap does not apply.
+    orgHas([{ orgId: OTHER_ORG, role: ORG_OWNER_ROLE }]);
+    issuerIs(DEFAULT_USER_ROLE, ORG_OWNER_ROLE);
+  });
+
+  afterEach(async () => {
+    const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+  });
+
+  it('a MEMBER invitation carries the tiers still grantable, in registration order', async () => {
+    expect(
+      await membershipForNewUser(
+        user,
+        { ...MEMBER_INVITE, tiers: ['brand', 'reports', 'gone', 'media'] },
+        db
+      )
+    ).toEqual({ orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE, tiers: ['media', 'brand'] });
+  });
+
+  it('an invitation with no tiers, or none grantable, decides exactly as before', async () => {
+    const plain = { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE };
+    expect(await membershipForNewUser(user, MEMBER_INVITE, db)).toEqual(plain);
+    expect(await membershipForNewUser(user, { ...MEMBER_INVITE, tiers: ['gone'] }, db)).toEqual(
+      plain
+    );
+  });
+
+  it('carries none beside an ADMIN invitation, or the OWNER the bootstrap makes', async () => {
+    expect(
+      await membershipForNewUser(
+        user,
+        { ...MEMBER_INVITE, orgRole: ORG_ADMIN_ROLE, tiers: ['media'] },
+        db
+      )
+    ).toEqual({ orgId: OTHER_ORG, role: ORG_ADMIN_ROLE });
+
+    orgHas([]); // the org's first non-staff member becomes its OWNER
+    expect(await membershipForNewUser(user, { ...MEMBER_INVITE, tiers: ['media'] }, db)).toEqual({
+      orgId: OTHER_ORG,
+      role: ORG_OWNER_ROLE,
+    });
+  });
+
+  it('carries none into the install org', async () => {
+    expect(await membershipForNewUser(user, { tiers: ['media'] }, db)).toEqual({
+      orgId: INSTALL_ORG_ID,
+      role: DEFAULT_ORG_ROLE,
+    });
+  });
+
+  it('a decision that failed writes a plain MEMBER: the grant fails closed', () => {
+    const { membership } = undecidedMembershipsForNewUser(user, {
+      ...MEMBER_INVITE,
+      tiers: ['media'],
+    });
+    expect(membership).toEqual({ orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE });
+  });
+
+  it('the signup record keeps the tiers, and gives them back, so a healed signup keeps its grant', () => {
+    const decided = { membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE, tiers: ['media'] } };
+    const record = signupRecordFor(decided);
+    expect(record).toEqual({
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: DEFAULT_ORG_ROLE,
+      signupOrgTiers: ['media'],
+    });
+    expect(membershipsFromSignupRecord(user, record)?.membership).toEqual(decided.membership);
+    // A record with no tiers is written field for field as before.
+    expect(signupRecordFor({ membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE } })).toEqual({
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: DEFAULT_ORG_ROLE,
+    });
+  });
+
+  it('writes the grant in the membership’s own INSERT, beside a MEMBER only', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    await writeNewUserMemberships(
+      USER_ID,
+      { membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE, tiers: ['media'] } },
+      db
+    );
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith({
+      where: { orgId_userId: { orgId: OTHER_ORG, userId: USER_ID } },
+      update: {},
+      create: {
+        orgId: OTHER_ORG,
+        userId: USER_ID,
+        role: DEFAULT_ORG_ROLE,
+        grant: { create: { tiers: ['media'] } },
+      },
+    });
+
+    mocks.orgMembership.upsert.mockClear();
+    await writeNewUserMemberships(
+      USER_ID,
+      { membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE, tiers: ['media'] } },
+      db
+    );
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: OTHER_ORG, userId: USER_ID, role: ORG_ADMIN_ROLE },
+      })
+    );
+  });
+
+  it('a heal from the record writes the grant with the membership', async () => {
+    mocks.user.findUnique.mockResolvedValue({
+      ...user,
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: DEFAULT_ORG_ROLE,
+      signupOrgTiers: ['media'],
+    });
+    mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
+    mockEnv.TENANCY_MODE = 'multi';
+
+    await healSignupRecord(USER_ID, db);
+
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ grant: { create: { tiers: ['media'] } } }),
+      })
+    );
+    expect(mocks.user.update).toHaveBeenCalledWith({
+      where: { id: USER_ID },
+      data: { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] },
+    });
   });
 });
