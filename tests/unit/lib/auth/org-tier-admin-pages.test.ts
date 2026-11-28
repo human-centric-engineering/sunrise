@@ -221,7 +221,6 @@ describe('named tiers (t-999)', () => {
     expect(namedAdminTiers()).toEqual(['page_designs']);
     expect(namedAdminTier('page_designs')).toEqual({
       holds,
-      ownHolds: holds,
       grantable: false,
       landing: '/admin/designs',
     });

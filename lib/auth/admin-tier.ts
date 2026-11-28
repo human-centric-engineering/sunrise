@@ -454,29 +454,15 @@ const NAMED_TIER = /^[a-z][a-z0-9_-]{0,47}$/;
 const RESERVED_TIER_NAMES: readonly string[] = Object.freeze(['org', 'platform']);
 
 /**
- * A named tier as the registry holds it: its `holds()` always present (the
- * grant's when the fork gave none), and whether it may be granted resolved.
+ * A named tier as the registry holds it: whether it may be granted, resolved.
+ * `holds` is the app's own, or absent when the grant answers: the policy
+ * (`lib/auth/authorization.ts`) reads the grant then. Not resolved here,
+ * because client components import this module and the grant's reader
+ * reaches the database.
  */
 export type RegisteredNamedAdminTier = Readonly<
-  Omit<NamedAdminTierDefinition, 'holds' | 'grantable'> & {
-    holds: NamedAdminTierHolds;
-    grantable: boolean;
-    /** The `holds()` the fork gave, or `undefined` when the grant's answers. */
-    ownHolds: NamedAdminTierHolds | undefined;
-  }
+  Omit<NamedAdminTierDefinition, 'grantable'> & { grantable: boolean }
 >;
-
-/**
- * The `holds()` of a tier registered without one (t-1123): a MEMBER whose
- * membership's grant lists the tier. Loaded lazily, for the import-cycle
- * reason given on {@link NamedAdminTierDefinition.holds}.
- */
-function grantHolds(tier: NamedAdminTier): NamedAdminTierHolds {
-  return async (viewer) => {
-    const { membershipGrantHolds } = await import('@/lib/tenancy/tier-grants');
-    return membershipGrantHolds(viewer, tier);
-  };
-}
 
 /**
  * Register a tier narrower than an org admin (t-999), and say who holds it.
@@ -572,7 +558,7 @@ export function registerAdminTier(
   const existing = namedTiers.get(name);
   if (
     existing !== undefined &&
-    existing.ownHolds === ownHolds &&
+    existing.holds === ownHolds &&
     existing.grantable === grantable &&
     existing.landing === landing &&
     sameAdminText(existing.label, label) &&
@@ -583,8 +569,7 @@ export function registerAdminTier(
   namedTiers.set(
     name,
     Object.freeze({
-      holds: ownHolds ?? grantHolds(name),
-      ownHolds,
+      ...(ownHolds === undefined ? {} : { holds: ownHolds }),
       grantable,
       landing,
       ...(label === undefined ? {} : { label }),
