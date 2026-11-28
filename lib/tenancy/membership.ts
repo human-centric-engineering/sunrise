@@ -25,6 +25,7 @@
  */
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { serviceAccountWhere } from '@/lib/auth/account';
 import { isPlatformAdmin, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { requiresEmailVerification } from '@/lib/auth/verification-status';
@@ -170,10 +171,20 @@ async function withInvitedTiers(
     return membership;
   }
   // Lazily: the tier registry runs the app's init, whose scaffold may import
-  // modules that import this one.
-  const { grantableTiersAmong } = await import('@/lib/tenancy/tier-grants');
-  const tiers = grantableTiersAmong(asked);
-  return tiers.length > 0 ? { ...membership, tiers } : membership;
+  // modules that import this one. A registry that fails writes a plain
+  // MEMBER, logged, rather than refusing the person the org: the grant fails
+  // closed, and an org admin can grant the tiers afterwards.
+  try {
+    const { grantableTiersAmong } = await import('@/lib/tenancy/tier-grants');
+    const tiers = grantableTiersAmong(asked);
+    return tiers.length > 0 ? { ...membership, tiers } : membership;
+  } catch (error) {
+    logger.error('Could not read the grantable tiers; the invitation’s tiers are not granted', {
+      orgId: membership.orgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return membership;
+  }
 }
 
 /** The reads the first-owner bootstrap makes. */

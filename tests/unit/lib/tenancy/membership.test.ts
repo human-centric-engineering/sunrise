@@ -1245,6 +1245,8 @@ describe('the invitation’s named tiers (t-1123)', () => {
     registerAdminTier('media', {});
     registerAdminTier('brand', {});
     registerAdminTier('reports', { holds: () => true });
+    // Named tiers admit anyone only at multi, so only there is one grantable.
+    mockEnv.TENANCY_MODE = 'multi';
     // A populated org, so the first-owner bootstrap does not apply.
     orgHas([{ orgId: OTHER_ORG, role: ORG_OWNER_ROLE }]);
     issuerIs(DEFAULT_USER_ROLE, ORG_OWNER_ROLE);

@@ -1407,7 +1407,12 @@ describe('checkInvitationInto (§111 t-813)', () => {
  * answers with its own holds() and is not grantable.
  */
 describe('named-tier grants (t-1123)', () => {
+  // Named tiers admit anyone only at multi, so only there is one grantable.
+  let previousMode: string;
   beforeEach(async () => {
+    const { env } = await import('@/lib/env');
+    previousMode = env.TENANCY_MODE;
+    env.TENANCY_MODE = 'multi';
     const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
     restoreNamedAdminTiers([]);
     registerAdminTier('media', {});
@@ -1418,9 +1423,22 @@ describe('named-tier grants (t-1123)', () => {
   afterEach(async () => {
     const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
     restoreNamedAdminTiers([]);
+    const { env } = await import('@/lib/env');
+    env.TENANCY_MODE = previousMode as typeof env.TENANCY_MODE;
   });
 
   describe('setMemberTiers', () => {
+    it('refuses every tier at single, where a grant would open nothing', async () => {
+      const { env } = await import('@/lib/env');
+      env.TENANCY_MODE = 'single';
+      db.orgMembership.findUnique.mockResolvedValue({ id: 'm1', role: DEFAULT_ORG_ROLE });
+
+      const error = await refusal(() => setMemberTiers(ORG, OTHER, ['media']));
+
+      expect(error.code).toBe('TIER_NOT_GRANTABLE');
+      expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    });
+
     it('writes exactly the tiers asked, in registration order, on the membership', async () => {
       db.orgMembership.findUnique.mockResolvedValue({ id: 'm1', role: DEFAULT_ORG_ROLE });
 
@@ -1550,11 +1568,23 @@ describe('named-tier grants (t-1123)', () => {
       });
     });
 
-    it('writes no grant beside an ADMIN membership', async () => {
-      await addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER, undefined, { tiers: ['media'] });
+    it('refuses tiers asked beside an ADMIN role, writing nothing', async () => {
+      const error = await refusal(() =>
+        addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER, undefined, { tiers: ['media'] })
+      );
 
-      expect(db.orgMembership.create).toHaveBeenCalled();
+      expect(error.code).toBe('GRANT_NEEDS_MEMBER');
+      expect(db.orgMembership.create).not.toHaveBeenCalled();
       expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses tiers in the install org before reading anything', async () => {
+      const error = await refusal(() =>
+        addMember(INSTALL_ORG_ID, OTHER, undefined, AS_PLATFORM, undefined, { tiers: ['media'] })
+      );
+
+      expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
+      expect(db.org.findUnique).not.toHaveBeenCalled();
     });
 
     it('writes no grant when the first-owner bootstrap makes the newcomer OWNER', async () => {

@@ -34,7 +34,8 @@ release process.
   (`membershipGrantHolds()`, `grantableAdminTiers()`) and
   `setMemberTiers()` in `lib/tenancy/lifecycle.ts`. Both export manifests
   carry the grant inside the membership rows. With no grantable tier
-  registered nothing changes. A fork that built its own grant (ConQuest's
+  registered, or at `TENANCY_MODE=single` (where the tier arm admits nobody),
+  nothing is grantable and nothing changes. A fork that built its own grant (ConQuest's
   agency access) can move to this one. Migration
   `20261130090000_org_membership_grant`. A fork that edited `OrgMembership`
   merges one new relation line.

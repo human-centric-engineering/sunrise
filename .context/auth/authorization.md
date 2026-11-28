@@ -485,7 +485,10 @@ registerOrgTierAdminPage('/admin/media', { tier: 'media' });
   so demoting someone later cannot quietly hand back tiers granted long ago.
   The default `holds()` also re-reads the row's role, not only the session's.
 - **A closed list, checked on write.** Only a registered tier that is
-  `grantable` can be written (400 `TIER_NOT_GRANTABLE`, naming the rest). A
+  `grantable` can be written (400 `TIER_NOT_GRANTABLE`, naming the rest).
+  **Nothing is grantable at `TENANCY_MODE=single`**: the tier arm admits
+  nobody there, so a grant would open nothing, and the Members page offers
+  no ticks. A
   tier with no `holds()` is grantable; one with its own is not unless it
   sets `grantable: true`, which it should do only when that `holds()` calls
   `membershipGrantHolds(viewer, tier)` to read the grant as part of its

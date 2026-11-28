@@ -669,6 +669,25 @@ export async function addMember(
   options: { seatHeld?: boolean; tiers?: readonly string[] } = {}
 ): Promise<MembershipRecord> {
   if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'add a member as an owner');
+  // Tiers widen a MEMBER only (t-1123): asked beside another role, or in the
+  // install org, they are refused, as the invite route and setMemberTiers
+  // refuse them, rather than dropped. With no role asked, the first-owner
+  // bootstrap may still make the newcomer OWNER; their role then opens every
+  // tier, and the grant is not written.
+  if ((options.tiers?.length ?? 0) > 0) {
+    if (orgId === INSTALL_ORG_ID) {
+      throw new OrgLifecycleError(
+        'INSTALL_ORG_MEMBERSHIP',
+        'Tiers cannot be granted in the install organisation'
+      );
+    }
+    if (role !== undefined && role !== DEFAULT_ORG_ROLE) {
+      throw new OrgLifecycleError(
+        'GRANT_NEEDS_MEMBER',
+        'Only a member can be granted tiers; owners and admins already open every one'
+      );
+    }
+  }
   const tiers = await checkGrantableTiers(options.tiers ?? []);
   await requireOrg(orgId, db);
   const user = await requireManageableUser(userId, db);

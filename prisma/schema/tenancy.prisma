@@ -131,7 +131,7 @@ model OrgMembership {
 ///
 /// One per membership, and only beside a MEMBER one: it widens a MEMBER and
 /// never narrows anyone, so it fails closed. Written directly by an org admin
-/// (`setMemberTiers()`, `lib/tenancy/tier-grants.ts`) or from the org
+/// (`setMemberTiers()`, `lib/tenancy/lifecycle.ts`) or from the org
 /// invitation the member accepted, when the membership is written; nothing
 /// binds on read. Cleared when the membership's role leaves MEMBER, and goes
 /// with the membership (cascade), so removing the person or erasing them or

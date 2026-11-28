@@ -14,6 +14,7 @@ const db = vi.hoisted(() => ({ orgMembership: { findUnique: vi.fn() } }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 
 import { registerAdminTier, restoreNamedAdminTiers } from '@/lib/auth/admin-tier';
+import { env } from '@/lib/env';
 import {
   grantableAdminTiers,
   grantableTiersAmong,
@@ -31,15 +32,21 @@ const viewer = (orgRole: string | null = DEFAULT_ORG_ROLE) => ({
   orgRole,
 });
 
+const previousMode = env.TENANCY_MODE;
 beforeEach(() => {
   vi.clearAllMocks();
+  // Named tiers admit anyone only at multi, so only there is one grantable.
+  env.TENANCY_MODE = 'multi';
   restoreNamedAdminTiers([]);
   registerAdminTier('media', { label: 'Media library', description: 'Upload images.' });
   registerAdminTier('reports', { holds: () => true });
   registerAdminTier('brand', { holds: () => false, grantable: true });
 });
 
-afterEach(() => restoreNamedAdminTiers([]));
+afterEach(() => {
+  restoreNamedAdminTiers([]);
+  env.TENANCY_MODE = previousMode;
+});
 
 describe('grantableAdminTiers', () => {
   it('lists the grantable tiers in registration order, with the app’s words', () => {
@@ -47,6 +54,13 @@ describe('grantableAdminTiers', () => {
       { name: 'media', label: 'Media library', description: 'Upload images.' },
       { name: 'brand' },
     ]);
+  });
+
+  it('is empty at single, where the policy admits nobody to a named tier', () => {
+    env.TENANCY_MODE = 'single';
+    expect(grantableAdminTiers()).toEqual([]);
+    expect(isGrantableTier('media')).toBe(false);
+    expect(ungrantableTiersAmong(['media'])).toEqual(['media']);
   });
 
   it('is empty when the app registered none: behaviour-neutral at rest', () => {

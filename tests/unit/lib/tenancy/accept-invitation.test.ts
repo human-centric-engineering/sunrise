@@ -154,7 +154,11 @@ beforeEach(() => {
 });
 
 describe('acceptInvitationAsExistingUser — named tiers (t-1123)', () => {
+  let previousMode: string;
   beforeEach(async () => {
+    const { env } = await import('@/lib/env');
+    previousMode = env.TENANCY_MODE;
+    env.TENANCY_MODE = 'multi';
     const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
     restoreNamedAdminTiers([]);
     registerAdminTier('media', {});
@@ -163,6 +167,28 @@ describe('acceptInvitationAsExistingUser — named tiers (t-1123)', () => {
   afterEach(async () => {
     const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
     restoreNamedAdminTiers([]);
+    const { env } = await import('@/lib/env');
+    env.TENANCY_MODE = previousMode as typeof env.TENANCY_MODE;
+    vi.restoreAllMocks();
+  });
+
+  it('still joins the person, with no tiers, when the tier registry fails', async () => {
+    const tierGrants = await import('@/lib/tenancy/tier-grants');
+    vi.spyOn(tierGrants, 'grantableTiersAmong').mockImplementation(() => {
+      throw new Error('app init failed');
+    });
+    invite('tok-a', { orgId: ORG_A, tiers: ['media'] });
+
+    await acceptInvitationAsExistingUser(accepter, EMAIL, 'tok-a');
+
+    expect(addMember).toHaveBeenCalledWith(
+      ORG_A,
+      'user-1',
+      DEFAULT_ORG_ROLE,
+      expect.anything(),
+      undefined,
+      { seatHeld: true }
+    );
   });
 
   it('hands addMember the tiers a MEMBER invitation grants, so they are written with it', async () => {

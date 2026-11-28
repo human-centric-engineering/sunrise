@@ -15,8 +15,11 @@
  *   MEMBER (`changeMemberRole`), so a later demotion cannot bring back tiers
  *   granted long ago.
  * - **A closed list, checked on write.** Only a registered tier that is
- *   {@link GrantableAdminTier grantable} can be written. A tier the app later
- *   stops registering admits nobody, so a stale name in a grant opens nothing.
+ *   {@link GrantableAdminTier grantable} can be written by a person, or by an
+ *   accepted invitation. A signup healed from its record (t-838) writes the
+ *   tiers that were grantable when it signed up. A tier the app later stops
+ *   registering admits nobody, and one that gains its own `holds()` stops
+ *   reading the grant unless it is grantable, so a stale name opens nothing.
  * - **Written, never bound.** An org admin sets it directly
  *   (`setMemberTiers()` in `lib/tenancy/lifecycle.ts`), or the org invitation
  *   carries it (`InvitationMetadata.tiers`) and acceptance writes it with the
@@ -40,6 +43,7 @@ import { namedAdminTier, namedAdminTiers } from '@/lib/auth/org-tier-admin-pages
 import type { AdminText } from '@/lib/auth/admin-tier';
 import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 import { DEFAULT_ORG_ROLE } from '@/lib/tenancy/roles';
+import { isMultiTenant } from '@/lib/tenancy/context';
 
 /** The most tiers one grant may list. More than any app registers; a bound on what a request may send. */
 export const MAX_GRANTED_TIERS = 32;
@@ -57,8 +61,13 @@ export interface GrantableAdminTier {
  * The named tiers an org admin may grant, in registration order: empty unless
  * the app registered one that is grantable. What the invite form and a
  * member's row offer, and what every write is checked against.
+ *
+ * Empty at `TENANCY_MODE=single`: the policy admits nobody to a named tier
+ * there (the org-tier arm is `multi` only), so a grant would open nothing,
+ * and the page would offer a setting that does nothing.
  */
 export function grantableAdminTiers(): readonly GrantableAdminTier[] {
+  if (!isMultiTenant()) return [];
   const tiers: GrantableAdminTier[] = [];
   for (const name of namedAdminTiers()) {
     const definition = namedAdminTier(name);
@@ -72,9 +81,9 @@ export function grantableAdminTiers(): readonly GrantableAdminTier[] {
   return tiers;
 }
 
-/** Is `name` a registered tier an org admin may grant? */
+/** Is `name` a registered tier an org admin may grant? Never at `single` (see {@link grantableAdminTiers}). */
 export function isGrantableTier(name: string): boolean {
-  return namedAdminTier(name)?.grantable === true;
+  return isMultiTenant() && namedAdminTier(name)?.grantable === true;
 }
 
 /**

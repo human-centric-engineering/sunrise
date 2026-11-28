@@ -257,9 +257,12 @@ POST /api/v1/orgs/[id]/members
   included, does), when the caller holds owner standing. `OWNER` needs OWNER
   standing.
   On the install org a `role` is refused: roles there follow the platform role.
-- `tiers`: optional, named tiers granted with the membership (t-1123). Written
-  only beside a `MEMBER` membership; each must be grantable
-  (`400 TIER_NOT_GRANTABLE` otherwise, before anything is written).
+- `tiers`: optional, named tiers granted with the membership (t-1123). Refused
+  beside a `role` other than `MEMBER` (`409 GRANT_NEEDS_MEMBER`) and on the
+  install org (`400 INSTALL_ORG_MEMBERSHIP`); each must be grantable
+  (`400 TIER_NOT_GRANTABLE` otherwise, and always at `single`). All before
+  anything is written. With no `role`, a newcomer the first-owner bootstrap
+  makes `OWNER` takes no grant: their role opens every tier.
 
 Adding by id enrols the user without asking them — it mirrors the platform
 admin naming an owner at creation, and the org's administrators already see

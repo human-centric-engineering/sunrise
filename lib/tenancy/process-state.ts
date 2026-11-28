@@ -531,7 +531,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
       'closedSectionsView',
     ],
     posture: 'no-tenant-data',
-    why: 'Admin page patterns a fork lists as org-tier from code (t-817), the named tiers it registers and the pages it declares for each (t-999), the switch key a page requires (t-1034), the core sections it closes to org admins for the whole install (t-929), and a frozen copy of each rebuilt when it changes. A named tier holds the fork’s holds() function, which looks up who holds it per request; it stores nobody’s answer.',
+    why: 'Admin page patterns a fork lists as org-tier from code (t-817), the named tiers it registers and the pages it declares for each (t-999), the switch key a page requires (t-1034), the core sections it closes to org admins for the whole install (t-929), and a frozen copy of each rebuilt when it changes. A named tier holds the fork’s holds() function when it gave one (with none, the policy reads the membership grant, t-1123), which looks up who holds it per request; it stores nobody’s answer.',
   },
   {
     file: 'lib/auth/org-tier-admin-pages.ts',

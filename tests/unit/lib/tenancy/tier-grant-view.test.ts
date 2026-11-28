@@ -20,12 +20,16 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { registerAdminTier, restoreNamedAdminTiers } from '@/lib/auth/admin-tier';
+import { env } from '@/lib/env';
 import { grantableTiersFor } from '@/lib/tenancy/tier-grant-view';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const ORG = 'cmorg000000000000000other';
 
+const previousMode = env.TENANCY_MODE;
 beforeEach(() => {
+  // Named tiers admit anyone only at multi, so only there is one grantable.
+  env.TENANCY_MODE = 'multi';
   restoreNamedAdminTiers([]);
   getTranslations.mockReset().mockResolvedValue(
     Object.assign((key: string) => catalogue[key] as string, {
@@ -34,7 +38,10 @@ beforeEach(() => {
     })
   );
 });
-afterEach(() => restoreNamedAdminTiers([]));
+afterEach(() => {
+  restoreNamedAdminTiers([]);
+  env.TENANCY_MODE = previousMode;
+});
 
 describe('grantableTiersFor', () => {
   it('names each grantable tier: a catalogue key through the catalogue, plain text as it is, none by its name', async () => {

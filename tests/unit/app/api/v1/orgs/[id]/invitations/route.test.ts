@@ -688,6 +688,8 @@ describe('POST /api/v1/orgs/[id]/invitations — seats limit (§135 t-1035)', ()
 
 describe('POST /api/v1/orgs/[id]/invitations — named tiers (t-1123)', () => {
   beforeEach(async () => {
+    // Named tiers admit anyone only at multi, so only there is one grantable.
+    mockEnv.TENANCY_MODE = 'multi';
     const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
     restoreNamedAdminTiers([]);
     registerAdminTier('media', {});

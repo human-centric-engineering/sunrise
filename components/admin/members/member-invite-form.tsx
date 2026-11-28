@@ -233,12 +233,15 @@ export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFor
         {result?.emailStatus === 'pending' && pending && (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
             <span>
+              {/* Console access is named only where the page offers it (t-1123). */}
               {result.invitation.orgRole && isOrgRole(result.invitation.orgRole)
-                ? t('invite.pendingAs', {
+                ? t(grantableTiers.length > 0 ? 'invite.pendingAsWithAccess' : 'invite.pendingAs', {
                     email: result.invitation.email,
                     role: t(`roles.${result.invitation.orgRole}`),
                   })
-                : t('invite.pending', { email: result.invitation.email })}
+                : t(grantableTiers.length > 0 ? 'invite.pendingWithAccess' : 'invite.pending', {
+                    email: result.invitation.email,
+                  })}
             </span>
             <Button
               variant="outline"

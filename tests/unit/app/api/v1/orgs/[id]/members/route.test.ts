@@ -233,6 +233,8 @@ describe('GET /api/v1/orgs/[id]/members — who the policy admits', () => {
 
 describe('GET /api/v1/orgs/[id]/members — named tiers (t-1123)', () => {
   beforeEach(async () => {
+    // Named tiers admit anyone only at multi, so only there is one grantable.
+    mockEnv.TENANCY_MODE = 'multi';
     const { restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
     restoreNamedAdminTiers([]);
     mockGetSession.mockResolvedValue(session('USER', ORG));
@@ -263,6 +265,16 @@ describe('GET /api/v1/orgs/[id]/members — named tiers (t-1123)', () => {
         select: expect.objectContaining({ grant: { select: { tiers: true } } }),
       })
     );
+  });
+
+  it('offers no tiers at single, where a grant would open nothing', async () => {
+    const { registerAdminTier } = await import('@/lib/auth/admin-tier');
+    registerAdminTier('media', {});
+    mockEnv.TENANCY_MODE = 'single';
+
+    const json = JSON.parse(await (await get()).text());
+
+    expect(json.data.grantableTiers).toEqual([]);
   });
 
   it('offers no tiers when the app registered none: the page shows no picker', async () => {
