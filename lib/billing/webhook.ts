@@ -41,7 +41,7 @@ import {
   type ProviderSubscription,
 } from '@/lib/billing/provider';
 import { lockOrgBilling, onTransaction } from '@/lib/billing/subscriptions';
-import { closeBillingPeriod } from '@/lib/billing/usage-report';
+import { closeSyncedPeriod } from '@/lib/billing/usage-report';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -439,78 +439,19 @@ async function closePeriodIfOver(
   ) {
     return;
   }
-  const ended = subscription.status === 'ended';
-  const movedOn = subscription.periodStart.getTime() > record.periodStart.getTime();
-  if (!ended && !movedOn) return;
-  // Ended before the period's end (cancelled at once, retries exhausted):
-  // closed when it ended. An unpaid one has no `endedAt`, so its period runs out.
-  const endedAt = ended ? subscription.endedAt : null;
-  const closing = {
-    orgId,
-    provider: provider.key,
-    customerRef: record.customerRef,
-    subscriptionRef: record.subscriptionRef,
-    planKey: record.planKey,
-  };
-  /** The earliest of `ends` after `from`, else `fallback`. */
-  const earliest = (from: Date, fallback: Date, ...ends: (Date | null)[]): Date =>
-    ends.reduce<Date>(
-      (soonest, at) => (at !== null && at > from && at < soonest ? at : soonest),
-      fallback
-    );
-
-  // The stored period closes at its end, or earlier where the next period
-  // began early (an anchor reset, an interval change, a trial ended early),
-  // so no usage is in two periods, or where the subscription ended. The
-  // provider invoices a subscription's last period as it ends, so no report
-  // sent after that is billed.
-  await closeBillingPeriod(
+  await closeSyncedPeriod(
     tx,
-    { ...closing, periodStart: record.periodStart },
     {
-      periodEnd: earliest(
-        record.periodStart,
-        record.periodEnd,
-        movedOn ? subscription.periodStart : null,
-        endedAt
-      ),
-      lastPeriod: ended && !movedOn,
-    }
-  );
-  if (!movedOn) return;
-
-  // The record fell more than a period behind (deliveries failed or were
-  // lost through a renewal): the time between the stored period and the
-  // current one is closed too, as one period under the stored plan, so its
-  // usage is counted rather than lost. It is usually past the provider's
-  // invoice by now; the send logs that.
-  if (subscription.periodStart > record.periodEnd) {
-    logger.warn('billing: a billing period passed with no sync; closing it now', {
       orgId,
+      provider: provider.key,
+      customerRef: record.customerRef,
       subscriptionRef: record.subscriptionRef,
-      from: record.periodEnd,
-      to: subscription.periodStart,
-    });
-    await closeBillingPeriod(
-      tx,
-      { ...closing, periodStart: record.periodEnd },
-      {
-        periodEnd: earliest(record.periodEnd, subscription.periodStart, endedAt),
-        lastPeriod: false,
-      }
-    );
-  }
-  // Ended in a period no sync had stored: that period was its last.
-  if (ended) {
-    await closeBillingPeriod(
-      tx,
-      { ...closing, periodStart: subscription.periodStart },
-      {
-        periodEnd: earliest(subscription.periodStart, subscription.periodEnd, endedAt),
-        lastPeriod: true,
-      }
-    );
-  }
+      planKey: record.planKey,
+      periodStart: record.periodStart,
+      periodEnd: record.periodEnd,
+    },
+    subscription
+  );
 }
 
 /** The plan whose price the subscription is on; `undefined` when none is. */

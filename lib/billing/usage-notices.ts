@@ -391,7 +391,7 @@ export async function emailOwners(notice: UsageNotice): Promise<void> {
     });
     return;
   }
-  const billingUrl = `${env.BETTER_AUTH_URL}${ORG_BILLING_PAGE_PATH}`;
+  const billingUrl = `${env.BETTER_AUTH_URL.replace(/\/+$/, '')}${ORG_BILLING_PAGE_PATH}`;
   const failed: string[] = [];
   for (const { user } of owners) {
     const where = await emailLocaleForUser(user.id, { orgId: notice.orgId });

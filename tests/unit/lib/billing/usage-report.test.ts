@@ -234,12 +234,14 @@ function makeProvider(): BillingProvider {
 
 import {
   closeBillingPeriod,
+  closeSyncedPeriod,
   countUsage,
   reportBeforeCancelling,
   runUsageReports,
   USAGE_SEND_LEASE_MS,
   USAGE_SETTLE_MS,
 } from '@/lib/billing/usage-report';
+import { logger } from '@/lib/logging';
 
 /** The in-memory client, as the close's transaction parameter is typed. */
 const asDb = mockPrisma as unknown as Parameters<typeof closeBillingPeriod>[0];
@@ -597,6 +599,121 @@ describe('closeBillingPeriod', () => {
   });
 });
 
+describe('closeSyncedPeriod', () => {
+  const stored = { ...subscriptionOf(NOV), periodEnd: DEC };
+  const synced = (overrides: Partial<Parameters<typeof closeSyncedPeriod>[2]> = {}) => ({
+    status: 'active' as const,
+    periodStart: NOV,
+    periodEnd: DEC,
+    endedAt: null,
+    ...overrides,
+  });
+  const closed = () => db.reports.map((r) => [r.periodStart, r.periodEnd, r.lastPeriod] as const);
+
+  it('closes nothing while the provider has not moved past the stored period', async () => {
+    expect(await closeSyncedPeriod(asDb, stored, synced())).toBe(false);
+    expect(db.reports).toEqual([]);
+  });
+
+  it('closes the period a renewal moved past at its end', async () => {
+    expect(
+      await closeSyncedPeriod(asDb, stored, synced({ periodStart: DEC, periodEnd: JAN }))
+    ).toBe(true);
+    expect(closed()).toEqual([[NOV, DEC, false]]);
+  });
+
+  it('closes where the next period began, when it began part-way through, so none is billed twice', async () => {
+    // Moved from monthly to yearly on the 15th: Stripe starts the new period then.
+    const switched = new Date('2026-11-15T00:00:00Z');
+    await closeSyncedPeriod(
+      asDb,
+      stored,
+      synced({ periodStart: switched, periodEnd: new Date('2027-11-15T00:00:00Z') })
+    );
+    expect(closed()).toEqual([[NOV, switched, false]]);
+  });
+
+  it('closes a subscription ended part-way through at when it ended, as its last', async () => {
+    const endedAt = new Date('2026-11-20T10:00:00Z');
+    await closeSyncedPeriod(asDb, stored, synced({ status: 'ended', endedAt }));
+    expect(closed()).toEqual([[NOV, endedAt, true]]);
+  });
+
+  it('closes an unpaid one, which has not ended at the provider, at its period end', async () => {
+    await closeSyncedPeriod(asDb, stored, synced({ status: 'ended', endedAt: null }));
+    expect(closed()).toEqual([[NOV, DEC, true]]);
+  });
+
+  it('closes a whole period no sync stored, between the stored one and the current one', async () => {
+    const FEB = new Date('2027-02-01T00:00:00Z');
+    await closeSyncedPeriod(asDb, stored, synced({ periodStart: JAN, periodEnd: FEB }));
+    expect(closed()).toEqual([
+      [NOV, DEC, false],
+      [DEC, JAN, false],
+    ]);
+  });
+
+  it('closes the period a subscription ended in, which no sync stored, as its last', async () => {
+    const endedAt = new Date('2026-12-10T00:00:00Z');
+    await closeSyncedPeriod(
+      asDb,
+      stored,
+      synced({ status: 'ended', periodStart: DEC, periodEnd: JAN, endedAt })
+    );
+    expect(closed()).toEqual([
+      [NOV, DEC, false],
+      [DEC, endedAt, true],
+    ]);
+  });
+});
+
+describe('the tick closing a period itself', () => {
+  it('closes where the provider says when its period moved on early, since it counts in the same run', async () => {
+    record();
+    const switched = new Date('2026-11-15T00:00:00Z');
+    vi.mocked(provider.fetchSubscription).mockResolvedValue({
+      ref: 'sub_1',
+      customerRef: 'cus_a',
+      status: 'active',
+      providerStatus: 'active',
+      priceLookupKeys: [],
+      periodStart: switched,
+      periodEnd: new Date('2027-11-15T00:00:00Z'),
+      cancelAtPeriodEnd: false,
+      endedAt: null,
+      live: true,
+      orgId: ORG,
+    });
+    counts.set(`${ORG}:convos`, 25);
+
+    await runUsageReports(NOW);
+
+    expect(provider.fetchSubscription).toHaveBeenCalledWith('sub_1');
+    expect(reportFor()).toMatchObject({ periodStart: NOV, periodEnd: switched, status: 'SENT' });
+    expect(mockCountMeter).toHaveBeenCalledWith(ORG, 'convos', { from: NOV, to: switched });
+  });
+
+  it('closes a row a close left open part-way, on the next run', async () => {
+    plans.list = [
+      {
+        key: 'pro',
+        meteredItems: {
+          ...METERED.meteredItems,
+          seats: { ...METERED.meteredItems.convos, meterKey: 'seats', providerMeter: 'seats_over' },
+        },
+      },
+    ];
+    record();
+    // A close that failed part-way: one meter's row moved on, the other not.
+    await closeBillingPeriod(asDb, subscriptionOf(NOV), { periodEnd: DEC, lastPeriod: false });
+    Object.assign(reportFor('seats') ?? {}, { status: 'OPEN' });
+
+    await runUsageReports(NOW);
+
+    expect(reportFor('seats')?.status).not.toBe('OPEN');
+  });
+});
+
 describe('the last period', () => {
   it('sends running totals while the subscription cancels at its end, and marks the close late', async () => {
     record({ periodStart: DEC, periodEnd: JAN, cancelAtPeriodEnd: true });
@@ -624,6 +741,34 @@ describe('the last period', () => {
     expect(run).toMatchObject({ closed: 1, counted: 1, late: 1, sent: 0 });
     expect(reportFor()).toMatchObject({ status: 'LATE', used: 21, quantity: 11 });
     expect(provider.reportUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it('marks a last period within its allowance as nothing owed, not late', async () => {
+    record({ periodStart: DEC, periodEnd: JAN, cancelAtPeriodEnd: true });
+    counts.set(`${ORG}:convos`, 4);
+
+    const run = await runUsageReports(new Date(JAN.getTime() + 10 * MINUTE));
+
+    expect(run).toMatchObject({ late: 0 });
+    expect(reportFor()).toMatchObject({ status: 'NONE', quantity: 0 });
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('last period was counted after'),
+      expect.anything()
+    );
+  });
+
+  it('logs a late period as a loss only past what its running totals reported', async () => {
+    record({ periodStart: DEC, periodEnd: JAN, cancelAtPeriodEnd: true });
+    counts.set(`${ORG}:convos`, 12);
+    await runUsageReports(NOW);
+
+    await runUsageReports(new Date(JAN.getTime() + 10 * MINUTE));
+
+    expect(reportFor()).toMatchObject({ status: 'LATE', quantity: 2, runningQuantity: 2 });
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('last period was counted after'),
+      expect.anything()
+    );
   });
 
   it('bills a period normally when the cancellation was withdrawn before it closed', async () => {

@@ -8,10 +8,11 @@
  * steps:
  *
  * 1. **Closed.** The webhook closes a period when a sync sees it move on, or
- *    the subscription end ({@link closeBillingPeriod}, inside the webhook's
+ *    the subscription end ({@link closeSyncedPeriod}, inside the webhook's
  *    transaction). The maintenance tick closes one too when the stored period
  *    has ended and no sync has moved it on yet, so a late webhook does not
- *    hold up a report. Closing twice is harmless: the row is unique.
+ *    hold up a report; it asks the provider first and closes where the
+ *    provider says. Closing twice is harmless: the row is unique.
  * 2. **Settled, then counted once.** A few minutes after the period's end
  *    ({@link USAGE_SETTLE_MS}), so rows committed just before the boundary are
  *    counted. The count and the excess go into the row, and a row already
@@ -52,7 +53,7 @@ import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { billingProvider } from '@/lib/billing/config';
 import { AI_SPEND_METER_KEY, excessOver, type MeteredItem } from '@/lib/billing/overage';
 import { billingPlansEnabled, planOf, registeredPlans } from '@/lib/billing/plans';
-import type { BillingProvider } from '@/lib/billing/provider';
+import type { BillingProvider, ProviderSubscription } from '@/lib/billing/provider';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { runAsOrg } from '@/lib/tenancy/context';
@@ -164,7 +165,8 @@ export interface ClosingSubscription {
  * Idempotent: a row already there keeps its id. One still open (running
  * totals) or not yet counted takes the closing values, so a later, better
  * informed close (the webhook saying the subscription ended early) wins over
- * the tick's; one already counted is never changed.
+ * an earlier one until the row is counted; one already counted is never
+ * changed.
  *
  * @returns how many rows the period has.
  */
@@ -216,6 +218,99 @@ export async function closeBillingPeriod(
     });
   }
   return items.length;
+}
+
+/**
+ * Close the stored period as the provider's current state says it ended: at
+ * the earliest of its stored end, where the next period began (an anchor
+ * reset, an interval change, a trial ended early, so no usage is in two
+ * periods), and when the subscription ended. A period between the stored one
+ * and the current one, which no sync stored, is closed too; and the current
+ * one, when the subscription ended in it. The webhook calls it in its
+ * transaction as it syncs; the tick calls it with what it fetched, before it
+ * would close a period at its stored end.
+ *
+ * @returns whether the provider has moved past the stored period (moved on,
+ *   or ended); `false` closes nothing.
+ */
+export async function closeSyncedPeriod(
+  db: Db,
+  stored: ClosingSubscription & { periodEnd: Date },
+  subscription: Pick<ProviderSubscription, 'status' | 'periodStart' | 'periodEnd' | 'endedAt'>
+): Promise<boolean> {
+  const ended = subscription.status === 'ended';
+  const movedOn = subscription.periodStart.getTime() > stored.periodStart.getTime();
+  if (!ended && !movedOn) return false;
+  // Ended before the period's end (cancelled at once, retries exhausted):
+  // closed when it ended. An unpaid one has no `endedAt`, so its period runs out.
+  const endedAt = ended ? subscription.endedAt : null;
+  const closing = {
+    orgId: stored.orgId,
+    provider: stored.provider,
+    customerRef: stored.customerRef,
+    subscriptionRef: stored.subscriptionRef,
+    planKey: stored.planKey,
+  };
+  /** The earliest of `ends` after `from`, else `fallback`. */
+  const earliest = (from: Date, fallback: Date, ...ends: (Date | null)[]): Date =>
+    ends.reduce<Date>(
+      (soonest, at) => (at !== null && at > from && at < soonest ? at : soonest),
+      fallback
+    );
+
+  // The stored period closes at its end, or earlier where the next period
+  // began early (an anchor reset, an interval change, a trial ended early),
+  // so no usage is in two periods, or where the subscription ended. The
+  // provider invoices a subscription's last period as it ends, so no report
+  // sent after that is billed.
+  await closeBillingPeriod(
+    db,
+    { ...closing, periodStart: stored.periodStart },
+    {
+      periodEnd: earliest(
+        stored.periodStart,
+        stored.periodEnd,
+        movedOn ? subscription.periodStart : null,
+        endedAt
+      ),
+      lastPeriod: ended && !movedOn,
+    }
+  );
+  if (!movedOn) return true;
+
+  // The record fell more than a period behind (deliveries failed or were
+  // lost through a renewal): the time between the stored period and the
+  // current one is closed too, as one period under the stored plan, so its
+  // usage is counted rather than lost. It is usually past the provider's
+  // invoice by now; the send logs that.
+  if (subscription.periodStart > stored.periodEnd) {
+    logger.warn('billing: a billing period passed with no sync; closing it now', {
+      orgId: stored.orgId,
+      subscriptionRef: stored.subscriptionRef,
+      from: stored.periodEnd,
+      to: subscription.periodStart,
+    });
+    await closeBillingPeriod(
+      db,
+      { ...closing, periodStart: stored.periodEnd },
+      {
+        periodEnd: earliest(stored.periodEnd, subscription.periodStart, endedAt),
+        lastPeriod: false,
+      }
+    );
+  }
+  // Ended in a period no sync had stored: that period was its last.
+  if (ended) {
+    await closeBillingPeriod(
+      db,
+      { ...closing, periodStart: subscription.periodStart },
+      {
+        periodEnd: earliest(subscription.periodStart, subscription.periodEnd, endedAt),
+        lastPeriod: true,
+      }
+    );
+  }
+  return true;
 }
 
 /** What one run of the job did, for the tick's log line. */
@@ -347,25 +442,32 @@ async function closeEndedPeriods(
       const record = asLive(row);
       if (!record) return;
       try {
-        const closedAlready = await runAsOrg(record.orgId, () =>
-          prisma.billingUsageReport.count({
-            where: {
-              orgId: record.orgId,
-              periodStart: record.periodStart,
-              // Pending too: a period whose count keeps failing is not closed
-              // again each run, which would count as work every run.
-              status: { notIn: ['OPEN'] },
-            },
+        const rows = await runAsOrg(record.orgId, () =>
+          prisma.billingUsageReport.findMany({
+            where: { orgId: record.orgId, periodStart: record.periodStart },
+            select: { status: true },
           })
         );
-        if (closedAlready > 0) return;
-        await runAsOrg(record.orgId, () =>
-          closeBillingPeriod(prisma, record, {
-            periodEnd: record.periodEnd,
-            // Cancelling at its end, the provider has made its final invoice.
-            lastPeriod: record.cancelAtPeriodEnd,
-          })
-        );
+        // Closed already: every row has left `OPEN`. Pending counts as closed,
+        // so a period whose count keeps failing is not closed again each run
+        // as work; a row still open (a close that failed part-way) is closed.
+        if (rows.length > 0 && rows.every((r) => r.status !== 'OPEN')) return;
+        // The provider's own state first: a period that moved on early, or a
+        // subscription ended, is closed where the provider says, as the
+        // webhook would, since a count made in this run cannot be corrected.
+        const synced = await provider.fetchSubscription(record.subscriptionRef);
+        const movedPast = synced
+          ? await runAsOrg(record.orgId, () => closeSyncedPeriod(prisma, record, synced))
+          : false;
+        if (!movedPast) {
+          await runAsOrg(record.orgId, () =>
+            closeBillingPeriod(prisma, record, {
+              periodEnd: record.periodEnd,
+              // Cancelling at its end, the provider has made its final invoice.
+              lastPeriod: record.cancelAtPeriodEnd,
+            })
+          );
+        }
         run.closed += 1;
       } catch (error) {
         run.failed += 1;
@@ -502,16 +604,16 @@ async function sendRunningTotal(
       await releaseSend(report.id);
       throw error;
     }
+    // What was sent is recorded whatever happened to the row meanwhile.
     await prisma.billingUsageReport.update({
       where: { id: report.id },
-      data: {
-        runningSends: send,
-        runningQuantity: quantity,
-        sendingAt: null,
-        planKey: record.planKey ?? report.planKey,
-        allowance: item.allowance,
-        providerMeter,
-      },
+      data: { runningSends: send, runningQuantity: quantity, sendingAt: null },
+    });
+    // The plan only while it is open: a close during the send has written
+    // the closing plan's, and a count may already rest on it.
+    await prisma.billingUsageReport.updateMany({
+      where: { id: report.id, status: 'OPEN' },
+      data: { planKey: record.planKey ?? report.planKey, allowance: item.allowance, providerMeter },
     });
     return { outcome: 'sent', quantity };
   });
@@ -598,7 +700,9 @@ async function countReport(
     to: report.periodEnd,
   });
   const quantity = excessOver(report, used);
-  const status = report.lastPeriod ? 'LATE' : quantity > 0 ? 'COUNTED' : 'NONE';
+  // A last period is invoiced already: its excess is recorded, not sent.
+  // Nothing over the allowance is nothing lost.
+  const status = quantity === 0 ? 'NONE' : report.lastPeriod ? 'LATE' : 'COUNTED';
   const written = await runAsOrg(report.orgId, () =>
     prisma.billingUsageReport.updateMany({
       // Only the first count is kept.
@@ -607,7 +711,8 @@ async function countReport(
     })
   );
   if (written.count === 0) return null;
-  if (status === 'LATE') {
+  // Logged as a loss only past what the running totals already reported.
+  if (status === 'LATE' && quantity > (report.runningQuantity ?? 0)) {
     logger.warn(
       "billing: a subscription's last period was counted after the provider invoiced it; not sent",
       {

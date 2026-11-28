@@ -1009,13 +1009,19 @@ registerPlan({
   sync stored has that period closed as its last. A
   subscription that was never `ACTIVE` or `PAST_DUE` closes nothing. The
   tick closes a period whose end passed while the record still holds it, so
-  a late renewal webhook does not hold up a report; a later close from the
-  webhook (that it ended early, say) replaces the tick's until the period is
-  counted.
+  a late renewal webhook does not hold up a report. It fetches the
+  subscription from the provider first and closes where the provider says
+  (moved on early, ended), as the webhook would: the tick counts what it
+  closed in the same run, so a later webhook could not correct it. Only when
+  the provider has not moved past the period either is it closed at its
+  stored end. A row still `OPEN` (a close that failed part-way) is closed on
+  the next run; a `PENDING` one is not closed again.
 - **A send takes a ten-minute lease on the row** (`sendingAt`), so two
   instances never send at once, and one that crashed is retried. A row's
   `status` says where it is: `OPEN` (running totals only), `PENDING`,
-  `COUNTED`, `SENT`, `NONE` (within the allowance) or `LATE`.
+  `COUNTED`, `SENT`, `NONE` (within the allowance) or `LATE`. A last
+  period within its allowance is `NONE`, not `LATE`, and a late one is
+  logged as a loss only past what its running totals reported.
 - **Each run walks every row**, a page at a time by key, so periods already
   closed, totals unchanged, and reports the provider keeps refusing never
   hold the rest back to a later run. A refused report is retried, and
