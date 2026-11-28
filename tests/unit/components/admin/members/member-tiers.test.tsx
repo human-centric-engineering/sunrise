@@ -191,6 +191,74 @@ describe('MembersTable — console access', () => {
   });
 });
 
+describe('MemberTiersDialog — leaving without saving', () => {
+  it('Cancel closes the dialog and sends nothing', async () => {
+    const user = userEvent.setup();
+    render(
+      <MembersTable orgId={ORG_ID} members={members} currentUserId={null} grantableTiers={TIERS} />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Change console access for Mo Member' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByLabelText('Media library'));
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(apiClient.put).not.toHaveBeenCalled();
+  });
+
+  it('Escape closes it too, and the next opening starts from the grant again', async () => {
+    const user = userEvent.setup();
+    render(
+      <MembersTable orgId={ORG_ID} members={members} currentUserId={null} grantableTiers={TIERS} />
+    );
+    const open = () =>
+      user.click(screen.getByRole('button', { name: 'Change console access for Dana Designer' }));
+
+    await open();
+    let dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByLabelText('Brand themes'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await open();
+    dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Brand themes')).not.toBeChecked();
+    expect(within(dialog).getByLabelText('Media library')).toBeChecked();
+  });
+
+  it('names a member with no name by their email', async () => {
+    const user = userEvent.setup();
+    const unnamed: OrgMember = { ...members[2], id: 'u-4', name: null, email: 'x@example.com' };
+    render(
+      <MembersTable
+        orgId={ORG_ID}
+        members={[unnamed]}
+        currentUserId={null}
+        grantableTiers={TIERS}
+      />
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: 'Change console access for x@example.com' })
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: 'Console access for x@example.com' })
+    ).toBeInTheDocument();
+  });
+
+  it('shows a granted tier the app no longer offers by its name', () => {
+    const stale: OrgMember = { ...members[2], tiers: ['retired_tier'] };
+    render(
+      <MembersTable orgId={ORG_ID} members={[stale]} currentUserId={null} grantableTiers={TIERS} />
+    );
+    expect(
+      screen.getByRole('button', { name: 'Change console access for Mo Member' })
+    ).toHaveTextContent('retired_tier');
+  });
+});
+
 describe('MemberInviteForm — console access', () => {
   async function fill(user: ReturnType<typeof userEvent.setup>) {
     await user.type(screen.getByLabelText('Name'), 'New Person');
