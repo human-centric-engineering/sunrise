@@ -1,19 +1,26 @@
 /**
- * next-intl for tests, backed by the real source catalogue (§138 t-1073).
+ * next-intl for tests, backed by the real catalogue (§138 t-1073).
  *
  * `tests/setup.ts` mocks `next-intl` and `next-intl/server` with these, for
- * every file. A component reads its strings exactly as it does in the app,
- * from `lib/i18n/messages/en.json`, so a test asserts on the English a viewer
- * sees and fails on a key that is missing from the catalogue. No provider
- * wrapper is needed in a render.
+ * every file. A component reads its strings exactly as it does in the app:
+ * from `catalogueFor('en')` (`lib/i18n/registry.ts`), which is
+ * `lib/i18n/messages/en.json` merged with whatever the app registers through
+ * `initAppMessages()` (t-1131, #1363). So a test asserts on the English a
+ * viewer sees, an app's own `app.…` strings included, and fails on a key that
+ * is missing from both. With no app strings registered it is `en.json` alone.
+ * No provider wrapper is needed in a render.
+ *
+ * Read on every call, not captured once, so strings a test registers are
+ * seen by the next render.
  *
  * A test that needs another locale mocks the module itself, or calls
- * {@link translatorFor} with its own messages.
+ * {@link translatorFor} with its own messages. A test that mocks
+ * `@/lib/i18n/registry` and renders text must give the mock a `catalogueFor`.
  */
 
 import { createFormatter, createTranslator } from 'next-intl';
-import en from '@/lib/i18n/messages/en.json';
 import { I18N_FORMATS } from '@/lib/i18n/format';
+import { catalogueFor } from '@/lib/i18n/registry';
 
 export const TEST_LOCALE = 'en';
 export const TEST_TIME_ZONE = 'UTC';
@@ -26,8 +33,16 @@ function namespaceOf(arg: NamespaceArg): string | undefined {
   return typeof arg === 'string' ? arg : arg?.namespace;
 }
 
-/** A translator over `messages` (the source catalogue by default). */
-export function translatorFor(namespace?: string, messages: Record<string, unknown> = en) {
+/** The catalogue a viewer in the test locale reads: the source and the app's strings. */
+export function testMessages(): Record<string, unknown> {
+  return catalogueFor(TEST_LOCALE);
+}
+
+/** A translator over `messages` (the {@link testMessages} catalogue by default). */
+export function translatorFor(
+  namespace?: string,
+  messages: Record<string, unknown> = testMessages()
+) {
   return createTranslator({
     locale: TEST_LOCALE,
     messages,
@@ -54,7 +69,7 @@ export const nextIntlClientMock = {
   useLocale: () => TEST_LOCALE,
   useTimeZone: () => TEST_TIME_ZONE,
   useNow: () => TEST_NOW,
-  useMessages: () => en,
+  useMessages: () => testMessages(),
 };
 
 /** A stand-in for `next-intl/server`, which cannot load outside a request. */
@@ -64,7 +79,7 @@ export const nextIntlServerMock = {
   getLocale: async () => TEST_LOCALE,
   getTimeZone: async () => TEST_TIME_ZONE,
   getNow: async () => TEST_NOW,
-  getMessages: async () => en,
+  getMessages: async () => testMessages(),
   setRequestLocale: () => {},
   getRequestConfig: (fn: unknown) => fn,
 };
