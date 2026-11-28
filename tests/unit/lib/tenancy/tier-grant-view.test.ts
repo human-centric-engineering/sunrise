@@ -20,6 +20,8 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { registerAdminTier, restoreNamedAdminTiers } from '@/lib/auth/admin-tier';
+import { logger } from '@/lib/logging';
+import { unstable_rethrow } from 'next/navigation';
 import { env } from '@/lib/env';
 import { grantableTiersFor } from '@/lib/tenancy/tier-grant-view';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -78,5 +80,44 @@ describe('grantableTiersFor', () => {
     registerAdminTier('reports', { holds: () => true });
     expect(await grantableTiersFor(ORG)).toEqual([]);
     expect(getTranslations).not.toHaveBeenCalled();
+  });
+
+  it('answers [] and logs at error when the translations cannot be read, rather than throw (t-1124)', async () => {
+    registerAdminTier('media', { label: { message: 'app.tiers.media' } });
+    getTranslations.mockReset().mockRejectedValue(new Error('no request locale'));
+
+    await expect(grantableTiersFor(ORG)).resolves.toEqual([]);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Grantable tiers could not be read; the roster is served without them',
+      { orgId: ORG, error: 'no request locale' }
+    );
+  });
+
+  it('answers [] when resolving a tier label throws', async () => {
+    registerAdminTier('media', { label: { message: 'app.tiers.media' } });
+    getTranslations.mockReset().mockResolvedValue(
+      Object.assign(
+        () => {
+          throw new Error('bad message');
+        },
+        { has: () => true, raw: () => 'x' }
+      )
+    );
+
+    await expect(grantableTiersFor(ORG)).resolves.toEqual([]);
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('lets a Next control-flow error through rather than logging it as a failure', async () => {
+    registerAdminTier('media', {});
+    const bailout = new Error('DYNAMIC_SERVER_USAGE');
+    getTranslations.mockReset().mockRejectedValue(bailout);
+    vi.mocked(unstable_rethrow).mockImplementationOnce((err: unknown) => {
+      throw err;
+    });
+
+    await expect(grantableTiersFor(ORG)).rejects.toBe(bailout);
+    expect(unstable_rethrow).toHaveBeenCalledWith(bailout);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

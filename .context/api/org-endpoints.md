@@ -261,8 +261,11 @@ POST /api/v1/orgs/[id]/members
   beside a `role` other than `MEMBER` (`409 GRANT_NEEDS_MEMBER`) and on the
   install org (`400 INSTALL_ORG_MEMBERSHIP`); each must be grantable
   (`400 TIER_NOT_GRANTABLE` otherwise, and always at `single`). All before
-  anything is written. With no `role`, a newcomer the first-owner bootstrap
-  makes `OWNER` takes no grant: their role opens every tier.
+  anything is written. With no `role`, a newcomer whose role is decided for
+  them takes no grant, because that role already opens every tier: one the
+  first-owner bootstrap makes `OWNER`, or one a surviving signup record (t-838)
+  places at `ADMIN`. The add still succeeds, and the response's `tiers` is
+  `[]` (t-1126). Check `tiers` rather than assume what was asked was written.
 
 Adding by id enrols the user without asking them — it mirrors the platform
 admin naming an owner at creation, and the org's administrators already see
@@ -271,7 +274,10 @@ the roster. The consenting path is an invitation, which the invitee accepts:
 `POST /api/v1/users/invite` with `orgId`. The `404` for an unknown id confirms
 only that a cuid — unguessable — does not name a user.
 
-**Response** (201 Created): the membership row.
+**Response** (201 Created): the membership row (`id`, `orgId`, `userId`,
+`role`, `createdAt`, `updatedAt`) and `tiers`: the named tiers its grant lists
+once the add commits. That is the tiers written, `[]` when none were (above), or
+for a healed `MEMBER` with no `tiers` asked, the grant the heal wrote.
 
 **Error Responses**: `400` with code `INSTALL_ORG_MEMBERSHIP` (a role on the
 install org) · `403 OWNER_STANDING` · `403 FORBIDDEN` with

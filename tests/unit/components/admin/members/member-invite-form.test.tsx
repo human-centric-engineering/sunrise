@@ -178,7 +178,7 @@ describe('MemberInviteForm', () => {
 
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
     expect(apiClient.post).toHaveBeenLastCalledWith(URL, {
-      body: { name: 'New Person', email: 'new@example.com' },
+      body: { name: 'New Person', email: 'new@example.com', orgRole: 'MEMBER' },
       params: { resend: 'true' },
     });
     expect(await screen.findByText(/Invitation sent/)).toBeInTheDocument();
@@ -206,12 +206,12 @@ describe('MemberInviteForm', () => {
 
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
     expect(apiClient.post).toHaveBeenLastCalledWith(URL, {
-      body: { name: 'New Person', email: 'new@example.com' },
+      body: { name: 'New Person', email: 'new@example.com', orgRole: 'MEMBER' },
       params: { resend: 'true' },
     });
   });
 
-  it('names the pending role and re-sends without one, so the API keeps it', async () => {
+  it('names the pending role, shows it in the form, and re-sends it untouched (t-1125)', async () => {
     vi.mocked(apiClient.post).mockResolvedValueOnce({
       message: 'Already invited',
       invitation: { email: 'new@example.com', name: 'New Person', orgRole: 'ADMIN' },
@@ -228,7 +228,7 @@ describe('MemberInviteForm', () => {
     await user.click(screen.getByRole('button', { name: 'Send it again' }));
 
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(apiClient.post).mock.calls[1][1]?.body).not.toHaveProperty('orgRole');
+    expect(vi.mocked(apiClient.post).mock.calls[1][1]?.body).toMatchObject({ orgRole: 'ADMIN' });
   });
 
   it('accepts an email pasted with spaces around it, as the API does', async () => {

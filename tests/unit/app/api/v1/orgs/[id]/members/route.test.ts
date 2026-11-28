@@ -295,6 +295,23 @@ describe('GET /api/v1/orgs/[id]/members — named tiers (t-1123)', () => {
       { name: 'page_designs', label: 'Page designs' },
     ]);
   });
+  it('still serves the roster when the tier names cannot be read: 200, no pickers, logged (t-1124)', async () => {
+    const { registerAdminTier } = await import('@/lib/auth/admin-tier');
+    registerAdminTier('media', { label: 'Media library' });
+    const intl = await import('next-intl/server');
+    vi.spyOn(intl, 'getTranslations').mockRejectedValueOnce(new Error('catalogue down'));
+
+    const response = await get();
+    const json = JSON.parse(await response.text());
+
+    expect(response.status).toBe(200);
+    expect(Array.isArray(json.data.members)).toBe(true);
+    expect(json.data.grantableTiers).toEqual([]);
+    expect(mockLog.error).toHaveBeenCalledWith(
+      'Grantable tiers could not be read; the roster is served without them',
+      expect.objectContaining({ orgId: ORG, error: 'catalogue down' })
+    );
+  });
 });
 
 describe('POST /api/v1/orgs/[id]/members', () => {
