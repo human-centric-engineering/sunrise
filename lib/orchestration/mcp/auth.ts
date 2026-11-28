@@ -11,8 +11,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { mcpKeyScopeSchema } from '@/lib/validations/mcp';
-import { resolveCredentialOrg } from '@/lib/tenancy/entry';
-import { runAsCredentialLookup } from '@/lib/tenancy/context';
+import { resolveCredentialOrg, verifiedMembership } from '@/lib/tenancy/entry';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { isMultiTenant, runAsCredentialLookup } from '@/lib/tenancy/context';
 import type { McpAuthContext } from '@/types/mcp';
 
 /** Prefix every MCP API key carries; the rate-limit credential lookup reads it too. */
@@ -66,7 +67,8 @@ export function generateApiKey(): { plaintext: string; hash: string; prefix: str
  *
  * Returns the auth context if valid, or null if the key is missing,
  * inactive, or expired — or if it cannot enter an org (§106, t-673): its
- * org is suspended, or it carries none at `multi`. The org's status is read
+ * org is suspended, or it carries none at `multi` — or if its creator is no
+ * longer a member of that org, or was erased (#1358). The org's status is read
  * with the key, and the context's `orgId` is the read rule's answer, so the
  * transport runs each request inside `runAsOrg(auth.orgId, …)`. Updates
  * `lastUsedAt` fire-and-forget.
@@ -115,6 +117,27 @@ export async function authenticateMcpRequest(
       refused: entry.refused,
     });
     return null;
+  }
+
+  // Every MCP call runs as the key's creator (`userId: auth.createdBy`), so
+  // the key is only as good as their standing in its org: read per request,
+  // as `enterApiKeyOrg` does for an `sk_` key, so removing them stops the key
+  // and re-adding them restores it (#1358). An erased creator (`SetNull`)
+  // leaves nobody to act as. The install org at `single` has no membership
+  // to verify, as on the `sk_` path.
+  if (!key.createdBy) {
+    logger.warn('MCP auth: key has no creator', { keyPrefix: key.keyPrefix });
+    return null;
+  }
+  if (!(entry.orgId === INSTALL_ORG_ID && !isMultiTenant())) {
+    const membership = await verifiedMembership(key.createdBy, entry.orgId, prisma);
+    if ('refused' in membership) {
+      logger.warn('MCP auth: key creator cannot enter its org', {
+        keyPrefix: key.keyPrefix,
+        refused: membership.refused,
+      });
+      return null;
+    }
   }
 
   // Fire-and-forget lastUsedAt update — under the lookup scope, since the

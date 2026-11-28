@@ -11,6 +11,9 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    orgMembership: {
+      findUnique: vi.fn(),
+    },
   },
 }));
 
@@ -24,6 +27,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import {
   generateApiKey,
   hashApiKey,
@@ -44,7 +48,7 @@ function makeMcpApiKey(
     scopes: string[];
     scopedAgentId: string | null;
     scope: unknown;
-    createdBy: string;
+    createdBy: string | null;
     isActive: boolean;
     expiresAt: Date | null;
     orgId: string | null;
@@ -281,15 +285,20 @@ describe('authenticateMcpRequest — the org the key acts for (§106, t-673)', (
     vi.clearAllMocks();
     mockEnv.TENANCY_MODE = 'single';
     vi.mocked(prisma.mcpApiKey.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      role: 'MEMBER',
+      org: { status: 'ACTIVE' },
+    } as never);
   });
 
-  it('reads the org’s status with the key — one query, no second read', async () => {
+  it('reads the org’s status with the key — one key read, then only the creator’s membership', async () => {
     vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
       makeMcpApiKey({ orgId: OTHER, org: { status: 'ACTIVE' } }) as never
     );
     const result = await authenticateMcpRequest('smcp_bound', CLIENT_IP, USER_AGENT);
     expect(result?.orgId).toBe(OTHER);
     expect(prisma.mcpApiKey.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.orgMembership.findUnique).toHaveBeenCalledTimes(1);
     expect(prisma.mcpApiKey.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ include: { org: { select: { status: true } } } })
     );
@@ -338,6 +347,104 @@ describe('authenticateMcpRequest — the org the key acts for (§106, t-673)', (
     );
     expect(await authenticateMcpRequest('smcp_suspended', CLIENT_IP, USER_AGENT)).toBeNull();
     expect(prisma.mcpApiKey.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('authenticateMcpRequest — the key acts only while its creator is a member (#1358)', () => {
+  const OTHER = 'cmorg000000000000000other';
+  const boundKey = (overrides: Parameters<typeof makeMcpApiKey>[0] = {}) =>
+    makeMcpApiKey({ orgId: OTHER, org: { status: 'ACTIVE' }, ...overrides });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(prisma.mcpApiKey.update).mockResolvedValue({} as never);
+  });
+
+  it('admits a key whose creator is a member of its org, reading that membership', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(boundKey() as never);
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      role: 'MEMBER',
+      org: { status: 'ACTIVE' },
+    } as never);
+
+    const result = await authenticateMcpRequest('smcp_member', CLIENT_IP, USER_AGENT);
+
+    expect(result).toMatchObject({ orgId: OTHER, createdBy: 'user-id-1' });
+    expect(prisma.orgMembership.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orgId_userId: { orgId: OTHER, userId: 'user-id-1' } },
+      })
+    );
+  });
+
+  it('refuses a key whose creator has been removed from its org, and does not mark it used', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(boundKey() as never);
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue(null);
+
+    expect(await authenticateMcpRequest('smcp_left', CLIENT_IP, USER_AGENT)).toBeNull();
+    expect(prisma.mcpApiKey.update).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith('MCP auth: key creator cannot enter its org', {
+      keyPrefix: 'smcp_abc',
+      refused: 'not-a-member',
+    });
+  });
+
+  it('admits the same key again once its creator is re-added — read per request', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(boundKey() as never);
+    vi.mocked(prisma.orgMembership.findUnique)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ role: 'MEMBER', org: { status: 'ACTIVE' } } as never);
+
+    expect(await authenticateMcpRequest('smcp_back', CLIENT_IP, USER_AGENT)).toBeNull();
+    expect(await authenticateMcpRequest('smcp_back', CLIENT_IP, USER_AGENT)).toMatchObject({
+      orgId: OTHER,
+    });
+  });
+
+  it('refuses a key whose creator was erased (createdBy SetNull), without a membership read', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      boundKey({ createdBy: null }) as never
+    );
+
+    expect(await authenticateMcpRequest('smcp_erased', CLIENT_IP, USER_AGENT)).toBeNull();
+    expect(prisma.orgMembership.findUnique).not.toHaveBeenCalled();
+    expect(prisma.mcpApiKey.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an erased creator’s key at single too — there is nobody to act as', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ createdBy: null }) as never
+    );
+
+    expect(await authenticateMcpRequest('smcp_erased', CLIENT_IP, USER_AGENT)).toBeNull();
+  });
+
+  it('does not read a membership for the install org at single, as on the sk_ path', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ orgId: INSTALL_ORG_ID, org: { status: 'ACTIVE' } }) as never
+    );
+
+    const result = await authenticateMcpRequest('smcp_install', CLIENT_IP, USER_AGENT);
+
+    expect(result?.orgId).toBe(INSTALL_ORG_ID);
+    expect(prisma.orgMembership.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('verifies the creator’s membership of the install org at multi', async () => {
+    vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue(
+      makeMcpApiKey({ orgId: INSTALL_ORG_ID, org: { status: 'ACTIVE' } }) as never
+    );
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue(null);
+
+    expect(await authenticateMcpRequest('smcp_install', CLIENT_IP, USER_AGENT)).toBeNull();
+    expect(prisma.orgMembership.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId: 'user-id-1' } },
+      })
+    );
   });
 });
 

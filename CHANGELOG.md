@@ -288,6 +288,16 @@ release process.
   tier), the same rule the failure exits use. `costUsd` is unchanged: it still
   prices each attempt at its own tier.
 
+### Security
+
+- **An MCP key stops working once its creator leaves the key's org (#1358).**
+  `authenticateMcpRequest` now reads the creator's `OrgMembership` on every
+  request, as an `sk_` key's owner's already is, and refuses (`401`) when it is
+  gone. Re-adding the creator restores the key. A key whose creator was erased
+  (`createdBy` null) is refused in every mode. The install org at `single` is
+  not membership-checked. **A fork with a tool-level membership check for this**
+  can drop it.
+
 ## [0.21.0] — 2026-11-26
 
 > **Alpha release.** Twenty-eighth tagged Sunrise release. **MINOR bump**: one
