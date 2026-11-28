@@ -23,9 +23,25 @@ vi.mock('@/lib/env', () => ({ env: { BETTER_AUTH_URL: 'https://app.test' } }));
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+// The org a call runs as, so the handler's scope can be pinned.
+const scope = vi.hoisted(() => ({ org: null as string | null }));
 vi.mock('@/lib/tenancy/context', () => ({
-  runAsOrg: (_orgId: string, fn: () => unknown) => fn(),
+  runAsOrg: async (orgId: string, fn: () => unknown) => {
+    const outer = scope.org;
+    scope.org = orgId;
+    try {
+      return await fn();
+    } finally {
+      scope.org = outer;
+    }
+  },
 }));
+type ProviderState =
+  { on: true; providerKey: string } | { on: false; reason: string; providerKey: string | null };
+const providerState = vi.hoisted((): { value: ProviderState } => ({
+  value: { on: true, providerKey: 'stripe' },
+}));
+vi.mock('@/lib/billing/config', () => ({ billingProviderState: () => providerState.value }));
 
 const counts = vi.hoisted(() => new Map<string, number>());
 const mockCountUsage = vi.hoisted(() =>
@@ -133,6 +149,7 @@ import {
   loadPlanAllowances,
   runUsageNotices,
 } from '@/lib/billing/usage-notices';
+import { logger } from '@/lib/logging';
 
 const ORG = 'org_a';
 const NOW = new Date('2026-12-10T12:00:00Z');
@@ -147,6 +164,8 @@ function onPlan(overrides: Record<string, unknown> = {}): void {
     orgId: ORG,
     planKey: 'pro',
     provider: 'stripe',
+    customerRef: 'cus_a',
+    subscriptionRef: 'sub_1',
     status: 'ACTIVE',
     periodStart: PERIOD_START,
     periodEnd: PERIOD_END,
@@ -166,6 +185,7 @@ beforeEach(() => {
   plans.handler = (notice) => {
     told.push(notice as (typeof told)[number]);
   };
+  providerState.value = { on: true, providerKey: 'stripe' };
 });
 
 describe('runUsageNotices', () => {
@@ -247,6 +267,56 @@ describe('runUsageNotices', () => {
     };
     await runUsageNotices(NOW);
     expect(told).toHaveLength(1);
+  });
+
+  it('runs the app’s handler as the org, not with the job’s system scope', async () => {
+    onPlan();
+    counts.set(`${ORG}:leads`, 9);
+    const scopes: (string | null)[] = [];
+    plans.handler = () => {
+      scopes.push(scope.org);
+    };
+
+    await runUsageNotices(NOW);
+
+    expect(scopes).toEqual([ORG]);
+  });
+
+  it('keeps a notice it sent when marking "near" as passed fails, and sends it once', async () => {
+    onPlan();
+    counts.set(`${ORG}:leads`, 12);
+    const insert = mockPrisma.billingUsageNotice.createMany.getMockImplementation();
+    mockPrisma.billingUsageNotice.createMany.mockImplementation(async (args) => {
+      if (args.data[0]?.threshold === 'near') throw new Error('connection dropped');
+      return insert ? insert(args) : { count: 0 };
+    });
+
+    expect(await runUsageNotices(NOW)).toEqual({ checked: 1, notified: 1, failed: 0 });
+    await runUsageNotices(NOW);
+    if (insert) mockPrisma.billingUsageNotice.createMany.mockImplementation(insert);
+
+    expect(told.map((n) => n.threshold)).toEqual(['reached']);
+    expect(db.notices.map((n) => n.threshold)).toEqual(['reached']);
+  });
+
+  it('rethrows the handler’s error when releasing its claim fails too, and logs the release', async () => {
+    onPlan();
+    counts.set(`${ORG}:leads`, 9);
+    plans.handler = () => {
+      throw new Error('the app’s notifier is down');
+    };
+    mockPrisma.billingUsageNotice.deleteMany.mockRejectedValueOnce(new Error('connection dropped'));
+
+    expect(await runUsageNotices(NOW)).toEqual({ checked: 1, notified: 0, failed: 1 });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('could not release'),
+      expect.objectContaining({ error: 'connection dropped' })
+    );
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('could not check or send'),
+      expect.objectContaining({ error: 'the app’s notifier is down' })
+    );
   });
 
   it('with no handler of the app’s, emails the org’s owners', async () => {
@@ -392,6 +462,15 @@ describe('loadPlanAllowances', () => {
       ['leads', false],
       ['ai_spend_cents', false],
     ]);
+  });
+
+  it('says it is not billed when the record’s provider is not the one switched on here', async () => {
+    onPlan();
+    providerState.value = { on: false, reason: 'unset', providerKey: null };
+    expect((await loadPlanAllowances(ORG, NOW)).every((item) => !item.billed)).toBe(true);
+
+    providerState.value = { on: true, providerKey: 'paddle' };
+    expect((await loadPlanAllowances(ORG, NOW)).every((item) => !item.billed)).toBe(true);
   });
 
   it('says an item could not be counted rather than showing nothing used', async () => {

@@ -193,9 +193,13 @@ export type AllowanceState = 'within' | 'near' | 'reached';
 
 /**
  * `reached` at or past the allowance; `near` from a warn item's threshold;
- * `within` otherwise. A soft or hard cap has no "near".
+ * `within` otherwise. A soft or hard cap has no "near". A soft cap is
+ * `reached` only past its allowance, where there is an excess to bill: at it,
+ * nothing is billed, and an allowance of 0 (purely usage-based) is not
+ * "billed" at no use.
  */
 export function allowanceState(item: MeteredItem, used: number): AllowanceState {
+  if (item.overage === 'soft_cap') return excessOver(item, used) > 0 ? 'reached' : 'within';
   if (used >= item.allowance) return 'reached';
   if (item.warnAtPercent !== null && used * 100 >= item.allowance * item.warnAtPercent) {
     return 'near';
@@ -234,8 +238,10 @@ const handlerSlot: { handler: UsageNoticeHandler | null } = { handler: null };
  * from `initAppBilling()` in `lib/app/billing.ts`; a later call replaces it.
  * With none set the platform emails the org's owners. A handler that throws
  * is retried on a later maintenance run; one that returns has told the org,
- * and that notice is not sent again for the period. To send nothing, set a
- * handler that does nothing; the billing page still shows the state.
+ * and that notice is not sent again for the period. It runs as the org
+ * (`runAsOrg`), so what it reads and writes is confined to that org. To send
+ * nothing, set a handler that does nothing; the billing page still shows the
+ * state.
  */
 export function setUsageNoticeHandler(handler: UsageNoticeHandler): void {
   if (typeof handler !== 'function') {

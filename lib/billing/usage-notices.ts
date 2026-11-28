@@ -21,7 +21,8 @@
  * its notices are once a month at most.
  *
  * **Tenancy posture.** The job runs under the audited system scope to find the
- * orgs on a plan with a warn item, then reads and writes as each org.
+ * orgs on a plan with a warn item, then reads and writes as each org. The
+ * app's handler runs as the org too.
  *
  * @see lib/billing/overage.ts — the rule and the handler seam
  * @see .context/billing/billing.md#usage-reporting
@@ -50,6 +51,8 @@ import {
   planOf,
   registeredPlans,
 } from '@/lib/billing/plans';
+import { billingProviderState } from '@/lib/billing/config';
+import { ORG_BILLING_PAGE_PATH } from '@/lib/billing/routes';
 import { countUsage } from '@/lib/billing/usage-report';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -60,25 +63,32 @@ interface WindowRecord {
   orgId: string;
   planKey: string | null;
   provider: string | null;
+  customerRef: string | null;
+  subscriptionRef: string | null;
   status: BillingSubscriptionStatus;
   periodStart: Date | null;
   periodEnd: Date | null;
 }
 
+/** What a window needs of the record: its subscription's period and state. */
+type PeriodRecord = Omit<WindowRecord, 'customerRef' | 'subscriptionRef'>;
+
 const WINDOW_FIELDS = {
   orgId: true,
   planKey: true,
   provider: true,
+  customerRef: true,
+  subscriptionRef: true,
   status: true,
   periodStart: true,
   periodEnd: true,
 } as const;
 
-function utcMonth(now: Date): { from: Date; to: Date } {
-  return {
-    from: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
-    to: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
-  };
+/** The UTC month, as a `month` meter counts it. */
+async function utcMonth(orgId: string, now: Date): Promise<{ from: Date; to: Date }> {
+  const month = await meterWindow('month', orgId, now);
+  if (!month.from || !month.to) throw new Error('A month window has no bounds');
+  return { from: month.from, to: month.to };
 }
 
 /** The label a metered item goes by: its meter's, or "AI spend". */
@@ -97,7 +107,7 @@ export function meteredItemLabel(meterKey: string): string {
 const PERIOD_GRACE_MS = 24 * 60 * 60 * 1000;
 
 /** The record's billing period while a provider subscription gives the org its plan. */
-function billingPeriod(record: WindowRecord): { from: Date; to: Date } | null {
+function billingPeriod(record: PeriodRecord): { from: Date; to: Date } | null {
   if (
     record.provider === null ||
     (record.status !== 'ACTIVE' && record.status !== 'PAST_DUE') ||
@@ -110,6 +120,18 @@ function billingPeriod(record: WindowRecord): { from: Date; to: Date } | null {
 }
 
 /**
+ * Whether the usage-report job bills this record's soft caps: the same live
+ * record it reads (`LIVE_RECORD` in `usage-report.ts`), at the provider that
+ * is switched on here.
+ */
+function billedHere(record: WindowRecord): boolean {
+  if (billingPeriod(record) === null) return false;
+  if (record.customerRef === null || record.subscriptionRef === null) return false;
+  const state = billingProviderState();
+  return state.on && state.providerKey === record.provider;
+}
+
+/**
  * The window a metered item's usage is measured in for this org now: the
  * billing period while a provider subscription gives the org its plan (kept a
  * day past its end until a sync moves it on), else the meter's own (the UTC
@@ -118,7 +140,7 @@ function billingPeriod(record: WindowRecord): { from: Date; to: Date } | null {
  * the cap writes. Throws as the app's window function does.
  */
 export async function allowanceWindow(
-  record: WindowRecord,
+  record: PeriodRecord,
   item: Pick<MeteredItem, 'meterKey' | 'overage'>,
   now: Date
 ): Promise<{ from: Date; to: Date }> {
@@ -128,9 +150,11 @@ export async function allowanceWindow(
   }
   const meterKey = item.meterKey;
   const meter = meterKey === AI_SPEND_METER_KEY ? undefined : meterOf(meterKey);
-  if (!meter || meter.period === 'standing') return utcMonth(now);
+  if (!meter || meter.period === 'standing') return utcMonth(record.orgId, now);
   const window = await meterWindow(meter.period, record.orgId, now);
-  return window.from && window.to ? { from: window.from, to: window.to } : utcMonth(now);
+  return window.from && window.to
+    ? { from: window.from, to: window.to }
+    : utcMonth(record.orgId, now);
 }
 
 /** One metered item of the org's plan, as the billing page shows it. */
@@ -175,7 +199,7 @@ export async function loadPlanAllowances(
         overage: item.overage,
         allowance: item.allowance,
         money: item.meterKey === AI_SPEND_METER_KEY,
-        billed: billingPeriod(record) !== null,
+        billed: billedHere(record),
       };
       try {
         const window = await allowanceWindow(record, item, now);
@@ -281,9 +305,6 @@ async function checkItem(
       })
     );
   const claimed = await claim(state);
-  // At the allowance, "near" is past too: claimed quietly, so it is not sent
-  // later in the window as if usage were still climbing towards it.
-  if (state === 'reached') await claim('near');
   if (claimed.count === 0) return false;
 
   const notice: UsageNotice = {
@@ -298,15 +319,44 @@ async function checkItem(
     periodEnd: window.to,
   };
   try {
-    await (appUsageNoticeHandler() ?? emailOwners)(notice);
+    // As the org, as an app's org hooks run, so the handler's reads and
+    // writes are confined to it rather than run with the job's system scope.
+    const handler = appUsageNoticeHandler() ?? emailOwners;
+    await runAsOrg(orgId, async () => {
+      await handler(notice);
+    });
   } catch (error) {
-    // Unclaimed, so a later run sends it.
-    await runAsOrg(orgId, () =>
-      prisma.billingUsageNotice.deleteMany({
-        where: { orgId, meterKey: item.meterKey, periodStart: window.from, threshold: state },
-      })
-    );
+    // Unclaimed, so a later run sends it. A release that fails too is
+    // logged, and the handler's error is the one rethrown.
+    try {
+      await runAsOrg(orgId, () =>
+        prisma.billingUsageNotice.deleteMany({
+          where: { orgId, meterKey: item.meterKey, periodStart: window.from, threshold: state },
+        })
+      );
+    } catch (releaseError) {
+      logger.error('billing: could not release a usage notice that failed; it is not retried', {
+        orgId,
+        meterKey: item.meterKey,
+        threshold: state,
+        error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+      });
+    }
     throw error;
+  }
+  // At the allowance, "near" is past too: claimed quietly once "reached" is
+  // sent, so it is not sent later in the window as if usage were still
+  // climbing towards it. Failing here sends nothing twice, so it is logged.
+  if (state === 'reached') {
+    try {
+      await claim('near');
+    } catch (error) {
+      logger.warn('billing: could not mark a usage notice’s "near" as passed', {
+        orgId,
+        meterKey: item.meterKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   logger.info('billing: told an org it is near or at an allowance', {
     orgId,
@@ -341,7 +391,7 @@ export async function emailOwners(notice: UsageNotice): Promise<void> {
     });
     return;
   }
-  const billingUrl = `${env.BETTER_AUTH_URL}/admin/billing`;
+  const billingUrl = `${env.BETTER_AUTH_URL}${ORG_BILLING_PAGE_PATH}`;
   const failed: string[] = [];
   for (const { user } of owners) {
     const where = await emailLocaleForUser(user.id, { orgId: notice.orgId });

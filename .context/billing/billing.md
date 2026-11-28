@@ -938,7 +938,11 @@ after the end, is always too late. So:
   erasure deletes its row. **A failed report does not stop the erasure**:
   it is logged at error with the org, and the usage goes unbilled. A meter
   that cannot count, or a provider meter that refuses, would otherwise
-  block erasing the org's data for good.
+  block erasing the org's data for good. **Not verified:** Stripe processes
+  meter events asynchronously, so the invoice `invoice_now` makes a moment
+  later may not carry the report. Each report sent before a cancellation is
+  logged with its quantity, so the final invoice can be checked against it
+  after the org's rows are gone.
 - **Ended by the provider at once** (an immediate cancellation in the portal,
   or retries exhausted): the last period's excess is not collected. It is
   closed at `endedAt`, or at the period's end when `endedAt` is null (an
@@ -1009,13 +1013,14 @@ registerPlan({
   webhook (that it ended early, say) replaces the tick's until the period is
   counted.
 - **A send takes a ten-minute lease on the row** (`sendingAt`), so two
-  instances never send at once, and one that crashed is retried.
+  instances never send at once, and one that crashed is retried. A row's
+  `status` says where it is: `OPEN` (running totals only), `PENDING`,
+  `COUNTED`, `SENT`, `NONE` (within the allowance) or `LATE`.
 - **Each run walks every row**, a page at a time by key, so periods already
   closed, totals unchanged, and reports the provider keeps refusing never
   hold the rest back to a later run. A refused report is retried, and
-  logged, every run. A row's
-  `status` says where it is: `OPEN` (running totals only), `PENDING`,
-  `COUNTED`, `SENT`, `NONE` (within the allowance) or `LATE`.
+  logged, every run. A period the tick closed whose count keeps failing is
+  not closed again, so it does not count as work each run.
 - **A provider changed since** (`BILLING_PROVIDER` moved on) leaves the
   other provider's rows where they are: they are not counted or sent here.
 - **Warn notices** are counted in the billing period while a provider
@@ -1023,15 +1028,22 @@ registerPlan({
   window (the UTC month for a standing meter and for AI spend), so a plan
   assigned by hand or given away still warns. A period stays the window for
   a day past its end while the renewal's webhook has not moved it on, so a
-  late webhook does not start a new window and send its notices again.
+  late webhook does not start a new window and send its notices again. One
+  notice per threshold per window, claimed before it is sent; a handler
+  that throws releases the claim and is retried. Once "reached" is sent,
+  "near" is claimed too, so it is never sent after "reached".
+  `warnAtPercent` defaults to 80.
+- **The handler runs as the org** (`runAsOrg`), as an app's org hooks do,
+  not with the job's system scope, so what it reads and writes is confined
+  to that org at `multi`.
 - **On the billing page**, a hard cap is counted in the meter's own window,
   where `checkMeterQuota()` enforces the limit it writes, not the billing
-  period. A soft cap past its allowance says it is billed only while a
-  provider subscription gives the org its plan; on a plan assigned by hand
-  nothing reports it, and the page says it is not billed. One notice per threshold per
-  window, claimed before it is sent; a handler that throws releases the
-  claim and is retried. Reaching the allowance first claims "near" too, so
-  it is never sent after "reached". `warnAtPercent` defaults to 80.
+  period. A soft cap is past its allowance only above it, where there is an
+  excess to bill, so a purely usage-based item (allowance 0) is not
+  "billed" at no use. It says it is billed only when the usage-report job
+  would bill it: a live subscription at the provider switched on here. On
+  a plan assigned by hand, or with billing switched off, nothing reports it
+  and the page says it is not billed.
 - **The default email** goes to each OWNER in their language, with an
   idempotency key per owner and notice. An org with no owner is logged.
 - **Not in t-1097:** seats as a subscription quantity; usage for a

@@ -65,7 +65,19 @@ describe('allowanceState', () => {
   it('a soft or hard cap is never "near": it has no threshold', () => {
     const soft = item({ overage: 'soft_cap', warnAtPercent: null });
     expect(allowanceState(soft, 9)).toBe('within');
-    expect(allowanceState(soft, 10)).toBe('reached');
+    const hard = item({ overage: 'hard_cap', warnAtPercent: null });
+    expect(allowanceState(hard, 9)).toBe('within');
+    expect(allowanceState(hard, 10)).toBe('reached');
+  });
+
+  it('a soft cap is reached only past its allowance, where there is an excess to bill', () => {
+    const soft = item({ overage: 'soft_cap', warnAtPercent: null });
+    expect(allowanceState(soft, 10)).toBe('within');
+    expect(allowanceState(soft, 11)).toBe('reached');
+    // Purely usage-based: nothing used is nothing billed.
+    const usageOnly = item({ overage: 'soft_cap', warnAtPercent: null, allowance: 0 });
+    expect(allowanceState(usageOnly, 0)).toBe('within');
+    expect(allowanceState(usageOnly, 1)).toBe('reached');
   });
 
   it('works the threshold in whole numbers, so 80% of 3 is near at 3 rather than 2.4', () => {

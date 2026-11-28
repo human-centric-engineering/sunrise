@@ -352,7 +352,9 @@ async function closeEndedPeriods(
             where: {
               orgId: record.orgId,
               periodStart: record.periodStart,
-              status: { notIn: ['OPEN', 'PENDING'] },
+              // Pending too: a period whose count keeps failing is not closed
+              // again each run, which would count as work every run.
+              status: { notIn: ['OPEN'] },
             },
           })
         );
@@ -409,7 +411,8 @@ async function sendRunningTotals(
       if (!record || record.periodStart >= now) return;
       for (const item of billedItems(record.planKey)) {
         try {
-          if ((await sendRunningTotal(provider, record, item, now)) === 'sent') run.running += 1;
+          if ((await sendRunningTotal(provider, record, item, now)).outcome === 'sent')
+            run.running += 1;
         } catch (error) {
           run.failed += 1;
           logger.error('billing: could not send a running usage total', {
@@ -428,16 +431,16 @@ async function sendRunningTotals(
  * time (the provider keeps the period's last value). The row stays `OPEN`, so
  * the period still closes, is counted and is sent as any other.
  *
- * @returns `sent`; `unchanged` when the provider already holds this total;
- *   `busy` when another send holds the row's lease; `closed` when the row is
- *   no longer open.
+ * @returns the outcome, with the total counted: `sent`; `unchanged` when the
+ *   provider already holds this total; `busy` when another send holds the
+ *   row's lease; `closed` when the row is no longer open.
  */
 async function sendRunningTotal(
   provider: BillingProvider,
   record: LiveRecord,
   item: MeteredItem,
   now: Date
-): Promise<'sent' | 'unchanged' | 'busy' | 'closed'> {
+): Promise<{ outcome: 'sent' | 'unchanged' | 'busy' | 'closed'; quantity: number }> {
   return runAsOrg(record.orgId, async () => {
     const key = {
       orgId_meterKey_periodStart: {
@@ -466,7 +469,7 @@ async function sendRunningTotal(
       skipDuplicates: true,
     });
     const report = await prisma.billingUsageReport.findUnique({ where: key });
-    if (!report || report.status !== 'OPEN') return 'closed';
+    if (!report || report.status !== 'OPEN') return { outcome: 'closed', quantity: 0 };
 
     // The plan's item as it is now, so a plan changed mid-period is reported
     // under the later one, as the period's close bills it.
@@ -477,9 +480,9 @@ async function sendRunningTotal(
     );
     // Nothing new to say: the provider's meter already holds this total.
     if (quantity === (report.runningQuantity ?? 0) && providerMeter === report.providerMeter) {
-      return 'unchanged';
+      return { outcome: 'unchanged', quantity };
     }
-    if (!(await claimSend(report, now, 'OPEN'))) return 'busy';
+    if (!(await claimSend(report, now, 'OPEN'))) return { outcome: 'busy', quantity };
 
     const send = report.runningSends + 1;
     try {
@@ -510,7 +513,7 @@ async function sendRunningTotal(
         providerMeter,
       },
     });
-    return 'sent';
+    return { outcome: 'sent', quantity };
   });
 }
 
@@ -730,6 +733,7 @@ export async function reportBeforeCancelling(
       if (!(await sendReport(provider, counted, now))) {
         throw new Error(`Usage report ${counted.id} is being sent elsewhere`);
       }
+      logSentBeforeCancelling(counted, counted.quantity ?? 0);
       sent += 1;
     }
 
@@ -742,12 +746,34 @@ export async function reportBeforeCancelling(
     // next one has not been synced, so it is not known here.
     if (!record || record.periodStart >= now || record.periodEnd <= now) return sent;
     for (const item of billedItems(record.planKey)) {
-      const outcome = await sendRunningTotal(provider, record, item, now);
+      const { outcome, quantity } = await sendRunningTotal(provider, record, item, now);
       if (outcome === 'busy') {
         throw new Error(`The ${item.meterKey} usage total is being sent elsewhere`);
       }
-      if (outcome === 'sent') sent += 1;
+      if (outcome === 'sent') {
+        logSentBeforeCancelling({ ...record, meterKey: item.meterKey }, quantity);
+        sent += 1;
+      }
     }
     return sent;
+  });
+}
+
+/**
+ * Each report sent before a cancellation, with what it said. The provider
+ * may build the cancellation's invoice before it has processed the report
+ * (Stripe processes meter events asynchronously; not verified against a
+ * live account), and the org's rows are then erased, so this line is what
+ * the invoice can be checked against.
+ */
+function logSentBeforeCancelling(
+  report: Pick<BillingUsageReport, 'orgId' | 'meterKey' | 'periodStart'>,
+  quantity: number
+): void {
+  logger.info('billing: reported usage before cancelling; check it is on the final invoice', {
+    orgId: report.orgId,
+    meterKey: report.meterKey,
+    periodStart: report.periodStart,
+    quantity,
   });
 }

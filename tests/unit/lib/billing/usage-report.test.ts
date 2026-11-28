@@ -440,6 +440,20 @@ describe('a closed period', () => {
     expect(provider.reportUsage).not.toHaveBeenCalled();
   });
 
+  it('does not close again, as work, a period whose count keeps failing', async () => {
+    record();
+    mockCountMeter.mockRejectedValue(new Error('count broke'));
+
+    const first = await runUsageReports(NOW);
+    const second = await runUsageReports(new Date(NOW.getTime() + 5 * MINUTE));
+    mockCountMeter.mockImplementation(
+      async (orgId: string, key: string) => counts.get(`${orgId}:${key}`) ?? 0
+    );
+
+    expect(first).toMatchObject({ closed: 1, failed: 1 });
+    expect(second).toMatchObject({ closed: 0, failed: 1 });
+  });
+
   it('a counting failure is logged and retried, and the other orgs still report', async () => {
     record();
     record({ orgId: 'org_b', customerRef: 'cus_b', subscriptionRef: 'sub_b' });

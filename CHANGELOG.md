@@ -125,7 +125,7 @@ release process.
   logged rather than stopping the erasure. Warn notices are recorded once per
   threshold in the new published model `BillingUsageNotice` and sent by the
   new `usageNotices` task (15 min); an app decides how with
-  `setUsageNoticeHandler()` from `initAppBilling()`, and with none the org's
+  `setUsageNoticeHandler()` from `initAppBilling()` (it runs as the org), and with none the org's
   owners get the new `usage-notice` email. `OrgBillingSubscription` gains
   `endedAt`; `GET /api/v1/orgs/[id]/billing` gains `allowances`, shown on the
   billing page; `countMeterWithin()` in `lib/tenancy/meters.ts` counts a
