@@ -220,7 +220,8 @@ release process.
   commits. When no `role` is asked and the newcomer becomes `OWNER` by the
   first-owner bootstrap, or `ADMIN` by a healed signup record, the add still
   succeeds with `tiers: []` instead of reading as if the tiers were granted.
-  The write runs SERIALIZABLE whenever it writes tiers (t-1127).
+  The write runs SERIALIZABLE whenever it writes tiers (t-1127), and is retried
+  up to three times when that fails it on a conflict (`P2034`).
 
 - **The MCP audit log no longer keeps the arguments of a tool that processes
   personal data (#1349).** `McpAuditLog.requestParams` for a `tools/call` now

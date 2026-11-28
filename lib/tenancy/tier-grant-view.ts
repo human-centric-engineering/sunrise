@@ -19,6 +19,7 @@
  * tiers itself.
  */
 
+import { unstable_rethrow } from 'next/navigation';
 import { getTranslations } from 'next-intl/server';
 import { humanise, textResolver, type AccessTranslator } from '@/lib/auth/access-explainer';
 import { logger } from '@/lib/logging';
@@ -42,6 +43,9 @@ export async function grantableTiersFor(orgId: string): Promise<GrantableTierVie
   try {
     return await namedGrantableTiers();
   } catch (err) {
+    // Next's own control-flow errors (a dynamic-API bail-out, a redirect)
+    // are not failures to read the tiers, and must reach the framework.
+    unstable_rethrow(err);
     logger.error('Grantable tiers could not be read; the roster is served without them', {
       orgId,
       error: err instanceof Error ? err.message : String(err),

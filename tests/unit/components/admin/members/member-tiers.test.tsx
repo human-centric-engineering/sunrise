@@ -313,6 +313,9 @@ describe('MemberInviteForm — console access', () => {
   });
 
   describe('"Send it again" sends what the form shows (t-1125)', () => {
+    // Each test queues its own answers; one that never resends must not
+    // leave its second answer for the next.
+    beforeEach(() => vi.mocked(apiClient.post).mockReset());
     const pendingWith = (orgRole: string, tiers: string[]) => ({
       message: 'Invitation already pending',
       invitation: { email: 'new@example.com', name: 'New Person', orgRole, tiers },
@@ -384,6 +387,16 @@ describe('MemberInviteForm — console access', () => {
         email: 'new@example.com',
         orgRole: 'ADMIN',
       });
+    });
+
+    it('does not name console access when the pending invitation carries only tiers the app no longer offers', async () => {
+      const user = userEvent.setup();
+      await toPending(user, pendingWith('MEMBER', ['retired_tier']));
+
+      expect(
+        screen.getByText(/pending as Member\. The form now shows that role\./)
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/console access/)).not.toBeInTheDocument();
     });
 
     it('does not tick a pending tier the app no longer offers', async () => {

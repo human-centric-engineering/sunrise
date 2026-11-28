@@ -21,6 +21,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { registerAdminTier, restoreNamedAdminTiers } from '@/lib/auth/admin-tier';
 import { logger } from '@/lib/logging';
+import { unstable_rethrow } from 'next/navigation';
 import { env } from '@/lib/env';
 import { grantableTiersFor } from '@/lib/tenancy/tier-grant-view';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -105,5 +106,18 @@ describe('grantableTiersFor', () => {
 
     await expect(grantableTiersFor(ORG)).resolves.toEqual([]);
     expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('lets a Next control-flow error through rather than logging it as a failure', async () => {
+    registerAdminTier('media', {});
+    const bailout = new Error('DYNAMIC_SERVER_USAGE');
+    getTranslations.mockReset().mockRejectedValue(bailout);
+    vi.mocked(unstable_rethrow).mockImplementationOnce((err: unknown) => {
+      throw err;
+    });
+
+    await expect(grantableTiersFor(ORG)).rejects.toBe(bailout);
+    expect(unstable_rethrow).toHaveBeenCalledWith(bailout);
+    expect(logger.error).not.toHaveBeenCalled();
   });
 });

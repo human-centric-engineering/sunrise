@@ -1622,6 +1622,41 @@ describe('named-tier grants (t-1123)', () => {
       expect(db.$transaction.mock.calls[0]?.[1]).toEqual({ isolationLevel: 'Serializable' });
     });
 
+    it('re-runs the add when SERIALIZABLE fails it, instead of answering 500', async () => {
+      const conflict = new Prisma.PrismaClientKnownRequestError('write conflict', {
+        code: 'P2034',
+        clientVersion: '7.0.0',
+      });
+      const run = db.$transaction.getMockImplementation();
+      db.$transaction.mockRejectedValueOnce(conflict).mockImplementation(run as never);
+
+      const membership = await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN, undefined, {
+        tiers: ['media'],
+      });
+
+      expect(db.$transaction).toHaveBeenCalledTimes(2);
+      expect(membership.tiers).toEqual(['media']);
+    });
+
+    it('gives up after three conflicts and passes the last one on', async () => {
+      const conflict = new Prisma.PrismaClientKnownRequestError('write conflict', {
+        code: 'P2034',
+        clientVersion: '7.0.0',
+      });
+      db.$transaction.mockRejectedValue(conflict);
+
+      await expect(
+        addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN, undefined, { tiers: ['media'] })
+      ).rejects.toBe(conflict);
+      expect(db.$transaction).toHaveBeenCalledTimes(3);
+    });
+
+    it('is logged by its caller, not here as well (t-1128)', async () => {
+      const { logger } = await import('@/lib/logging');
+      await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN, undefined, { tiers: ['media'] });
+      expect(logger.info).not.toHaveBeenCalledWith('Org member added', expect.anything());
+    });
+
     it('keeps the default isolation when no tiers are asked', async () => {
       await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
 

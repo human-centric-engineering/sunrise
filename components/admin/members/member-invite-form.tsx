@@ -109,7 +109,12 @@ export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFor
   const tiers = watch('tiers') ?? [];
   // Tiers widen a Member only; any other role sends none.
   const offersTiers = grantableTiers.length > 0 && orgRole === DEFAULT_ORG_ROLE;
-  const pendingHasAccess = (result?.invitation.tiers?.length ?? 0) > 0;
+  // The notice names console access only when the pending invitation carries a
+  // tier the form can show: one the app no longer offers is not ticked, and a
+  // resend does not keep it.
+  const pendingHasAccess = (result?.invitation.tiers ?? []).some((name) =>
+    grantableTiers.some((tier) => tier.name === name)
+  );
   // One failure for both sends: "Send it again" is a save of the same form.
   const save = useSaveFailure({
     fallback: t('invite.failed'),

@@ -52,6 +52,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
+import { isSerializableConflict } from '@/lib/db/serializable-conflict';
 import { logger } from '@/lib/logging';
 import { APIError } from '@/lib/api/errors';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
@@ -734,57 +735,77 @@ export async function addMember(
   // do: a concurrent move off MEMBER (which deletes grants) would otherwise
   // land between the two and leave a grant beside an ADMIN, handed back on a
   // later demotion (t-1127). Without tiers there is no such pair to guard.
+  // SERIALIZABLE answers a clash by failing one side (P2034); that side is
+  // re-run from the top, so it reads what the other committed, rather than
+  // answering a person adding a member or accepting an invitation with a 500.
   let healedSignupOrg: string | null = null;
-  const membership = await db.$transaction(
-    async (tx) => {
-      healedSignupOrg = await healSignupRecord(userId, tx);
-      // The record may have named this very org, in which case it is now written
-      // — with the role the invitation gave. A role the caller asked for wins
-      // over it (review round 3); with none asked, the invitation's stands.
-      const healedRow = await tx.orgMembership.findUnique({
-        where: { orgId_userId: { orgId, userId } },
-        select: { ...membershipSelect, grant: { select: { tiers: true } } },
-      });
-      let written: MembershipRecord;
-      // What the membership's grant lists once this transaction commits.
-      let held: string[] = [];
-      if (!healedRow) {
-        written = await tx.orgMembership.create({
-          data: { orgId, userId, role: effectiveRole },
-          select: membershipSelect,
-        });
-      } else if (role === undefined || healedRow.role === effectiveRole) {
-        const { grant, ...healed } = healedRow;
-        written = healed;
-        held = grant?.tiers ?? [];
-      } else {
-        written = await tx.orgMembership.update({
+  const attempt = () =>
+    db.$transaction(
+      async (tx) => {
+        healedSignupOrg = await healSignupRecord(userId, tx);
+        // The record may have named this very org, in which case it is now written
+        // — with the role the invitation gave. A role the caller asked for wins
+        // over it (review round 3); with none asked, the invitation's stands.
+        const healedRow = await tx.orgMembership.findUnique({
           where: { orgId_userId: { orgId, userId } },
-          data: { role: effectiveRole },
-          select: membershipSelect,
+          select: { ...membershipSelect, grant: { select: { tiers: true } } },
         });
-        // The healed membership's role changed: a grant the heal wrote beside a
-        // MEMBER goes when the role leaves MEMBER, as in `changeMemberRole`, so
-        // a later demotion cannot bring it back.
-        if (written.role !== DEFAULT_ORG_ROLE) {
-          await tx.orgMembershipGrant.deleteMany({ where: { membershipId: written.id } });
+        let written: MembershipRecord;
+        // What the membership's grant lists once this transaction commits.
+        let held: string[] = [];
+        if (!healedRow) {
+          written = await tx.orgMembership.create({
+            data: { orgId, userId, role: effectiveRole },
+            select: membershipSelect,
+          });
+        } else if (role === undefined || healedRow.role === effectiveRole) {
+          const { grant, ...healed } = healedRow;
+          written = healed;
+          held = grant?.tiers ?? [];
+        } else {
+          written = await tx.orgMembership.update({
+            where: { orgId_userId: { orgId, userId } },
+            data: { role: effectiveRole },
+            select: membershipSelect,
+          });
+          // The healed membership's role changed: a grant the heal wrote beside a
+          // MEMBER goes when the role leaves MEMBER, as in `changeMemberRole`, so
+          // a later demotion cannot bring it back.
+          if (written.role !== DEFAULT_ORG_ROLE) {
+            await tx.orgMembershipGrant.deleteMany({ where: { membershipId: written.id } });
+          }
         }
-      }
-      // The tiers the caller granted (t-1123), in the same transaction, beside
-      // a MEMBER only: a membership that became an OWNER by the first-owner
-      // bootstrap takes none. A grant the heal already wrote is replaced.
-      if (tiers.length > 0 && orgId !== INSTALL_ORG_ID && written.role === DEFAULT_ORG_ROLE) {
-        await writeGrant(tx, written.id, tiers);
-        held = tiers;
-      }
-      return { ...written, tiers: held };
-    },
-    tiers.length > 0 ? SERIALIZABLE : undefined
-  );
+        // The tiers the caller granted (t-1123), in the same transaction, beside
+        // a MEMBER only: a membership that became an OWNER by the first-owner
+        // bootstrap takes none. A grant the heal already wrote is replaced.
+        if (tiers.length > 0 && orgId !== INSTALL_ORG_ID && written.role === DEFAULT_ORG_ROLE) {
+          await writeGrant(tx, written.id, tiers);
+          held = tiers;
+        }
+        return { ...written, tiers: held };
+      },
+      tiers.length > 0 ? SERIALIZABLE : undefined
+    );
+  const membership = await retryingConflicts(attempt);
 
   setUpHealedSignupOrg(healedSignupOrg, userId);
-  logger.info('Org member added', { orgId, userId, role: membership.role });
+  // Logged by each caller, which knows what the add was (t-1128): the members
+  // route with the actor, an accepted invitation as an acceptance.
   return membership;
+}
+
+/** How many times a write is tried when SERIALIZABLE fails it (P2034). */
+const CONFLICT_ATTEMPTS = 3;
+
+/** `run`, re-run from the top when SERIALIZABLE fails it (P2034), up to {@link CONFLICT_ATTEMPTS} times. */
+async function retryingConflicts<T>(run: () => Promise<T>): Promise<T> {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isSerializableConflict(error) || tries >= CONFLICT_ATTEMPTS) throw error;
+    }
+  }
 }
 
 /**
