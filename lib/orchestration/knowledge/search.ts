@@ -149,6 +149,12 @@ export interface KnowledgeSearchEmbedding {
   provider: string;
   inputTokens: number;
   costUsd: number;
+  /**
+   * Whether the query's embedding went out on the org's own provider key
+   * (§137): the same spend as `costUsd`, as `embedText` reports it (#1369).
+   * Optional for `EmbedTextResult.ownKey`'s reason; read absent as `false`.
+   */
+  ownKey?: boolean;
 }
 
 /** Full return shape for `searchKnowledgeWithEmbedding`. */
@@ -283,6 +289,7 @@ export async function searchKnowledgeWithEmbedding(
       provider: embedResult.provider,
       inputTokens: embedResult.inputTokens,
       costUsd: embedResult.costUsd,
+      ...(embedResult.ownKey === undefined ? {} : { ownKey: embedResult.ownKey }),
     },
   };
 }

@@ -23,7 +23,8 @@ release process.
   carry `ownKey`: the flag their cost row already records. It is `true` for a
   call on the org's own provider key (§137), and for a batch run only when
   every batch was. A caller keeping its own spend tally can now tell own-key
-  spend from platform spend. Core always sets it. It is optional in the type
+  spend from platform spend. `searchKnowledgeWithEmbedding`'s `embedding`
+  carries it too. Core always sets it. It is optional in the type
   so a fork's existing test doubles still compile; read absent as `false`.
 
 - **Granting named admin tiers to a MEMBER (t-1123).** A new model,

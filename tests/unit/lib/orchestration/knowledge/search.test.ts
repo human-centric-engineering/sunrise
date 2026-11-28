@@ -47,7 +47,7 @@ vi.mock('@/lib/orchestration/settings', () => ({
 }));
 
 // Import SUT and mock modules after mocks are registered
-const { searchKnowledge, getPatternDetail, listPatterns } =
+const { searchKnowledge, searchKnowledgeWithEmbedding, getPatternDetail, listPatterns } =
   await import('@/lib/orchestration/knowledge/search');
 const { embedText, getActiveEmbeddingModelSummary } =
   await import('@/lib/orchestration/knowledge/embedder');
@@ -104,6 +104,29 @@ describe('searchKnowledge', () => {
     expect(results[0].chunk.id).toBe('chunk-1');
     // similarity = 1 - distance + Math.abs(keyword_boost) = 1 - 0.2 + 0.05 = 0.85
     expect(results[0].similarity).toBeCloseTo(0.85);
+  });
+
+  it('reports the query embedding’s cost and which key paid it (#1369)', async () => {
+    vi.mocked(embedText).mockResolvedValue({
+      embedding: new Array(1536).fill(0),
+      model: 'text-embedding-3-small',
+      provider: 'openai',
+      dimensions: 1536,
+      inputTokens: 10,
+      costUsd: 0.0002,
+      ownKey: true,
+    });
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([makeRawRow()] as never);
+
+    const { embedding } = await searchKnowledgeWithEmbedding('what is chain of thought');
+
+    expect(embedding).toEqual({
+      model: 'text-embedding-3-small',
+      provider: 'openai',
+      inputTokens: 10,
+      costUsd: 0.0002,
+      ownKey: true,
+    });
   });
 
   it("selects and returns each chunk's position (t-1106)", async () => {
