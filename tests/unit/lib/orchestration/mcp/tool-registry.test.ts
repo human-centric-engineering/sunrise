@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -1025,13 +1025,25 @@ describe('toolArgumentsAuditable (#1349)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+  afterEach(() => {
+    vi.mocked(registerBuiltInCapabilities).mockReset();
+  });
 
   it('clears a capability that declares no personal data', () => {
     vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: false } as never);
 
     expect(toolArgumentsAuditable('search_knowledge')).toBe(true);
     expect(capabilityDispatcher.getHandler).toHaveBeenCalledWith('search_knowledge');
-    expect(registerBuiltInCapabilities).toHaveBeenCalled();
+  });
+
+  it('does not warm the registry, so a failed app init cannot throw out of an audit write', () => {
+    vi.mocked(registerBuiltInCapabilities).mockImplementation(() => {
+      throw new Error('app capability init failed');
+    });
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue(undefined);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(false);
+    expect(registerBuiltInCapabilities).not.toHaveBeenCalled();
   });
 
   it('withholds a capability that processes personal data', () => {

@@ -200,10 +200,11 @@ release process.
   code and timing are kept. Other methods' params are unchanged.
   `toolArgumentsAuditable(slug)` (`lib/orchestration/mcp/tool-registry.ts`)
   answers the question, and `callMcpTool()` takes an optional fourth
-  `onResolved(slug)` callback that reports which slug it ran. **A fork carrying this as a divergence** can take
-  ours and retire the row. Rows written before this change are not rewritten:
-  they are pruned under the MCP audit retention setting (90 days by default,
-  never when it is `0`), or an admin can purge them from the audit page.
+  `onResolved(slug)` callback that reports which slug it ran. **A fork
+  carrying this as a divergence** can take ours and retire the row. Rows
+  written before this change are not rewritten: they are pruned under the MCP
+  audit retention setting (90 days by default, never when it is `0`), or an
+  admin can purge them from the audit page.
 
 - **A fork's authorization policy and sealed stores no longer run inside
   Sunrise's own tests (#1361, #1359).** **A fork's tests**: `tests/setup.ts`

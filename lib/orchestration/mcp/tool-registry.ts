@@ -305,9 +305,13 @@ export async function callMcpTool(
  * data) and when no handler is registered for the slug, since nothing then
  * vouches for what the arguments hold. The audit log is install-wide (no org
  * column) and outside every org's erasure, so it fails closed.
+ *
+ * It does not warm the registry itself: `callMcpTool` has already done that on
+ * the way to dispatch, and `registerBuiltInCapabilities()` rethrows for good
+ * once a fork's app capability init has failed, which here would turn an audit
+ * write into an escaped error. A cold registry finds no handler and withholds.
  */
 export function toolArgumentsAuditable(slug: string): boolean {
-  registerBuiltInCapabilities();
   const handler = capabilityDispatcher.getHandler(slug);
   return handler !== undefined && !handler.processesPii;
 }

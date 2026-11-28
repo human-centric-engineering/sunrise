@@ -539,7 +539,13 @@ function auditParamsOf(request: JsonRpcRequest, audit: AuditFacts): JsonRpcReque
   const params = request.params;
   if (request.method !== 'tools/call' || !params) return params;
   if (audit.toolSlug !== undefined && toolArgumentsAuditable(audit.toolSlug)) return params;
-  return { name: params.name, arguments: WITHHELD_TOOL_ARGUMENTS };
+  // The name is kept only in the shape a valid call has; on the invalid-params
+  // path it can be any structure the client chose, personal data included.
+  const name = mcpToolCallParamsSchema.shape.name.safeParse(params.name);
+  return {
+    name: name.success ? name.data : WITHHELD_TOOL_ARGUMENTS,
+    arguments: WITHHELD_TOOL_ARGUMENTS,
+  };
 }
 
 function extractToolSlug(request: JsonRpcRequest): string | undefined {

@@ -792,6 +792,21 @@ describe('handleMcpRequest', () => {
         expect(JSON.stringify(entry)).not.toContain('Sarah');
       });
 
+      it('withholds a name that is not a valid tool name, since it can carry anything', async () => {
+        await call({
+          name: { text: 'Sarah at Acme, sarah@acme.example' },
+          arguments: { text: 'x' },
+        });
+
+        const entry = await audited();
+        expect(entry?.responseCode).toBe('error');
+        expect(entry?.requestParams).toEqual({
+          name: WITHHELD_TOOL_ARGUMENTS,
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+        expect(JSON.stringify(entry)).not.toContain('Sarah');
+      });
+
       it('withholds them for a call that never resolved to a tool', async () => {
         vi.mocked(callMcpTool).mockResolvedValue({
           content: [{ type: 'text', text: 'Unknown tool: assess_draft' }],
