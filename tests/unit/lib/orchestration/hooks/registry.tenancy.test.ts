@@ -42,6 +42,9 @@ vi.mock('@/lib/db/client', () => ({
       update: vi.fn().mockResolvedValue({ id: 'del-1' }),
       // The first attempt claims the lease its row was written with (#834).
       updateManyAndReturn: vi.fn().mockResolvedValue([{ id: 'del-1', createdAt: new Date() }]),
+      // A failed post reads the row, then records the failure on it.
+      findUnique: vi.fn().mockResolvedValue(null),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
   },
 }));
@@ -262,6 +265,45 @@ describe('the hook cache at multi', () => {
     );
     expect(mockFindMany).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('the hook send at multi (#1371)', () => {
+  it('pins a customer org’s send to a checked address', async () => {
+    await emitAs(ORG_A, 1);
+
+    // The URL schema reads the text; the dispatcher checks where it resolves.
+    expect(mockFetch.mock.calls[0][1]).toHaveProperty('dispatcher', expect.anything());
+  });
+
+  it('sends the install org’s as it always was', async () => {
+    await emitAs(INSTALL_ORG_ID, 1);
+
+    expect(mockFetch.mock.calls[0][1]).not.toHaveProperty('dispatcher');
+  });
+
+  it('records a customer org’s unresolvable host without saying which it was', async () => {
+    // What undici throws for a name the operator's DNS does not answer: a bare
+    // "fetch failed" whose cause carries the host. Told apart from a refused
+    // address, it would tell an org admin which internal names resolve.
+    const lookup = Object.assign(new Error('getaddrinfo ENOTFOUND db.internal'), {
+      code: 'ENOTFOUND',
+    });
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed', { cause: lookup }));
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      id: 'del-1',
+      attempts: 0,
+      createdAt: new Date(),
+    } as never);
+
+    await emitAs(ORG_A, 1);
+
+    await vi.waitFor(() => expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalled());
+    const [args] = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls[0];
+    expect(args.data).toMatchObject({
+      lastError: 'Could not reach the destination: its host is not allowed or does not exist',
+    });
+    expect(JSON.stringify(args.data)).not.toContain('db.internal');
   });
 });
 
