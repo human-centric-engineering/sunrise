@@ -289,7 +289,7 @@ describe('MemberInviteForm — console access', () => {
     emailStatus: 'sent' as const,
   };
 
-  it('says a resend keeps console access only when the pending invitation carries some', async () => {
+  it('names console access in the pending notice only when the pending invitation carries some', async () => {
     const user = userEvent.setup();
     const pendingWith = (tiers: string[]) => ({
       message: 'Invitation already pending',
@@ -301,11 +301,100 @@ describe('MemberInviteForm — console access', () => {
 
     await fill(user);
     await user.click(screen.getByRole('button', { name: /send invitation/i }));
-    expect(await screen.findByText(/keeps that role\.$/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/pending as Member\. The form now shows that role\./)
+    ).toBeInTheDocument();
 
     vi.mocked(apiClient.post).mockResolvedValueOnce(pendingWith(['media']));
     await user.click(screen.getByRole('button', { name: /send invitation/i }));
-    expect(await screen.findByText(/keeps that role and its console access\./)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/pending as Member, with console access\. The form now shows both\./)
+    ).toBeInTheDocument();
+  });
+
+  describe('"Send it again" sends what the form shows (t-1125)', () => {
+    const pendingWith = (orgRole: string, tiers: string[]) => ({
+      message: 'Invitation already pending',
+      invitation: { email: 'new@example.com', name: 'New Person', orgRole, tiers },
+      emailStatus: 'pending' as const,
+    });
+    async function toPending(
+      user: ReturnType<typeof userEvent.setup>,
+      pending: ReturnType<typeof pendingWith>
+    ) {
+      vi.mocked(apiClient.post).mockResolvedValueOnce(pending);
+      vi.mocked(apiClient.post).mockResolvedValueOnce(sent);
+      render(<MemberInviteForm orgId={ORG_ID} grantableTiers={TIERS} />);
+      await fill(user);
+      await user.click(screen.getByRole('button', { name: /send invitation/i }));
+      await screen.findByRole('button', { name: 'Send it again' });
+    }
+    const resentBody = () => vi.mocked(apiClient.post).mock.calls[1]?.[1]?.body;
+
+    it('shows the pending invitation’s ticks, and re-sends them untouched', async () => {
+      const user = userEvent.setup();
+      await toPending(user, pendingWith('MEMBER', ['media']));
+
+      expect(screen.getByLabelText('Media library')).toBeChecked();
+      expect(screen.getByLabelText('Brand themes')).not.toBeChecked();
+      await user.click(screen.getByRole('button', { name: 'Send it again' }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+      expect(resentBody()).toMatchObject({ orgRole: 'MEMBER', tiers: ['media'] });
+    });
+
+    it('sends a tier ticked after the notice', async () => {
+      const user = userEvent.setup();
+      await toPending(user, pendingWith('MEMBER', []));
+
+      await user.click(screen.getByLabelText('Brand themes'));
+      await user.click(screen.getByRole('button', { name: 'Send it again' }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+      expect(resentBody()).toMatchObject({ orgRole: 'MEMBER', tiers: ['brand'] });
+    });
+
+    it('sends an empty list when every tick is removed, so the tiers go', async () => {
+      const user = userEvent.setup();
+      await toPending(user, pendingWith('MEMBER', ['media', 'brand']));
+
+      await user.click(screen.getByLabelText('Media library'));
+      await user.click(screen.getByLabelText('Brand themes'));
+      await user.click(screen.getByRole('button', { name: 'Send it again' }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+      expect(resentBody()).toEqual({
+        name: 'New Person',
+        email: 'new@example.com',
+        orgRole: 'MEMBER',
+        tiers: [],
+      });
+    });
+
+    it('sends another role chosen after the notice, with no tiers', async () => {
+      const user = userEvent.setup();
+      await toPending(user, pendingWith('MEMBER', ['media']));
+
+      await user.selectOptions(screen.getByTestId('role-select'), 'ADMIN');
+      await user.click(screen.getByRole('button', { name: 'Send it again' }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+      expect(resentBody()).toEqual({
+        name: 'New Person',
+        email: 'new@example.com',
+        orgRole: 'ADMIN',
+      });
+    });
+
+    it('does not tick a pending tier the app no longer offers', async () => {
+      const user = userEvent.setup();
+      await toPending(user, pendingWith('MEMBER', ['retired_tier', 'brand']));
+
+      await user.click(screen.getByRole('button', { name: 'Send it again' }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+      expect(resentBody()).toMatchObject({ tiers: ['brand'] });
+    });
   });
 
   it('offers no ticks when the app offers no tier', () => {

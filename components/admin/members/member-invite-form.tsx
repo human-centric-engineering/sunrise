@@ -11,6 +11,12 @@
  * When the app lets org admins grant named tiers (t-1123), a MEMBER invitation
  * can carry some: ticks under the role, shown only while the role is Member,
  * and written as the member's grant when they accept.
+ *
+ * "Send it again" sends what the form shows (t-1125). When the API answers
+ * that an invitation is already pending, the role and ticks are set to that
+ * invitation's, so a resend left untouched keeps it as it is, and one the
+ * admin changed (a tick added, every tick removed, another role) is sent
+ * as shown.
  */
 
 import { useMemo, useState } from 'react';
@@ -81,15 +87,15 @@ export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFor
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<OrgInvitationResponse | null>(null);
-  // Who the API said already has a pending invitation. "Send it again"
-  // re-sends that invitation by name and email, with no role, so the API keeps
-  // the role it was issued with rather than taking whatever the field holds.
+  // Who the API said already has a pending invitation: "Send it again"
+  // re-sends to that name and email, with the role and ticks the form shows.
   const [pending, setPending] = useState<{ name: string; email: string } | null>(null);
 
   const {
     register,
     handleSubmit,
     setValue,
+    getValues,
     setError,
     watch,
     reset,
@@ -126,7 +132,17 @@ export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFor
       setPending(
         response.emailStatus === 'pending' ? { name: data.name, email: data.email } : null
       );
-      if (response.emailStatus !== 'pending') {
+      if (response.emailStatus === 'pending') {
+        // Show the pending invitation's own role and ticks, so the form is
+        // what "Send it again" will send.
+        const pendingRole = response.invitation.orgRole;
+        setValue('orgRole', pendingRole && isOrgRole(pendingRole) ? pendingRole : DEFAULT_ORG_ROLE);
+        const offered = new Set(grantableTiers.map((tier) => tier.name));
+        setValue(
+          'tiers',
+          (response.invitation.tiers ?? []).filter((name) => offered.has(name))
+        );
+      } else {
         reset();
         router.refresh();
       }
@@ -250,7 +266,20 @@ export function MemberInviteForm({ orgId, grantableTiers = [] }: MemberInviteFor
               disabled={submitting}
               onClick={() => {
                 save.clear();
-                void send(pending, true);
+                // The role always, and the ticks exactly as shown while they
+                // are (an empty list removes them). With no ticks on offer,
+                // or another role, none are sent and the API keeps none.
+                const { orgRole: role, tiers: picked } = getValues();
+                void send(
+                  {
+                    ...pending,
+                    orgRole: role,
+                    ...(grantableTiers.length > 0 && role === DEFAULT_ORG_ROLE
+                      ? { tiers: picked ?? [] }
+                      : {}),
+                  },
+                  true
+                );
               }}
             >
               {t('invite.sendAgain')}
