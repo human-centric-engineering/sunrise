@@ -175,6 +175,7 @@ function mockEmbedResult(embeddings: number[][]): EmbedBatchResult {
       dimensions: 1536,
       embeddedAt: new Date('2026-01-01'),
     },
+    ownKey: false,
   };
 }
 

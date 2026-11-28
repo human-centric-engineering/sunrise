@@ -774,6 +774,16 @@ export interface EmbedTextResult {
   inputTokens: number;
   /** Local-provider calls cost $0; rate-table misses also produce 0. */
   costUsd: number;
+  /**
+   * Whether this call went out on the org's own provider key (§137) — the
+   * same spend as `costUsd`, and the flag its cost row records. `false` on
+   * the install's key or a local provider. A caller keeping its own spend
+   * tally reads it to tell own-key spend from platform spend (#1369).
+   *
+   * Always set here. Optional so a fork's test double built before it still
+   * type-checks; read absent as `false` (platform spend).
+   */
+  ownKey?: boolean;
 }
 
 /**
@@ -843,6 +853,7 @@ export async function embedText(
     dimensions: provider.dimensions,
     inputTokens,
     costUsd: cost.totalCostUsd,
+    ownKey,
   };
 }
 
@@ -850,6 +861,13 @@ export async function embedText(
 export interface EmbedBatchResult {
   embeddings: number[][];
   provenance: EmbeddingProvenance;
+  /**
+   * Whether the run went out on the org's own provider key (§137): `true`
+   * only when every batch did, the rule its one cost row records. `false` for
+   * a run on the install's key, a local provider, a mix, or no batches (#1369).
+   * Always set here; optional for the reason on {@link EmbedTextResult.ownKey}.
+   */
+  ownKey?: boolean;
 }
 
 /**
@@ -969,5 +987,6 @@ async function embedBatchInScope(
       dimensions: provider.dimensions,
       embeddedAt,
     },
+    ownKey: batchesOnOwnKey === true,
   };
 }

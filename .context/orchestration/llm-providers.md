@@ -1038,7 +1038,10 @@ for the provider the call was made on. Omitted, the row is the platform's.
 channel send, a marker row). A chat turn's rows ask the provider serving the
 turn, which moves on a failover; its attachment row asks the provider the turn
 picked, which it is billed with. A batched embedding run writes one row, marked only
-if every batch went out on the org's own key. **A fork's own `logCost` calls**
+if every batch went out on the org's own key. `embedText` and `embedBatch` return
+the same flag as `ownKey` on their results (#1369), so a caller keeping its own
+tally of `costUsd` can tell own-key spend from platform spend without the
+provider. **A fork's own `logCost` calls**
 are not on the roster: pass `ownKey` from the provider you called, or the
 org's own spend counts against the platform's caps.
 

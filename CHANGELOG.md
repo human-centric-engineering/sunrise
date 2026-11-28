@@ -18,6 +18,15 @@ release process.
 
 ### Added
 
+- **Embedding results say whether the org's own key paid (#1369).**
+  `EmbedTextResult` and `EmbedBatchResult` (`lib/orchestration/knowledge/embedder.ts`)
+  carry `ownKey`: the flag their cost row already records. It is `true` for a
+  call on the org's own provider key (§137), and for a batch run only when
+  every batch was. A caller keeping its own spend tally can now tell own-key
+  spend from platform spend. `searchKnowledgeWithEmbedding`'s `embedding`
+  carries it too. Core always sets it. It is optional in the type
+  so a fork's existing test doubles still compile; read absent as `false`.
+
 - **Granting named admin tiers to a MEMBER (t-1123).** A new model,
   `OrgMembershipGrant` (one per membership, `onDelete: Cascade` with it),
   lists the named tiers a MEMBER holds in their org. `registerAdminTier()`'s
@@ -165,6 +174,16 @@ release process.
   should write `position`; a document with any null row falls back.
 
 ### Changed
+
+- **Component tests read the strings an app registers (#1363).** The next-intl
+  test helper (`tests/helpers/i18n.ts`, which `tests/setup.ts` applies to every
+  file) now serves `catalogueFor('en')`: `en.json` plus the app's
+  `registerAppMessages` strings, read on every call. A test rendering an
+  `app.…` string shows its English instead of the key. With no app strings
+  the catalogue is `en.json` alone, so existing tests are unchanged. **A fork
+  that re-pointed the helper, or mocked next-intl with `catalogueFor` in its
+  own tests,** can drop that edit. A test that mocks `@/lib/i18n/registry` and
+  renders text must give the mock a `catalogueFor`.
 
 - **Billing audit rows record the plan as `metadata.plan` (§139 t-1096).**
   `org.billing.checkout` wrote it as `planKey`, which the audit logger's secret
