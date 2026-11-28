@@ -344,6 +344,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'and Sunrise cannot see the loss any other way: it fails only in a fork.',
   },
   {
+    path: 'tests/unit/emails/pseudo-locale.test.tsx',
+    reason:
+      'lists the templates in `emails/` off disk and fails for one it has no ' +
+      'case for. A branch that only adds a template reaches this test through ' +
+      'no import, so a scoped run passed and full CI failed (#1367).',
+  },
+  {
     path: 'tests/unit/auth-role-literals.test.ts',
     reason:
       'greps every tracked source file for a bare `User.role` literal against ' +
