@@ -29,7 +29,11 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { loggableUrl } from '@/lib/logging/redact-path';
-import { describeOutboundFailure, withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
+import {
+  describeOutboundFailure,
+  isUnsafeAddressRefusal,
+  withOutboundDispatcher,
+} from '@/lib/security/safe-dispatcher';
 import {
   HookEventPayloadSchema,
   WebhookActionSchema,
@@ -541,7 +545,9 @@ async function attemptDelivery(
 
   const uncounted = posted.uncounted === true && checkFailureUncounted(delivery.createdAt);
   const newAttempts = delivery.attempts + (uncounted ? 0 : 1);
-  const exhausted = newAttempts >= MAX_ATTEMPTS;
+  // A refused address is terminal, as for webhook subscriptions: no retry can
+  // change where the host resolves, only a new URL can.
+  const exhausted = posted.terminal === true || newAttempts >= MAX_ATTEMPTS;
   const retryDelay = RETRY_DELAYS_MS[Math.max(newAttempts, 1) - 1];
   const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);
 
@@ -595,8 +601,12 @@ type AttemptRecord = DeliveryLike & {
 /** How one POST to a hook went. */
 type HookPostResult =
   | { ok: true; statusCode: number }
-  /** `uncounted`: nothing was posted, as the dispatcher's outcome (t-886). */
-  | { ok: false; statusCode?: number; error: string; uncounted?: boolean };
+  /**
+   * `uncounted`: nothing was posted, as the dispatcher's outcome (t-886).
+   * `terminal`: the checked dispatcher refused the address (#1371), so the row
+   * is exhausted rather than retried.
+   */
+  | { ok: false; statusCode?: number; error: string; uncounted?: boolean; terminal?: boolean };
 
 /** POST `payload` to the hook, signed when it has a secret. Never throws. */
 async function postHook(
@@ -651,7 +661,11 @@ async function postHook(
     // all as a bare "fetch failed"; the reason lives on `cause`. For a customer
     // org, a refused address and a name that does not exist read the same, so
     // `lastError` maps no internal hostnames.
-    return { ok: false, error: describeOutboundFailure(err) };
+    return {
+      ok: false,
+      ...(isUnsafeAddressRefusal(err) ? { terminal: true } : {}),
+      error: describeOutboundFailure(err),
+    };
   }
 }
 
