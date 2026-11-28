@@ -19,6 +19,7 @@ import { billingProviderState } from '@/lib/billing/config';
 import { assertMayChangeBilling } from '@/lib/billing/org-access';
 import { planOf, registeredPlans } from '@/lib/billing/plans';
 import { pendingSignupPlan, type PendingSignupPlan } from '@/lib/billing/signup-plan';
+import { loadPlanAllowances, type PlanAllowance } from '@/lib/billing/usage-notices';
 import { loadOrgSubscription, type OrgSubscriptionView } from '@/lib/billing/subscriptions';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -75,6 +76,12 @@ export interface OrgBilling {
   } | null;
   /** Every meter's usage and limit; `null` when the counts could not be read. */
   usage: OrgBillingUsage[] | null;
+  /**
+   * Each metered item of the org's plan: its allowance this period, what has
+   * been used of it, and what happens past it (§139 t-1097). Empty when the
+   * plan has none; `null` when they could not be read.
+   */
+  allowances: PlanAllowance[] | null;
   /** The plans with a price, which an owner can buy. */
   plans: OrgBillingPlan[];
   /**
@@ -130,6 +137,19 @@ async function loadUsage(orgId: string): Promise<Awaited<ReturnType<typeof loadO
   }
 }
 
+/** The plan's allowances, or `null` when they could not be read; as {@link loadUsage}. */
+async function loadAllowances(orgId: string): Promise<PlanAllowance[] | null> {
+  try {
+    return await loadPlanAllowances(orgId);
+  } catch (error) {
+    logger.error("billing: could not read the org's allowances for its billing page", {
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 /**
  * Whether the record has a subscription state worth showing. A record that
  * names no plan and that the provider has never written to holds only a
@@ -172,7 +192,11 @@ export async function loadOrgBilling(
   });
   if (!org) return null;
 
-  const [record, usage] = await Promise.all([loadOrgSubscription(orgId), loadUsage(orgId)]);
+  const [record, usage, allowances] = await Promise.all([
+    loadOrgSubscription(orgId),
+    loadUsage(orgId),
+    loadAllowances(orgId),
+  ]);
   const state = billingProviderState();
   const planKey = record?.planKey ?? null;
   const current = planKey === null ? undefined : planOf(planKey);
@@ -211,6 +235,7 @@ export async function loadOrgBilling(
         used: meter.used,
         countFailed: meter.countFailed,
       })) ?? null,
+    allowances,
     plans: registeredPlans()
       .filter((plan) => plan.priceLookupKey !== null)
       .map((plan) => ({

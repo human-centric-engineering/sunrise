@@ -1,7 +1,8 @@
 /**
  * The billing page's content (§139 t-1095): the org's plan and its status,
- * the current period, usage against each limit, the plans it could buy, and
- * the way to the customer portal. Everything comes from one read
+ * the current period, what its plan includes and how much of it is used
+ * (t-1097), usage against each limit, the plans it could buy, and the way to
+ * the customer portal. Everything comes from one read
  * (`GET /api/v1/orgs/[id]/billing`), handed down by the page.
  *
  * Read-only unless `billing.mayChange`, which the route sets for the org's
@@ -27,8 +28,12 @@ import {
 } from '@/components/ui/table';
 import type { OrgBilling } from '@/lib/billing/org-billing';
 
+type Allowance = NonNullable<OrgBilling['allowances']>[number];
+
 /** {@link OrgBilling} as JSON carries it: dates are ISO strings. */
-export type OrgBillingView = Omit<OrgBilling, 'subscription'> & {
+export type OrgBillingView = Omit<OrgBilling, 'subscription' | 'allowances'> & {
+  allowances:
+    (Omit<Allowance, 'window'> & { window: { from: string; to: string } | null })[] | null;
   subscription:
     | (Omit<NonNullable<OrgBilling['subscription']>, 'periodStart' | 'periodEnd'> & {
         periodStart: string | null;
@@ -135,6 +140,74 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
           </CardContent>
         )}
       </Card>
+
+      {billing.allowances !== null && billing.allowances.length === 0 ? null : (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('allowances.heading')}</CardTitle>
+            <CardDescription>{t('allowances.intro')}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {billing.allowances === null ? (
+              <p role="alert" className="text-destructive text-sm">
+                {t('allowances.loadFailed')}
+              </p>
+            ) : (
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t('allowances.item')}</TableHead>
+                      <TableHead>{t('allowances.used')}</TableHead>
+                      <TableHead>{t('allowances.included')}</TableHead>
+                      <TableHead>{t('allowances.status')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {billing.allowances.map((item) => {
+                      const amount = (n: number) =>
+                        item.money
+                          ? format.number(n / 100, { style: 'currency', currency: 'USD' })
+                          : format.number(n);
+                      return (
+                        <TableRow key={item.key}>
+                          <TableCell>
+                            <span className="font-medium">{item.label}</span>
+                            <span className="text-muted-foreground block text-xs">
+                              {t(`allowances.rule.${item.overage}`)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {item.used === null ? t('allowances.countFailed') : amount(item.used)}
+                          </TableCell>
+                          <TableCell>{amount(item.allowance)}</TableCell>
+                          <TableCell>
+                            {item.state === null || item.state === 'within' ? (
+                              <span className="text-muted-foreground text-sm">
+                                {item.state === null ? '—' : t('allowances.state.within')}
+                              </span>
+                            ) : (
+                              <Badge
+                                variant={item.state === 'reached' ? 'destructive' : 'secondary'}
+                              >
+                                {item.overage === 'soft_cap' &&
+                                item.state === 'reached' &&
+                                !item.billed
+                                  ? t('allowances.state.soft_cap.reachedUnbilled')
+                                  : t(`allowances.state.${item.overage}.${item.state}`)}
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

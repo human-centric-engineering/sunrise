@@ -26,7 +26,15 @@ vi.mock('@/lib/db/client', () => ({
 const fake = vi.hoisted((): { provider: unknown } => ({ provider: null }));
 vi.mock('@/lib/billing/config', () => ({ billingProvider: async () => fake.provider }));
 
+// What reporting writes and sends is usage-report.test.ts; here, that it
+// comes before any cancellation and that its failure stops the erasure.
+const mockReportBeforeCancelling = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock('@/lib/billing/usage-report', () => ({
+  reportBeforeCancelling: mockReportBeforeCancelling,
+}));
+
 import { BillingErasureError, cancelOrgSubscriptionsAtProvider } from '@/lib/billing/erase';
+import { logger } from '@/lib/logging';
 
 const ORG = 'org_a';
 const provider = {
@@ -56,6 +64,40 @@ beforeEach(() => {
 });
 
 describe('cancelOrgSubscriptionsAtProvider', () => {
+  it('reports the open period’s usage before it cancels anything (t-1097)', async () => {
+    mockReportBeforeCancelling.mockResolvedValueOnce(2);
+
+    await cancelOrgSubscriptionsAtProvider(ORG);
+
+    expect(mockReportBeforeCancelling).toHaveBeenCalledWith(provider, ORG);
+    expect(mockReportBeforeCancelling.mock.invocationCallOrder[0]).toBeLessThan(
+      provider.cancelSubscription.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('cancels anyway when the usage report fails, and logs what went unbilled', async () => {
+    // A meter that cannot count, or a provider meter that refuses, must not
+    // hold up erasing the org's data for good.
+    mockReportBeforeCancelling.mockRejectedValueOnce(new Error('count broke'));
+
+    const result = await cancelOrgSubscriptionsAtProvider(ORG);
+
+    expect(result?.cancelled).toEqual(['sub_1', 'sub_unpaid', 'sub_never_stored']);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('could not report'),
+      expect.objectContaining({ orgId: ORG, error: 'count broke' })
+    );
+  });
+
+  it('reports nothing while billing is off', async () => {
+    fake.provider = null;
+    record.row = null;
+
+    await cancelOrgSubscriptionsAtProvider(ORG);
+
+    expect(mockReportBeforeCancelling).not.toHaveBeenCalled();
+  });
+
   it('cancels every live subscription of every customer, the stored one and the ones searched', async () => {
     const result = await cancelOrgSubscriptionsAtProvider(ORG);
 

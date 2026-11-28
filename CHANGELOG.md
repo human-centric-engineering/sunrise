@@ -106,6 +106,33 @@ release process.
   `SignupForm` an optional `continueTo`. An unknown plan, an invited signup, an
   app resolver's `join` or `install`, and billing off behave as before. See
   [`.context/billing/billing.md`](./.context/billing/billing.md#choosing-a-plan-at-signup).
+- **Usage reported each billing period, and the overage rule (§139 t-1097).**
+  A plan's new optional `meteredItems` (`PlanDefinition`;
+  `RegisteredPlan.meteredItems` is always set) give a meter, or AI spend in
+  cents (`ai_spend_cents`), an allowance per period and an overage rule
+  (`lib/billing/overage.ts`): `warn` (the org is told near and at the
+  allowance, nothing stops), `soft_cap` (usage continues and the excess is
+  reported to the provider; needs `providerMeter` and a priced plan) or
+  `hard_cap` (the allowance is written as the meter's limit, so
+  `checkMeterQuota()` refuses past it). Warn and soft cap clear the meter's
+  limit. Each closed period's soft caps are counted once and reported once
+  per (org, meter, period) in the new published model `BillingUsageReport`
+  with enum `BillingUsageReportStatus` (org-owned, in the org export), sent
+  through `reportUsage()` by the new `usageReports` maintenance task (5 min,
+  system scope); the webhook closes a period as it syncs the next, and a
+  subscription's last period sends running totals. Org erasure reports the
+  open period's total so far before it cancels, and a failed report is
+  logged rather than stopping the erasure. Warn notices are recorded once per
+  threshold in the new published model `BillingUsageNotice` and sent by the
+  new `usageNotices` task (15 min); an app decides how with
+  `setUsageNoticeHandler()` from `initAppBilling()` (it runs as the org), and with none the org's
+  owners get the new `usage-notice` email. `OrgBillingSubscription` gains
+  `endedAt`; `GET /api/v1/orgs/[id]/billing` gains `allowances`, shown on the
+  billing page; `countMeterWithin()` in `lib/tenancy/meters.ts` counts a
+  meter in a given window. Nothing changes until an app registers a plan
+  with metered items. **Stripe setup:** each soft-capped meter must use the
+  `Last` aggregation. See
+  [`.context/billing/billing.md`](./.context/billing/billing.md#what-t-1097-built).
 - **`AiKnowledgeChunk.position` (t-1106).** A nullable `Int`: the chunk's
   0-based place in its document, written whenever chunks are (upload, rechunk,
   the patterns seeder). Knowledge search returns it on each chunk, and

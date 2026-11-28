@@ -59,6 +59,8 @@ import { runWaitlistRetention } from '@/lib/waitlist/retention';
 import { retryOwedOrgCreatedHooks } from '@/lib/tenancy/org-created-hooks';
 import { sweepAbandonedSignupOrgs } from '@/lib/tenancy/signup-org';
 import { applyWaitingFreeSignupPlans } from '@/lib/billing/signup-plan';
+import { runUsageReports } from '@/lib/billing/usage-report';
+import { runUsageNotices } from '@/lib/billing/usage-notices';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -149,6 +151,9 @@ function job<T, R = undefined>(spec: {
  * | `waitlistRetention`       | 1 hour   | per-org | windows are days and months; entries are tenant-owned (§125)        |
  * | `orgCreatedHooks`         | 15 min   | system  | retries an app's org-created hook that failed at the create (t-1061) |
  * | `abandonedSignupOrgs`     | 1 hour   | system  | deletes orgs a failed signup left; one is abandoned after an hour  |
+ * | `signupPlans`             | 15 min   | system  | applies a free signup plan once its org's setup hooks are done      |
+ * | `usageReports`            | 5 min    | system  | a closed period settles for 5 min; running totals in a last period  |
+ * | `usageNotices`            | 15 min   | system  | tells an org near or at a warn item's allowance, once per window    |
  *
  * `platformAgents` does real work only after a deploy changes the platform
  * agents' definitions, when an org's creation-time reconcile failed, or when
@@ -322,6 +327,38 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     // A plan whose assignment keeps failing is not work: counting it would
     // hold the idle gate open, as for orgCreatedHooks.
     foundWork: (r) => r.applied > 0,
+  }),
+  job({
+    name: 'usageReports',
+    // Once, not once per org: it selects only the records and reports with
+    // something to do, then acts as each org (§139 t-1097). With no payment
+    // provider, or no plan with a soft cap, it makes no query.
+    scope: {
+      system: 'usageReports: count and send each closed billing period’s usage (t-1097)',
+    },
+    // A closed period is counted once it has settled for five minutes
+    // (USAGE_SETTLE_MS), and a last period's running total is sent each run,
+    // so the gap bounds how much of its final minutes goes unbilled.
+    intervalMs: 5 * MINUTE,
+    run: () => runUsageReports(),
+    // A send that keeps failing is not work, as for orgCreatedHooks; what was
+    // closed, counted or sent may mean more behind a batch.
+    foundWork: (r) => r.closed + r.running + r.counted + r.sent > 0,
+  }),
+  job({
+    name: 'usageNotices',
+    // Once, not once per org: it selects the orgs on a plan with a warn item
+    // and acts as each (§139 t-1097). With no such plan it makes no query.
+    scope: {
+      system: 'usageNotices: tell orgs near or at a warn item’s allowance (t-1097)',
+    },
+    // A notice is a heads-up, not a charge: fifteen minutes late is fine, and
+    // each run counts every warn item of every org on such a plan.
+    intervalMs: 15 * MINUTE,
+    run: () => runUsageNotices(),
+    // Counting is not work, or the gate could never arm while any org is on
+    // such a plan; a notice sent is.
+    foundWork: (r) => r.notified > 0,
   }),
 ];
 

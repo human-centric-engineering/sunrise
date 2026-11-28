@@ -29,6 +29,7 @@
 
 import { APIError } from '@/lib/api/errors';
 import { billingProvider } from '@/lib/billing/config';
+import { reportBeforeCancelling } from '@/lib/billing/usage-report';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { runAsOrg } from '@/lib/tenancy/context';
@@ -96,6 +97,31 @@ export async function cancelOrgSubscriptionsAtProvider(
       );
     }
     return null;
+  }
+
+  // The open period's usage first, so the invoice the cancellation makes
+  // carries it (t-1097). A failure does not stop the erasure: unbilled usage
+  // is the vendor's loss, and must not hold up erasing the org's data (a
+  // meter that cannot count, or a provider meter that refuses, would hold it
+  // up for good). It is logged, with the org, so it can be billed by hand.
+  try {
+    const reported = await reportBeforeCancelling(provider, orgId);
+    if (reported > 0) {
+      logger.info('billing: reported usage before cancelling for org erasure', {
+        orgId,
+        provider: provider.key,
+        reports: reported,
+      });
+    }
+  } catch (error) {
+    logger.error(
+      "billing: could not report an org's usage before cancelling for its erasure; erasing anyway, so it is not billed",
+      {
+        orgId,
+        provider: provider.key,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 
   const found = await provider.findCustomerRefs(orgId);

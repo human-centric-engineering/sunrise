@@ -21,14 +21,14 @@ every billing route answers that billing is off.
 Each section describes the design whether or not its task has merged. This
 table says what exists.
 
-| Part                                                                          | Task   | State         |
-| ----------------------------------------------------------------------------- | ------ | ------------- |
-| This spec, and the spike                                                      | t-1092 | **Built**     |
-| Plans as bundles of entitlements; the org's subscription record; staff assign | t-1093 | **Built**     |
-| The provider adapter, Stripe, checkout, portal, the webhook, lapsed handling  | t-1094 | **Built**     |
-| The billing page in the org-admin console                                     | t-1095 | **Built**     |
-| Choosing a plan at signup                                                     | t-1096 | **Built**     |
-| Usage reported each period; the overage rule                                  | t-1097 | Not built yet |
+| Part                                                                          | Task   | State     |
+| ----------------------------------------------------------------------------- | ------ | --------- |
+| This spec, and the spike                                                      | t-1092 | **Built** |
+| Plans as bundles of entitlements; the org's subscription record; staff assign | t-1093 | **Built** |
+| The provider adapter, Stripe, checkout, portal, the webhook, lapsed handling  | t-1094 | **Built** |
+| The billing page in the org-admin console                                     | t-1095 | **Built** |
+| Choosing a plan at signup                                                     | t-1096 | **Built** |
+| Usage reported each period; the overage rule                                  | t-1097 | **Built** |
 
 ## Who owns what
 
@@ -99,7 +99,8 @@ In the Stripe Dashboard, in test mode first and then again in live mode:
 
 3. **The secret key** (`sk_test_…`, or a restricted key with read and write
    on customers, Checkout sessions, the customer portal, subscriptions and
-   prices, and read on customers' search) into `STRIPE_SECRET_KEY`.
+   prices, read on customers' search, and write on meter events if a plan
+   has a soft cap) into `STRIPE_SECRET_KEY`.
 4. **Failed payments** (Billing → Revenue recovery → Retries): choose to
    cancel the subscription, or mark it unpaid, once retries fail. Left as
    past due, the org keeps its plan for as long as Stripe keeps it there; the
@@ -108,7 +109,18 @@ In the Stripe Dashboard, in test mode first and then again in live mode:
    changing plan between your plans' prices and cancelling, and set
    cancellations to take effect **at the end of the billing period**, so the
    last period's usage can still be reported (t-1097).
-6. Set `BILLING_PROVIDER=stripe` and restart. Config health on the admin
+6. **A meter for each soft-capped item** (Billing → Meters), only if a plan
+   has one ([Usage reporting](#usage-reporting)): its event name is the
+   item's `providerMeter`, the customer is mapped from
+   `stripe_customer_id`, and its **aggregation is `Last`**, not `Sum`: the
+   platform reports each period's total, and a resend under `Sum` would
+   bill it twice. Then give the plan's price a metered component on that
+   meter, priced per unit over the allowance.
+7. **The invoice grace period** (Billing → Subscriptions and emails →
+   invoices finalise after), if a plan has a soft cap: several hours rather
+   than the default hour, so a maintenance tick that stalls briefly does not
+   miss the invoice. A report sent after it is logged.
+8. Set `BILLING_PROVIDER=stripe` and restart. Config health on the admin
    overview says if either key is missing, if the install is not at `multi`,
    or if the app names no fallback plan.
 
@@ -596,8 +608,8 @@ Decided at planning (2026-11-25):
   back on is the remedy. With an ended subscription, or none, erasure goes
   ahead and logs that it did not check the provider.
 - **Not in t-1094:** telling the owner a payment failed (the event is
-  recorded; nothing is sent), purging old ledger rows, and usage reports (t-1097; `reportUsage()` is implemented in the
-  Stripe adapter, and nothing calls it yet).
+  recorded; nothing is sent), purging old ledger rows, and usage reports
+  (t-1097, [What t-1097 built](#what-t-1097-built)).
 - **Erasure closes the org's open checkout pages** at the provider before it
   cancels the subscriptions, so a page left open in a tab cannot be paid
   once the org is gone.
@@ -852,15 +864,20 @@ period's total. Stripe deduplicates on `identifier` only within a rolling 24
 hours. A report whose send succeeded but was not marked sent, resent a day
 later, is counted twice by a `sum` meter. A `last` meter takes the most recent
 value in the period, so resending the same total is harmless at any age (spike
-part F). The setup steps will say to create each meter with `last`.
+part F). The setup steps say to create each meter with `Last`
+([Setting up Stripe](#setting-up-stripe), step 6).
 
 **The grace period is the deadline.** Stripe finalises a period's invoice an
 hour after the period ends by default, and the operator can extend that to 72
 hours. Usage that arrives later is accepted, but it is added to neither that
-invoice nor the next. So a report that misses the window is marked late and
-logged, and never moved into the next period, which would bill the wrong
-period. The setup steps will recommend a grace period of several hours, so a
-tick that stalls briefly does not cost an invoice.
+invoice nor the next. The platform cannot see the operator's setting, so an
+ordinary report is sent whenever it is counted, never moved into the next
+period (which would bill the wrong one), and logged when it goes out more
+than an hour after the period's end, Stripe's default. Only a last period,
+which the provider has always invoiced by the time it closes, is marked
+`LATE` and not sent. The setup steps recommend a grace period of several
+hours, so a tick that stalls briefly does not cost an invoice
+([Setting up Stripe](#setting-up-stripe), step 7).
 
 **What is reported, by overage rule** (the rule is the app's, per metered
 item):
@@ -911,16 +928,135 @@ after the end, is always too late. So:
   bills the latest one, so only usage in the minutes after the last tick
   before the end goes unbilled. The final count at close is still recorded,
   and marked late.
-- **Cancelled by the platform** (erasure, or replacing an `incomplete`
-  subscription): the open period's total is reported first (`final: true`,
-  timestamped now), then the subscription is cancelled with its usage
-  invoiced (Stripe's `invoice_now`).
+- **Cancelled by the platform** (erasure): the open period's total so far is
+  reported first, as a running total (timestamped now, its own identifier),
+  then the subscription is cancelled with its usage invoiced (Stripe's
+  `invoice_now`). The row stays `OPEN`: if the cancellation fails, or the
+  erasure is never retried, the period closes, is counted and is sent at its
+  end as any other, and the `last` meter takes the later value. A period
+  already closed and not yet sent is counted and sent then too, since
+  erasure deletes its row. **A failed report does not stop the erasure**:
+  it is logged at error with the org, and the usage goes unbilled. A meter
+  that cannot count, or a provider meter that refuses, would otherwise
+  block erasing the org's data for good. **Not verified:** Stripe processes
+  meter events asynchronously, so the invoice `invoice_now` makes a moment
+  later may not carry the report. Each report sent before a cancellation is
+  logged with its quantity, so the final invoice can be checked against it
+  after the org's rows are gone.
 - **Ended by the provider at once** (an immediate cancellation in the portal,
   or retries exhausted): the last period's excess is not collected. It is
   closed at `endedAt`, or at the period's end when `endedAt` is null (an
   `unpaid` subscription has not ended at Stripe), and recorded as late, so the
-  loss is visible. The setup
-  steps will recommend configuring the portal to cancel at period end.
+  loss is visible. The setup steps recommend configuring the portal to
+  cancel at period end ([Setting up Stripe](#setting-up-stripe), step 5).
+
+### What t-1097 built
+
+| Need                                   | Where                                                                                                                   |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| A plan's metered items and their rules | `PlanDefinition.meteredItems` (`lib/billing/plans.ts`); checked and typed in `lib/billing/overage.ts`                   |
+| How a warn notice reaches the org      | `setUsageNoticeHandler()` (`lib/billing/overage.ts`), from `initAppBilling()`; by default, `emailOwners()`              |
+| The reports                            | `BillingUsageReport` (`prisma/schema/platform.prisma`), unique on (org, meter, period start)                            |
+| Closing, counting and sending          | `closeBillingPeriod()`, `runUsageReports()`, `reportBeforeCancelling()` (`lib/billing/usage-report.ts`)                 |
+| The warn notices                       | `BillingUsageNotice`, `runUsageNotices()` (`lib/billing/usage-notices.ts`), the `usage-notice` email                    |
+| Counting a meter in a billing period   | `countMeterWithin()` (`lib/tenancy/meters.ts`)                                                                          |
+| The maintenance jobs                   | `usageReports` every 5 minutes, `usageNotices` every 15 (`lib/orchestration/maintenance/platform-jobs.ts`), both system |
+| On the billing page                    | **Included in your plan**: each item's use, allowance, rule and state (`loadPlanAllowances()`)                          |
+| Check it on a real database            | `npm run smoke:billing-usage`                                                                                           |
+
+A metered item, in a plan:
+
+```ts
+registerPlan({
+  key: 'pro',
+  label: 'Pro',
+  switches: { reports: true },
+  meterLimits: { seats: 25 },
+  priceLookupKey: 'pro_monthly',
+  meteredItems: {
+    conversations: { overage: 'soft_cap', allowance: 1000, providerMeter: 'conversations_over' },
+    ai_spend_cents: { overage: 'warn', allowance: 5000, warnAtPercent: 90 },
+    documents: { overage: 'hard_cap', allowance: 50 },
+  },
+});
+```
+
+- **A plan is refused as it registers** when an item names a meter nothing
+  registers, a rule that is not one, an allowance that is not a whole number
+  (or zero on a warn item), a soft cap with no `providerMeter` or on a plan
+  with no price, a hard cap on AI spend (cap it with `aiBudgetUsd`), or a
+  meter the plan's `meterLimits` also names. The init gate rolls back every
+  plan, and the notice handler with them.
+- **The limit each rule writes** goes into the registered plan's
+  `meterLimits`, so `applyPlan()` writes it with the rest: a hard cap's
+  allowance, and no limit for warn and soft cap. Clearing it matters when an
+  org moves off a plan that hard-capped the same meter.
+- **Only a soft cap makes a report row.** Warn and hard cap bill nothing,
+  so nothing is recorded for them. A period's rows hold the plan the org
+  was on when it closed: a plan changed part-way through is billed under
+  the later one, as Stripe's proration already decides the price. A row
+  opened earlier (by a running total) takes the closing plan's allowance and
+  provider meter, and so does each running total sent after the change.
+- **The webhook closes a period in its own transaction**: when a sync of
+  the stored subscription sees its period start move on, or it end. It
+  closes at the earliest of the stored end, where the next period began (a
+  billing-anchor reset, an interval change or an early trial end starts it
+  before the stored end, and no usage may be in two periods), and when it
+  ended. A record that fell more than a period behind (deliveries lost
+  through a renewal) has the time in between closed as one period too,
+  logged, so its usage is counted; it is usually past the provider's invoice
+  by then, which the send logs. A subscription that ended in a period no
+  sync stored has that period closed as its last. A
+  subscription that was never `ACTIVE` or `PAST_DUE` closes nothing. The
+  tick closes a period whose end passed while the record still holds it, so
+  a late renewal webhook does not hold up a report. It fetches the
+  subscription from the provider first and closes where the provider says
+  (moved on early, ended), as the webhook would: the tick counts what it
+  closed in the same run, so a later webhook could not correct it. Only when
+  the provider has not moved past the period either is it closed at its
+  stored end. A row still `OPEN` (a close that failed part-way) is closed on
+  the next run; a `PENDING` one is not closed again.
+- **A send takes a ten-minute lease on the row** (`sendingAt`), so two
+  instances never send at once, and one that crashed is retried. A row's
+  `status` says where it is: `OPEN` (running totals only), `PENDING`,
+  `COUNTED`, `SENT`, `NONE` (within the allowance) or `LATE`. A last
+  period within its allowance is `NONE`, not `LATE`, and a late one is
+  logged as a loss only past what its running totals reported.
+- **Each run walks every row**, a page at a time by key, so periods already
+  closed, totals unchanged, and reports the provider keeps refusing never
+  hold the rest back to a later run. A refused report is retried, and
+  logged, every run. A period the tick closed whose count keeps failing is
+  not closed again, so it does not count as work each run.
+- **A provider changed since** (`BILLING_PROVIDER` moved on) leaves the
+  other provider's rows where they are: they are not counted or sent here.
+- **Warn notices** are counted in the billing period while a provider
+  subscription gives the org its plan, and otherwise in the meter's own
+  window (the UTC month for a standing meter and for AI spend), so a plan
+  assigned by hand or given away still warns. A period stays the window for
+  a day past its end while the renewal's webhook has not moved it on, so a
+  late webhook does not start a new window and send its notices again. One
+  notice per threshold per window, claimed before it is sent; a handler
+  that throws releases the claim and is retried. Once "reached" is sent,
+  "near" is claimed too, so it is never sent after "reached".
+  `warnAtPercent` defaults to 80.
+- **The handler runs as the org** (`runAsOrg`), as an app's org hooks do,
+  not with the job's system scope, so what it reads and writes is confined
+  to that org at `multi`.
+- **On the billing page**, a hard cap is counted in the meter's own window,
+  where `checkMeterQuota()` enforces the limit it writes, not the billing
+  period. A soft cap is past its allowance only above it, where there is an
+  excess to bill, so a purely usage-based item (allowance 0) is not
+  "billed" at no use. It says it is billed only when the usage-report job
+  would bill it: a live subscription at the provider switched on here. On
+  a plan assigned by hand, or with billing switched off, nothing reports it
+  and the page says it is not billed.
+- **The default email** goes to each OWNER in their language, with an
+  idempotency key per owner and notice. An org with no owner is logged.
+- **Not in t-1097:** seats as a subscription quantity; usage for a
+  subscription the platform cancels when it replaces an unfinished or paused
+  one (neither gave the org a plan, so it has no period to bill); and
+  purging old report and notice rows, which are kept until the org is
+  erased.
 
 ## Who may do what
 
@@ -937,13 +1073,15 @@ Decided at planning:
 ## Privacy
 
 - **Billing records hold no `userId`.** The subscription record, the event
-  ledger and the usage reports belong to the org. They go in the org export and
+  ledger, the usage reports and the usage notices belong to the org. They go in the org export and
   org erasure manifests (`lib/privacy/org-sources.ts`). The audit row records
   who acted, so the per-person manifest is unchanged.
 - **Card details never reach the platform.** Checkout and the portal are the
   provider's pages.
-- **Erasing an org cancels its subscriptions at the provider first**, then
-  deletes the local rows. Otherwise the provider keeps charging a card for an
+- **Erasing an org reports its open period's usage, then cancels its
+  subscriptions at the provider**, then deletes the local rows. A usage
+  report that fails is logged and does not stop the erasure
+  ([The last period](#the-last-period)). Otherwise the provider keeps charging a card for an
   org that no longer exists. It finds every customer of the org: the stored
   reference, and any whose metadata names the org (`findCustomerRefs`), which
   covers a customer whose reference was never stored. Then it cancels every
@@ -999,8 +1137,8 @@ any task's done-when.
   change.
 - **Proration and mid-period plan changes** are the provider's (Stripe prorates
   in the portal). Stripe leaves usage reported in the grace period off the
-  invoice made by a mid-period price change. That is noted for t-1097, not
-  designed around.
+  invoice made by a mid-period price change. t-1097 reports a period under
+  the plan the org was on when it closed and does not design around it.
 - **Invoices in the console**: the portal shows them. The billing page links to
   it rather than listing invoices.
 

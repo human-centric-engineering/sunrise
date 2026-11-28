@@ -250,13 +250,40 @@ async function countAsOrg(
   now: Date
 ): Promise<{ used: number; window: MeterWindow }> {
   const window = await meterWindow(meter.period, orgId, now);
+  return { used: await countWithin(meter, orgId, window), window };
+}
+
+async function countWithin(meter: Meter, orgId: string, window: MeterWindow): Promise<number> {
   const used: unknown = await meter.count({ orgId, from: window.from, to: window.to });
   if (typeof used !== 'number' || !Number.isInteger(used) || used < 0) {
     throw new Error(
       `The count answered ${JSON.stringify(used)}, not a whole number of zero or more`
     );
   }
-  return { used, window };
+  return used;
+}
+
+/**
+ * One meter's count for one org within a window the caller names, rather
+ * than the meter's own `period`: billing counts a provider's billing period
+ * (§139 t-1097). A standing meter has no window, so it is counted as it is
+ * now, whatever the window. Runs as that org and across its owners, as every
+ * count here does. Throws when nothing registers the meter, or as the app's
+ * count does; unlike {@link checkMeterQuota} it does not fail open, because a
+ * bill must not be built on a count that failed.
+ */
+export function countMeterWithin(
+  orgId: string,
+  key: string,
+  window: { from: Date; to: Date }
+): Promise<number> {
+  const meter = meterOf(key);
+  if (!meter) return Promise.reject(new Error(`No meter "${key}" is registered`));
+  const counted: MeterWindow =
+    meter.period === 'standing' ? { from: null, to: null } : { from: window.from, to: window.to };
+  return runAcrossOwners("meters: an org's usage is counted across all its members", () =>
+    runAsOrg(orgId, () => countWithin(meter, orgId, counted))
+  );
 }
 
 /**

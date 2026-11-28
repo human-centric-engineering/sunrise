@@ -744,6 +744,32 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     fetch: ({ orgId }) =>
       prisma.billingWebhookEvent.findMany({ where: { orgId }, orderBy: { receivedAt: 'asc' } }),
   },
+  {
+    model: 'BillingUsageReport',
+    section: 'billingUsageReports',
+    disposition: 'export',
+    description:
+      'What the organisation used of each metered item in each billing period, what was reported to the payment provider as usage past the allowance, and when.',
+    // §139 t-1097. `orgId` is required on this table, so there is no NULL-org
+    // row; it names no person. Erased with the org by the cascade.
+    fetch: ({ orgId }) =>
+      prisma.billingUsageReport.findMany({
+        where: { orgId },
+        orderBy: [{ periodStart: 'asc' }, { meterKey: 'asc' }],
+      }),
+  },
+  {
+    model: 'BillingUsageNotice',
+    section: 'billingUsageNotices',
+    disposition: 'export',
+    description:
+      'Each time the organisation was told it was near, or at, the allowance of a metered item, with its usage then.',
+    // §139 t-1097. `orgId` is required, so there is no NULL-org row; it names
+    // no person (the owners it was emailed to are not recorded). Erased with
+    // the org by the cascade.
+    fetch: ({ orgId }) =>
+      prisma.billingUsageNotice.findMany({ where: { orgId }, orderBy: { notifiedAt: 'asc' } }),
+  },
 ];
 
 /**

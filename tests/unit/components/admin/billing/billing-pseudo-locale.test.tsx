@@ -68,6 +68,30 @@ const BASE: OrgBillingView = {
   customerElsewhere: false,
   installOrg: false,
   signupPlan: null,
+  allowances: [
+    {
+      key: 'convos',
+      label: 'METERLABEL',
+      overage: 'warn',
+      allowance: 10,
+      money: false,
+      billed: true,
+      used: 9,
+      state: 'near',
+      window: null,
+    },
+    {
+      key: 'ai_spend_cents',
+      label: 'METERLABEL',
+      overage: 'soft_cap',
+      allowance: 500,
+      money: true,
+      billed: true,
+      used: null,
+      state: null,
+      window: null,
+    },
+  ],
 };
 
 /** The rendered text with the app's own labels taken out. */

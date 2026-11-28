@@ -30,6 +30,13 @@
  */
 
 import { initAppBilling } from '@/lib/app/billing';
+import {
+  checkMeteredItems,
+  meteredItemLimits,
+  usageNoticeHandlerSlot,
+  type MeteredItem,
+  type MeteredItemDefinition,
+} from '@/lib/billing/overage';
 import { billingProviderRegistry } from '@/lib/billing/provider';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import {
@@ -87,6 +94,14 @@ export interface PlanDefinition {
    * signup links.
    */
   availableAtSignup?: boolean;
+  /**
+   * The plan's metered items, by meter key (`ai_spend_cents` for AI spend):
+   * each an allowance per billing period and what happens past it
+   * (`warn`, `soft_cap`, `hard_cap`; §139 t-1097). A meter here must not also
+   * be in `meterLimits`: a hard cap writes its allowance as the limit, and
+   * warn and soft cap clear it.
+   */
+  meteredItems?: Readonly<Record<string, MeteredItemDefinition>>;
 }
 
 /** A registered plan, frozen, with its optional fields filled in. */
@@ -95,7 +110,14 @@ export interface RegisteredPlan {
   readonly label: string;
   readonly description: string;
   readonly switches: Readonly<Record<string, boolean>>;
+  /**
+   * The meter limits the plan writes: its own `meterLimits`, and the limit
+   * each metered item implies (a hard cap's allowance; none for warn and
+   * soft cap).
+   */
   readonly meterLimits: Readonly<Record<string, number | null>>;
+  /** The plan's metered items, by meter key; empty when it has none. */
+  readonly meteredItems: Readonly<Record<string, MeteredItem>>;
   /** `undefined` when the plan does not decide the budget. */
   readonly aiBudgetUsd: number | null | undefined;
   readonly priceLookupKey: string | null;
@@ -241,6 +263,10 @@ export function registerPlan(definition: PlanDefinition): void {
     );
   }
   const availableAtSignup = rawAtSignup ?? priceLookupKey !== null;
+  const meteredItems = checkMeteredItems(key, definition.meteredItems, {
+    priced: priceLookupKey !== null,
+    meterLimitKeys: Object.keys(meterLimits),
+  });
   const description =
     typeof definition.description === 'string' ? definition.description.trim() : '';
   plans.set(
@@ -250,7 +276,8 @@ export function registerPlan(definition: PlanDefinition): void {
       label,
       description,
       switches: Object.freeze(switches),
-      meterLimits: Object.freeze(meterLimits),
+      meterLimits: Object.freeze({ ...meterLimits, ...meteredItemLimits(meteredItems) }),
+      meteredItems,
       aiBudgetUsd: budget as number | null | undefined,
       priceLookupKey,
       availableAtSignup,
@@ -289,15 +316,19 @@ const appInit = createAppInitGate({
   // The providers an app registers (t-1094) are in the snapshot too: one left
   // behind by an init that threw would be selectable by BILLING_PROVIDER while
   // the log said nothing registered.
+  // So is the usage-notice handler (t-1097): one set by an init that threw
+  // would take over the owners' emails while the log said nothing registered.
   snapshot: () => ({
     plans: new Map(plans),
     fallbackKey,
     providers: new Map(billingProviderRegistry()),
+    noticeHandler: usageNoticeHandlerSlot().handler,
   }),
   restore: (before) => {
     restoreMap(plans, before.plans);
     fallbackKey = before.fallbackKey;
     restoreMap(billingProviderRegistry(), before.providers);
+    usageNoticeHandlerSlot().handler = before.noticeHandler;
   },
 });
 
@@ -320,6 +351,15 @@ export function registeredPlans(): readonly RegisteredPlan[] {
 export function planOf(key: string): RegisteredPlan | undefined {
   appInit.ensure();
   return plans.get(key);
+}
+
+/**
+ * The usage-notice handler the app set (`setUsageNoticeHandler()`), or `null`
+ * for the platform's default email. Runs the app's init first.
+ */
+export function appUsageNoticeHandler(): ReturnType<typeof usageNoticeHandlerSlot>['handler'] {
+  appInit.ensure();
+  return usageNoticeHandlerSlot().handler;
 }
 
 /** The app's fallback plan, or `null` when it names none. */
@@ -351,5 +391,6 @@ export function __resetBillingPlansForTests(): void {
   plans.clear();
   fallbackKey = null;
   billingProviderRegistry().clear();
+  usageNoticeHandlerSlot().handler = null;
   appInit.reset();
 }

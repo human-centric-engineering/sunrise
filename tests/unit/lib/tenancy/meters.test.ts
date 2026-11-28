@@ -34,6 +34,7 @@ import {
   SEATS_METER_KEY,
   allMeters,
   checkMeterQuota,
+  countMeterWithin,
   countSeats,
   loadOrgMeterUsage,
   meterLimitMessage,
@@ -884,5 +885,40 @@ describe('loadOrgMeterUsage', () => {
       used: 1,
     });
     expect(period).toHaveBeenCalledWith({ orgId: ORG, now: NOW });
+  });
+});
+
+describe('countMeterWithin (§139 t-1097)', () => {
+  const window = {
+    from: new Date('2026-02-10T00:00:00.000Z'),
+    to: new Date('2026-03-10T00:00:00.000Z'),
+  };
+
+  it('counts within the window it is given, not the meter’s own month, as the org', async () => {
+    let scope: unknown;
+    const count = vi.fn(async () => {
+      scope = getTenantContext();
+      return 12;
+    });
+    appRegisters(meter('reports', count, 'month'));
+
+    expect(await countMeterWithin(ORG, 'reports', window)).toBe(12);
+    expect(count).toHaveBeenCalledWith({ orgId: ORG, from: window.from, to: window.to });
+    expect(scope).toMatchObject({ orgId: ORG });
+  });
+
+  it('counts a standing meter as it is now, whatever the window', async () => {
+    const count = vi.fn(async () => 4);
+    appRegisters(meter('docs', count, 'standing'));
+
+    expect(await countMeterWithin(ORG, 'docs', window)).toBe(4);
+    expect(count).toHaveBeenCalledWith({ orgId: ORG, from: null, to: null });
+  });
+
+  it('throws, rather than answering allowed, for a meter nothing registers or a count that fails', async () => {
+    appRegisters(meter('bad', () => -1, 'month'));
+
+    await expect(countMeterWithin(ORG, 'nope', window)).rejects.toThrow(/No meter "nope"/);
+    await expect(countMeterWithin(ORG, 'bad', window)).rejects.toThrow(/not a whole number/);
   });
 });

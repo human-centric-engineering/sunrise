@@ -195,10 +195,12 @@ describe('PLATFORM_JOB_NAMES', () => {
       'orgCreatedHooks',
       'abandonedSignupOrgs',
       'signupPlans',
+      'usageReports',
+      'usageNotices',
     ]);
   });
 
-  it('declares a scope on every task, and only the audit-table prune, the pending-erasure retrier, the org-created retry, the abandoned signup-org sweep and the signup-plan sweep run as system (§108)', () => {
+  it('declares a scope on every task, and only the audit-table prune, the pending-erasure retrier, the org-created retry, the abandoned signup-org sweep, the signup-plan sweep and the usage-report and usage-notice jobs run as system (§108)', () => {
     // Every task that touches a tenant-owned table is per-org: under the
     // system scope nothing is stamped, and the reaper, recovery, the scheduler
     // and the evaluation worker all CREATE rows. The system tasks are the
@@ -207,7 +209,9 @@ describe('PLATFORM_JOB_NAMES', () => {
     // of theirs; and the org-created retry, which selects the few orgs that
     // owe hooks and enters each one's scope itself (t-1061); and the sweep of
     // orgs a failed signup left, one DELETE over the org table (t-1062); and
-    // the signup-plan sweep, one select of the few orgs waiting on one (t-1096).
+    // the signup-plan sweep, one select of the few orgs waiting on one (t-1096);
+    // and the usage-report and usage-notice jobs, which select the few
+    // records with something to do and act as each org (t-1097).
     const scopes = PLATFORM_JOBS.map((job) => [job.name, job.scope] as const);
 
     expect(scopes).toEqual([
@@ -226,6 +230,8 @@ describe('PLATFORM_JOB_NAMES', () => {
       ['orgCreatedHooks', { system: expect.stringContaining('orgCreatedHooks') }],
       ['abandonedSignupOrgs', { system: expect.stringContaining('abandonedSignupOrgs') }],
       ['signupPlans', { system: expect.stringContaining('signupPlans') }],
+      ['usageReports', { system: expect.stringContaining('usageReports') }],
+      ['usageNotices', { system: expect.stringContaining('usageNotices') }],
     ]);
   });
 
