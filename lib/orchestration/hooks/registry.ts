@@ -29,7 +29,11 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { keepRunningAfterResponse } from '@/lib/api/after-response';
 import { loggableUrl } from '@/lib/logging/redact-path';
-import { describeFetchFailure } from '@/lib/errors/fetch-error';
+import {
+  describeOutboundFailure,
+  isUnsafeAddressRefusal,
+  withOutboundDispatcher,
+} from '@/lib/security/safe-dispatcher';
 import {
   HookEventPayloadSchema,
   WebhookActionSchema,
@@ -541,7 +545,9 @@ async function attemptDelivery(
 
   const uncounted = posted.uncounted === true && checkFailureUncounted(delivery.createdAt);
   const newAttempts = delivery.attempts + (uncounted ? 0 : 1);
-  const exhausted = newAttempts >= MAX_ATTEMPTS;
+  // A refused address is terminal, as for webhook subscriptions: no retry can
+  // change where the host resolves, only a new URL can.
+  const exhausted = posted.terminal === true || newAttempts >= MAX_ATTEMPTS;
   const retryDelay = RETRY_DELAYS_MS[Math.max(newAttempts, 1) - 1];
   const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);
 
@@ -595,8 +601,12 @@ type AttemptRecord = DeliveryLike & {
 /** How one POST to a hook went. */
 type HookPostResult =
   | { ok: true; statusCode: number }
-  /** `uncounted`: nothing was posted, as the dispatcher's outcome (t-886). */
-  | { ok: false; statusCode?: number; error: string; uncounted?: boolean };
+  /**
+   * `uncounted`: nothing was posted, as the dispatcher's outcome (t-886).
+   * `terminal`: the checked dispatcher refused the address (#1371), so the row
+   * is exhausted rather than retried.
+   */
+  | { ok: false; statusCode?: number; error: string; uncounted?: boolean; terminal?: boolean };
 
 /** POST `payload` to the hook, signed when it has a secret. Never throws. */
 async function postHook(
@@ -614,35 +624,48 @@ async function postHook(
       signingHeaders[SIGNATURE_HEADER] = signature;
     }
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Hook-Event': payload.eventType,
-        ...(customHeaders ?? {}),
-        ...signingHeaders,
-      },
-      body,
-      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS.hook),
-      // Refuse redirects rather than follow them (#534). `fetch` defaults to
-      // 'follow'. The hook URL itself IS re-checked at dispatch — `loadHooks`
-      // and `parseDeliveryForDispatch` both re-parse the stored action through
-      // `WebhookActionSchema`, which carries the `isSafeProviderUrl` refine — but
-      // a redirect TARGET is a second address no schema ever saw
-      // that this request would POST the event payload AND its HMAC signature
-      // headers to. Erroring is also what GitHub and Stripe do for outbound
-      // webhooks: an endpoint that moved should be re-pointed, not chased.
-      // The failure surfaces as a normal delivery error and is retried.
-      redirect: 'error',
-    });
+    // Pinned to a checked address when acting for a customer org (#1371), as
+    // webhook subscriptions are (§111 t-811): the `WebhookActionSchema`
+    // re-parse at dispatch reads the URL's text, not where its host resolves.
+    // First attempts and retries both come through here.
+    const res = await fetch(
+      url,
+      withOutboundDispatcher({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Hook-Event': payload.eventType,
+          ...(customHeaders ?? {}),
+          ...signingHeaders,
+        },
+        body,
+        signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS.hook),
+        // Refuse redirects rather than follow them (#534). `fetch` defaults to
+        // 'follow'. The hook URL itself IS re-checked at dispatch — `loadHooks`
+        // and `parseDeliveryForDispatch` both re-parse the stored action through
+        // `WebhookActionSchema`, which carries the `isSafeProviderUrl` refine — but
+        // a redirect TARGET is a second address no schema ever saw
+        // that this request would POST the event payload AND its HMAC signature
+        // headers to. Erroring is also what GitHub and Stripe do for outbound
+        // webhooks: an endpoint that moved should be re-pointed, not chased.
+        // The failure surfaces as a normal delivery error and is retried.
+        redirect: 'error',
+      })
+    );
 
     return res.ok
       ? { ok: true, statusCode: res.status }
       : { ok: false, statusCode: res.status, error: `HTTP ${res.status}` };
   } catch (err: unknown) {
     // undici renders a refused redirect, a DNS failure and a connection reset
-    // all as a bare "fetch failed"; the reason lives on `cause`.
-    return { ok: false, error: describeFetchFailure(err) };
+    // all as a bare "fetch failed"; the reason lives on `cause`. For a customer
+    // org, a refused address and a name that does not exist read the same, so
+    // `lastError` maps no internal hostnames.
+    return {
+      ok: false,
+      ...(isUnsafeAddressRefusal(err) ? { terminal: true } : {}),
+      error: describeOutboundFailure(err),
+    };
   }
 }
 

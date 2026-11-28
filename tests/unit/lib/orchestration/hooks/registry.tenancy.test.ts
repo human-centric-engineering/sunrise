@@ -42,6 +42,9 @@ vi.mock('@/lib/db/client', () => ({
       update: vi.fn().mockResolvedValue({ id: 'del-1' }),
       // The first attempt claims the lease its row was written with (#834).
       updateManyAndReturn: vi.fn().mockResolvedValue([{ id: 'del-1', createdAt: new Date() }]),
+      // A failed post reads the row, then records the failure on it.
+      findUnique: vi.fn().mockResolvedValue(null),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
   },
 }));
@@ -73,6 +76,7 @@ import {
 } from '@/lib/orchestration/hooks/signing';
 import { prisma } from '@/lib/db/client';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { outboundDispatcher, UnsafeResolvedAddressError } from '@/lib/security/safe-dispatcher';
 
 const ORG_A = 'cmorg00000000000000000orga';
 const ORG_B = 'cmorg00000000000000000orgb';
@@ -262,6 +266,77 @@ describe('the hook cache at multi', () => {
     );
     expect(mockFindMany).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+/** The data of the write that recorded a failed post: the one setting `lastError`. */
+async function failureWrite(): Promise<Record<string, unknown>> {
+  const find = () =>
+    vi
+      .mocked(prisma.aiEventHookDelivery.updateMany)
+      .mock.calls.map(([args]) => args.data as Record<string, unknown>)
+      .find((data) => 'lastError' in data);
+  await vi.waitFor(() => expect(find()).toBeDefined());
+  return find() as Record<string, unknown>;
+}
+
+describe('the hook send at multi (#1371)', () => {
+  it('pins a customer org’s send to a checked address', async () => {
+    await emitAs(ORG_A, 1);
+
+    // The URL schema reads the text; the dispatcher checks where it resolves.
+    // By identity: the checked one, not any dispatcher.
+    const sent = mockFetch.mock.calls[0][1] as { dispatcher?: unknown };
+    const checked = await runAsOrg(ORG_A, async () => outboundDispatcher());
+    expect(checked).toBeDefined();
+    expect(sent.dispatcher).toBe(checked);
+  });
+
+  it('sends the install org’s as it always was', async () => {
+    await emitAs(INSTALL_ORG_ID, 1);
+
+    expect(mockFetch.mock.calls[0][1]).not.toHaveProperty('dispatcher');
+  });
+
+  it('records a customer org’s unresolvable host without saying which it was', async () => {
+    // What undici throws for a name the operator's DNS does not answer: a bare
+    // "fetch failed" whose cause carries the host. Told apart from a refused
+    // address, it would tell an org admin which internal names resolve.
+    const lookup = Object.assign(new Error('getaddrinfo ENOTFOUND db.internal'), {
+      code: 'ENOTFOUND',
+    });
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed', { cause: lookup }));
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      id: 'del-1',
+      attempts: 0,
+      createdAt: new Date(),
+    } as never);
+
+    await emitAs(ORG_A, 1);
+
+    const data = await failureWrite();
+    expect(data).toMatchObject({
+      status: 'failed',
+      lastError: 'Could not reach the destination: its host is not allowed or does not exist',
+    });
+    expect(JSON.stringify(data)).not.toContain('db.internal');
+  });
+
+  it('gives up at once on a refused address, as a webhook subscription does', async () => {
+    // No retry can change where the host resolves; only a new URL can.
+    const refused = new UnsafeResolvedAddressError('db.internal', '10.0.0.5', 'private');
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed', { cause: refused }));
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      id: 'del-1',
+      attempts: 0,
+      createdAt: new Date(),
+    } as never);
+
+    await emitAs(ORG_A, 1);
+
+    const data = await failureWrite();
+    expect(data).toMatchObject({ status: 'exhausted', attempts: 1, nextRetryAt: null });
+    expect(JSON.stringify(data)).not.toContain('10.0.0.5');
   });
 });
 
