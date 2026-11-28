@@ -34,6 +34,7 @@ vi.mock('@/lib/billing/usage-report', () => ({
 }));
 
 import { BillingErasureError, cancelOrgSubscriptionsAtProvider } from '@/lib/billing/erase';
+import { logger } from '@/lib/logging';
 
 const ORG = 'org_a';
 const provider = {
@@ -74,11 +75,18 @@ describe('cancelOrgSubscriptionsAtProvider', () => {
     );
   });
 
-  it('cancels nothing when the usage report fails, so the erasure stops and is retried', async () => {
-    mockReportBeforeCancelling.mockRejectedValueOnce(new Error('provider unreachable'));
+  it('cancels anyway when the usage report fails, and logs what went unbilled', async () => {
+    // A meter that cannot count, or a provider meter that refuses, must not
+    // hold up erasing the org's data for good.
+    mockReportBeforeCancelling.mockRejectedValueOnce(new Error('count broke'));
 
-    await expect(cancelOrgSubscriptionsAtProvider(ORG)).rejects.toThrow('provider unreachable');
-    expect(provider.cancelSubscription).not.toHaveBeenCalled();
+    const result = await cancelOrgSubscriptionsAtProvider(ORG);
+
+    expect(result?.cancelled).toEqual(['sub_1', 'sub_unpaid', 'sub_never_stored']);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('could not report'),
+      expect.objectContaining({ orgId: ORG, error: 'count broke' })
+    );
   });
 
   it('reports nothing while billing is off', async () => {

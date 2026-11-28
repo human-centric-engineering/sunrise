@@ -28,8 +28,10 @@
  * the period's end, each run sends the period's running total
  * (`final: false`, placed now, a new identifier each time). When it closes,
  * the count is recorded and marked `LATE`, not sent. An org erased mid-period
- * has its open period reported before the subscription is cancelled
- * ({@link reportBeforeCancelling}). One ended at once by the provider is
+ * has its open period's total so far sent, as a running total, before the
+ * subscription is cancelled ({@link reportBeforeCancelling}); its row stays
+ * open, so a cancellation that fails leaves the period to close as any
+ * other. One ended at once by the provider is
  * closed when it ended and marked `LATE`, so the loss is visible.
  *
  * **Off unless it can bill.** With no provider, plans not in use, or no plan
@@ -71,8 +73,29 @@ export const USAGE_SEND_LEASE_MS = 10 * MINUTE;
  */
 const DEFAULT_PROVIDER_GRACE_MS = 60 * MINUTE;
 
-/** The most rows one step handles in one run; the next run takes the rest. */
-const BATCH = 100;
+/** Rows read per page; each step walks every page in one run. */
+const PAGE = 100;
+
+/**
+ * Walk every row a query matches, a page at a time, keyed on a unique field
+ * the query orders by. Every page is walked, so rows a step skips or fails on
+ * (a period already closed, a total unchanged, a send the provider refuses)
+ * never hold the rest back to a later run.
+ */
+async function eachPage<T>(
+  read: (after: string | undefined) => Promise<T[]>,
+  keyOf: (row: T) => string,
+  handle: (row: T) => Promise<void>
+): Promise<void> {
+  let after: string | undefined;
+  for (;;) {
+    const rows = await read(after);
+    for (const row of rows) await handle(row);
+    const last = rows.at(-1);
+    if (rows.length < PAGE || last === undefined) return;
+    after = keyOf(last);
+  }
+}
 
 type Db = Pick<PrismaClient, 'billingUsageReport'> | Prisma.TransactionClient;
 
@@ -172,15 +195,26 @@ export async function closeBillingPeriod(
     })),
     skipDuplicates: true,
   });
-  await db.billingUsageReport.updateMany({
-    where: {
-      orgId: subscription.orgId,
-      periodStart: subscription.periodStart,
-      meterKey: { in: items.map((item) => item.meterKey) },
-      status: { in: ['OPEN', 'PENDING'] },
-    },
-    data: { status: 'PENDING', periodEnd: close.periodEnd, lastPeriod: close.lastPeriod },
-  });
+  // Per item: a row opened under an earlier plan takes this one's allowance
+  // and provider meter, so the period is billed under the plan it closed on.
+  for (const item of items) {
+    await db.billingUsageReport.updateMany({
+      where: {
+        orgId: subscription.orgId,
+        periodStart: subscription.periodStart,
+        meterKey: item.meterKey,
+        status: { in: ['OPEN', 'PENDING'] },
+      },
+      data: {
+        status: 'PENDING',
+        periodEnd: close.periodEnd,
+        lastPeriod: close.lastPeriod,
+        planKey,
+        allowance: item.allowance,
+        providerMeter: item.providerMeter ?? item.meterKey,
+      },
+    });
+  }
   return items.length;
 }
 
@@ -293,46 +327,53 @@ async function closeEndedPeriods(
   now: Date,
   run: UsageReportRun
 ): Promise<void> {
-  const rows = await prisma.orgBillingSubscription.findMany({
-    where: {
-      ...LIVE_RECORD,
-      provider: provider.key,
-      planKey: { in: planKeys },
-      periodEnd: { lte: new Date(now.getTime() - USAGE_SETTLE_MS) },
-    },
-    select: RECORD_FIELDS,
-    take: BATCH,
-  });
-  for (const row of rows) {
-    const record = asLive(row);
-    if (!record) continue;
-    try {
-      const closedAlready = await runAsOrg(record.orgId, () =>
-        prisma.billingUsageReport.count({
-          where: {
-            orgId: record.orgId,
-            periodStart: record.periodStart,
-            status: { notIn: ['OPEN', 'PENDING'] },
-          },
-        })
-      );
-      if (closedAlready > 0) continue;
-      await runAsOrg(record.orgId, () =>
-        closeBillingPeriod(prisma, record, {
-          periodEnd: record.periodEnd,
-          // Cancelling at its end, the provider has made its final invoice.
-          lastPeriod: record.cancelAtPeriodEnd,
-        })
-      );
-      run.closed += 1;
-    } catch (error) {
-      run.failed += 1;
-      logger.error('billing: could not close a billing period', {
-        orgId: record.orgId,
-        error: errorText(error),
-      });
+  const read = (after: string | undefined) =>
+    prisma.orgBillingSubscription.findMany({
+      where: {
+        ...LIVE_RECORD,
+        provider: provider.key,
+        planKey: { in: planKeys },
+        periodEnd: { lte: new Date(now.getTime() - USAGE_SETTLE_MS) },
+        ...(after ? { orgId: { gt: after } } : {}),
+      },
+      select: RECORD_FIELDS,
+      orderBy: { orgId: 'asc' },
+      take: PAGE,
+    });
+  await eachPage(
+    read,
+    (row) => row.orgId,
+    async (row) => {
+      const record = asLive(row);
+      if (!record) return;
+      try {
+        const closedAlready = await runAsOrg(record.orgId, () =>
+          prisma.billingUsageReport.count({
+            where: {
+              orgId: record.orgId,
+              periodStart: record.periodStart,
+              status: { notIn: ['OPEN', 'PENDING'] },
+            },
+          })
+        );
+        if (closedAlready > 0) return;
+        await runAsOrg(record.orgId, () =>
+          closeBillingPeriod(prisma, record, {
+            periodEnd: record.periodEnd,
+            // Cancelling at its end, the provider has made its final invoice.
+            lastPeriod: record.cancelAtPeriodEnd,
+          })
+        );
+        run.closed += 1;
+      } catch (error) {
+        run.failed += 1;
+        logger.error('billing: could not close a billing period', {
+          orgId: record.orgId,
+          error: errorText(error),
+        });
+      }
     }
-  }
+  );
 }
 
 /**
@@ -346,42 +387,57 @@ async function sendRunningTotals(
   now: Date,
   run: UsageReportRun
 ): Promise<void> {
-  const rows = await prisma.orgBillingSubscription.findMany({
-    where: {
-      ...LIVE_RECORD,
-      provider: provider.key,
-      planKey: { in: planKeys },
-      cancelAtPeriodEnd: true,
-      periodEnd: { gt: now },
-    },
-    select: RECORD_FIELDS,
-    take: BATCH,
-  });
-  for (const row of rows) {
-    const record = asLive(row);
-    if (!record || record.periodStart >= now) continue;
-    for (const item of billedItems(record.planKey)) {
-      try {
-        if (await sendRunningTotal(provider, record, item, now)) run.running += 1;
-      } catch (error) {
-        run.failed += 1;
-        logger.error('billing: could not send a running usage total', {
-          orgId: record.orgId,
-          meterKey: item.meterKey,
-          error: errorText(error),
-        });
+  const read = (after: string | undefined) =>
+    prisma.orgBillingSubscription.findMany({
+      where: {
+        ...LIVE_RECORD,
+        provider: provider.key,
+        planKey: { in: planKeys },
+        cancelAtPeriodEnd: true,
+        periodEnd: { gt: now },
+        ...(after ? { orgId: { gt: after } } : {}),
+      },
+      select: RECORD_FIELDS,
+      orderBy: { orgId: 'asc' },
+      take: PAGE,
+    });
+  await eachPage(
+    read,
+    (row) => row.orgId,
+    async (row) => {
+      const record = asLive(row);
+      if (!record || record.periodStart >= now) return;
+      for (const item of billedItems(record.planKey)) {
+        try {
+          if ((await sendRunningTotal(provider, record, item, now)) === 'sent') run.running += 1;
+        } catch (error) {
+          run.failed += 1;
+          logger.error('billing: could not send a running usage total', {
+            orgId: record.orgId,
+            meterKey: item.meterKey,
+            error: errorText(error),
+          });
+        }
       }
     }
-  }
+  );
 }
 
-/** @returns whether a running total was sent. */
+/**
+ * Send the open period's total so far, placed now, with a new identifier each
+ * time (the provider keeps the period's last value). The row stays `OPEN`, so
+ * the period still closes, is counted and is sent as any other.
+ *
+ * @returns `sent`; `unchanged` when the provider already holds this total;
+ *   `busy` when another send holds the row's lease; `closed` when the row is
+ *   no longer open.
+ */
 async function sendRunningTotal(
   provider: BillingProvider,
   record: LiveRecord,
   item: MeteredItem,
   now: Date
-): Promise<boolean> {
+): Promise<'sent' | 'unchanged' | 'busy' | 'closed'> {
   return runAsOrg(record.orgId, async () => {
     const key = {
       orgId_meterKey_periodStart: {
@@ -410,22 +466,27 @@ async function sendRunningTotal(
       skipDuplicates: true,
     });
     const report = await prisma.billingUsageReport.findUnique({ where: key });
-    if (!report || report.status !== 'OPEN') return false;
+    if (!report || report.status !== 'OPEN') return 'closed';
 
+    // The plan's item as it is now, so a plan changed mid-period is reported
+    // under the later one, as the period's close bills it.
+    const providerMeter = item.providerMeter ?? item.meterKey;
     const quantity = excessOver(
-      report,
+      item,
       await countUsage(record.orgId, item.meterKey, { from: record.periodStart, to: now })
     );
     // Nothing new to say: the provider's meter already holds this total.
-    if (quantity === (report.runningQuantity ?? 0)) return false;
-    if (!(await claimSend(report, now, 'OPEN'))) return false;
+    if (quantity === (report.runningQuantity ?? 0) && providerMeter === report.providerMeter) {
+      return 'unchanged';
+    }
+    if (!(await claimSend(report, now, 'OPEN'))) return 'busy';
 
     const send = report.runningSends + 1;
     try {
       await provider.reportUsage({
         customerRef: report.customerRef,
         subscriptionRef: report.subscriptionRef,
-        providerMeter: report.providerMeter,
+        providerMeter,
         quantity,
         periodStart: report.periodStart,
         periodEnd: report.periodEnd,
@@ -440,9 +501,16 @@ async function sendRunningTotal(
     }
     await prisma.billingUsageReport.update({
       where: { id: report.id },
-      data: { runningSends: send, runningQuantity: quantity, sendingAt: null },
+      data: {
+        runningSends: send,
+        runningQuantity: quantity,
+        sendingAt: null,
+        planKey: record.planKey ?? report.planKey,
+        allowance: item.allowance,
+        providerMeter,
+      },
     });
-    return true;
+    return 'sent';
   });
 }
 
@@ -484,31 +552,37 @@ async function countSettled(
   now: Date,
   run: UsageReportRun
 ): Promise<void> {
-  const reports = await prisma.billingUsageReport.findMany({
-    where: {
-      status: 'PENDING',
-      provider: provider.key,
-      periodEnd: { lte: new Date(now.getTime() - USAGE_SETTLE_MS) },
-    },
-    orderBy: { periodEnd: 'asc' },
-    take: BATCH,
-  });
-  for (const report of reports) {
-    try {
-      const outcome = await countReport(report, now);
-      if (outcome === null) continue;
-      run.counted += 1;
-      if (outcome === 'LATE') run.late += 1;
-    } catch (error) {
-      run.failed += 1;
-      logger.error('billing: could not count a usage report', {
-        orgId: report.orgId,
-        reportId: report.id,
-        meterKey: report.meterKey,
-        error: errorText(error),
-      });
+  const read = (after: string | undefined) =>
+    prisma.billingUsageReport.findMany({
+      where: {
+        status: 'PENDING',
+        provider: provider.key,
+        periodEnd: { lte: new Date(now.getTime() - USAGE_SETTLE_MS) },
+        ...(after ? { id: { gt: after } } : {}),
+      },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+    });
+  await eachPage(
+    read,
+    (report) => report.id,
+    async (report) => {
+      try {
+        const outcome = await countReport(report, now);
+        if (outcome === null) return;
+        run.counted += 1;
+        if (outcome === 'LATE') run.late += 1;
+      } catch (error) {
+        run.failed += 1;
+        logger.error('billing: could not count a usage report', {
+          orgId: report.orgId,
+          reportId: report.id,
+          meterKey: report.meterKey,
+          error: errorText(error),
+        });
+      }
     }
-  }
+  );
 }
 
 /** @returns the status it was counted to, or `null` when another instance counted it first. */
@@ -552,24 +626,29 @@ async function sendCounted(
   now: Date,
   run: UsageReportRun
 ): Promise<void> {
-  const reports = await prisma.billingUsageReport.findMany({
-    where: { status: 'COUNTED', provider: provider.key },
-    orderBy: { periodEnd: 'asc' },
-    take: BATCH,
-  });
-  for (const report of reports) {
-    try {
-      if (await sendReport(provider, report, now)) run.sent += 1;
-    } catch (error) {
-      run.failed += 1;
-      logger.error('billing: could not send a usage report; it is retried', {
-        orgId: report.orgId,
-        reportId: report.id,
-        meterKey: report.meterKey,
-        error: errorText(error),
-      });
+  const read = (after: string | undefined) =>
+    prisma.billingUsageReport.findMany({
+      where: { status: 'COUNTED', provider: provider.key, ...(after ? { id: { gt: after } } : {}) },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+    });
+  await eachPage(
+    read,
+    (report) => report.id,
+    async (report) => {
+      try {
+        if (await sendReport(provider, report, now)) run.sent += 1;
+      } catch (error) {
+        run.failed += 1;
+        logger.error('billing: could not send a usage report; it is retried', {
+          orgId: report.orgId,
+          reportId: report.id,
+          meterKey: report.meterKey,
+          error: errorText(error),
+        });
+      }
     }
-  }
+  );
 }
 
 /** @returns whether this call sent it. */
@@ -612,12 +691,19 @@ async function sendReport(
 }
 
 /**
- * Before the platform cancels an org's subscription (erasure), report the
- * open period's usage so far, `final: true` and placed now, so the invoice
- * the cancellation makes carries it. Throws when it cannot, so the erasure
- * step stops and is retried rather than cancelling with the usage unbilled.
- * Does nothing when the org's record holds no live subscription at this
- * provider, or its plan bills nothing.
+ * Before the platform cancels an org's subscription (erasure), report what the
+ * cancellation's invoice should carry. The open period's total so far is sent
+ * as a running total (placed now, a new identifier each time), so its row
+ * stays `OPEN`: if the cancellation then fails, or the erasure is never
+ * retried, the period still closes, is counted and is sent as any other, and
+ * the provider keeps the later value. A period that already closed and has
+ * not been sent yet is counted and sent now, since erasing the org deletes
+ * its rows.
+ *
+ * Throws when a count or a send fails, or another instance holds a send's
+ * lease, so the caller can log what went unreported. Does nothing when the
+ * org's record holds no live subscription at this provider, or its plan bills
+ * nothing.
  *
  * @returns how many reports it sent.
  */
@@ -627,36 +713,40 @@ export async function reportBeforeCancelling(
   now: Date = new Date()
 ): Promise<number> {
   return runAsOrg(orgId, async () => {
+    let sent = 0;
+    // Closed, and not sent yet: the tick would have, minutes from now.
+    const waiting = await prisma.billingUsageReport.findMany({
+      where: { orgId, provider: provider.key, status: { in: ['PENDING', 'COUNTED'] } },
+    });
+    for (const report of waiting) {
+      let counted: BillingUsageReport | null = report;
+      if (report.status === 'PENDING') {
+        // Counted now rather than after settling: the org's rows go with it.
+        // Whoever counted it, the row says where it is now.
+        await countReport(report, now);
+        counted = await prisma.billingUsageReport.findUnique({ where: { id: report.id } });
+      }
+      if (counted === null || counted.status !== 'COUNTED') continue;
+      if (!(await sendReport(provider, counted, now))) {
+        throw new Error(`Usage report ${counted.id} is being sent elsewhere`);
+      }
+      sent += 1;
+    }
+
     const row = await prisma.orgBillingSubscription.findFirst({
       where: { ...LIVE_RECORD, orgId, provider: provider.key },
       select: RECORD_FIELDS,
     });
     const record = row ? asLive(row) : null;
-    if (!record || record.periodStart >= now) return 0;
-    if ((await closeBillingPeriod(prisma, record, { periodEnd: now, lastPeriod: true })) === 0) {
-      return 0;
-    }
-    const reports = await prisma.billingUsageReport.findMany({
-      where: { orgId, periodStart: record.periodStart, status: { in: ['PENDING', 'COUNTED'] } },
-    });
-    let sent = 0;
-    for (const report of reports) {
-      if (report.status === 'PENDING') {
-        // Counted now rather than after settling: the period ends with the
-        // cancellation that follows.
-        const used = await countUsage(orgId, report.meterKey, {
-          from: report.periodStart,
-          to: report.periodEnd,
-        });
-        const quantity = excessOver(report, used);
-        await prisma.billingUsageReport.updateMany({
-          where: { id: report.id, status: 'PENDING' },
-          data: { status: quantity > 0 ? 'COUNTED' : 'NONE', used, quantity, countedAt: now },
-        });
-        if (quantity === 0) continue;
-        report.quantity = quantity;
+    // A stored period already over is the one closed above; the provider's
+    // next one has not been synced, so it is not known here.
+    if (!record || record.periodStart >= now || record.periodEnd <= now) return sent;
+    for (const item of billedItems(record.planKey)) {
+      const outcome = await sendRunningTotal(provider, record, item, now);
+      if (outcome === 'busy') {
+        throw new Error(`The ${item.meterKey} usage total is being sent elsewhere`);
       }
-      if (await sendReport(provider, report, now, now)) sent += 1;
+      if (outcome === 'sent') sent += 1;
     }
     return sent;
   });

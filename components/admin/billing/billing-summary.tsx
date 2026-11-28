@@ -190,7 +190,11 @@ export function BillingSummary({ billing }: BillingSummaryProps) {
                               <Badge
                                 variant={item.state === 'reached' ? 'destructive' : 'secondary'}
                               >
-                                {t(`allowances.state.${item.overage}.${item.state}`)}
+                                {item.overage === 'soft_cap' &&
+                                item.state === 'reached' &&
+                                !item.billed
+                                  ? t('allowances.state.soft_cap.reachedUnbilled')
+                                  : t(`allowances.state.${item.overage}.${item.state}`)}
                               </Badge>
                             )}
                           </TableCell>

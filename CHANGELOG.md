@@ -121,7 +121,8 @@ release process.
   through `reportUsage()` by the new `usageReports` maintenance task (5 min,
   system scope); the webhook closes a period as it syncs the next, and a
   subscription's last period sends running totals. Org erasure reports the
-  open period before it cancels. Warn notices are recorded once per
+  open period's total so far before it cancels, and a failed report is
+  logged rather than stopping the erasure. Warn notices are recorded once per
   threshold in the new published model `BillingUsageNotice` and sent by the
   new `usageNotices` task (15 min); an app decides how with
   `setUsageNoticeHandler()` from `initAppBilling()`, and with none the org's

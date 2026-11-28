@@ -106,7 +106,15 @@ vi.mock('@/lib/billing/apply-plan', () => ({ applyPlan: mockApplyPlan }));
 const mockTakeSignupPlan = vi.hoisted(() => vi.fn(async () => null));
 // Closing a period for usage reports (§139 t-1097): which period the webhook
 // closes is pinned here; what closing writes is usage-report.test.ts.
-const mockClosePeriod = vi.hoisted(() => vi.fn(async () => 0));
+const mockClosePeriod = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _db: unknown,
+      _closing: { periodStart: Date },
+      _close: { periodEnd: Date; lastPeriod: boolean }
+    ) => 0
+  )
+);
 vi.mock('@/lib/billing/usage-report', () => ({ closeBillingPeriod: mockClosePeriod }));
 
 vi.mock('@/lib/tenancy/org-settings', async (importOriginal) => ({
@@ -1031,6 +1039,61 @@ describe('closing a billing period for usage reports (t-1097)', () => {
       periodEnd: DEC,
       lastPeriod: true,
     });
+  });
+
+  it('closes a period the next one began part-way through where the next began, so none is billed twice', async () => {
+    onPro();
+    // Moved from monthly to yearly on the 15th: Stripe starts the new period then.
+    const switched = new Date('2026-11-15T00:00:00Z');
+    holds(sub('sub_1', { periodStart: switched, periodEnd: new Date('2027-11-15T00:00:00Z') }));
+
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(mockClosePeriod).toHaveBeenCalledTimes(1);
+    expect(mockClosePeriod).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ periodStart: NOV }),
+      { periodEnd: switched, lastPeriod: false }
+    );
+  });
+
+  it('closes a whole period no sync stored, between the stored one and the current one', async () => {
+    onPro();
+    const FEB = new Date('2027-02-01T00:00:00Z');
+    holds(sub('sub_1', { periodStart: JAN, periodEnd: FEB }));
+
+    await deliver({ subscriptionRef: 'sub_1' });
+
+    expect(
+      mockClosePeriod.mock.calls.map(([, closing, close]) => [closing.periodStart, close])
+    ).toEqual([
+      [NOV, { periodEnd: DEC, lastPeriod: false }],
+      [DEC, { periodEnd: JAN, lastPeriod: false }],
+    ]);
+  });
+
+  it('closes a subscription that ended in a period no sync stored, that period as its last', async () => {
+    onPro();
+    const endedAt = new Date('2026-12-10T00:00:00Z');
+    holds(
+      sub('sub_1', {
+        status: 'ended',
+        providerStatus: 'canceled',
+        live: false,
+        periodStart: DEC,
+        periodEnd: JAN,
+        endedAt,
+      })
+    );
+
+    await deliver({ subscriptionRef: 'sub_1', providerType: 'customer.subscription.deleted' });
+
+    expect(
+      mockClosePeriod.mock.calls.map(([, closing, close]) => [closing.periodStart, close])
+    ).toEqual([
+      [NOV, { periodEnd: DEC, lastPeriod: false }],
+      [DEC, { periodEnd: endedAt, lastPeriod: true }],
+    ]);
   });
 
   it('closes nothing when the period has not moved, and nothing for a subscription that gave no plan', async () => {

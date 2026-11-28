@@ -374,6 +374,7 @@ describe('what the plan includes (§139 t-1097)', () => {
     overage: 'warn' as const,
     allowance: 1000,
     money: false,
+    billed: true,
     used: 100,
     state: 'within' as const,
     window: { from: '2026-11-01T00:00:00.000Z', to: '2026-12-01T00:00:00.000Z' },
@@ -424,6 +425,22 @@ describe('what the plan includes (§139 t-1097)', () => {
     const docs = screen.getByRole('row', { name: /Documents/ });
     expect(within(docs).getByText('Within the allowance')).toBeInTheDocument();
     expect(within(docs).getByText(/Nothing more can be added/)).toBeInTheDocument();
+  });
+
+  it('says use past a soft cap is not billed when no subscription bills it', () => {
+    render(
+      <BillingSummary
+        billing={billing({
+          allowances: [
+            allowance({ overage: 'soft_cap', used: 1200, state: 'reached', billed: false }),
+          ],
+        })}
+      />
+    );
+
+    const convos = screen.getByRole('row', { name: /Conversations/ });
+    expect(within(convos).getByText(/Past the allowance: not billed/)).toBeInTheDocument();
+    expect(within(convos).queryByText('Past the allowance: billed')).not.toBeInTheDocument();
   });
 
   it('says an item could not be counted, never 0', () => {

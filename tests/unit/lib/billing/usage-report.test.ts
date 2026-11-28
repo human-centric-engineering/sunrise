@@ -83,7 +83,9 @@ function matches(row: Row, where: Row = {}): boolean {
       const cmp = (other: unknown) =>
         value instanceof Date && other instanceof Date
           ? value.getTime() - other.getTime()
-          : (value as number) - (other as number);
+          : typeof value === 'string' && typeof other === 'string'
+            ? value.localeCompare(other)
+            : (value as number) - (other as number);
       if ('in' in ops && !(ops.in as unknown[]).includes(value)) return false;
       if ('notIn' in ops && (ops.notIn as unknown[]).includes(value)) return false;
       if ('not' in ops && ops.not === null && value === null) return false;
@@ -96,6 +98,13 @@ function matches(row: Row, where: Row = {}): boolean {
   });
 }
 
+/** `orderBy: { field: 'asc' }`, on one string field, as the module pages. */
+function ordered(rows: Row[], orderBy?: Record<string, 'asc'>): Row[] {
+  const field = orderBy ? Object.keys(orderBy)[0] : undefined;
+  if (!field) return rows;
+  return [...rows].sort((a, b) => String(a[field]).localeCompare(String(b[field])));
+}
+
 const db = vi.hoisted((): { records: Row[]; reports: Row[]; cost: number | null } => ({
   records: [],
   reports: [],
@@ -105,8 +114,20 @@ let nextId = 0;
 
 const mockPrisma = vi.hoisted(() => ({
   orgBillingSubscription: {
-    findMany: vi.fn(async ({ where, take }: { where: Row; take?: number }) =>
-      db.records.filter((r) => matches(r, where)).slice(0, take ?? Infinity)
+    findMany: vi.fn(
+      async ({
+        where,
+        take,
+        orderBy,
+      }: {
+        where: Row;
+        take?: number;
+        orderBy?: Record<string, 'asc'>;
+      }) =>
+        ordered(
+          db.records.filter((r) => matches(r, where)),
+          orderBy
+        ).slice(0, take ?? Infinity)
     ),
     findFirst: vi.fn(
       async ({ where }: { where: Row }) => db.records.find((r) => matches(r, where)) ?? null
@@ -155,16 +176,29 @@ const mockPrisma = vi.hoisted(() => ({
       Object.assign(row, data);
       return { ...row };
     }),
-    findUnique: vi.fn(async ({ where }: { where: { orgId_meterKey_periodStart: Row } }) => {
-      const key = where.orgId_meterKey_periodStart;
-      const row = db.reports.find((r) => matches(r, key));
-      return row ? { ...row } : null;
-    }),
-    findMany: vi.fn(async ({ where, take }: { where: Row; take?: number }) =>
-      db.reports
-        .filter((r) => matches(r, where))
-        .slice(0, take ?? Infinity)
-        .map((r) => ({ ...r }))
+    findUnique: vi.fn(
+      async ({ where }: { where: { id?: string; orgId_meterKey_periodStart?: Row } }) => {
+        const key = where.orgId_meterKey_periodStart ?? { id: where.id };
+        const row = db.reports.find((r) => matches(r, key));
+        return row ? { ...row } : null;
+      }
+    ),
+    findMany: vi.fn(
+      async ({
+        where,
+        take,
+        orderBy,
+      }: {
+        where: Row;
+        take?: number;
+        orderBy?: Record<string, 'asc'>;
+      }) =>
+        ordered(
+          db.reports.filter((r) => matches(r, where)),
+          orderBy
+        )
+          .slice(0, take ?? Infinity)
+          .map((r) => ({ ...r }))
     ),
   },
   aiCostLog: {
@@ -232,6 +266,16 @@ function record(overrides: Row = {}): void {
     ...overrides,
   });
 }
+
+/** The subscription a period closes under, as the webhook and the tick pass it. */
+const subscriptionOf = (periodStart: Date) => ({
+  orgId: ORG,
+  provider: 'stripe',
+  customerRef: 'cus_a',
+  subscriptionRef: 'sub_1',
+  planKey: 'pro',
+  periodStart,
+});
 
 const reportFor = (meterKey = 'convos') => db.reports.find((r) => r.meterKey === meterKey);
 const sends = () => vi.mocked(provider.reportUsage).mock.calls.map(([input]) => input);
@@ -410,15 +454,76 @@ describe('a closed period', () => {
   });
 });
 
+describe('every row, every run', () => {
+  /** Orgs named so they sort ahead of `org_z`, the one that must not wait. */
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => `org_${String(i).padStart(3, '0')}`);
+
+  it('closes a newly ended period behind more than a page of periods already closed', async () => {
+    // Stale records: closed, the renewal never synced.
+    for (const orgId of many(120)) {
+      record({ orgId, customerRef: `cus_${orgId}`, subscriptionRef: `sub_${orgId}` });
+      db.reports.push({
+        id: `old_${orgId}`,
+        orgId,
+        meterKey: 'convos',
+        periodStart: NOV,
+        status: 'NONE',
+      });
+    }
+    record({ orgId: 'org_z', customerRef: 'cus_z', subscriptionRef: 'sub_z' });
+    counts.set('org_z:convos', 25);
+
+    const run = await runUsageReports(NOW);
+
+    expect(run).toMatchObject({ closed: 1, sent: 1 });
+    expect(sends().map((x) => x.customerRef)).toEqual(['cus_z']);
+  });
+
+  it('sends a counted report behind more than a page that the provider keeps refusing', async () => {
+    for (const orgId of many(120)) {
+      db.reports.push({
+        id: `a_${orgId}`,
+        orgId,
+        provider: 'stripe',
+        customerRef: 'cus_refused',
+        subscriptionRef: 'sub_x',
+        providerMeter: 'convos_over',
+        meterKey: 'convos',
+        periodStart: NOV,
+        periodEnd: DEC,
+        status: 'COUNTED',
+        quantity: 1,
+        sendingAt: null,
+      });
+    }
+    db.reports.push({
+      id: 'z_report',
+      orgId: 'org_z',
+      provider: 'stripe',
+      customerRef: 'cus_z',
+      subscriptionRef: 'sub_z',
+      providerMeter: 'convos_over',
+      meterKey: 'convos',
+      periodStart: NOV,
+      periodEnd: DEC,
+      status: 'COUNTED',
+      quantity: 3,
+      sendingAt: null,
+    });
+    vi.mocked(provider.reportUsage).mockImplementation(async (input) => {
+      if (input.customerRef === 'cus_refused') throw new Error('timestamp too old');
+    });
+
+    const run = await runUsageReports(NOW);
+
+    expect(run).toMatchObject({ sent: 1, failed: 120 });
+    expect(db.reports.find((r) => r.id === 'z_report')?.status).toBe('SENT');
+  });
+});
+
 describe('closeBillingPeriod', () => {
-  const subscription = {
-    orgId: ORG,
-    provider: 'stripe',
-    customerRef: 'cus_a',
-    subscriptionRef: 'sub_1',
-    planKey: 'pro',
-    periodStart: NOV,
-  };
+  const subscription = subscriptionOf(NOV);
 
   it('writes nothing for a plan that bills nothing, or a period with no length', async () => {
     expect(
@@ -447,6 +552,34 @@ describe('closeBillingPeriod', () => {
     Object.assign(reportFor() ?? {}, { status: 'SENT' });
     await closeBillingPeriod(asDb, subscription, { periodEnd: DEC, lastPeriod: false });
     expect(reportFor()).toMatchObject({ periodEnd: ended, lastPeriod: true, status: 'SENT' });
+  });
+
+  it('bills a row opened under an earlier plan under the plan the period closed on', async () => {
+    plans.list = [
+      METERED,
+      {
+        key: 'max',
+        meteredItems: {
+          convos: { ...METERED.meteredItems.convos, allowance: 50, providerMeter: 'convos_max' },
+        },
+      },
+    ];
+    // Opened by a running total under `pro`; the org moved to `max` since.
+    await closeBillingPeriod(asDb, subscription, { periodEnd: DEC, lastPeriod: false });
+    Object.assign(reportFor() ?? {}, { status: 'OPEN' });
+
+    await closeBillingPeriod(
+      asDb,
+      { ...subscription, planKey: 'max' },
+      { periodEnd: DEC, lastPeriod: false }
+    );
+
+    expect(reportFor()).toMatchObject({
+      status: 'PENDING',
+      planKey: 'max',
+      allowance: 50,
+      providerMeter: 'convos_max',
+    });
   });
 });
 
@@ -493,22 +626,66 @@ describe('the last period', () => {
 });
 
 describe('reportBeforeCancelling', () => {
-  it('reports the open period’s excess once, final and placed now', async () => {
+  it('sends the open period’s excess so far, placed now, and leaves the period open', async () => {
     record({ periodStart: DEC, periodEnd: JAN });
     counts.set(`${ORG}:convos`, 30);
 
     expect(await reportBeforeCancelling(provider, ORG, NOW)).toBe(1);
+    // Retried with nothing new: the provider already holds this total.
     expect(await reportBeforeCancelling(provider, ORG, NOW)).toBe(0);
 
-    expect(sends()).toEqual([expect.objectContaining({ final: true, quantity: 20, at: NOW })]);
-    expect(reportFor()).toMatchObject({ status: 'SENT', periodEnd: NOW, lastPeriod: true });
+    const id = String(reportFor()?.id);
+    expect(sends()).toEqual([
+      expect.objectContaining({ final: false, quantity: 20, at: NOW, identifier: `${id}:1` }),
+    ]);
+    expect(reportFor()).toMatchObject({ status: 'OPEN', periodEnd: JAN, runningQuantity: 20 });
+  });
+
+  it('leaves a period whose cancellation failed to close, be counted and be sent as any other', async () => {
+    record({ periodStart: DEC, periodEnd: JAN });
+    counts.set(`${ORG}:convos`, 30);
+    await reportBeforeCancelling(provider, ORG, NOW);
+
+    // The cancellation failed and the erasure was not retried: the
+    // subscription goes on, and the rest of the period is used.
+    counts.set(`${ORG}:convos`, 45);
+    const run = await runUsageReports(new Date(JAN.getTime() + 10 * MINUTE));
+
+    expect(run).toMatchObject({ closed: 1, counted: 1, sent: 1, late: 0 });
+    expect(reportFor()).toMatchObject({ status: 'SENT', periodEnd: JAN, lastPeriod: false });
+    expect(sends().at(-1)).toMatchObject({
+      final: true,
+      quantity: 35,
+      at: new Date(JAN.getTime() - 1000),
+      identifier: reportFor()?.id,
+    });
+  });
+
+  it('counts and sends a closed period not yet sent, since erasure deletes its row', async () => {
+    // The stored period ended 20 minutes ago; the tick closed it, and the
+    // renewal has not been synced.
+    record();
+    await closeBillingPeriod(asDb, subscriptionOf(NOV), { periodEnd: DEC, lastPeriod: false });
+    counts.set(`${ORG}:convos`, 14);
+
+    expect(await reportBeforeCancelling(provider, ORG, NOW)).toBe(1);
+
+    expect(sends()).toEqual([
+      expect.objectContaining({
+        final: true,
+        quantity: 4,
+        at: new Date(DEC.getTime() - 1000),
+        identifier: reportFor()?.id,
+      }),
+    ]);
+    expect(reportFor()).toMatchObject({ status: 'SENT', used: 14 });
   });
 
   it('sends nothing within the allowance, or with no live subscription at this provider', async () => {
     record({ periodStart: DEC, periodEnd: JAN });
     counts.set(`${ORG}:convos`, 3);
     expect(await reportBeforeCancelling(provider, ORG, NOW)).toBe(0);
-    expect(reportFor()?.status).toBe('NONE');
+    expect(reportFor()?.status).toBe('OPEN');
 
     db.records = [];
     db.reports = [];
@@ -518,7 +695,7 @@ describe('reportBeforeCancelling', () => {
     expect(provider.reportUsage).not.toHaveBeenCalled();
   });
 
-  it('throws when the send fails, so the erasure stops', async () => {
+  it('throws when the send fails, and releases the row for a retry', async () => {
     record({ periodStart: DEC, periodEnd: JAN });
     counts.set(`${ORG}:convos`, 30);
     vi.mocked(provider.reportUsage).mockRejectedValueOnce(new Error('provider unreachable'));
@@ -526,7 +703,20 @@ describe('reportBeforeCancelling', () => {
     await expect(reportBeforeCancelling(provider, ORG, NOW)).rejects.toThrow(
       'provider unreachable'
     );
-    expect(reportFor()).toMatchObject({ status: 'COUNTED', sendingAt: null });
+    expect(reportFor()).toMatchObject({ status: 'OPEN', sendingAt: null, runningSends: 0 });
+  });
+
+  it('throws rather than reporting done while another send holds the row', async () => {
+    record({ periodStart: DEC, periodEnd: JAN });
+    counts.set(`${ORG}:convos`, 30);
+    await reportBeforeCancelling(provider, ORG, NOW);
+    counts.set(`${ORG}:convos`, 40);
+    Object.assign(reportFor() ?? {}, { sendingAt: new Date(NOW.getTime() - MINUTE) });
+
+    await expect(reportBeforeCancelling(provider, ORG, NOW)).rejects.toThrow(
+      'being sent elsewhere'
+    );
+    expect(provider.reportUsage).toHaveBeenCalledTimes(1);
   });
 });
 

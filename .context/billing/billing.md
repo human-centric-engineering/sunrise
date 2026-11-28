@@ -928,10 +928,17 @@ after the end, is always too late. So:
   bills the latest one, so only usage in the minutes after the last tick
   before the end goes unbilled. The final count at close is still recorded,
   and marked late.
-- **Cancelled by the platform** (erasure, or replacing an `incomplete`
-  subscription): the open period's total is reported first (`final: true`,
-  timestamped now), then the subscription is cancelled with its usage
-  invoiced (Stripe's `invoice_now`).
+- **Cancelled by the platform** (erasure): the open period's total so far is
+  reported first, as a running total (timestamped now, its own identifier),
+  then the subscription is cancelled with its usage invoiced (Stripe's
+  `invoice_now`). The row stays `OPEN`: if the cancellation fails, or the
+  erasure is never retried, the period closes, is counted and is sent at its
+  end as any other, and the `last` meter takes the later value. A period
+  already closed and not yet sent is counted and sent then too, since
+  erasure deletes its row. **A failed report does not stop the erasure**:
+  it is logged at error with the org, and the usage goes unbilled. A meter
+  that cannot count, or a provider meter that refuses, would otherwise
+  block erasing the org's data for good.
 - **Ended by the provider at once** (an immediate cancellation in the portal,
   or retries exhausted): the last period's excess is not collected. It is
   closed at `endedAt`, or at the period's end when `endedAt` is null (an
@@ -983,16 +990,30 @@ registerPlan({
 - **Only a soft cap makes a report row.** Warn and hard cap bill nothing,
   so nothing is recorded for them. A period's rows hold the plan the org
   was on when it closed: a plan changed part-way through is billed under
-  the later one, as Stripe's proration already decides the price.
+  the later one, as Stripe's proration already decides the price. A row
+  opened earlier (by a running total) takes the closing plan's allowance and
+  provider meter, and so does each running total sent after the change.
 - **The webhook closes a period in its own transaction**: when a sync of
-  the stored subscription sees its period start move on, or it end. A
+  the stored subscription sees its period start move on, or it end. It
+  closes at the earliest of the stored end, where the next period began (a
+  billing-anchor reset, an interval change or an early trial end starts it
+  before the stored end, and no usage may be in two periods), and when it
+  ended. A record that fell more than a period behind (deliveries lost
+  through a renewal) has the time in between closed as one period too,
+  logged, so its usage is counted; it is usually past the provider's invoice
+  by then, which the send logs. A subscription that ended in a period no
+  sync stored has that period closed as its last. A
   subscription that was never `ACTIVE` or `PAST_DUE` closes nothing. The
   tick closes a period whose end passed while the record still holds it, so
   a late renewal webhook does not hold up a report; a later close from the
   webhook (that it ended early, say) replaces the tick's until the period is
   counted.
 - **A send takes a ten-minute lease on the row** (`sendingAt`), so two
-  instances never send at once, and one that crashed is retried. A row's
+  instances never send at once, and one that crashed is retried.
+- **Each run walks every row**, a page at a time by key, so periods already
+  closed, totals unchanged, and reports the provider keeps refusing never
+  hold the rest back to a later run. A refused report is retried, and
+  logged, every run. A row's
   `status` says where it is: `OPEN` (running totals only), `PENDING`,
   `COUNTED`, `SENT`, `NONE` (within the allowance) or `LATE`.
 - **A provider changed since** (`BILLING_PROVIDER` moved on) leaves the
@@ -1000,7 +1021,14 @@ registerPlan({
 - **Warn notices** are counted in the billing period while a provider
   subscription gives the org its plan, and otherwise in the meter's own
   window (the UTC month for a standing meter and for AI spend), so a plan
-  assigned by hand or given away still warns. One notice per threshold per
+  assigned by hand or given away still warns. A period stays the window for
+  a day past its end while the renewal's webhook has not moved it on, so a
+  late webhook does not start a new window and send its notices again.
+- **On the billing page**, a hard cap is counted in the meter's own window,
+  where `checkMeterQuota()` enforces the limit it writes, not the billing
+  period. A soft cap past its allowance says it is billed only while a
+  provider subscription gives the org its plan; on a plan assigned by hand
+  nothing reports it, and the page says it is not billed. One notice per threshold per
   window, claimed before it is sent; a handler that throws releases the
   claim and is retried. Reaching the allowance first claims "near" too, so
   it is never sent after "reached". `warnAtPercent` defaults to 80.
@@ -1033,7 +1061,9 @@ Decided at planning:
 - **Card details never reach the platform.** Checkout and the portal are the
   provider's pages.
 - **Erasing an org reports its open period's usage, then cancels its
-  subscriptions at the provider**, then deletes the local rows. Otherwise the provider keeps charging a card for an
+  subscriptions at the provider**, then deletes the local rows. A usage
+  report that fails is logged and does not stop the erasure
+  ([The last period](#the-last-period)). Otherwise the provider keeps charging a card for an
   org that no longer exists. It finds every customer of the org: the stored
   reference, and any whose metadata names the org (`findCustomerRefs`), which
   covers a customer whose reference was never stored. Then it cancels every

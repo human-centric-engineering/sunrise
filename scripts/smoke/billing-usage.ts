@@ -17,7 +17,8 @@
  *     on its own key, and rounded to cents once.
  *   • **The last period**: running totals while the subscription cancels at
  *     its end, each with its own identifier, and the closing count marked late
- *     and not sent. **Erasure** reports the open period before it cancels.
+ *     and not sent. **Erasure** reports the open period's total so far
+ *     before it cancels, and leaves the period open.
  *   • **Each rule**: warn tells the org once per threshold and allows; soft
  *     cap allows and reports the excess; hard cap refuses at the allowance.
  *   • **A plan with no metered items reports nothing.**
@@ -334,8 +335,13 @@ async function main(): Promise<void> {
     const sentC = sentFor(`cus_c_${stamp}`);
     check(cancelled !== null, 'the cancellation ran');
     check(
-      sentC.length === 1 && sentC[0]?.final === true && sentC[0]?.quantity === 20,
-      'the open period’s excess is reported, final, before the subscription is cancelled'
+      sentC.length === 1 && sentC[0]?.final === false && sentC[0]?.quantity === 20,
+      'the open period’s excess so far is reported before the subscription is cancelled'
+    );
+    const openC = (await reportsOf(c)).find((r) => r.meterKey === 'smoke_convos');
+    check(
+      openC?.status === 'OPEN' && openC.periodEnd.getTime() === openEnd.getTime(),
+      'its row stays open, so a cancellation that failed leaves the period to close as any other'
     );
     await cancelOrgSubscriptionsAtProvider(c);
     check(sentFor(`cus_c_${stamp}`).length === 1, 'a retried erasure does not report it again');

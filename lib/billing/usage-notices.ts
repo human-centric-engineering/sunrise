@@ -16,7 +16,8 @@
  * **The window** is the org's billing period while a provider subscription
  * gives it its plan; otherwise (a plan assigned by hand, or given away) the
  * meter's own window, and the UTC month for a standing meter and for AI spend,
- * as §110's budget counts it. A standing meter has no window of its own, so
+ * as §110's budget counts it. A hard cap on the billing page is always the
+ * meter's own window, where its limit is enforced. A standing meter has no window of its own, so
  * its notices are once a month at most.
  *
  * **Tenancy posture.** The job runs under the audited system scope to find the
@@ -87,26 +88,45 @@ export function meteredItemLabel(meterKey: string): string {
 }
 
 /**
+ * How long past its end a stored billing period is still the window, while
+ * the renewal's webhook has not moved it on. Switching to the meter's own
+ * window at the boundary would start a new window, and send its notices
+ * again; a period this far past its end means the sync is broken, and the
+ * meter's own window is the better guess.
+ */
+const PERIOD_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/** The record's billing period while a provider subscription gives the org its plan. */
+function billingPeriod(record: WindowRecord): { from: Date; to: Date } | null {
+  if (
+    record.provider === null ||
+    (record.status !== 'ACTIVE' && record.status !== 'PAST_DUE') ||
+    record.periodStart === null ||
+    record.periodEnd === null
+  ) {
+    return null;
+  }
+  return { from: record.periodStart, to: record.periodEnd };
+}
+
+/**
  * The window a metered item's usage is measured in for this org now: the
- * billing period while a provider subscription gives the org its plan, else
- * the meter's own (the UTC month for a standing meter and for AI spend).
- * Throws as the app's window function does.
+ * billing period while a provider subscription gives the org its plan (kept a
+ * day past its end until a sync moves it on), else the meter's own (the UTC
+ * month for a standing meter and for AI spend). A hard cap is always the
+ * meter's own window, since that is where `checkMeterQuota` counts the limit
+ * the cap writes. Throws as the app's window function does.
  */
 export async function allowanceWindow(
   record: WindowRecord,
-  meterKey: string,
+  item: Pick<MeteredItem, 'meterKey' | 'overage'>,
   now: Date
 ): Promise<{ from: Date; to: Date }> {
-  const inPeriod =
-    record.provider !== null &&
-    (record.status === 'ACTIVE' || record.status === 'PAST_DUE') &&
-    record.periodStart !== null &&
-    record.periodEnd !== null &&
-    record.periodStart <= now &&
-    now < record.periodEnd;
-  if (inPeriod && record.periodStart && record.periodEnd) {
-    return { from: record.periodStart, to: record.periodEnd };
+  const period = item.overage === 'hard_cap' ? null : billingPeriod(record);
+  if (period && period.from <= now && now.getTime() < period.to.getTime() + PERIOD_GRACE_MS) {
+    return period;
   }
+  const meterKey = item.meterKey;
   const meter = meterKey === AI_SPEND_METER_KEY ? undefined : meterOf(meterKey);
   if (!meter || meter.period === 'standing') return utcMonth(now);
   const window = await meterWindow(meter.period, record.orgId, now);
@@ -123,6 +143,12 @@ export interface PlanAllowance {
   money: boolean;
   /** Within the window; `null` when it could not be counted. */
   used: number | null;
+  /**
+   * Whether use past a soft cap is billed: only while a provider
+   * subscription gives the org its plan. A plan assigned by hand reports
+   * nothing, and a soft cap stops nothing, so its excess is not charged.
+   */
+  billed: boolean;
   state: AllowanceState | null;
   window: { from: Date; to: Date } | null;
 }
@@ -149,9 +175,10 @@ export async function loadPlanAllowances(
         overage: item.overage,
         allowance: item.allowance,
         money: item.meterKey === AI_SPEND_METER_KEY,
+        billed: billingPeriod(record) !== null,
       };
       try {
-        const window = await allowanceWindow(record, item.meterKey, now);
+        const window = await allowanceWindow(record, item, now);
         const used = await countUsage(orgId, item.meterKey, window);
         return { ...base, used, state: allowanceState(item, used), window };
       } catch (error) {
@@ -231,7 +258,7 @@ async function checkItem(
   item: MeteredItem,
   now: Date
 ): Promise<boolean> {
-  const window = await allowanceWindow(record, item.meterKey, now);
+  const window = await allowanceWindow(record, item, now);
   const used = await countUsage(record.orgId, item.meterKey, window);
   const state = allowanceState(item, used);
   if (state === 'within') return false;

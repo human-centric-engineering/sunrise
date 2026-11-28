@@ -264,6 +264,35 @@ describe('runUsageNotices', () => {
 });
 
 describe('allowanceWindow', () => {
+  const warn = (meterKey: string) => ({ meterKey, overage: 'warn' as const });
+  const subscribed = {
+    orgId: ORG,
+    planKey: 'pro',
+    provider: 'stripe',
+    status: 'ACTIVE' as const,
+    periodStart: PERIOD_START,
+    periodEnd: PERIOD_END,
+  };
+
+  it('is the meter’s own window for a hard cap, where its limit is enforced', async () => {
+    expect(
+      await allowanceWindow(subscribed, { meterKey: 'leads', overage: 'hard_cap' }, NOW)
+    ).toEqual({ from: DEC, to: JAN });
+  });
+
+  it('keeps a period just past its end until a sync moves it on, and not past a day', async () => {
+    const justPast = new Date(PERIOD_END.getTime() + 5 * 60_000);
+    expect(await allowanceWindow(subscribed, warn('leads'), justPast)).toEqual({
+      from: PERIOD_START,
+      to: PERIOD_END,
+    });
+    const dayPast = new Date(PERIOD_END.getTime() + 24 * 60 * 60_000);
+    expect(await allowanceWindow(subscribed, warn('leads'), dayPast)).toEqual({
+      from: DEC,
+      to: JAN,
+    });
+  });
+
   it('is the billing period while a provider subscription gives the org its plan', async () => {
     const record = {
       orgId: ORG,
@@ -273,7 +302,7 @@ describe('allowanceWindow', () => {
       periodStart: PERIOD_START,
       periodEnd: PERIOD_END,
     };
-    expect(await allowanceWindow(record, 'leads', NOW)).toEqual({
+    expect(await allowanceWindow(record, warn('leads'), NOW)).toEqual({
       from: PERIOD_START,
       to: PERIOD_END,
     });
@@ -288,7 +317,7 @@ describe('allowanceWindow', () => {
       periodStart: null,
       periodEnd: null,
     };
-    expect(await allowanceWindow(byHand, 'leads', NOW)).toEqual({ from: DEC, to: JAN });
+    expect(await allowanceWindow(byHand, warn('leads'), NOW)).toEqual({ from: DEC, to: JAN });
     const lapsed = {
       ...byHand,
       provider: 'stripe',
@@ -296,7 +325,7 @@ describe('allowanceWindow', () => {
       periodStart: PERIOD_START,
       periodEnd: PERIOD_END,
     };
-    expect(await allowanceWindow(lapsed, 'leads', NOW)).toEqual({ from: DEC, to: JAN });
+    expect(await allowanceWindow(lapsed, warn('leads'), NOW)).toEqual({ from: DEC, to: JAN });
   });
 
   it('is the UTC month for a standing meter and for AI spend', async () => {
@@ -308,8 +337,11 @@ describe('allowanceWindow', () => {
       periodStart: null,
       periodEnd: null,
     };
-    expect(await allowanceWindow(byHand, 'seats', NOW)).toEqual({ from: DEC, to: JAN });
-    expect(await allowanceWindow(byHand, 'ai_spend_cents', NOW)).toEqual({ from: DEC, to: JAN });
+    expect(await allowanceWindow(byHand, warn('seats'), NOW)).toEqual({ from: DEC, to: JAN });
+    expect(await allowanceWindow(byHand, warn('ai_spend_cents'), NOW)).toEqual({
+      from: DEC,
+      to: JAN,
+    });
   });
 });
 
@@ -326,6 +358,7 @@ describe('loadPlanAllowances', () => {
         overage: 'warn',
         allowance: 10,
         money: false,
+        billed: true,
         used: 9,
         state: 'near',
         window: { from: PERIOD_START, to: PERIOD_END },
@@ -336,10 +369,28 @@ describe('loadPlanAllowances', () => {
         overage: 'soft_cap',
         allowance: 500,
         money: true,
+        billed: true,
         used: 650,
         state: 'reached',
         window: { from: PERIOD_START, to: PERIOD_END },
       },
+    ]);
+  });
+
+  it('says use past a soft cap is not billed on a plan assigned by hand', async () => {
+    onPlan({
+      provider: null,
+      customerRef: null,
+      subscriptionRef: null,
+      periodStart: null,
+      periodEnd: null,
+    });
+
+    const items = await loadPlanAllowances(ORG, NOW);
+
+    expect(items.map((item) => [item.key, item.billed])).toEqual([
+      ['leads', false],
+      ['ai_spend_cents', false],
     ]);
   });
 

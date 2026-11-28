@@ -1451,7 +1451,8 @@
           },
           "soft_cap": {
             "near": "Nearly used up",
-            "reached": "Past the allowance: billed"
+            "reached": "Past the allowance: billed",
+            "reachedUnbilled": "Past the allowance: not billed, as the plan was not bought through a subscription"
           },
           "hard_cap": {
             "near": "Nearly used up",
