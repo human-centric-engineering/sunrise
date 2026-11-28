@@ -30,6 +30,8 @@ const db = vi.hoisted(() => ({
     upsert: vi.fn(),
   },
   user: { findUnique: vi.fn(), update: vi.fn() },
+  // A member's named-tier grant (t-1123).
+  orgMembershipGrant: { deleteMany: vi.fn(), upsert: vi.fn() },
   $transaction: vi.fn(),
   // A healed signup record removes its org's awaiting-founder mark (t-1062).
   $executeRaw: vi.fn(),
@@ -616,7 +618,7 @@ describe('addMember', () => {
     );
     expect(db.user.update).toHaveBeenCalledWith({
       where: { id: OTHER },
-      data: { signupOrgId: null, signupOrgRole: null },
+      data: { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] },
     });
   });
 

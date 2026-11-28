@@ -430,6 +430,7 @@ describe('POST /api/v1/users/invite', () => {
         preferences: {},
         signupOrgId: null,
         signupOrgRole: null,
+        signupOrgTiers: [],
         erasureRequestedAt: null,
         erasureRequestedBy: null,
         erasureReason: null,

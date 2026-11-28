@@ -409,8 +409,12 @@ export function buildAccessExplainer(
   };
 }
 
-/** Resolves an {@link AdminText}: plain text as it is, a key through the catalogue. */
-function textResolver(t: AccessTranslator): (value: AdminText) => string {
+/**
+ * Resolves an {@link AdminText}: plain text as it is, a key through the
+ * catalogue. Exported for the other readers of an app's words (the Members
+ * page's tier names, t-1123).
+ */
+export function textResolver(t: AccessTranslator): (value: AdminText) => string {
   return (value) => {
     if (typeof value === 'string') return value;
     if (t.has(value.message)) return t(value.message);
@@ -445,7 +449,8 @@ function switchLabelResolver(): (key: string) => string {
 }
 
 /** `page_designs` → `Page designs`: a name to show when the app gave no label. */
-function humanise(name: string): string {
+/** A tier or section name as words: `page_designs` → "Page designs". */
+export function humanise(name: string): string {
   const words = name.replace(/[_-]+/g, ' ').trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }

@@ -740,7 +740,7 @@ describe('backfillInstallMemberships (t-835)', () => {
       );
       expect(store.user.update).toHaveBeenCalledWith({
         where: { id: 'u-recorded' },
-        data: { signupOrgId: null, signupOrgRole: null },
+        data: { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] },
       });
     } finally {
       users.splice(
@@ -838,7 +838,7 @@ describe('undecidedMembershipsForNewUser', () => {
 // write is healed into the org that invited them rather than a default.
 describe('the signup record (t-838)', () => {
   const human = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
-  const cleared = { signupOrgId: null, signupOrgRole: null };
+  const cleared = { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] };
 
   it('records the decided membership, not the floor', () => {
     expect(
@@ -1070,7 +1070,7 @@ describe('activeOrgForSession — healing from the signup record (t-838)', () =>
     signupOrgId: orgId,
     signupOrgRole: role,
   });
-  const cleared = { signupOrgId: null, signupOrgRole: null };
+  const cleared = { signupOrgId: null, signupOrgRole: null, signupOrgTiers: [] };
 
   beforeEach(() => {
     mockEnv.TENANCY_MODE = 'multi';

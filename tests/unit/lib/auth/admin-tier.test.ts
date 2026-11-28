@@ -17,7 +17,12 @@
  * refuses, which switch a page needs by the pattern Next.js serves it by, and
  * that a reach opens a requiring surface only where the policy admitted it.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+// The default holds() of a tier registered without one reads the grant
+// (t-1123); stubbed, so these tests stay on the registrar.
+const { grantHolds } = vi.hoisted(() => ({ grantHolds: vi.fn() }));
+vi.mock('@/lib/tenancy/tier-grants', () => ({ membershipGrantHolds: grantHolds }));
 
 import {
   ADMIN_INDEX_PATH,
@@ -307,7 +312,12 @@ describe('registerAdminTier (t-999)', () => {
     // The same definition again is a no-op, as under HMR.
     registerAdminTier('media', { holds });
     expect(registeredNamedAdminTiers().map(([name]) => name)).toEqual(['page_designs', 'media']);
-    expect(registeredNamedAdminTiers()[0][1]).toEqual({ holds, landing: '/admin/designs' });
+    expect(registeredNamedAdminTiers()[0][1]).toEqual({
+      holds,
+      ownHolds: holds,
+      grantable: false,
+      landing: '/admin/designs',
+    });
     expect(Object.isFrozen(registeredNamedAdminTiers()[0][1])).toBe(true);
   });
 
@@ -324,10 +334,13 @@ describe('registerAdminTier (t-999)', () => {
     expect(registeredNamedAdminTiers()).toEqual([]);
   });
 
-  it('refuses a tier with no holds(), or with a landing that is not a plain admin path', () => {
-    expect(() => registerAdminTier('media', {} as unknown as { holds: () => boolean })).toThrow(
-      /no holds\(\)/
-    );
+  it('refuses a holds that is not a function, a grantable that is not a boolean, or a landing that is not a plain admin path', () => {
+    expect(() =>
+      registerAdminTier('media', { holds: 'yes' } as unknown as { holds: () => boolean })
+    ).toThrow(/holds that is not a function/);
+    expect(() =>
+      registerAdminTier('media', { grantable: 'yes' } as unknown as { grantable: boolean })
+    ).toThrow(/grantable that is not true or false/);
     for (const landing of ['/designs', '/admin/designs/[id]', '/admin/designs/', '/admin/x?y=1']) {
       expect(() => registerAdminTier('media', { holds, landing })).toThrow(/landing/);
     }
@@ -341,9 +354,53 @@ describe('registerAdminTier (t-999)', () => {
     registerAdminTier('media', { holds: reloaded, landing: '/admin/media' });
     // One tier, in its first place, answering with the new holds().
     expect(registeredNamedAdminTiers()).toEqual([
-      ['media', { holds: reloaded, landing: '/admin/media' }],
+      ['media', { holds: reloaded, ownHolds: reloaded, grantable: false, landing: '/admin/media' }],
     ]);
     expect(registeredNamedAdminTiers()).not.toBe(view);
+  });
+});
+
+describe('registerAdminTier without a holds() (t-1123)', () => {
+  it('is held by the grant, and grantable', async () => {
+    registerAdminTier('media', {});
+    const [[, definition]] = registeredNamedAdminTiers();
+    expect(definition.grantable).toBe(true);
+    expect(definition.ownHolds).toBeUndefined();
+    expect(typeof definition.holds).toBe('function');
+
+    // The default holds() reads the membership's grant, for this tier.
+    const viewer = Object.freeze({
+      userId: 'u1',
+      credential: 'session' as const,
+      orgId: 'o1',
+      orgRole: 'MEMBER',
+    });
+    grantHolds.mockResolvedValueOnce(true);
+    await expect(definition.holds(viewer)).resolves.toBe(true);
+    expect(grantHolds).toHaveBeenCalledWith(viewer, 'media');
+    grantHolds.mockResolvedValueOnce(false);
+    await expect(definition.holds(viewer)).resolves.toBe(false);
+  });
+
+  it('keeps an app’s own holds() not grantable unless it says so', () => {
+    registerAdminTier('own', { holds });
+    registerAdminTier('both', { holds, grantable: true });
+    const tiers = Object.fromEntries(registeredNamedAdminTiers());
+    expect(tiers.own.grantable).toBe(false);
+    expect(tiers.both.grantable).toBe(true);
+    expect(tiers.both.holds).toBe(holds);
+  });
+
+  it('refuses a tier nobody could hold: no holds() and not grantable', () => {
+    expect(() => registerAdminTier('media', { grantable: false })).toThrow(/nobody but the org/);
+    expect(registeredNamedAdminTiers()).toEqual([]);
+  });
+
+  it('is a no-op registered again with no holds(), as under HMR', () => {
+    registerAdminTier('media', {});
+    const view = registeredNamedAdminTiers();
+    registerAdminTier('media', {});
+    expect(registeredNamedAdminTiers()).toBe(view);
   });
 });
 

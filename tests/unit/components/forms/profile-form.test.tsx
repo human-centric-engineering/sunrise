@@ -81,6 +81,7 @@ describe('components/forms/profile-form', () => {
     location: 'New York, USA',
     signupOrgId: null,
     signupOrgRole: null,
+    signupOrgTiers: [],
     erasureRequestedAt: null,
     erasureRequestedBy: null,
     erasureReason: null,

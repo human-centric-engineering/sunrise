@@ -94,6 +94,7 @@ const createMockUser = (id: string, name: string) => ({
   preferences: {},
   signupOrgId: null,
   signupOrgRole: null,
+  signupOrgTiers: [],
   erasureRequestedAt: null,
   erasureRequestedBy: null,
   erasureReason: null,

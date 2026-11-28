@@ -50,8 +50,12 @@ model User {
   // invited them, never the install org by default. No FK on purpose: an org
   // erased first leaves a value the heal checks for and clears. Not
   // client-settable (`input: false` in lib/auth/config.ts).
-  signupOrgId   String?
-  signupOrgRole OrgRole?
+  signupOrgId    String?
+  signupOrgRole  OrgRole?
+  // The named tiers that membership's grant lists (t-1123), so a healed
+  // signup keeps them. Empty for every other signup, and cleared with the two
+  // above.
+  signupOrgTiers String[] @default([])
 
   // A pending erasure (t-842). Set, with the account disabled, in one
   // transaction before any erasure work starts (`requestUserErasure()`), so a

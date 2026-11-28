@@ -110,7 +110,9 @@ export type OrgLifecycleErrorCode =
   | 'ALREADY_MEMBER'
   | 'NOT_A_MEMBER'
   | 'OWNER_STANDING'
-  | 'ORG_NOT_ACTIVE';
+  | 'ORG_NOT_ACTIVE'
+  | 'TIER_NOT_GRANTABLE'
+  | 'GRANT_NEEDS_MEMBER';
 
 const STATUS_FOR: Record<OrgLifecycleErrorCode, number> = {
   ORG_NOT_FOUND: 404,
@@ -123,6 +125,8 @@ const STATUS_FOR: Record<OrgLifecycleErrorCode, number> = {
   NOT_A_MEMBER: 404,
   OWNER_STANDING: 403,
   ORG_NOT_ACTIVE: 400,
+  TIER_NOT_GRANTABLE: 400,
+  GRANT_NEEDS_MEMBER: 409,
 };
 
 /**
@@ -662,9 +666,10 @@ export async function addMember(
   role: OrgRole | undefined,
   actor: MembershipActor,
   db: LifecycleDb = prisma,
-  options: { seatHeld?: boolean } = {}
+  options: { seatHeld?: boolean; tiers?: readonly string[] } = {}
 ): Promise<MembershipRecord> {
   if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'add a member as an owner');
+  const tiers = await checkedTiers(options.tiers ?? []);
   await requireOrg(orgId, db);
   const user = await requireManageableUser(userId, db);
 
@@ -713,18 +718,28 @@ export async function addMember(
       where: { orgId_userId: { orgId, userId } },
       select: membershipSelect,
     });
+    let written: MembershipRecord;
     if (!healed) {
-      return tx.orgMembership.create({
+      written = await tx.orgMembership.create({
         data: { orgId, userId, role: effectiveRole },
         select: membershipSelect,
       });
+    } else if (role === undefined || healed.role === effectiveRole) {
+      written = healed;
+    } else {
+      written = await tx.orgMembership.update({
+        where: { orgId_userId: { orgId, userId } },
+        data: { role: effectiveRole },
+        select: membershipSelect,
+      });
     }
-    if (role === undefined || healed.role === effectiveRole) return healed;
-    return tx.orgMembership.update({
-      where: { orgId_userId: { orgId, userId } },
-      data: { role: effectiveRole },
-      select: membershipSelect,
-    });
+    // The tiers the caller granted (t-1123), in the same transaction, beside
+    // a MEMBER only: a membership that became an OWNER by the first-owner
+    // bootstrap takes none. A grant the heal already wrote is replaced.
+    if (tiers.length > 0 && orgId !== INSTALL_ORG_ID && written.role === DEFAULT_ORG_ROLE) {
+      await writeGrant(tx, written.id, tiers);
+    }
+    return written;
   });
 
   setUpHealedSignupOrg(healedSignupOrg, userId);
@@ -841,15 +856,112 @@ export async function changeMemberRole(
       }
     }
 
-    return tx.orgMembership.update({
+    const changed = await tx.orgMembership.update({
       where: { orgId_userId: { orgId, userId } },
       data: { role },
       select: membershipSelect,
     });
+    // A grant widens a MEMBER only (t-1123). Cleared when the role leaves
+    // MEMBER, not kept inert: a later demotion back to MEMBER would otherwise
+    // quietly hand back tiers granted long before.
+    if (role !== DEFAULT_ORG_ROLE) {
+      await tx.orgMembershipGrant.deleteMany({ where: { membershipId: changed.id } });
+    }
+    return changed;
   }, SERIALIZABLE);
 
   logger.info('Org member role changed', { orgId, userId, role });
   return updated;
+}
+
+/** A member's granted tiers, as {@link setMemberTiers} answers. */
+export interface MemberTiersRecord {
+  orgId: string;
+  userId: string;
+  tiers: string[];
+}
+
+/**
+ * Set the named tiers a MEMBER holds in the org (t-1123): their grant lists
+ * exactly `tiers`, in registration order. An empty list removes the grant.
+ *
+ * Refused: the install org (`INSTALL_ORG_MEMBERSHIP`, its roles follow the
+ * platform role); someone not a member (`NOT_A_MEMBER`, 404); a member who
+ * is not a MEMBER (`GRANT_NEEDS_MEMBER`, 409), because their role already
+ * opens every named tier and a grant widens a MEMBER only; and any tier that
+ * is not registered and grantable (`TIER_NOT_GRANTABLE`, 400, naming them),
+ * rather than writing the rest.
+ *
+ * Who may set it is the route's admission: an org OWNER or ADMIN, or a
+ * platform admin. An ADMIN may grant tiers to anyone, as they may invite:
+ * every named tier is narrower than their own role.
+ */
+export async function setMemberTiers(
+  orgId: string,
+  userId: string,
+  tiers: readonly string[],
+  db: Pick<PrismaClient, 'orgMembership' | '$transaction'> = prisma
+): Promise<MemberTiersRecord> {
+  if (orgId === INSTALL_ORG_ID) {
+    throw new OrgLifecycleError(
+      'INSTALL_ORG_MEMBERSHIP',
+      'Tiers cannot be granted in the install organisation'
+    );
+  }
+  const granted = await checkedTiers(tiers);
+
+  await db.$transaction(async (tx) => {
+    const membership = await tx.orgMembership.findUnique({
+      where: { orgId_userId: { orgId, userId } },
+      select: { id: true, role: true },
+    });
+    if (!membership) throw new OrgLifecycleError('NOT_A_MEMBER', 'Member not found');
+    if (granted.length === 0) {
+      await tx.orgMembershipGrant.deleteMany({ where: { membershipId: membership.id } });
+      return;
+    }
+    if (membership.role !== DEFAULT_ORG_ROLE) {
+      throw new OrgLifecycleError(
+        'GRANT_NEEDS_MEMBER',
+        'Only a member can be granted tiers; owners and admins already open every one'
+      );
+    }
+    await writeGrant(tx, membership.id, granted);
+  }, SERIALIZABLE);
+
+  logger.info('Org member tiers set', { orgId, userId, tiers: granted });
+  return { orgId, userId, tiers: granted };
+}
+
+/**
+ * `asked`, checked against the grantable tiers and put in registration order;
+ * throws `TIER_NOT_GRANTABLE` naming any that is not. Loaded lazily: the tier
+ * registry runs the app's init, whose scaffold may import this module.
+ */
+async function checkedTiers(asked: readonly string[]): Promise<string[]> {
+  if (asked.length === 0) return [];
+  const { grantableTiersAmong, ungrantableTiersAmong } = await import('@/lib/tenancy/tier-grants');
+  const refused = ungrantableTiersAmong(asked);
+  if (refused.length > 0) {
+    throw new OrgLifecycleError(
+      'TIER_NOT_GRANTABLE',
+      `These tiers cannot be granted: ${refused.join(', ')}`
+    );
+  }
+  return grantableTiersAmong(asked);
+}
+
+/** Write the grant on `membershipId` to list exactly `tiers`. */
+function writeGrant(
+  tx: Pick<Prisma.TransactionClient, 'orgMembershipGrant'>,
+  membershipId: string,
+  tiers: readonly string[]
+) {
+  return tx.orgMembershipGrant.upsert({
+    where: { membershipId },
+    create: { membershipId, tiers: [...tiers] },
+    update: { tiers: [...tiers] },
+  });
 }
 
 /**

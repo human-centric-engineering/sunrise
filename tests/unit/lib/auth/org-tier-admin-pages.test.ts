@@ -219,7 +219,12 @@ describe('named tiers (t-999)', () => {
     fork.init = init;
 
     expect(namedAdminTiers()).toEqual(['page_designs']);
-    expect(namedAdminTier('page_designs')).toEqual({ holds, landing: '/admin/designs' });
+    expect(namedAdminTier('page_designs')).toEqual({
+      holds,
+      ownHolds: holds,
+      grantable: false,
+      landing: '/admin/designs',
+    });
     expect(namedTierAdminPages()).toEqual([{ pattern: '/admin/designs', tier: 'page_designs' }]);
     // An org admin opens the named tier's page too, so it is on their list,
     // and it shows one org's rows, so the header names the org on it.

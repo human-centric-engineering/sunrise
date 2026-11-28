@@ -167,6 +167,11 @@ export interface NamedTierAdminPage {
   readonly tier: NamedAdminTier;
 }
 
+/** Who holds a named tier, as {@link NamedAdminTierDefinition.holds} answers it. */
+export type NamedAdminTierHolds = (
+  viewer: Readonly<AuthorizationPrincipal & { orgId: string }>
+) => boolean | Promise<boolean>;
+
 /**
  * A named tier, as the fork registers it with {@link registerAdminTier}.
  */
@@ -179,15 +184,31 @@ export interface NamedAdminTierDefinition {
    * admin. Answer for `viewer.orgId` and no other org. May be async (a lookup
    * of the fork's own rows). A throw, or anything but `true`, is no.
    *
+   * **Optional** (t-1123). With none, the tier is held by a MEMBER whose
+   * membership's grant lists it: the platform's record of named tiers, which
+   * an org admin sets on the Members page or with the org invitation
+   * (`lib/tenancy/tier-grants.ts`). Give one only when who holds the tier is
+   * decided by your own rows; to read the grant as part of your answer, call
+   * `membershipGrantHolds(viewer, tier)` from `lib/tenancy/tier-grants.ts`
+   * and set {@link grantable}.
+   *
    * Load the lookup with `await import(…)` inside the function rather than
    * a static import at the top of `lib/app/admin-tier.ts`. The authorization
    * policy imports that scaffold to read this registry, so a module it
    * imports statically that in turn imports the guards or the policy is an
    * import cycle, and one that reads them at module scope fails at boot.
    */
-  holds: (
-    viewer: Readonly<AuthorizationPrincipal & { orgId: string }>
-  ) => boolean | Promise<boolean>;
+  holds?: NamedAdminTierHolds;
+  /**
+   * May an org admin grant this tier to a MEMBER, on the Members page, with an
+   * invitation, or through the API (t-1123)? Defaults to `true` for a tier with
+   * no {@link holds} (the grant is what holds it) and `false` for one with its
+   * own, whose answer the grant would not change unless that `holds()` reads
+   * it. Set `true` beside your own `holds()` only when it calls
+   * `membershipGrantHolds()`. `false` with no `holds()` is refused: nobody but
+   * the org's admins could ever hold such a tier.
+   */
+  grantable?: boolean;
   /**
    * Where `/admin` sends someone who holds this tier and is not an org admin:
    * a page registered for this tier, written word for word with literal
@@ -418,10 +439,9 @@ const appPageRequires = new Map<string, string>();
 /** {@link appPageRequires} as a frozen array, rebuilt only after it changes. */
 let appPageRequiresView: readonly AdminPageRequirement[] | null = null;
 /** The fork's named tiers (t-999), in registration order. */
-const namedTiers = new Map<NamedAdminTier, Readonly<NamedAdminTierDefinition>>();
+const namedTiers = new Map<NamedAdminTier, RegisteredNamedAdminTier>();
 /** {@link namedTiers} as a frozen array, rebuilt only after it changes. */
-let namedTiersView:
-  readonly (readonly [NamedAdminTier, Readonly<NamedAdminTierDefinition>])[] | null = null;
+let namedTiersView: readonly (readonly [NamedAdminTier, RegisteredNamedAdminTier])[] | null = null;
 
 /** What a named tier may be called: lower case, a letter first, at most 48 characters. */
 const NAMED_TIER = /^[a-z][a-z0-9_-]{0,47}$/;
@@ -432,6 +452,31 @@ const NAMED_TIER = /^[a-z][a-z0-9_-]{0,47}$/;
  * read as one of them in review, and `'org'` would be answered as `'org'`.
  */
 const RESERVED_TIER_NAMES: readonly string[] = Object.freeze(['org', 'platform']);
+
+/**
+ * A named tier as the registry holds it: its `holds()` always present (the
+ * grant's when the fork gave none), and whether it may be granted resolved.
+ */
+export type RegisteredNamedAdminTier = Readonly<
+  Omit<NamedAdminTierDefinition, 'holds' | 'grantable'> & {
+    holds: NamedAdminTierHolds;
+    grantable: boolean;
+    /** The `holds()` the fork gave, or `undefined` when the grant's answers. */
+    ownHolds: NamedAdminTierHolds | undefined;
+  }
+>;
+
+/**
+ * The `holds()` of a tier registered without one (t-1123): a MEMBER whose
+ * membership's grant lists the tier. Loaded lazily, for the import-cycle
+ * reason given on {@link NamedAdminTierDefinition.holds}.
+ */
+function grantHolds(tier: NamedAdminTier): NamedAdminTierHolds {
+  return async (viewer) => {
+    const { membershipGrantHolds } = await import('@/lib/tenancy/tier-grants');
+    return membershipGrantHolds(viewer, tier);
+  };
+}
 
 /**
  * Register a tier narrower than an org admin (t-999), and say who holds it.
@@ -486,8 +531,21 @@ export function registerAdminTier(
       "is reserved: 'org' is core's tier and 'platform' is what no tier means. Name the narrower audience."
     );
   }
-  if (typeof definition?.holds !== 'function') {
-    refuse('has no holds() — say who holds the tier.');
+  if (typeof definition !== 'object' || definition === null) {
+    refuse('has no definition.');
+  }
+  const ownHolds = definition.holds;
+  if (ownHolds !== undefined && typeof ownHolds !== 'function') {
+    refuse('has a holds that is not a function.');
+  }
+  if (definition.grantable !== undefined && typeof definition.grantable !== 'boolean') {
+    refuse('has a grantable that is not true or false.');
+  }
+  const grantable = definition.grantable ?? ownHolds === undefined;
+  if (ownHolds === undefined && !grantable) {
+    refuse(
+      'is not grantable and has no holds(), so nobody but the org’s admins could hold it. Give a holds(), or let it be granted.'
+    );
   }
   const { landing } = definition;
   if (landing !== undefined && !isPlainAdminPath(landing)) {
@@ -513,7 +571,9 @@ export function registerAdminTier(
         );
   const existing = namedTiers.get(name);
   if (
-    existing?.holds === definition.holds &&
+    existing !== undefined &&
+    existing.ownHolds === ownHolds &&
+    existing.grantable === grantable &&
     existing.landing === landing &&
     sameAdminText(existing.label, label) &&
     sameAdminText(existing.description, description)
@@ -523,7 +583,9 @@ export function registerAdminTier(
   namedTiers.set(
     name,
     Object.freeze({
-      holds: definition.holds,
+      holds: ownHolds ?? grantHolds(name),
+      ownHolds,
+      grantable,
       landing,
       ...(label === undefined ? {} : { label }),
       ...(description === undefined ? {} : { description }),
@@ -748,7 +810,7 @@ export function restoreAppOrgTierAdminPages(
  */
 export function registeredNamedAdminTiers(): readonly (readonly [
   NamedAdminTier,
-  Readonly<NamedAdminTierDefinition>,
+  RegisteredNamedAdminTier,
 ])[] {
   namedTiersView ??= Object.freeze(
     [...namedTiers].map(([name, definition]) => Object.freeze([name, definition] as const))
@@ -763,9 +825,7 @@ export function registeredNamedAdminTiers(): readonly (readonly [
  *
  * @internal
  */
-export function registeredNamedAdminTier(
-  name: string
-): Readonly<NamedAdminTierDefinition> | undefined {
+export function registeredNamedAdminTier(name: string): RegisteredNamedAdminTier | undefined {
   return namedTiers.get(name);
 }
 
@@ -776,7 +836,7 @@ export function registeredNamedAdminTier(
  * @internal
  */
 export function restoreNamedAdminTiers(
-  tiers: readonly (readonly [NamedAdminTier, Readonly<NamedAdminTierDefinition>])[]
+  tiers: readonly (readonly [NamedAdminTier, RegisteredNamedAdminTier])[]
 ): void {
   namedTiers.clear();
   for (const [name, definition] of tiers) namedTiers.set(name, definition);
