@@ -15,6 +15,7 @@ vi.mock('@/lib/orchestration/mcp/audit-logger', () => ({
 vi.mock('@/lib/orchestration/mcp/tool-registry', () => ({
   listMcpTools: vi.fn(),
   callMcpTool: vi.fn(),
+  toolArgumentsAuditable: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/mcp/resource-registry', () => ({
@@ -44,8 +45,13 @@ import {
   handleMcpRequest,
   McpProtocolError,
   __resetKeyRateLimitCacheForTests,
+  WITHHELD_TOOL_ARGUMENTS,
 } from '@/lib/orchestration/mcp/protocol-handler';
-import { listMcpTools, callMcpTool } from '@/lib/orchestration/mcp/tool-registry';
+import {
+  listMcpTools,
+  callMcpTool,
+  toolArgumentsAuditable,
+} from '@/lib/orchestration/mcp/tool-registry';
 import {
   listMcpResources,
   readMcpResource,
@@ -691,6 +697,79 @@ describe('handleMcpRequest', () => {
           scopedAgentId: null,
         }
       );
+    });
+
+    describe('what the audit log keeps of the arguments (#1349)', () => {
+      const call = (args: Record<string, unknown>) =>
+        handleMcpRequest(
+          makeRequest({
+            method: 'tools/call',
+            params: { name: 'assess_draft', arguments: args },
+          }),
+          { auth, protocolVersion, serverState, rateLimiter }
+        );
+      const audited = async () => {
+        const { logMcpAudit } = await import('@/lib/orchestration/mcp/audit-logger');
+        return vi.mocked(logMcpAudit).mock.calls.at(-1)?.[0];
+      };
+
+      it('keeps them as sent for a tool cleared as holding no personal data', async () => {
+        vi.mocked(toolArgumentsAuditable).mockResolvedValue(true);
+        vi.mocked(callMcpTool).mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+        await call({ q: 'test' });
+
+        expect(toolArgumentsAuditable).toHaveBeenCalledWith('assess_draft');
+        expect((await audited())?.requestParams).toEqual({
+          name: 'assess_draft',
+          arguments: { q: 'test' },
+        });
+      });
+
+      it('withholds them for a tool that processes personal data, keeping the name', async () => {
+        vi.mocked(toolArgumentsAuditable).mockResolvedValue(false);
+        vi.mocked(callMcpTool).mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+        await call({ text: 'Sarah at Acme saved four hours a week.' });
+
+        const entry = await audited();
+        expect(entry?.toolSlug).toBe('assess_draft');
+        expect(entry?.responseCode).toBe('success');
+        expect(entry?.requestParams).toEqual({
+          name: 'assess_draft',
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+        expect(JSON.stringify(entry)).not.toContain('Sarah');
+      });
+
+      it('withholds them on the error path too', async () => {
+        vi.mocked(toolArgumentsAuditable).mockResolvedValue(false);
+        vi.mocked(callMcpTool).mockRejectedValue(new Error('boom'));
+
+        await call({ text: 'Sarah at Acme saved four hours a week.' });
+
+        const entry = await audited();
+        expect(entry?.responseCode).toBe('error');
+        expect(entry?.requestParams).toEqual({
+          name: 'assess_draft',
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+        expect(JSON.stringify(entry)).not.toContain('Sarah');
+      });
+
+      it('leaves the params of every other method as they are', async () => {
+        vi.mocked(listMcpTools).mockResolvedValue([]);
+
+        await handleMcpRequest(makeRequest({ method: 'tools/list', params: { cursor: 'c1' } }), {
+          auth,
+          protocolVersion,
+          serverState,
+          rateLimiter,
+        });
+
+        expect(toolArgumentsAuditable).not.toHaveBeenCalled();
+        expect((await audited())?.requestParams).toEqual({ cursor: 'c1' });
+      });
     });
 
     it("forwards the key's scopedAgentId to callMcpTool so tool calls run under the scoped agent", async () => {

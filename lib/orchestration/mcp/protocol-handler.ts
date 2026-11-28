@@ -30,7 +30,11 @@ import {
 } from '@/lib/validations/mcp';
 import { hasScope } from '@/lib/orchestration/mcp/auth';
 import { logMcpAudit } from '@/lib/orchestration/mcp/audit-logger';
-import { listMcpTools, callMcpTool } from '@/lib/orchestration/mcp/tool-registry';
+import {
+  listMcpTools,
+  callMcpTool,
+  toolArgumentsAuditable,
+} from '@/lib/orchestration/mcp/tool-registry';
 import {
   listMcpResources,
   readMcpResource,
@@ -104,7 +108,7 @@ export async function handleMcpRequest(
       method: request.method,
       toolSlug: extractToolSlug(request),
       resourceUri: extractResourceUri(request),
-      requestParams: request.params,
+      requestParams: await auditParamsOf(request),
       responseCode: 'success',
       durationMs: Date.now() - startedAt,
       clientIp: auth.clientIp,
@@ -121,7 +125,7 @@ export async function handleMcpRequest(
       method: request.method,
       toolSlug: extractToolSlug(request),
       resourceUri: extractResourceUri(request),
-      requestParams: request.params,
+      requestParams: await auditParamsOf(request),
       responseCode: 'error',
       errorMessage: errorMsg,
       durationMs: Date.now() - startedAt,
@@ -496,6 +500,25 @@ function jsonRpcSuccess(id: string | number, result: unknown): JsonRpcResponse {
 
 function jsonRpcError(id: string | number, code: number, message: string): JsonRpcResponse {
   return { jsonrpc: '2.0', id, error: { code, message } };
+}
+
+/** What the audit log keeps in place of a `tools/call`'s arguments, when it keeps none. */
+export const WITHHELD_TOOL_ARGUMENTS = '[withheld: this tool processes personal data]';
+
+/**
+ * A request's params as the audit log may keep them. A `tools/call`'s
+ * `arguments` are withheld unless {@link toolArgumentsAuditable} clears the
+ * tool: the log is install-wide, read by platform admins, and outside every
+ * org's erasure, so a capability's `processesPii` redaction must not be
+ * undone here by storing what it redacts. The tool name, outcome and timing
+ * are kept either way.
+ */
+async function auditParamsOf(request: JsonRpcRequest): Promise<JsonRpcRequest['params']> {
+  const params = request.params;
+  if (request.method !== 'tools/call' || !params || !('arguments' in params)) return params;
+  const name = extractToolSlug(request);
+  if (name !== undefined && (await toolArgumentsAuditable(name))) return params;
+  return { ...params, arguments: WITHHELD_TOOL_ARGUMENTS };
 }
 
 function extractToolSlug(request: JsonRpcRequest): string | undefined {

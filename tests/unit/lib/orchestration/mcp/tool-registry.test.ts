@@ -21,6 +21,7 @@ vi.mock('@/lib/logging', () => ({
 vi.mock('@/lib/orchestration/capabilities/dispatcher', () => ({
   capabilityDispatcher: {
     dispatch: vi.fn(),
+    getHandler: vi.fn(),
   },
 }));
 
@@ -49,6 +50,7 @@ import {
   listMcpTools,
   callMcpTool,
   clearMcpToolCache,
+  toolArgumentsAuditable,
 } from '@/lib/orchestration/mcp/tool-registry';
 import type { McpContentBlock } from '@/types/mcp';
 
@@ -1016,5 +1018,59 @@ describe('callMcpTool: rich content blocks', () => {
 
     expect(result.isError).toBeUndefined();
     expect(asText(result.content[0])).toBe('{"result":42}');
+  });
+});
+
+describe('toolArgumentsAuditable (#1349)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearMcpToolCache();
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+  });
+
+  it('clears a known tool whose capability declares no personal data', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: false } as never);
+
+    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(true);
+    expect(capabilityDispatcher.getHandler).toHaveBeenCalledWith('search_knowledge');
+    expect(registerBuiltInCapabilities).toHaveBeenCalled();
+  });
+
+  it('withholds a tool whose capability processes personal data', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: true } as never);
+
+    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(false);
+  });
+
+  it('resolves a custom name to its capability, as a call does', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([
+      makeExposedTool({ customName: 'kb' }),
+    ] as never);
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: true } as never);
+
+    await expect(toolArgumentsAuditable('kb')).resolves.toBe(false);
+    expect(capabilityDispatcher.getHandler).toHaveBeenCalledWith('search_knowledge');
+  });
+
+  it('withholds a name no tool answers to, and one with no registered handler', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue(undefined);
+
+    await expect(toolArgumentsAuditable('no_such_tool')).resolves.toBe(false);
+    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(false);
+  });
+
+  it('withholds when the lookup itself fails, and says it could not look', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockRejectedValue(new Error('pool exhausted'));
+
+    await expect(toolArgumentsAuditable('search_knowledge')).resolves.toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('withholding its arguments'),
+      expect.objectContaining({ toolName: 'search_knowledge', error: 'pool exhausted' })
+    );
   });
 });

@@ -128,6 +128,8 @@ The registry will catch a missing override at startup. The test will catch an ov
 
 This is the capability-layer story. Three sibling PII surfaces sit elsewhere and are handled (or deferred) separately:
 
+(One surface `processesPii` does reach beyond provenance: the MCP audit log withholds a declaring tool's arguments entirely. See [`orchestration/mcp.md`](../orchestration/mcp.md#what-the-audit-log-keeps-of-a-tool-calls-arguments).)
+
 - **KB citation excerpts** (`Citation.excerpt`, up to 400 chars per citation). If the knowledge base contains personal data, excerpts can leak it. Mitigation lives at the document level — see the deferred item for a `containsPii` flag on `AiKnowledgeDocument`.
 - **Workflow source snippets** (`ProvenanceItem.snippet`, LLM-emitted). Different shape, different surface; needs its own redactor design.
 - **Message content itself**. If the user typed their phone number into the conversation, that's on `AiMessage.content`. Mitigation is a chat-handler-level input scanner, not a capability redactor.
