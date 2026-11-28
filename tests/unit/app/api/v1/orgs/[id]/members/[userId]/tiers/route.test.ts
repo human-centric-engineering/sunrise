@@ -22,7 +22,9 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     org: { findUnique: vi.fn() },
     orgMembership: { findUnique: vi.fn() },
+    orgMembershipGrant: { deleteMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -90,6 +92,23 @@ describe('PUT /api/v1/orgs/[id]/members/[userId]/tiers', () => {
     expect(res.status).toBe(200);
     expect(json.data).toEqual({ orgId: ORG, userId: TARGET, tiers: ['media', 'brand'] });
     expect(lifecycle.setMemberTiers).toHaveBeenCalledWith(ORG, TARGET, ['media', 'brand']);
+  });
+
+  it('logs one tier change once, not once here and once in the lifecycle (t-1128)', async () => {
+    // The real lifecycle this time, so a line it wrote would be counted too
+    // (the route logger and `logger` are the same mock).
+    const actual =
+      await vi.importActual<typeof import('@/lib/tenancy/lifecycle')>('@/lib/tenancy/lifecycle');
+    lifecycle.setMemberTiers.mockImplementationOnce(actual.setMemberTiers);
+    vi.mocked(prisma.$transaction).mockImplementation(((fn: (tx: typeof prisma) => unknown) =>
+      fn(prisma)) as never);
+
+    const res = await put({ tiers: [] });
+
+    expect(res.status).toBe(200);
+    const lines = mockLog.info.mock.calls.filter(([message]) => message === 'Org member tiers set');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.[1]).toMatchObject({ actorUserId: expect.any(String) });
   });
 
   it('takes an empty list, which removes the grant', async () => {

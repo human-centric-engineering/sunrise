@@ -12,7 +12,7 @@
  * is asserted on the same mocks. `revokeUserSessions` is mocked at the
  * module — its own test covers the filter.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { INSTALL_ORG_ID, INSTALL_ORG_SLUG } from '@/lib/tenancy/constants';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -1200,6 +1200,14 @@ describe('only an OWNER confers or revokes OWNER — the takeover an ADMIN canno
     }
   });
 
+  it('a role change is logged by its route, not here as well (t-1128)', async () => {
+    const { logger } = await import('@/lib/logging');
+    db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
+    db.orgMembership.count.mockResolvedValue(2);
+    await changeMemberRole(ORG, OWNER, ORG_ADMIN_ROLE, AS_OWNER);
+    expect(logger.info).not.toHaveBeenCalledWith('Org member role changed', expect.anything());
+  });
+
   it('the owner-count transactions run SERIALIZABLE', async () => {
     db.orgMembership.findUnique.mockResolvedValue({ role: ORG_OWNER_ROLE });
     await changeMemberRole(ORG, OWNER, ORG_ADMIN_ROLE, AS_OWNER);
@@ -1587,7 +1595,7 @@ describe('named-tier grants (t-1123)', () => {
       expect(db.org.findUnique).not.toHaveBeenCalled();
     });
 
-    it('writes no grant when the first-owner bootstrap makes the newcomer OWNER', async () => {
+    it('writes no grant when the first-owner bootstrap makes the newcomer OWNER, and says so: tiers [] (t-1126)', async () => {
       db.orgMembership.count.mockResolvedValue(0);
 
       const membership = await addMember(ORG, OTHER, undefined, AS_OWNER, undefined, {
@@ -1595,7 +1603,29 @@ describe('named-tier grants (t-1123)', () => {
       });
 
       expect(membership.role).toBe(ORG_OWNER_ROLE);
+      expect(membership.tiers).toEqual([]);
       expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    });
+
+    it('answers the tiers it wrote beside a MEMBER', async () => {
+      const membership = await addMember(ORG, OTHER, undefined, AS_ADMIN, undefined, {
+        tiers: ['brand', 'media'],
+      });
+
+      expect(membership).toMatchObject({ role: DEFAULT_ORG_ROLE, tiers: ['media', 'brand'] });
+    });
+
+    it('runs SERIALIZABLE when it writes tiers, so a concurrent role change cannot slip between the role read and the grant (t-1127)', async () => {
+      await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN, undefined, { tiers: ['media'] });
+
+      expect(db.$transaction).toHaveBeenCalledTimes(1);
+      expect(db.$transaction.mock.calls[0]?.[1]).toEqual({ isolationLevel: 'Serializable' });
+    });
+
+    it('keeps the default isolation when no tiers are asked', async () => {
+      await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_ADMIN);
+
+      expect(db.$transaction.mock.calls[0]?.[1]).toBeUndefined();
     });
 
     it('refuses a tier that cannot be granted before writing the membership', async () => {
@@ -1625,7 +1655,7 @@ describe('addMember over a healed membership (t-1123)', () => {
     );
   });
 
-  const healedAs = (role: string) =>
+  const healedAs = (role: string, grant: { tiers: string[] } | null = null) =>
     db.orgMembership.findUnique
       .mockResolvedValueOnce(null) // the ALREADY_MEMBER check, before the heal
       .mockResolvedValueOnce({
@@ -1635,7 +1665,40 @@ describe('addMember over a healed membership (t-1123)', () => {
         role,
         createdAt: new Date(),
         updatedAt: new Date(),
+        grant,
       });
+
+  it('a membership healed at ADMIN takes no grant, and answers tiers [] rather than as granted (t-1126)', async () => {
+    const { env } = await import('@/lib/env');
+    const previousMode = env.TENANCY_MODE;
+    env.TENANCY_MODE = 'multi';
+    const { registerAdminTier, restoreNamedAdminTiers } = await import('@/lib/auth/admin-tier');
+    restoreNamedAdminTiers([]);
+    registerAdminTier('media', {});
+    onTestFinished(() => {
+      restoreNamedAdminTiers([]);
+      env.TENANCY_MODE = previousMode;
+    });
+    healedAs(ORG_ADMIN_ROLE);
+
+    const membership = await addMember(ORG, OTHER, undefined, AS_OWNER, undefined, {
+      tiers: ['media'],
+    });
+
+    expect(membership.role).toBe(ORG_ADMIN_ROLE);
+    expect(membership.tiers).toEqual([]);
+    expect(db.orgMembershipGrant.upsert).not.toHaveBeenCalled();
+    // The answer carries no `grant` relation, only the tiers.
+    expect(membership).not.toHaveProperty('grant');
+  });
+
+  it('answers the grant a healed MEMBER already holds when no tiers are asked', async () => {
+    healedAs(DEFAULT_ORG_ROLE, { tiers: ['media'] });
+
+    const membership = await addMember(ORG, OTHER, undefined, AS_OWNER);
+
+    expect(membership.tiers).toEqual(['media']);
+  });
 
   it('deletes the grant when the role asked for moves the healed membership off MEMBER', async () => {
     healedAs(DEFAULT_ORG_ROLE);

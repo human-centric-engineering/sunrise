@@ -214,6 +214,14 @@ release process.
 
 ### Fixed
 
+- **Adding an org member with `tiers` says which tiers were actually granted
+  (t-1126).** `POST /api/v1/orgs/[id]/members` (and `addMember()`) now return
+  `tiers` beside the membership row: the tiers its grant lists once the add
+  commits. When no `role` is asked and the newcomer becomes `OWNER` by the
+  first-owner bootstrap, or `ADMIN` by a healed signup record, the add still
+  succeeds with `tiers: []` instead of reading as if the tiers were granted.
+  The write runs SERIALIZABLE whenever it writes tiers (t-1127).
+
 - **The MCP audit log no longer keeps the arguments of a tool that processes
   personal data (#1349).** `McpAuditLog.requestParams` for a `tools/call` now
   holds only `{ name, arguments: WITHHELD_TOOL_ARGUMENTS }` unless the slug the

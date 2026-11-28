@@ -667,13 +667,14 @@ export async function addMember(
   actor: MembershipActor,
   db: LifecycleDb = prisma,
   options: { seatHeld?: boolean; tiers?: readonly string[] } = {}
-): Promise<MembershipRecord> {
+): Promise<MembershipRecord & { tiers: string[] }> {
   if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'add a member as an owner');
   // Tiers widen a MEMBER only (t-1123): asked beside another role, or in the
   // install org, they are refused, as the invite route and setMemberTiers
   // refuse them, rather than dropped. With no role asked, the first-owner
-  // bootstrap may still make the newcomer OWNER; their role then opens every
-  // tier, and the grant is not written.
+  // bootstrap may still make the newcomer OWNER, or a healed signup record
+  // ADMIN; their role then opens every tier, the grant is not written, and
+  // the answer's `tiers` says so (`[]`) rather than read as granted (t-1126).
   if ((options.tiers?.length ?? 0) > 0) {
     if (orgId === INSTALL_ORG_ID) {
       throw new OrgLifecycleError(
@@ -727,45 +728,59 @@ export async function addMember(
 
   // Placed by hand: a signup record that survived a failed write is paid and
   // cleared first (t-838), in the same transaction.
+  //
+  // Writing tiers reads the role and then writes the grant beside it, so that
+  // transaction runs SERIALIZABLE, as `changeMemberRole` and `setMemberTiers`
+  // do: a concurrent move off MEMBER (which deletes grants) would otherwise
+  // land between the two and leave a grant beside an ADMIN, handed back on a
+  // later demotion (t-1127). Without tiers there is no such pair to guard.
   let healedSignupOrg: string | null = null;
-  const membership = await db.$transaction(async (tx) => {
-    healedSignupOrg = await healSignupRecord(userId, tx);
-    // The record may have named this very org, in which case it is now written
-    // — with the role the invitation gave. A role the caller asked for wins
-    // over it (review round 3); with none asked, the invitation's stands.
-    const healed = await tx.orgMembership.findUnique({
-      where: { orgId_userId: { orgId, userId } },
-      select: membershipSelect,
-    });
-    let written: MembershipRecord;
-    if (!healed) {
-      written = await tx.orgMembership.create({
-        data: { orgId, userId, role: effectiveRole },
-        select: membershipSelect,
-      });
-    } else if (role === undefined || healed.role === effectiveRole) {
-      written = healed;
-    } else {
-      written = await tx.orgMembership.update({
+  const membership = await db.$transaction(
+    async (tx) => {
+      healedSignupOrg = await healSignupRecord(userId, tx);
+      // The record may have named this very org, in which case it is now written
+      // — with the role the invitation gave. A role the caller asked for wins
+      // over it (review round 3); with none asked, the invitation's stands.
+      const healedRow = await tx.orgMembership.findUnique({
         where: { orgId_userId: { orgId, userId } },
-        data: { role: effectiveRole },
-        select: membershipSelect,
+        select: { ...membershipSelect, grant: { select: { tiers: true } } },
       });
-      // The healed membership's role changed: a grant the heal wrote beside a
-      // MEMBER goes when the role leaves MEMBER, as in `changeMemberRole`, so
-      // a later demotion cannot bring it back.
-      if (written.role !== DEFAULT_ORG_ROLE) {
-        await tx.orgMembershipGrant.deleteMany({ where: { membershipId: written.id } });
+      let written: MembershipRecord;
+      // What the membership's grant lists once this transaction commits.
+      let held: string[] = [];
+      if (!healedRow) {
+        written = await tx.orgMembership.create({
+          data: { orgId, userId, role: effectiveRole },
+          select: membershipSelect,
+        });
+      } else if (role === undefined || healedRow.role === effectiveRole) {
+        const { grant, ...healed } = healedRow;
+        written = healed;
+        held = grant?.tiers ?? [];
+      } else {
+        written = await tx.orgMembership.update({
+          where: { orgId_userId: { orgId, userId } },
+          data: { role: effectiveRole },
+          select: membershipSelect,
+        });
+        // The healed membership's role changed: a grant the heal wrote beside a
+        // MEMBER goes when the role leaves MEMBER, as in `changeMemberRole`, so
+        // a later demotion cannot bring it back.
+        if (written.role !== DEFAULT_ORG_ROLE) {
+          await tx.orgMembershipGrant.deleteMany({ where: { membershipId: written.id } });
+        }
       }
-    }
-    // The tiers the caller granted (t-1123), in the same transaction, beside
-    // a MEMBER only: a membership that became an OWNER by the first-owner
-    // bootstrap takes none. A grant the heal already wrote is replaced.
-    if (tiers.length > 0 && orgId !== INSTALL_ORG_ID && written.role === DEFAULT_ORG_ROLE) {
-      await writeGrant(tx, written.id, tiers);
-    }
-    return written;
-  });
+      // The tiers the caller granted (t-1123), in the same transaction, beside
+      // a MEMBER only: a membership that became an OWNER by the first-owner
+      // bootstrap takes none. A grant the heal already wrote is replaced.
+      if (tiers.length > 0 && orgId !== INSTALL_ORG_ID && written.role === DEFAULT_ORG_ROLE) {
+        await writeGrant(tx, written.id, tiers);
+        held = tiers;
+      }
+      return { ...written, tiers: held };
+    },
+    tiers.length > 0 ? SERIALIZABLE : undefined
+  );
 
   setUpHealedSignupOrg(healedSignupOrg, userId);
   logger.info('Org member added', { orgId, userId, role: membership.role });
@@ -895,7 +910,8 @@ export async function changeMemberRole(
     return changed;
   }, SERIALIZABLE);
 
-  logger.info('Org member role changed', { orgId, userId, role });
+  // Logged by the route, which knows the actor (t-1128): a second line here
+  // counted every change twice. Its only caller is that route.
   return updated;
 }
 
@@ -954,7 +970,7 @@ export async function setMemberTiers(
     await writeGrant(tx, membership.id, granted);
   }, SERIALIZABLE);
 
-  logger.info('Org member tiers set', { orgId, userId, tiers: granted });
+  // Logged by the route, which knows the actor, as a role change is (t-1128).
   return { orgId, userId, tiers: granted };
 }
 
