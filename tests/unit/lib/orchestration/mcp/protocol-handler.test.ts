@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -305,11 +305,13 @@ describe('handleMcpRequest', () => {
       expect(result?.error?.message).toBe('Rate limit exceeded');
     });
 
-    it('includes toolSlug in rate-limited audit entry for tools/call', async () => {
+    // #1349: nothing has resolved the name before the limiter refuses, and an
+    // unresolved name is free text the client chose, so it is not recorded.
+    it('records no tool name in a rate-limited audit entry for tools/call', async () => {
       const blockedLimiter = makeRateLimiter(false);
       const req = makeRequest({
         method: 'tools/call',
-        params: { name: 'search_kb', arguments: {} },
+        params: { name: 'sarah.jones@acme.example', arguments: {} },
       });
       await handleMcpRequest(req, {
         auth,
@@ -320,11 +322,11 @@ describe('handleMcpRequest', () => {
 
       const { logMcpAudit } = await import('@/lib/orchestration/mcp/audit-logger');
       expect(logMcpAudit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          responseCode: 'rate_limited',
-          toolSlug: 'search_kb',
-        })
+        expect.objectContaining({ responseCode: 'rate_limited', method: 'tools/call' })
       );
+      const entry = vi.mocked(logMcpAudit).mock.calls.at(-1)?.[0];
+      expect(entry?.toolSlug).toBeUndefined();
+      expect(JSON.stringify(entry)).not.toContain('sarah');
     });
   });
 
@@ -721,6 +723,10 @@ describe('handleMcpRequest', () => {
         const { logMcpAudit } = await import('@/lib/orchestration/mcp/audit-logger');
         return vi.mocked(logMcpAudit).mock.calls.at(-1)?.[0];
       };
+      afterEach(() => {
+        vi.mocked(callMcpTool).mockReset();
+        vi.mocked(toolArgumentsAuditable).mockReset();
+      });
 
       it('keeps them as sent for a tool cleared as holding no personal data', async () => {
         vi.mocked(toolArgumentsAuditable).mockReturnValue(true);
@@ -735,7 +741,7 @@ describe('handleMcpRequest', () => {
         });
       });
 
-      it('judges the slug the call ran, not the name it was sent as', async () => {
+      it('judges, and records, the slug the call ran, not the name it was sent as', async () => {
         vi.mocked(toolArgumentsAuditable).mockReturnValue(true);
         runsAs('search_knowledge');
 
@@ -743,6 +749,7 @@ describe('handleMcpRequest', () => {
 
         expect(toolArgumentsAuditable).toHaveBeenCalledWith('search_knowledge');
         expect(toolArgumentsAuditable).not.toHaveBeenCalledWith('assess_draft');
+        expect((await audited())?.toolSlug).toBe('search_knowledge');
       });
 
       it('withholds them for a tool that processes personal data, keeping the name', async () => {
@@ -792,7 +799,7 @@ describe('handleMcpRequest', () => {
         expect(JSON.stringify(entry)).not.toContain('Sarah');
       });
 
-      it('withholds a name that is not a valid tool name, since it can carry anything', async () => {
+      it('withholds a name that is not a valid tool name, in params and in toolSlug', async () => {
         await call({
           name: { text: 'Sarah at Acme, sarah@acme.example' },
           arguments: { text: 'x' },
@@ -800,6 +807,7 @@ describe('handleMcpRequest', () => {
 
         const entry = await audited();
         expect(entry?.responseCode).toBe('error');
+        expect(entry?.toolSlug).toBeUndefined();
         expect(entry?.requestParams).toEqual({
           name: WITHHELD_TOOL_ARGUMENTS,
           arguments: WITHHELD_TOOL_ARGUMENTS,
@@ -807,19 +815,22 @@ describe('handleMcpRequest', () => {
         expect(JSON.stringify(entry)).not.toContain('Sarah');
       });
 
-      it('withholds them for a call that never resolved to a tool', async () => {
+      it('withholds the name and arguments of a call that never resolved to a tool', async () => {
         vi.mocked(callMcpTool).mockResolvedValue({
-          content: [{ type: 'text', text: 'Unknown tool: assess_draft' }],
+          content: [{ type: 'text', text: 'Unknown tool' }],
           isError: true,
         });
 
-        await callWith({ text: 'Sarah at Acme saved four hours a week.' });
+        await call({ name: 'sarah.jones@acme.example', arguments: { text: 'x' } });
 
+        const entry = await audited();
         expect(toolArgumentsAuditable).not.toHaveBeenCalled();
-        expect((await audited())?.requestParams).toEqual({
-          name: 'assess_draft',
+        expect(entry?.toolSlug).toBeUndefined();
+        expect(entry?.requestParams).toEqual({
+          name: WITHHELD_TOOL_ARGUMENTS,
           arguments: WITHHELD_TOOL_ARGUMENTS,
         });
+        expect(JSON.stringify(entry)).not.toContain('sarah');
       });
 
       it('leaves the params of every other method as they are', async () => {

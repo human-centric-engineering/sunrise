@@ -90,7 +90,8 @@ export async function handleMcpRequest(
     logMcpAudit({
       apiKeyId: auth.apiKeyId,
       method: request.method,
-      toolSlug: extractToolSlug(request),
+      // No tool name: nothing has resolved it yet, and an unresolved name is
+      // free text the client chose (see auditParamsOf).
       resourceUri: extractResourceUri(request),
       responseCode: 'rate_limited',
       durationMs: Date.now() - startedAt,
@@ -107,7 +108,7 @@ export async function handleMcpRequest(
     logMcpAudit({
       apiKeyId: auth.apiKeyId,
       method: request.method,
-      toolSlug: extractToolSlug(request),
+      toolSlug: audit.toolSlug,
       resourceUri: extractResourceUri(request),
       requestParams: auditParamsOf(request, audit),
       responseCode: 'success',
@@ -124,7 +125,7 @@ export async function handleMcpRequest(
     logMcpAudit({
       apiKeyId: auth.apiKeyId,
       method: request.method,
-      toolSlug: extractToolSlug(request),
+      toolSlug: audit.toolSlug,
       resourceUri: extractResourceUri(request),
       requestParams: auditParamsOf(request, audit),
       responseCode: 'error',
@@ -527,32 +528,26 @@ interface AuditFacts {
 /**
  * A request's params as the audit log may keep them. A `tools/call` keeps
  * everything as sent only when the slug it ran (`audit.toolSlug`) is cleared
- * by {@link toolArgumentsAuditable}; otherwise only the tool name and
- * {@link WITHHELD_TOOL_ARGUMENTS} are kept, so no other key a client adds
- * (`_meta`, extras) carries the personal data either. The log is install-wide,
- * read by platform admins, and outside every org's erasure, so a capability's
- * `processesPii` redaction must not be undone here by storing what it redacts.
- * A call that never resolved (unknown name, bad params, scope refused) is
- * withheld too. The tool name, outcome and timing are kept either way.
+ * by {@link toolArgumentsAuditable}. Otherwise the row keeps `arguments` as
+ * {@link WITHHELD_TOOL_ARGUMENTS} and drops every other key a client adds
+ * (`_meta`, extras), so none of them carries the personal data either. The
+ * log is install-wide, read by platform admins, and outside every org's
+ * erasure, so a capability's `processesPii` redaction must not be undone here
+ * by storing what it redacts.
+ *
+ * The name is kept only once it has resolved to a tool. A call that never
+ * resolved (unknown name, invalid params, scope refused) withholds the name as
+ * well: it is free text the client chose, and nothing vouches for it. The
+ * outcome and timing are kept either way.
  */
 function auditParamsOf(request: JsonRpcRequest, audit: AuditFacts): JsonRpcRequest['params'] {
   const params = request.params;
   if (request.method !== 'tools/call' || !params) return params;
-  if (audit.toolSlug !== undefined && toolArgumentsAuditable(audit.toolSlug)) return params;
-  // The name is kept only in the shape a valid call has; on the invalid-params
-  // path it can be any structure the client chose, personal data included.
-  const name = mcpToolCallParamsSchema.shape.name.safeParse(params.name);
-  return {
-    name: name.success ? name.data : WITHHELD_TOOL_ARGUMENTS,
-    arguments: WITHHELD_TOOL_ARGUMENTS,
-  };
-}
-
-function extractToolSlug(request: JsonRpcRequest): string | undefined {
-  if (request.method !== 'tools/call') return undefined;
-  const params = request.params;
-  if (params && typeof params.name === 'string') return params.name;
-  return undefined;
+  if (audit.toolSlug === undefined) {
+    return { name: WITHHELD_TOOL_ARGUMENTS, arguments: WITHHELD_TOOL_ARGUMENTS };
+  }
+  if (toolArgumentsAuditable(audit.toolSlug)) return params;
+  return { name: params.name, arguments: WITHHELD_TOOL_ARGUMENTS };
 }
 
 function extractResourceUri(request: JsonRpcRequest): string | undefined {

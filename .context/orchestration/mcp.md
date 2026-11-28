@@ -200,9 +200,14 @@ rename mid-call cannot change the answer. The params are kept as sent only when
 that slug has a registered handler that does **not** declare `processesPii`.
 Otherwise the row keeps only `{ name, arguments: WITHHELD_TOOL_ARGUMENTS }`:
 every other key the client sent (`_meta`, extras) is dropped with the
-arguments. That covers a personal-data tool, a capability with no handler, and a
-call that never resolved (unknown name, invalid params, scope refused). The tool
-name, result code, duration, IP and user agent are kept either way. Other
+arguments. That covers a personal-data tool and a capability with no handler.
+A call that never resolved (unknown name, invalid params, scope refused)
+withholds the name too, as `{ name: WITHHELD_TOOL_ARGUMENTS, arguments:
+WITHHELD_TOOL_ARGUMENTS }`: an unresolved name is free text the client chose.
+The `toolSlug` column holds the capability slug the call ran (not a
+`customName` it was sent as), and is empty for a call that never resolved,
+including one the rate limiter refused. The result code, duration, IP and user
+agent are kept either way. Other
 methods' params go through `sanitizeParams` unchanged: secret-looking keys
 stripped, size capped.
 
