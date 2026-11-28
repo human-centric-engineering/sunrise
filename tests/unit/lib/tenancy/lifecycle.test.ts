@@ -1578,3 +1578,51 @@ describe('named-tier grants (t-1123)', () => {
     });
   });
 });
+
+describe('addMember over a healed membership (t-1123)', () => {
+  beforeEach(() => {
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.user.findUnique.mockResolvedValue(human(OTHER));
+    db.orgMembership.update.mockImplementation(({ data }: { data: { role: string } }) =>
+      Promise.resolve({
+        id: 'm1',
+        orgId: ORG,
+        userId: OTHER,
+        role: data.role,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    );
+  });
+
+  const healedAs = (role: string) =>
+    db.orgMembership.findUnique
+      .mockResolvedValueOnce(null) // the ALREADY_MEMBER check, before the heal
+      .mockResolvedValueOnce({
+        id: 'm1',
+        orgId: ORG,
+        userId: OTHER,
+        role,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+  it('deletes the grant when the role asked for moves the healed membership off MEMBER', async () => {
+    healedAs(DEFAULT_ORG_ROLE);
+
+    await addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER);
+
+    expect(db.orgMembership.update).toHaveBeenCalled();
+    expect(db.orgMembershipGrant.deleteMany).toHaveBeenCalledWith({
+      where: { membershipId: 'm1' },
+    });
+  });
+
+  it('keeps it when the healed membership stays MEMBER', async () => {
+    healedAs(DEFAULT_ORG_ROLE);
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER);
+
+    expect(db.orgMembershipGrant.deleteMany).not.toHaveBeenCalled();
+  });
+});

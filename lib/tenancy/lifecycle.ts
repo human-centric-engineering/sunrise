@@ -732,6 +732,12 @@ export async function addMember(
         data: { role: effectiveRole },
         select: membershipSelect,
       });
+      // The healed membership's role changed: a grant the heal wrote beside a
+      // MEMBER goes when the role leaves MEMBER, as in `changeMemberRole`, so
+      // a later demotion cannot bring it back.
+      if (written.role !== DEFAULT_ORG_ROLE) {
+        await tx.orgMembershipGrant.deleteMany({ where: { membershipId: written.id } });
+      }
     }
     // The tiers the caller granted (t-1123), in the same transaction, beside
     // a MEMBER only: a membership that became an OWNER by the first-owner
