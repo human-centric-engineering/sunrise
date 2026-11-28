@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -15,6 +15,7 @@ vi.mock('@/lib/orchestration/mcp/audit-logger', () => ({
 vi.mock('@/lib/orchestration/mcp/tool-registry', () => ({
   listMcpTools: vi.fn(),
   callMcpTool: vi.fn(),
+  toolArgumentsAuditable: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/mcp/resource-registry', () => ({
@@ -44,8 +45,13 @@ import {
   handleMcpRequest,
   McpProtocolError,
   __resetKeyRateLimitCacheForTests,
+  WITHHELD_TOOL_ARGUMENTS,
 } from '@/lib/orchestration/mcp/protocol-handler';
-import { listMcpTools, callMcpTool } from '@/lib/orchestration/mcp/tool-registry';
+import {
+  listMcpTools,
+  callMcpTool,
+  toolArgumentsAuditable,
+} from '@/lib/orchestration/mcp/tool-registry';
 import {
   listMcpResources,
   readMcpResource,
@@ -299,11 +305,13 @@ describe('handleMcpRequest', () => {
       expect(result?.error?.message).toBe('Rate limit exceeded');
     });
 
-    it('includes toolSlug in rate-limited audit entry for tools/call', async () => {
+    // #1349: nothing has resolved the name before the limiter refuses, and an
+    // unresolved name is free text the client chose, so it is not recorded.
+    it('records no tool name in a rate-limited audit entry for tools/call', async () => {
       const blockedLimiter = makeRateLimiter(false);
       const req = makeRequest({
         method: 'tools/call',
-        params: { name: 'search_kb', arguments: {} },
+        params: { name: 'sarah.jones@acme.example', arguments: {} },
       });
       await handleMcpRequest(req, {
         auth,
@@ -314,11 +322,11 @@ describe('handleMcpRequest', () => {
 
       const { logMcpAudit } = await import('@/lib/orchestration/mcp/audit-logger');
       expect(logMcpAudit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          responseCode: 'rate_limited',
-          toolSlug: 'search_kb',
-        })
+        expect.objectContaining({ responseCode: 'rate_limited', method: 'tools/call' })
       );
+      const entry = vi.mocked(logMcpAudit).mock.calls.at(-1)?.[0];
+      expect(entry?.toolSlug).toBeUndefined();
+      expect(JSON.stringify(entry)).not.toContain('sarah');
     });
   });
 
@@ -689,8 +697,155 @@ describe('handleMcpRequest', () => {
         {
           userId: 'user-1',
           scopedAgentId: null,
-        }
+        },
+        expect.any(Function)
       );
+    });
+
+    describe('what the audit log keeps of the arguments (#1349)', () => {
+      const call = (params: Record<string, unknown>) =>
+        handleMcpRequest(makeRequest({ method: 'tools/call', params }), {
+          auth,
+          protocolVersion,
+          serverState,
+          rateLimiter,
+        });
+      const callWith = (args: Record<string, unknown>) =>
+        call({ name: 'assess_draft', arguments: args });
+      // callMcpTool reports the slug it ran, then answers (or throws).
+      const runsAs = (slug: string, outcome: 'ok' | 'throws' = 'ok') =>
+        vi.mocked(callMcpTool).mockImplementation(async (_name, _args, _caller, onResolved) => {
+          onResolved?.(slug);
+          if (outcome === 'throws') throw new Error('boom');
+          return { content: [{ type: 'text', text: 'ok' }] };
+        });
+      const audited = async () => {
+        const { logMcpAudit } = await import('@/lib/orchestration/mcp/audit-logger');
+        return vi.mocked(logMcpAudit).mock.calls.at(-1)?.[0];
+      };
+      afterEach(() => {
+        vi.mocked(callMcpTool).mockReset();
+        vi.mocked(toolArgumentsAuditable).mockReset();
+      });
+
+      it('keeps them as sent for a tool cleared as holding no personal data', async () => {
+        vi.mocked(toolArgumentsAuditable).mockReturnValue(true);
+        runsAs('assess_draft');
+
+        await callWith({ q: 'test' });
+
+        expect(toolArgumentsAuditable).toHaveBeenCalledWith('assess_draft');
+        expect((await audited())?.requestParams).toEqual({
+          name: 'assess_draft',
+          arguments: { q: 'test' },
+        });
+      });
+
+      it('judges, and records, the slug the call ran, not the name it was sent as', async () => {
+        vi.mocked(toolArgumentsAuditable).mockReturnValue(true);
+        runsAs('search_knowledge');
+
+        await callWith({ q: 'test' });
+
+        expect(toolArgumentsAuditable).toHaveBeenCalledWith('search_knowledge');
+        expect(toolArgumentsAuditable).not.toHaveBeenCalledWith('assess_draft');
+        expect((await audited())?.toolSlug).toBe('search_knowledge');
+      });
+
+      it('withholds them for a tool that processes personal data, keeping the name', async () => {
+        vi.mocked(toolArgumentsAuditable).mockReturnValue(false);
+        runsAs('assess_draft');
+
+        await callWith({ text: 'Sarah at Acme saved four hours a week.' });
+
+        const entry = await audited();
+        expect(entry?.toolSlug).toBe('assess_draft');
+        expect(entry?.responseCode).toBe('success');
+        expect(entry?.requestParams).toEqual({
+          name: 'assess_draft',
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+        expect(JSON.stringify(entry)).not.toContain('Sarah');
+      });
+
+      it('drops every other key a client sent alongside withheld arguments', async () => {
+        vi.mocked(toolArgumentsAuditable).mockReturnValue(false);
+        runsAs('assess_draft');
+
+        await call({
+          name: 'assess_draft',
+          arguments: { text: 'x' },
+          _meta: { progressToken: 't1', note: 'sarah@acme.example' },
+        });
+
+        expect((await audited())?.requestParams).toEqual({
+          name: 'assess_draft',
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+      });
+
+      it('withholds them on the error path too', async () => {
+        vi.mocked(toolArgumentsAuditable).mockReturnValue(false);
+        runsAs('assess_draft', 'throws');
+
+        await callWith({ text: 'Sarah at Acme saved four hours a week.' });
+
+        const entry = await audited();
+        expect(entry?.responseCode).toBe('error');
+        expect(entry?.requestParams).toEqual({
+          name: 'assess_draft',
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+        expect(JSON.stringify(entry)).not.toContain('Sarah');
+      });
+
+      it('withholds a name that is not a valid tool name, in params and in toolSlug', async () => {
+        await call({
+          name: { text: 'Sarah at Acme, sarah@acme.example' },
+          arguments: { text: 'x' },
+        });
+
+        const entry = await audited();
+        expect(entry?.responseCode).toBe('error');
+        expect(entry?.toolSlug).toBeUndefined();
+        expect(entry?.requestParams).toEqual({
+          name: WITHHELD_TOOL_ARGUMENTS,
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+        expect(JSON.stringify(entry)).not.toContain('Sarah');
+      });
+
+      it('withholds the name and arguments of a call that never resolved to a tool', async () => {
+        vi.mocked(callMcpTool).mockResolvedValue({
+          content: [{ type: 'text', text: 'Unknown tool' }],
+          isError: true,
+        });
+
+        await call({ name: 'sarah.jones@acme.example', arguments: { text: 'x' } });
+
+        const entry = await audited();
+        expect(toolArgumentsAuditable).not.toHaveBeenCalled();
+        expect(entry?.toolSlug).toBeUndefined();
+        expect(entry?.requestParams).toEqual({
+          name: WITHHELD_TOOL_ARGUMENTS,
+          arguments: WITHHELD_TOOL_ARGUMENTS,
+        });
+        expect(JSON.stringify(entry)).not.toContain('sarah');
+      });
+
+      it('leaves the params of every other method as they are', async () => {
+        vi.mocked(listMcpTools).mockResolvedValue([]);
+
+        await handleMcpRequest(makeRequest({ method: 'tools/list', params: { cursor: 'c1' } }), {
+          auth,
+          protocolVersion,
+          serverState,
+          rateLimiter,
+        });
+
+        expect(toolArgumentsAuditable).not.toHaveBeenCalled();
+        expect((await audited())?.requestParams).toEqual({ cursor: 'c1' });
+      });
     });
 
     it("forwards the key's scopedAgentId to callMcpTool so tool calls run under the scoped agent", async () => {
@@ -711,7 +866,8 @@ describe('handleMcpRequest', () => {
         {
           userId: 'user-1',
           scopedAgentId: 'agent-scoped',
-        }
+        },
+        expect.any(Function)
       );
     });
 
@@ -734,7 +890,8 @@ describe('handleMcpRequest', () => {
           userId: 'user-1',
           scopedAgentId: null,
           scope: { projectId: 'proj-42' },
-        }
+        },
+        expect.any(Function)
       );
     });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -21,6 +21,7 @@ vi.mock('@/lib/logging', () => ({
 vi.mock('@/lib/orchestration/capabilities/dispatcher', () => ({
   capabilityDispatcher: {
     dispatch: vi.fn(),
+    getHandler: vi.fn(),
   },
 }));
 
@@ -49,6 +50,7 @@ import {
   listMcpTools,
   callMcpTool,
   clearMcpToolCache,
+  toolArgumentsAuditable,
 } from '@/lib/orchestration/mcp/tool-registry';
 import type { McpContentBlock } from '@/types/mcp';
 
@@ -1016,5 +1018,75 @@ describe('callMcpTool: rich content blocks', () => {
 
     expect(result.isError).toBeUndefined();
     expect(asText(result.content[0])).toBe('{"result":42}');
+  });
+});
+
+describe('toolArgumentsAuditable (#1349)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.mocked(registerBuiltInCapabilities).mockReset();
+  });
+
+  it('clears a capability that declares no personal data', () => {
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: false } as never);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(true);
+    expect(capabilityDispatcher.getHandler).toHaveBeenCalledWith('search_knowledge');
+  });
+
+  it('does not warm the registry, so a failed app init cannot throw out of an audit write', () => {
+    vi.mocked(registerBuiltInCapabilities).mockImplementation(() => {
+      throw new Error('app capability init failed');
+    });
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue(undefined);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(false);
+    expect(registerBuiltInCapabilities).not.toHaveBeenCalled();
+  });
+
+  it('withholds a capability that processes personal data', () => {
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue({ processesPii: true } as never);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(false);
+  });
+
+  it('withholds a slug with no registered handler', () => {
+    vi.mocked(capabilityDispatcher.getHandler).mockReturnValue(undefined);
+
+    expect(toolArgumentsAuditable('search_knowledge')).toBe(false);
+  });
+});
+
+describe('callMcpTool: onResolved (#1349)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearMcpToolCache();
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+  });
+
+  it('reports the slug a custom name resolved to, before anything runs', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([
+      makeExposedTool({ customName: 'kb' }),
+    ] as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
+    const onResolved = vi.fn();
+
+    await callMcpTool('kb', {}, { userId: 'user-1' }, onResolved);
+
+    expect(onResolved).toHaveBeenCalledWith('search_knowledge');
+    expect(capabilityDispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('reports nothing for a name no tool answers to', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    const onResolved = vi.fn();
+
+    await callMcpTool('no_such_tool', {}, { userId: 'user-1' }, onResolved);
+
+    expect(onResolved).not.toHaveBeenCalled();
   });
 });

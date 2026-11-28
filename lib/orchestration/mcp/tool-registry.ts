@@ -185,11 +185,17 @@ async function getMcpSystemAgentId(): Promise<string | null> {
  * agent for unscoped keys, preserving prior behaviour. An optional `scope`
  * carrier is threaded through to `execute()` (see `CapabilityContext.scope`);
  * it is undefined until a caller supplies it.
+ *
+ * `onResolved`, when given, is told the capability slug the name resolved to,
+ * before anything runs. The audit log decides from it (see
+ * {@link toolArgumentsAuditable}), so it judges the tool this call ran rather
+ * than whatever the name resolves to by the time the call returns.
  */
 export async function callMcpTool(
   toolName: string,
   args: Record<string, unknown> | undefined,
-  caller: { userId: string | null; scopedAgentId?: string | null; scope?: Record<string, string> }
+  caller: { userId: string | null; scopedAgentId?: string | null; scope?: Record<string, string> },
+  onResolved?: (slug: string) => void
 ): Promise<McpToolCallResult> {
   // Resolve the actual capability slug from tool name (custom names are
   // supported, so we look up by either). Resolve against the UNSCOPED global
@@ -206,6 +212,7 @@ export async function callMcpTool(
       isError: true,
     };
   }
+  onResolved?.(tool.slug);
 
   // Honour the key's scoped agent when bound; otherwise fall back to the
   // shared mcp-system agent (which every backend caller can dispatch under).
@@ -286,6 +293,27 @@ export async function callMcpTool(
     ],
     isError: true,
   };
+}
+
+/**
+ * Whether a tool call's arguments may be written to the MCP audit log as sent,
+ * given the capability slug the call resolved to (from `callMcpTool`'s
+ * `onResolved`).
+ *
+ * `true` only for a registered capability that does not declare
+ * `processesPii`. `false` when it declares it (its arguments carry personal
+ * data) and when no handler is registered for the slug, since nothing then
+ * vouches for what the arguments hold. The audit log is install-wide (no org
+ * column) and outside every org's erasure, so it fails closed.
+ *
+ * It does not warm the registry itself: `callMcpTool` has already done that on
+ * the way to dispatch, and `registerBuiltInCapabilities()` rethrows for good
+ * once a fork's app capability init has failed, which here would turn an audit
+ * write into an escaped error. A cold registry finds no handler and withholds.
+ */
+export function toolArgumentsAuditable(slug: string): boolean {
+  const handler = capabilityDispatcher.getHandler(slug);
+  return handler !== undefined && !handler.processesPii;
 }
 
 /** Clear the tool cache (after admin mutations) */

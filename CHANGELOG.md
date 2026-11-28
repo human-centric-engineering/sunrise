@@ -192,6 +192,23 @@ release process.
 
 ### Fixed
 
+- **The MCP audit log no longer keeps the arguments of a tool that processes
+  personal data (#1349).** `McpAuditLog.requestParams` for a `tools/call` now
+  holds only `{ name, arguments: WITHHELD_TOOL_ARGUMENTS }` unless the slug the
+  call ran is a registered capability that does not declare `processesPii`; a
+  call that never resolved to a tool withholds its name as well. The result
+  code and timing are kept. **Changed:** `McpAuditLog.toolSlug` now holds the
+  capability slug the call ran rather than the name it was sent as (a
+  `customName`), and is empty for a call that never resolved, rate-limited
+  calls included. Other methods' params are unchanged.
+  `toolArgumentsAuditable(slug)` (`lib/orchestration/mcp/tool-registry.ts`)
+  answers the question, and `callMcpTool()` takes an optional fourth
+  `onResolved(slug)` callback that reports which slug it ran. **A fork
+  carrying this as a divergence** can take ours and retire the row. Rows
+  written before this change are not rewritten: they are pruned under the MCP
+  audit retention setting (90 days by default, never when it is `0`), or an
+  admin can purge them from the audit page.
+
 - **A fork's authorization policy and sealed stores no longer run inside
   Sunrise's own tests (#1361, #1359).** **A fork's tests**: `tests/setup.ts`
   now pins `initAppAuthorizationPolicy` and `initAppSealedStores` to no-ops, as

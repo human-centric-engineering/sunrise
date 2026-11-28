@@ -175,17 +175,48 @@ header: ignore what you no longer honour.
 
 ## Security Model
 
-| Layer              | Mechanism                                                                               |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| Auth               | Bearer token (`smcp_` prefix, SHA-256 hashed), scope-based, bound to one org (§106)     |
-| Master switch      | `McpServerConfig.isEnabled` — 503 when off                                              |
-| Default-deny       | Everything disabled by default; each tool/resource must be explicitly enabled           |
-| Rate limiting      | IP-level (100/min) -> per-key (configurable) -> per-tool (via dispatcher)               |
-| Input validation   | JSON-RPC envelope (Zod) -> tool args (JSON Schema + Zod in dispatcher)                  |
-| SSRF prevention    | Resource URIs pattern-matched against registered set; no user URL reaches `fetch()`     |
-| Audit              | Every MCP call logged with IP, duration, method, result code. Manual purge via admin UI |
-| Error sanitization | JSON-RPC errors never leak internals in production                                      |
-| Body size limit    | POST bodies &gt; 1MB (via `content-length`) → 413 before JSON parsing                   |
+| Layer              | Mechanism                                                                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth               | Bearer token (`smcp_` prefix, SHA-256 hashed), scope-based, bound to one org (§106)                                                            |
+| Master switch      | `McpServerConfig.isEnabled` — 503 when off                                                                                                     |
+| Default-deny       | Everything disabled by default; each tool/resource must be explicitly enabled                                                                  |
+| Rate limiting      | IP-level (100/min) -> per-key (configurable) -> per-tool (via dispatcher)                                                                      |
+| Input validation   | JSON-RPC envelope (Zod) -> tool args (JSON Schema + Zod in dispatcher)                                                                         |
+| SSRF prevention    | Resource URIs pattern-matched against registered set; no user URL reaches `fetch()`                                                            |
+| Audit              | Every MCP call logged with IP, duration, method, result code. Manual purge via admin UI. A personal-data tool's arguments are withheld (below) |
+| Error sanitization | JSON-RPC errors never leak internals in production                                                                                             |
+| Body size limit    | POST bodies &gt; 1MB (via `content-length`) → 413 before JSON parsing                                                                          |
+
+### What the audit log keeps of a tool call's arguments
+
+`McpAuditLog` has no org column and erasure does not reach it, so it must not
+hold personal data. For `tools/call`, `callMcpTool` reports the capability slug
+it resolved the name to (`customName` included) through its `onResolved`
+callback, and `auditParamsOf()` in `protocol-handler.ts` asks
+`toolArgumentsAuditable(slug)` (`tool-registry.ts`) about that slug before both
+audit writes, success and error. Deciding from the slug the call ran, not by
+resolving the name again afterwards, means a cache refresh or a `customName`
+rename mid-call cannot change the answer. The params are kept as sent only when
+that slug has a registered handler that does **not** declare `processesPii`.
+Otherwise the row keeps only `{ name, arguments: WITHHELD_TOOL_ARGUMENTS }`:
+every other key the client sent (`_meta`, extras) is dropped with the
+arguments. That covers a personal-data tool and a capability with no handler.
+A call that never resolved (unknown name, invalid params, scope refused)
+withholds the name too, as `{ name: WITHHELD_TOOL_ARGUMENTS, arguments:
+WITHHELD_TOOL_ARGUMENTS }`: an unresolved name is free text the client chose.
+The `toolSlug` column holds the capability slug the call ran (not a
+`customName` it was sent as), and is empty for a call that never resolved,
+including one the rate limiter refused. The result code, duration, IP and user
+agent are kept either way. Other
+methods' params go through `sanitizeParams` unchanged: secret-looking keys
+stripped, size capped.
+
+So a capability author's `processesPii = true` (see
+[`security/pii-redaction.md`](../security/pii-redaction.md)) is what keeps its
+input out of this log. There is nothing extra to set for MCP. Rows written
+before this rule (#1349) are not rewritten: they are pruned under the audit
+retention setting (`auditRetentionDays`, 90 by default, never when `0`), or an
+admin can purge them from `/admin/orchestration/mcp/audit`.
 
 ### Body size limit (413)
 

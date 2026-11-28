@@ -30,7 +30,11 @@ import {
 } from '@/lib/validations/mcp';
 import { hasScope } from '@/lib/orchestration/mcp/auth';
 import { logMcpAudit } from '@/lib/orchestration/mcp/audit-logger';
-import { listMcpTools, callMcpTool } from '@/lib/orchestration/mcp/tool-registry';
+import {
+  listMcpTools,
+  callMcpTool,
+  toolArgumentsAuditable,
+} from '@/lib/orchestration/mcp/tool-registry';
 import {
   listMcpResources,
   readMcpResource,
@@ -86,7 +90,8 @@ export async function handleMcpRequest(
     logMcpAudit({
       apiKeyId: auth.apiKeyId,
       method: request.method,
-      toolSlug: extractToolSlug(request),
+      // No tool name: nothing has resolved it yet, and an unresolved name is
+      // free text the client chose (see auditParamsOf).
       resourceUri: extractResourceUri(request),
       responseCode: 'rate_limited',
       durationMs: Date.now() - startedAt,
@@ -96,15 +101,16 @@ export async function handleMcpRequest(
     return jsonRpcError(request.id!, JsonRpcErrorCode.RATE_LIMITED, 'Rate limit exceeded');
   }
 
+  const audit: AuditFacts = {};
   try {
-    const result = await dispatchMethod(request, context);
+    const result = await dispatchMethod(request, context, audit);
 
     logMcpAudit({
       apiKeyId: auth.apiKeyId,
       method: request.method,
-      toolSlug: extractToolSlug(request),
+      toolSlug: audit.toolSlug,
       resourceUri: extractResourceUri(request),
-      requestParams: request.params,
+      requestParams: auditParamsOf(request, audit),
       responseCode: 'success',
       durationMs: Date.now() - startedAt,
       clientIp: auth.clientIp,
@@ -119,9 +125,9 @@ export async function handleMcpRequest(
     logMcpAudit({
       apiKeyId: auth.apiKeyId,
       method: request.method,
-      toolSlug: extractToolSlug(request),
+      toolSlug: audit.toolSlug,
       resourceUri: extractResourceUri(request),
-      requestParams: request.params,
+      requestParams: auditParamsOf(request, audit),
       responseCode: 'error',
       errorMessage: errorMsg,
       durationMs: Date.now() - startedAt,
@@ -138,7 +144,11 @@ export async function handleMcpRequest(
 /**
  * Dispatch to the appropriate method handler.
  */
-async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext): Promise<unknown> {
+async function dispatchMethod(
+  request: JsonRpcRequest,
+  context: HandlerContext,
+  audit: AuditFacts
+): Promise<unknown> {
   const { auth, protocolVersion } = context;
 
   switch (request.method) {
@@ -154,7 +164,7 @@ async function dispatchMethod(request: JsonRpcRequest, context: HandlerContext):
 
     case 'tools/call':
       requireScope(auth, McpScope.TOOLS_EXECUTE);
-      return handleToolsCall(request.params, auth);
+      return handleToolsCall(request.params, auth, audit);
 
     case 'resources/list':
       requireScope(auth, McpScope.RESOURCES_READ);
@@ -282,7 +292,8 @@ async function handleToolsList(
 
 async function handleToolsCall(
   params: Record<string, unknown> | undefined,
-  auth: McpAuthContext
+  auth: McpAuthContext,
+  audit: AuditFacts
 ): Promise<unknown> {
   const parsed = mcpToolCallParamsSchema.safeParse(params);
   if (!parsed.success) {
@@ -292,11 +303,18 @@ async function handleToolsCall(
     );
   }
 
-  const result = await callMcpTool(parsed.data.name, parsed.data.arguments, {
-    userId: auth.createdBy,
-    scopedAgentId: auth.scopedAgentId,
-    ...(auth.scope ? { scope: auth.scope } : {}),
-  });
+  const result = await callMcpTool(
+    parsed.data.name,
+    parsed.data.arguments,
+    {
+      userId: auth.createdBy,
+      scopedAgentId: auth.scopedAgentId,
+      ...(auth.scope ? { scope: auth.scope } : {}),
+    },
+    (slug) => {
+      audit.toolSlug = slug;
+    }
+  );
 
   return result;
 }
@@ -498,11 +516,38 @@ function jsonRpcError(id: string | number, code: number, message: string): JsonR
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
-function extractToolSlug(request: JsonRpcRequest): string | undefined {
-  if (request.method !== 'tools/call') return undefined;
+/** What the audit log keeps in place of a `tools/call`'s arguments, when it keeps none. */
+export const WITHHELD_TOOL_ARGUMENTS = '[withheld: arguments not cleared for the audit log]';
+
+/** What the request's own handler learned that the audit row depends on. */
+interface AuditFacts {
+  /** The capability slug a `tools/call` resolved to and ran, once known. */
+  toolSlug?: string;
+}
+
+/**
+ * A request's params as the audit log may keep them. A `tools/call` keeps
+ * everything as sent only when the slug it ran (`audit.toolSlug`) is cleared
+ * by {@link toolArgumentsAuditable}. Otherwise the row keeps `arguments` as
+ * {@link WITHHELD_TOOL_ARGUMENTS} and drops every other key a client adds
+ * (`_meta`, extras), so none of them carries the personal data either. The
+ * log is install-wide, read by platform admins, and outside every org's
+ * erasure, so a capability's `processesPii` redaction must not be undone here
+ * by storing what it redacts.
+ *
+ * The name is kept only once it has resolved to a tool. A call that never
+ * resolved (unknown name, invalid params, scope refused) withholds the name as
+ * well: it is free text the client chose, and nothing vouches for it. The
+ * outcome and timing are kept either way.
+ */
+function auditParamsOf(request: JsonRpcRequest, audit: AuditFacts): JsonRpcRequest['params'] {
   const params = request.params;
-  if (params && typeof params.name === 'string') return params.name;
-  return undefined;
+  if (request.method !== 'tools/call' || !params) return params;
+  if (audit.toolSlug === undefined) {
+    return { name: WITHHELD_TOOL_ARGUMENTS, arguments: WITHHELD_TOOL_ARGUMENTS };
+  }
+  if (toolArgumentsAuditable(audit.toolSlug)) return params;
+  return { name: params.name, arguments: WITHHELD_TOOL_ARGUMENTS };
 }
 
 function extractResourceUri(request: JsonRpcRequest): string | undefined {
