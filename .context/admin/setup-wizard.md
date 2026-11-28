@@ -58,6 +58,8 @@ Both writes go through `PATCH /api/v1/admin/orchestration/settings` and invalida
 
 `getSetupState()` falls back to the safest "everything-set-up" state on DB failure so a transient blip doesn't pop the banner.
 
+**Which org it reads (#1295).** `hasProvider` and `hasDefaultChatModel` read platform-wide config (`AiProviderConfig`, the `AiOrchestrationSettings` singleton) and need no org. `hasAgent` counts `AiAgent`, which is tenant-owned, so the count runs inside `runAsOrg` for the org the viewer entered, taken from `requestPrincipal()`. A page renders outside the guards that enter an org for an API route; without this, at `TENANCY_MODE=multi` the data layer refused the count and the catch above answered "set up" for every org. With no org entered at `multi` there is no org to count, so `hasAgent` answers `true` without asking and the other two still answer from the database. At `single` an unscoped count resolves to the install org.
+
 ## Hooks used
 
 - `useLocalStorage<WizardState>(STORAGE_KEY, DEFAULT_STATE)` — persistence. See [`.context/ui/hooks.md`](../ui/hooks.md).

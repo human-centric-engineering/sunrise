@@ -10,9 +10,11 @@
  * transitively reachable from a client component.
  */
 
+import { requestPrincipal } from '@/lib/auth/admin-page-viewer';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { parseStoredDefaults } from '@/lib/orchestration/settings';
+import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
 
 export interface SetupState {
   /** True if at least one `AiProviderConfig` row exists. */
@@ -29,15 +31,41 @@ export interface SetupState {
 }
 
 /**
+ * Count the viewer's org's user-created agents, inside the org they entered.
+ *
+ * `AiAgent` is tenant-owned, and a page renders outside the guards that enter
+ * an org for an API route, so at `multi` an unscoped count is refused by the
+ * data layer (#1295). With no org entered at `multi` there is no org to ask
+ * about: `null`, which the caller reads as "has agents" so the banner stays
+ * quiet. At `single` an unscoped count resolves to the install org.
+ */
+async function countOrgAgents(): Promise<number | null> {
+  const count = () => prisma.aiAgent.count({ where: { isSystem: false } });
+  const entry = await requestPrincipal();
+  const orgId = entry?.principal.orgId;
+  if (orgId) {
+    return runAsOrg(orgId, count, {
+      source: entry.support ? 'support' : 'session',
+      ...(entry.support ? { support: entry.support } : {}),
+    });
+  }
+  if (isMultiTenant()) return null;
+  return count();
+}
+
+/**
  * Build a `SetupState` snapshot for the orchestration dashboard. Failures
  * fall back to the safest "everything-set-up" state so the wizard banner
  * doesn't pop up on a transient DB blip.
+ *
+ * The provider and settings reads are platform-wide config and need no org;
+ * the agent count runs in the org the viewer entered (see `countOrgAgents`).
  */
 export async function getSetupState(): Promise<SetupState> {
   try {
     const [providerCount, agentCount, settingsRow] = await Promise.all([
       prisma.aiProviderConfig.count(),
-      prisma.aiAgent.count({ where: { isSystem: false } }),
+      countOrgAgents(),
       prisma.aiOrchestrationSettings.findUnique({ where: { slug: 'global' } }),
     ]);
 
@@ -46,7 +74,7 @@ export async function getSetupState(): Promise<SetupState> {
 
     return {
       hasProvider: providerCount > 0,
-      hasAgent: agentCount > 0,
+      hasAgent: agentCount === null || agentCount > 0,
       hasDefaultChatModel: chat.length > 0,
     };
   } catch (err) {

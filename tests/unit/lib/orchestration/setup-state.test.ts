@@ -8,6 +8,10 @@
  * - getSetupState: defaultModels.chat empty string → hasDefaultChatModel false
  * - getSetupState: DB throws → falls back to "everything-set-up" so the
  *   wizard banner doesn't pop up on a transient blip
+ * - getSetupState at TENANCY_MODE=multi (#1295): the agent count runs in the
+ *   org the viewer entered, so the data layer's no-context refusal no longer
+ *   reads as "set up"; with no org entered, hasAgent cannot be asked and
+ *   answers true while the platform-wide probes still answer truthfully
  *
  * @see lib/orchestration/setup-state.ts
  */
@@ -15,6 +19,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
+
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
+vi.mock('@/lib/auth/admin-page-viewer', () => ({
+  requestPrincipal: vi.fn(),
+}));
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -43,13 +54,41 @@ vi.mock('@/lib/logging', () => ({
 // ─── Imports after mocks ──────────────────────────────────────────────────────
 
 import { prisma } from '@/lib/db/client';
+import { requestPrincipal } from '@/lib/auth/admin-page-viewer';
 import { getSetupState } from '@/lib/orchestration/setup-state';
+import { getTenantContext } from '@/lib/tenancy/context';
+
+type Entry = Awaited<ReturnType<typeof requestPrincipal>>;
+
+/** The viewer's session principal, as `requestPrincipal()` builds it for an entered org. */
+function enteredOrg(orgId: string): Entry {
+  return {
+    principal: { userId: 'user_1', role: 'ADMIN', credential: 'session', orgId, orgRole: 'OWNER' },
+    scope: { org: orgId },
+  };
+}
+
+/**
+ * The data layer's rule at multi for a tenant-owned model (lib/db/tenancy-extension.ts):
+ * no tenant context, refuse. `AiAgent` is tenant-owned; the provider and settings
+ * models are global config (lib/tenancy/classification.ts) and need no context.
+ */
+function agentCountRefusingWithoutOrg(count: number) {
+  return () => {
+    if (!getTenantContext()) {
+      return Promise.reject(new Error('No tenant context for AiAgent.count at TENANCY_MODE=multi'));
+    }
+    return Promise.resolve(count);
+  };
+}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('getSetupState', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'single';
+    vi.mocked(requestPrincipal).mockResolvedValue(enteredOrg('org_install'));
   });
 
   it('reports a fully empty state on a fresh install', async () => {
@@ -134,6 +173,108 @@ describe('getSetupState', () => {
       hasProvider: true,
       hasAgent: true,
       hasDefaultChatModel: true,
+    });
+  });
+
+  it('at single with no org entered, counts agents unscoped (the install org)', async () => {
+    vi.mocked(requestPrincipal).mockResolvedValue(null);
+    vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
+    vi.mocked(prisma.aiAgent.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+    const state = await getSetupState();
+
+    expect(prisma.aiAgent.count).toHaveBeenCalledWith({ where: { isSystem: false } });
+    expect(state.hasAgent).toBe(false);
+  });
+
+  describe('at TENANCY_MODE=multi (#1295)', () => {
+    beforeEach(() => {
+      mockEnv.TENANCY_MODE = 'multi';
+    });
+
+    it('counts agents inside the org the viewer entered, so a fresh org reads as not set up', async () => {
+      vi.mocked(requestPrincipal).mockResolvedValue(enteredOrg('org_a'));
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(0);
+      vi.mocked(prisma.aiAgent.count).mockImplementation(agentCountRefusingWithoutOrg(0) as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      const state = await getSetupState();
+
+      // Before the fix the agent count ran with no org, the data layer
+      // refused it, and the catch answered "everything set up".
+      expect(state).toEqual({ hasProvider: false, hasAgent: false, hasDefaultChatModel: false });
+    });
+
+    it('runs the agent count as the entered org, not another', async () => {
+      vi.mocked(requestPrincipal).mockResolvedValue(enteredOrg('org_a'));
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
+      let orgAtCount: string | null | undefined;
+      vi.mocked(prisma.aiAgent.count).mockImplementation((() => {
+        orgAtCount = getTenantContext()?.orgId;
+        return Promise.resolve(3);
+      }) as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      const state = await getSetupState();
+
+      expect(orgAtCount).toBe('org_a');
+      expect(state.hasAgent).toBe(true);
+      // The scope does not leak out of the probe.
+      expect(getTenantContext()).toBeNull();
+    });
+
+    it('enters a support session as support, carrying its grant', async () => {
+      const support = {
+        grantId: 'grant_1',
+        level: 'ADMIN' as const,
+        expiresAt: new Date('2027-01-01'),
+      };
+      vi.mocked(requestPrincipal).mockResolvedValue({
+        ...(enteredOrg('org_b') as NonNullable<Entry>),
+        support,
+      });
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
+      let contextAtCount: ReturnType<typeof getTenantContext> = null;
+      vi.mocked(prisma.aiAgent.count).mockImplementation((() => {
+        contextAtCount = getTenantContext();
+        return Promise.resolve(0);
+      }) as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      await getSetupState();
+
+      expect(contextAtCount).toEqual({
+        orgId: 'org_b',
+        source: 'support',
+        role: undefined,
+        support,
+      });
+    });
+
+    it('with no org entered, skips the agent count and still answers the platform-wide probes', async () => {
+      vi.mocked(requestPrincipal).mockResolvedValue(null);
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(0);
+      vi.mocked(prisma.aiAgent.count).mockImplementation(agentCountRefusingWithoutOrg(0) as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      const state = await getSetupState();
+
+      // hasAgent is per org and cannot be asked without one, so it takes the
+      // quiet answer; hasProvider is platform-wide and must not be lost with it.
+      expect(prisma.aiAgent.count).not.toHaveBeenCalled();
+      expect(state).toEqual({ hasProvider: false, hasAgent: true, hasDefaultChatModel: false });
+    });
+
+    it('still falls back to "everything-set-up" on a real DB failure inside the org', async () => {
+      vi.mocked(requestPrincipal).mockResolvedValue(enteredOrg('org_a'));
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(0);
+      vi.mocked(prisma.aiAgent.count).mockRejectedValue(new Error('connection lost'));
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+
+      const state = await getSetupState();
+
+      expect(state).toEqual({ hasProvider: true, hasAgent: true, hasDefaultChatModel: true });
     });
   });
 });
