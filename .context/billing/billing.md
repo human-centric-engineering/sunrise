@@ -864,15 +864,20 @@ period's total. Stripe deduplicates on `identifier` only within a rolling 24
 hours. A report whose send succeeded but was not marked sent, resent a day
 later, is counted twice by a `sum` meter. A `last` meter takes the most recent
 value in the period, so resending the same total is harmless at any age (spike
-part F). The setup steps will say to create each meter with `last`.
+part F). The setup steps say to create each meter with `Last`
+([Setting up Stripe](#setting-up-stripe), step 6).
 
 **The grace period is the deadline.** Stripe finalises a period's invoice an
 hour after the period ends by default, and the operator can extend that to 72
 hours. Usage that arrives later is accepted, but it is added to neither that
-invoice nor the next. So a report that misses the window is marked late and
-logged, and never moved into the next period, which would bill the wrong
-period. The setup steps will recommend a grace period of several hours, so a
-tick that stalls briefly does not cost an invoice.
+invoice nor the next. The platform cannot see the operator's setting, so an
+ordinary report is sent whenever it is counted, never moved into the next
+period (which would bill the wrong one), and logged when it goes out more
+than an hour after the period's end, Stripe's default. Only a last period,
+which the provider has always invoiced by the time it closes, is marked
+`LATE` and not sent. The setup steps recommend a grace period of several
+hours, so a tick that stalls briefly does not cost an invoice
+([Setting up Stripe](#setting-up-stripe), step 7).
 
 **What is reported, by overage rule** (the rule is the app's, per metered
 item):
@@ -931,8 +936,8 @@ after the end, is always too late. So:
   or retries exhausted): the last period's excess is not collected. It is
   closed at `endedAt`, or at the period's end when `endedAt` is null (an
   `unpaid` subscription has not ended at Stripe), and recorded as late, so the
-  loss is visible. The setup
-  steps will recommend configuring the portal to cancel at period end.
+  loss is visible. The setup steps recommend configuring the portal to
+  cancel at period end ([Setting up Stripe](#setting-up-stripe), step 5).
 
 ### What t-1097 built
 

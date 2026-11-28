@@ -37,6 +37,7 @@ item (t-1034) and how a surface looks to an org without it (t-1053), and
 | Key format                         | `ENTITLEMENT_KEY_PATTERN` in `lib/validations/tenancy.ts`: `lead_gen`, not `Lead-Gen`                                                         |
 | Register a meter                   | `registerMeter({ key, label, period, count })` in the same `initAppEntitlements()`                                                            |
 | May this org add one more?         | `checkMeterQuota(orgId, key)`, `lib/tenancy/meters.ts` → `{ allowed, used, limit, label, window }`                                            |
+| Count one in a window you name     | `countMeterWithin(orgId, key, { from, to })`, `lib/tenancy/meters.ts`; throws rather than failing open (billing, §139 t-1097)                 |
 | Set limits from your own code      | `writeOrgMeterLimits(orgId, { key: n \| null })`, `lib/tenancy/org-settings.ts`                                                               |
 | Read / set limits over HTTP        | `GET` / `PATCH /api/v1/admin/orgs/[id]/meters`; the **Limits** section on `/admin/orgs/[id]`                                                  |
 | Name a set of them (a plan)        | `registerPlan()` in `lib/app/billing.ts`; see [Billing](../billing/billing.md#plans)                                                          |
