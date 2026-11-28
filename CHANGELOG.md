@@ -174,6 +174,16 @@ release process.
 
 ### Changed
 
+- **Component tests read the strings an app registers (#1363).** The next-intl
+  test helper (`tests/helpers/i18n.ts`, which `tests/setup.ts` applies to every
+  file) now serves `catalogueFor('en')`: `en.json` plus the app's
+  `registerAppMessages` strings, read on every call. A test rendering an
+  `app.…` string shows its English instead of the key. With no app strings
+  the catalogue is `en.json` alone, so existing tests are unchanged. **A fork
+  that re-pointed the helper, or mocked next-intl with `catalogueFor` in its
+  own tests,** can drop that edit. A test that mocks `@/lib/i18n/registry` and
+  renders text must give the mock a `catalogueFor`.
+
 - **Billing audit rows record the plan as `metadata.plan` (§139 t-1096).**
   `org.billing.checkout` wrote it as `planKey`, which the audit logger's secret
   rule (a name ending in `key`) stored as `[REDACTED]`, so the row never said
